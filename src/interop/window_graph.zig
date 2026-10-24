@@ -1,18 +1,19 @@
-//! Session-wide guest window graph, layer 1: pure value rules.
+//! Session-wide guest window graph (TODO #10): pure value rules, graph state and the planning engine.
 //!
-//! This file holds the stateless part of the graph engine (TODO #10): the C ABI
-//! type aliases, the PascalCase constants asserted against
-//! `include/waddle/interop_window_graph.h`, the persistent record layout, facts
-//! validation, the window classifier (header steps 0 to 8), identity comparison
-//! and the small arithmetic helpers (FNV-1a class hash, wrap-safe tick order,
-//! saturating counters). Nothing here allocates, keeps state, calls the
-//! operating system or touches a thread. The stateful engine (entries, deferred
-//! records, event ring, refresh, retirement) is appended below by the next stage.
+//! Layer 1 is the stateless part: the C ABI type aliases, the PascalCase constants asserted
+//! against `include/waddle/interop_window_graph.h`, the persistent record layout, facts
+//! validation, the window classifier (header steps 0 to 8, also exported as
+//! `classify_public`), identity comparison and the small arithmetic helpers (FNV-1a class
+//! hash, 64-bit tick unwrapping, saturating counters). Nothing there allocates, keeps state,
+//! calls the operating system or touches a thread. Layer 2 holds the graph state, the event
+//! ring and its queries, and the planning engine: `observe`, `note_destroyed`, the retire
+//! cascade and deferral. Every mutating call is plan, pre-check, at most one `app_key_lookup`,
+//! then an infallible apply. The refresh engine is appended by the next stage.
 //!
-//! Every function documented here is pure and therefore safe to call from any
-//! thread concurrently with other pure calls on distinct or shared read-only
-//! arguments. Test blocks live below the `Test-only` delimiter line at the end
-//! of the production area, which is the split point of the coverage tool.
+//! The pure functions are safe to call from any thread concurrently with other pure calls on
+//! distinct or shared read-only arguments; every stateful function is owner-thread only. Test
+//! blocks live below the `Test-only` delimiter line at the end of the production area, which is
+//! the split point of the coverage tool.
 
 const std = @import("std");
 
@@ -99,8 +100,11 @@ pub const FactOnInputDesktop: u32 = 1 << 9;
 pub const FactClassTruncated: u32 = 1 << 10;
 /// Fact flag: process image unreadable; set if and only if `image_length` is 0.
 pub const FactImageUnknown: u32 = 1 << 11;
+/// Fact flag: observer-computed; `owner` is never exported or no longer exists, so
+/// classification treats the window as not owned (requires `owner != 0`).
+pub const FactOwnerHidden: u32 = 1 << 12;
 /// Mask of every defined fact flag; any other bit is invalid facts.
-pub const FactMask: u32 = 0x0FFF;
+pub const FactMask: u32 = 0x1FFF;
 
 /// Change bit: x, y, width or height changed.
 pub const ChangeRect: u32 = 1 << 0;
@@ -319,6 +323,7 @@ comptime {
         .{ FactOnInputDesktop, c.InteropWindowFactOnInputDesktop },
         .{ FactClassTruncated, c.InteropWindowFactClassTruncated },
         .{ FactImageUnknown, c.InteropWindowFactImageUnknown },
+        .{ FactOwnerHidden, c.InteropWindowFactOwnerHidden },
         .{ FactMask, c.InteropWindowFactMask },
         .{ ChangeRect, c.InteropWindowChangeRect },
         .{ ChangeState, c.InteropWindowChangeState },
@@ -329,6 +334,9 @@ comptime {
         .{ EventAnnounce, c.InteropWindowEventAnnounce },
         .{ EventUpdate, c.InteropWindowEventUpdate },
         .{ EventRetireIntent, c.InteropWindowEventRetireIntent },
+        .{ @intFromEnum(verdict_kind_t.Eligible), c.InteropWindowVerdictEligible },
+        .{ @intFromEnum(verdict_kind_t.NotExported), c.InteropWindowVerdictNotExported },
+        .{ @intFromEnum(verdict_kind_t.Suspended), c.InteropWindowVerdictSuspended },
         .{ UacWindow, c.InteropWindowUacWindow },
         .{ UacAuto, c.InteropWindowUacAuto },
         .{ UacNative, c.InteropWindowUacNative },
@@ -458,10 +466,10 @@ pub const record_t = struct {
     process_id: u32,
     /// Creating thread id.
     thread_id: u32,
-    /// `captured_ms` of the admitting facts (wrap-safe tick domain).
-    admit_captured_ms: u32,
-    /// `captured_ms` of the newest accepted facts.
-    last_captured_ms: u32,
+    /// Unwrapped 64-bit tick (see `unwrap_tick`) of the facts that admitted the record.
+    admit_captured_ms: u64,
+    /// Unwrapped 64-bit tick of the newest accepted facts.
+    last_captured_ms: u64,
     /// Reason code recorded when the record retired.
     retire_reason: u32,
     /// Valid bytes in `title`, 0..1024.
@@ -577,17 +585,24 @@ pub fn ascii_eql_ignore_case(a: []const u8, b: []const u8) bool {
     return true;
 }
 
-/// Order two 32-bit tick values in a wrap-safe way.
+/// Initial value of `graph_t.tick_base`: 2^32, so no unwrapped tick is ever negative.
+pub const TickBaseStart: u64 = 4294967296;
+
+/// Unwrap a raw 32-bit tick against a 64-bit base.
 ///
-/// @param[in] a First tick.
-/// @param[in] b Second tick.
-/// @return true iff the signed 32-bit difference `a - b` is negative, that is `a`
-///         is earlier than `b` within half the tick range. A difference of exactly
-///         2^31 is negative in both directions (ambiguous, treated as earlier).
-/// @note Pure; thread-safe.
-pub fn time_before(a: u32, b: u32) bool {
-    const difference: i32 = @bitCast(a -% b);
-    return difference < 0;
+/// Computes `base + (i64)(i32)(t32 -% (u32)base)` with the subtraction wrapping modulo 2^32, so the
+/// result is the 64-bit value congruent to `t32` that lies within +-2^31 of `base`. The result is
+/// exact while the base is advanced at least once per 2^31 ms. The caller (never this function)
+/// advances `graph_t.tick_base` to the larger of the old base and the result, and only when the call
+/// returns Ok.
+///
+/// @param[in] base Current 64-bit base, at least `TickBaseStart` so the result cannot underflow.
+/// @param[in] t32 Raw 32-bit tick-domain value from the wire.
+/// @return The unwrapped 64-bit tick; below `base` for a delayed older tick.
+/// @note Pure; thread-safe. Wrapping arithmetic only, no overflow trap.
+pub fn unwrap_tick(base: u64, t32: u32) u64 {
+    const delta: i32 = @bitCast(t32 -% @as(u32, @truncate(base)));
+    return base +% @as(u64, @bitCast(@as(i64, delta)));
 }
 
 /// Derive protocol state bits from facts. Never sets `StateActivated`.
@@ -614,7 +629,7 @@ pub fn derive_state(facts: *const facts_t) u32 {
 ///
 /// Rules: window, root and stamp nonzero; owner and owner_root both zero or both
 /// nonzero; flags within `FactMask`; AgentPreedit requires AgentOwned;
-/// LayeredAlphaKnown requires Layered; ImageUnknown set if and only if
+/// OwnerHidden requires `owner != 0`; LayeredAlphaKnown requires Layered; ImageUnknown set if and only if
 /// `image_length` is 0; dpi in 96..960; width, height, min_width and min_height at
 /// most 16384; class_length 1..256, image_length 0..260, title_length 0..1024;
 /// class, image and title valid UTF-8 without NUL over their stated lengths only
@@ -628,6 +643,7 @@ pub fn validate_facts(facts: *const facts_t) bool {
     if ((facts.owner != 0) != (facts.owner_root != 0)) return false;
     if (facts.flags & ~FactMask != 0) return false;
     if (facts.flags & FactAgentPreedit != 0 and facts.flags & FactAgentOwned == 0) return false;
+    if (facts.flags & FactOwnerHidden != 0 and facts.owner == 0) return false;
     if (facts.flags & FactLayeredAlphaKnown != 0 and facts.flags & FactLayered == 0) return false;
     if ((facts.flags & FactImageUnknown != 0) != (facts.image_length == 0)) return false;
     if (facts.dpi < MinDpi or facts.dpi > MaxDpi) return false;
@@ -652,14 +668,24 @@ pub const eligible_t = struct {
     parent_window: u64,
 };
 
-/// Outcome of classification.
-pub const verdict_t = union(enum) {
-    /// The window is exportable with this role and parent.
-    eligible: eligible_t,
+/// Kind tag of a classification outcome; numeric values equal `interop_window_verdict_kind_t`.
+pub const verdict_kind_t = enum(u32) {
+    /// The window is exportable with a role and a parent.
+    Eligible = 1,
     /// The window is not exported; the payload is a classification `Reason*` code (1..9).
-    not_exported: u32,
+    NotExported = 2,
     /// The input desktop is not Default: nothing may be admitted, retired or updated.
-    suspended: void,
+    Suspended = 3,
+};
+
+/// Outcome of classification.
+pub const verdict_t = union(verdict_kind_t) {
+    /// The window is exportable with this role and parent.
+    Eligible: eligible_t,
+    /// The window is not exported; the payload is a classification `Reason*` code (1..9).
+    NotExported: u32,
+    /// The input desktop is not Default: nothing may be admitted, retired or updated.
+    Suspended: void,
 };
 
 const ExcludedClasses = [_][]const u8{
@@ -713,20 +739,28 @@ fn class_is_excluded(facts: *const facts_t) bool {
     return false;
 }
 
+/// A window is owned iff `owner != 0` and OwnerHidden is clear.
+fn is_owned(facts: *const facts_t) bool {
+    return facts.owner != 0 and !flag_set(facts, FactOwnerHidden);
+}
+
 /// Step 8 gate shared by every role.
 fn gate(facts: *const facts_t, role: u32, parent_window: u64) verdict_t {
-    if (facts.width == 0 or facts.height == 0) return .{ .not_exported = ReasonZeroArea };
+    if (facts.width == 0 or facts.height == 0) return .{ .NotExported = ReasonZeroArea };
     if (flag_set(facts, FactLayered) and flag_set(facts, FactLayeredAlphaKnown) and facts.alpha == 0) {
-        return .{ .not_exported = ReasonTransparent };
+        return .{ .NotExported = ReasonTransparent };
     }
-    return .{ .eligible = .{ .role = role, .parent_window = parent_window } };
+    return .{ .Eligible = .{ .role = role, .parent_window = parent_window } };
 }
 
 /// Classify a facts snapshot (header steps 0 to 8; the first matching step wins).
 ///
-/// Step 0: OnInputDesktop clear is `suspended`; Visible clear is NotVisible.
+/// "Owned" means `owner != 0` and OwnerHidden clear; an owner-hidden window is judged as not owned
+/// in steps 4 to 7 and for the preedit parent.
+/// Step 0: OnInputDesktop clear is `Suspended`; Visible clear is NotVisible.
 /// Step 1: excluded classes, CoreWindow of the three shell-host images, then the
-/// agent's own windows (preedit selects ImePreedit and skips to step 8).
+/// agent's own windows (preedit selects ImePreedit, parent `owner_root` when owned else 0, and
+/// skips to step 8).
 /// Step 2: consent.exe dummy class and credential dialog per `uac_mode`.
 /// Step 3: root != window is Child. Step 4: Menu. Step 5: Tooltip. Step 6: owned
 /// and not APPWINDOW is Dialog. Step 7: Toplevel. Step 8: ZeroArea and Transparent
@@ -740,25 +774,25 @@ fn gate(facts: *const facts_t, role: u32, parent_window: u64) verdict_t {
 /// @return A `verdict_t` value; nothing in it borrows from `facts`.
 /// @note Pure; thread-safe. Self-ownership and cycles are the graph's concern, not this function's.
 pub fn classify(facts: *const facts_t, uac_mode: u32) verdict_t {
-    if (!flag_set(facts, FactOnInputDesktop)) return .suspended;
-    if (!flag_set(facts, FactVisible)) return .{ .not_exported = ReasonNotVisible };
-    if (class_is_excluded(facts)) return .{ .not_exported = ReasonExcludedClass };
+    if (!flag_set(facts, FactOnInputDesktop)) return .Suspended;
+    if (!flag_set(facts, FactVisible)) return .{ .NotExported = ReasonNotVisible };
+    if (class_is_excluded(facts)) return .{ .NotExported = ReasonExcludedClass };
     if (class_is(facts, CoreWindowClass) and image_is_shell_host(facts)) {
-        return .{ .not_exported = ReasonExcludedCoreWindow };
+        return .{ .NotExported = ReasonExcludedCoreWindow };
     }
     if (flag_set(facts, FactAgentOwned)) {
-        if (!flag_set(facts, FactAgentPreedit)) return .{ .not_exported = ReasonExcludedAgent };
-        return gate(facts, RoleImePreedit, 0);
+        if (!flag_set(facts, FactAgentPreedit)) return .{ .NotExported = ReasonExcludedAgent };
+        return gate(facts, RoleImePreedit, if (is_owned(facts)) facts.owner_root else 0);
     }
     if (image_is(facts, ConsentImage)) {
-        if (class_is(facts, UacDummyClass)) return .{ .not_exported = ReasonExcludedUacDummy };
+        if (class_is(facts, UacDummyClass)) return .{ .NotExported = ReasonExcludedUacDummy };
         if (class_is(facts, UacCredentialClass)) {
-            if (uac_mode != UacWindow and uac_mode != UacAuto) return .{ .not_exported = ReasonUacNativeHidden };
+            if (uac_mode != UacWindow and uac_mode != UacAuto) return .{ .NotExported = ReasonUacNativeHidden };
             return gate(facts, RoleUacConsent, 0);
         }
     }
-    if (facts.root != facts.window) return .{ .not_exported = ReasonChild };
-    const owned = facts.owner != 0;
+    if (facts.root != facts.window) return .{ .NotExported = ReasonChild };
+    const owned = is_owned(facts);
     const popup_parent: u64 = if (owned) facts.owner_root else 0;
     const caption_bar = facts.style & StyleCaption == StyleCaption;
     const no_activate = facts.ex_style & ExStyleNoActivate != 0;
@@ -772,6 +806,34 @@ pub fn classify(facts: *const facts_t, uac_mode: u32) verdict_t {
     }
     if (owned and facts.ex_style & ExStyleAppWindow == 0) return gate(facts, RoleDialog, facts.owner_root);
     return gate(facts, RoleToplevel, 0);
+}
+
+/// Pure `interop_window_graph_classify`: validate, then classify, writing the C verdict.
+///
+/// @param[in] facts Non-null borrowed snapshot; read only, never retained.
+/// @param[in] uac_mode `UacWindow`, `UacAuto` or `UacNative`; anything above `UacNative` is InvalidArgument.
+/// @param[out] out Non-null; fully written on Ok (fields not meaningful for the kind are zero,
+///             `reserved0` zero), unchanged on every other status.
+/// @return Ok; InvalidArgument for `uac_mode` above 2; InvalidFacts when `validate_facts` fails.
+/// @note Pure and thread-safe: touches no graph, counter or callback; no allocation.
+pub fn classify_public(facts: *const facts_t, uac_mode: u32, out: *c.interop_window_verdict_t) status_t {
+    if (uac_mode > UacNative) return .InvalidArgument;
+    if (!validate_facts(facts)) return .InvalidFacts;
+    var verdict = std.mem.zeroes(c.interop_window_verdict_t);
+    switch (classify(facts, uac_mode)) {
+        .Eligible => |eligible_verdict| {
+            verdict.kind = @intFromEnum(verdict_kind_t.Eligible);
+            verdict.role = eligible_verdict.role;
+            verdict.parent_window = eligible_verdict.parent_window;
+        },
+        .NotExported => |reason| {
+            verdict.kind = @intFromEnum(verdict_kind_t.NotExported);
+            verdict.reason = reason;
+        },
+        .Suspended => verdict.kind = @intFromEnum(verdict_kind_t.Suspended),
+    }
+    out.* = verdict;
+    return .Ok;
 }
 
 /// Compare a stored record with a new snapshot of the same HWND for incarnation identity.
@@ -795,6 +857,15 @@ pub fn identity_equal(rec: *const record_t, facts: *const facts_t) bool {
 /// @note Not atomic; the graph is single-threaded by contract.
 pub fn bump(counter: *u64) void {
     counter.* +|= 1;
+}
+
+/// Add to a counter, saturating at the maximum u64 value.
+///
+/// @param[in,out] counter Non-null caller-owned counter; never wraps.
+/// @param[in] amount Value to add.
+/// @note Not atomic; the graph is single-threaded by contract.
+pub fn bump_by(counter: *u64, amount: u64) void {
+    counter.* +|= amount;
 }
 
 /// Application-key lookup callback type (`interop_window_app_key_lookup_t`); optional C function pointer.
@@ -865,6 +936,9 @@ pub const graph_t = struct {
     generations_issued: u64,
     /// Largest stamp accepted by an Ok call.
     stamp_high_water: u64,
+    /// Monotonic 64-bit tick base (`unwrap_tick`); advanced to the larger of itself and the
+    /// unwrapped tick on every Ok call that carries a tick; starts at `TickBaseStart`.
+    tick_base: u64 = TickBaseStart,
     /// Next deferral age to assign; starts at 1, saturating.
     next_seq: u64,
     /// Clock reading of the last successful capacity diagnostic.
@@ -921,6 +995,7 @@ pub fn create(allocator: std.mem.Allocator, config: *const config_t) error{ OutO
     graph.owner_thread = std.Thread.getCurrentId();
     graph.timer = std.time.Timer.start() catch null;
     graph.next_seq = 1;
+    graph.tick_base = TickBaseStart;
     return graph;
 }
 
@@ -1068,15 +1143,37 @@ pub fn ring_room(graph: *const graph_t) u32 {
     return EventCapacity - graph.ring_len;
 }
 
+/// Find the pending event an Announce or Update of (window, generation) would merge into.
+///
+/// The ring is scanned newest first and the first event with the same (window, generation)
+/// decides: an Announce or Update is the merge target, a RetireIntent ends the scan with no
+/// target (events never merge across a retirement).
+///
+/// @param[in] graph Non-null graph; the returned pointer aliases ring storage.
+/// @param[in] window HWND of the generation.
+/// @param[in] generation Generation to match.
+/// @return Pointer to the newest matching Announce/Update event, or null when a new slot is needed.
+/// @note Owner thread only; no allocation; at most 256 iterations. The pointer is valid until
+///       the next ring mutation and is never retained.
+pub fn ring_merge_target(graph: *graph_t, window: u64, generation: u64) ?*event_t {
+    var offset = graph.ring_len;
+    while (offset > 0) {
+        offset -= 1;
+        const queued = &graph.ring[ring_index(graph, offset)];
+        if (queued.window != window or queued.generation != generation) continue;
+        return if (queued.kind == EventRetireIntent) null else queued;
+    }
+    return null;
+}
+
 /// Queue an event, merging an Announce or Update into a pending one when the header allows.
 ///
-/// For kind Announce or Update the ring is scanned newest first for the first event with the
-/// same (window, generation). If that event is an Announce or Update its payload (x, y, width,
-/// height, state, dpi, min_width, min_height, title and title_length) is overwritten in place,
-/// its kind is kept (an Announce stays an Announce), its changed_mask is OR-ed with the new
-/// one and `events_coalesced` is bumped. If it is a RetireIntent the scan stops: events never
-/// merge across a retirement. Otherwise the event is appended and `events_queued` is bumped
-/// (`updates_queued` as well for an Update). RetireIntent is always appended.
+/// For kind Announce or Update the ring is searched with `ring_merge_target`. If a target exists
+/// its payload (x, y, width, height, state, dpi, min_width, min_height, title and title_length) is
+/// overwritten in place, its kind is kept (an Announce stays an Announce), its changed_mask is
+/// OR-ed with the new one and `events_coalesced` is bumped. Otherwise the event is appended and
+/// `events_queued` is bumped (`updates_queued` as well for an Update). RetireIntent is always
+/// appended.
 ///
 /// @param[in,out] graph Non-null graph.
 /// @param[in] ev Non-null borrowed event; copied, never retained.
@@ -1087,12 +1184,7 @@ pub fn ring_room(graph: *const graph_t) u32 {
 /// @note Owner thread only; no allocation; at most 256 iterations.
 pub fn ring_push_or_coalesce(graph: *graph_t, ev: *const event_t) bool {
     if (ev.kind == EventAnnounce or ev.kind == EventUpdate) {
-        var offset = graph.ring_len;
-        while (offset > 0) {
-            offset -= 1;
-            const queued = &graph.ring[ring_index(graph, offset)];
-            if (queued.window != ev.window or queued.generation != ev.generation) continue;
-            if (queued.kind == EventRetireIntent) break;
+        if (ring_merge_target(graph, ev.window, ev.generation)) |queued| {
             queued.x = ev.x;
             queued.y = ev.y;
             queued.width = ev.width;
@@ -1386,7 +1478,939 @@ pub fn take_capacity_diagnostic(graph: *graph_t, out: *diagnostic_t) status_t {
     return .Ok;
 }
 
-// Planning engine: appended by the next stage.
+// ---------------------------------------------------------------------------------------------
+// Planning engine (TODO #10, layer 2b1): observe, note_destroyed, retire cascade, deferral.
+//
+// Every mutating call follows the same shape: guards (`enter`), read-only plan, pre-checks that
+// can still fail without touching anything (cycle, capacity, generations, event-queue room), the
+// single `app_key_lookup` call, and then an infallible apply phase. Counters may change on a
+// failing status; graph state may not (except the documented Cycle drop of a deferred record).
+// ---------------------------------------------------------------------------------------------
+
+/// Per-call effect counts that end up in `observation_t`.
+pub const tally_t = struct {
+    /// New ring slots consumed by this call (a coalesced payload counts 0).
+    events: u32 = 0,
+    /// Entries announced, including flushed children.
+    admitted: u32 = 0,
+    /// Entries moved to Retiring, including descendants.
+    retired: u32 = 0,
+    /// Deferred records dropped or evicted.
+    dropped: u32 = 0,
+};
+
+/// A set of Active entries that retire together: the root and every transitive descendant.
+///
+/// `slots` holds entry-slot indices in descending generation order, so descendants come before
+/// their ancestors and the root (the lowest generation, by invariant I-4) is the last element.
+pub const cascade_t = struct {
+    /// Number of valid elements in `slots`, 0..64.
+    count: u32 = 0,
+    /// Entry-slot indices, children first, root last.
+    slots: [MaxEntries]u8 = [_]u8{0} ** MaxEntries,
+};
+
+/// Collect the retirement cascade of one Active entry.
+///
+/// Descendants are the Active entries whose (parent_window, parent_generation) pair names a
+/// collected member, found transitively. The result is sorted by descending generation.
+///
+/// @param[in] graph Non-null graph; never written.
+/// @param[in] root Slot index of an Active entry.
+/// @param[out] out Non-null; fully rewritten.
+/// @note Owner thread only; pure read; at most 64 x 64 comparisons; no allocation.
+pub fn collect_cascade(graph: *const graph_t, root: usize, out: *cascade_t) void {
+    var in_set = [_]bool{false} ** MaxEntries;
+    out.* = .{};
+    out.slots[0] = @intCast(root);
+    out.count = 1;
+    in_set[root] = true;
+    var head: u32 = 0;
+    while (head < out.count) : (head += 1) {
+        const parent = &graph.entries[out.slots[head]].record;
+        for (&graph.entries, 0..) |*entry, index| {
+            if (entry.state != .Active or in_set[index]) continue;
+            if (entry.record.parent_window != parent.window) continue;
+            if (entry.record.parent_generation != parent.generation) continue;
+            in_set[index] = true;
+            out.slots[out.count] = @intCast(index);
+            out.count += 1;
+        }
+    }
+    var next: u32 = 1;
+    while (next < out.count) : (next += 1) {
+        const moving = out.slots[next];
+        const generation = graph.entries[moving].record.generation;
+        var hole = next;
+        while (hole > 0 and graph.entries[out.slots[hole - 1]].record.generation < generation) : (hole -= 1) {
+            out.slots[hole] = out.slots[hole - 1];
+        }
+        out.slots[hole] = moving;
+    }
+}
+
+/// Test whether a window is the HWND of any member of a cascade.
+///
+/// @param[in] graph Non-null graph; never written.
+/// @param[in] cascade Non-null cascade collected from the same graph.
+/// @param[in] window HWND to look for.
+/// @return true when some member entry has that window.
+/// @note Owner thread only; pure read.
+pub fn cascade_has_window(graph: *const graph_t, cascade: *const cascade_t, window: u64) bool {
+    for (cascade.slots[0..cascade.count]) |slot| {
+        if (graph.entries[slot].record.window == window) return true;
+    }
+    return false;
+}
+
+/// Build an event carrying the full current payload of a record.
+///
+/// @param[in] graph Non-null graph (supplies the session epoch).
+/// @param[in] rec Non-null record; title and application key are copied by value.
+/// @param[in] kind `EventAnnounce`, `EventUpdate` or `EventRetireIntent`.
+/// @param[in] mask changed_mask (`ChangeMask` for Announce, the diff for Update, 0 for RetireIntent).
+/// @param[in] reason Reason code, meaningful for RetireIntent only (0 otherwise).
+/// @return A fully initialised event value (reserved0 zero).
+/// @note Pure; thread-safe for distinct graphs; no allocation.
+pub fn event_from_record(graph: *const graph_t, rec: *const record_t, kind: u32, mask: u32, reason: u32) event_t {
+    var ev = std.mem.zeroes(event_t);
+    ev.session_epoch = graph.config.session_epoch;
+    ev.window = rec.window;
+    ev.generation = rec.generation;
+    ev.parent_window = rec.parent_window;
+    ev.parent_generation = rec.parent_generation;
+    ev.x = rec.x;
+    ev.y = rec.y;
+    ev.width = rec.width;
+    ev.height = rec.height;
+    ev.kind = kind;
+    ev.role = rec.role;
+    ev.state = rec.state;
+    ev.dpi = rec.dpi;
+    ev.min_width = rec.min_width;
+    ev.min_height = rec.min_height;
+    ev.process_id = rec.process_id;
+    ev.changed_mask = mask;
+    ev.reason = reason;
+    ev.title_length = rec.title_length;
+    ev.app_key_length = rec.app_key_length;
+    ev.title = rec.title;
+    ev.app_key = rec.app_key;
+    return ev;
+}
+
+/// Retire a cascade: children first, root last.
+///
+/// Every member moves to Retiring (keeping slot, record and generation) and one RetireIntent
+/// event with the last known payload is appended per member: the root with `root_reason`, every
+/// descendant with `ReasonParentRetired`. `retire_intents` is bumped per member. The caller
+/// must have proven `ring_room >= cascade.count`. Re-deferral of descendants is a separate step
+/// (`redefer_descendants`) because it must follow the flush of the replacement.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] cascade Non-null cascade collected from this graph; all members Active.
+/// @param[in] root_reason Reason recorded for the root (the last element).
+/// @param[in,out] tally Non-null; `events` and `retired` are increased.
+/// @note Owner thread only; no callback; no allocation.
+pub fn retire_cascade(graph: *graph_t, cascade: *const cascade_t, root_reason: u32, tally: *tally_t) void {
+    for (cascade.slots[0..cascade.count], 0..) |slot, position| {
+        const entry = &graph.entries[slot];
+        entry.state = .Retiring;
+        entry.record.retire_reason = if (position + 1 == cascade.count) root_reason else ReasonParentRetired;
+        const ev = event_from_record(graph, &entry.record, EventRetireIntent, 0, entry.record.retire_reason);
+        if (ring_push_or_coalesce(graph, &ev)) tally.events += 1;
+        bump(&graph.stats.retire_intents);
+        tally.retired += 1;
+    }
+}
+
+/// Remove a deferred record and count the drop.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] slot Index of a used deferred slot.
+/// @param[in,out] tally Non-null; `dropped` is increased.
+/// @note Owner thread only. Bumps `stats.deferred_dropped`; evictions use `defer_insert` instead.
+pub fn drop_deferred(graph: *graph_t, slot: usize, tally: *tally_t) void {
+    graph.deferred[slot] = .{ .used = false, .seen = false, .record = record_init() };
+    bump(&graph.stats.deferred_dropped);
+    tally.dropped += 1;
+}
+
+/// Store a new deferred record, evicting the oldest one when the set is full.
+///
+/// The record gets the next age `seq` (saturating counter, ties broken by lowest index when
+/// choosing a victim). When all 64 slots are used the record with the lowest `seq` is evicted:
+/// `stats.deferred_evicted` and the diagnostic counter are bumped and `tally.dropped` grows.
+/// `stats.deferred_added` is bumped for the new record. The record is stored as a deferred
+/// record: `generation`, `parent_generation`, `admit_stamp`, `admit_captured_ms` and
+/// `retire_reason` are forced to zero.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] rec Non-null record to copy; its `seq` is ignored.
+/// @param[in] seen Initial refresh seen mark.
+/// @param[in,out] tally Non-null; `dropped` is increased on eviction.
+/// @note Owner thread only; no callback; no allocation; infallible.
+pub fn defer_insert(graph: *graph_t, rec: *const record_t, seen: bool, tally: *tally_t) void {
+    var slot: usize = 0;
+    var found = false;
+    for (&graph.deferred, 0..) |*candidate, index| {
+        if (!candidate.used) {
+            slot = index;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        for (&graph.deferred, 0..) |*candidate, index| {
+            if (candidate.record.seq < graph.deferred[slot].record.seq) slot = index;
+        }
+        graph.deferred[slot] = .{ .used = false, .seen = false, .record = record_init() };
+        bump(&graph.stats.deferred_evicted);
+        bump(&graph.diag_deferred_evicted);
+        tally.dropped += 1;
+    }
+    var stored = rec.*;
+    stored.generation = 0;
+    stored.parent_generation = 0;
+    stored.admit_stamp = 0;
+    stored.admit_captured_ms = 0;
+    stored.retire_reason = 0;
+    stored.seq = graph.next_seq;
+    graph.next_seq +|= 1;
+    graph.deferred[slot] = .{ .used = true, .seen = seen, .record = stored };
+    bump(&graph.stats.deferred_added);
+}
+
+fn exported_count(graph: *const graph_t) u32 {
+    return MaxEntries - count_state(graph, .Free);
+}
+
+fn find_free_entry(graph: *const graph_t) ?usize {
+    for (&graph.entries, 0..) |*entry, index| {
+        if (entry.state == .Free) return index;
+    }
+    return null;
+}
+
+fn reject_queue_full(graph: *graph_t) status_t {
+    bump(&graph.stats.rejected_queue_full);
+    bump(&graph.diag_queue_full);
+    return .QueueFull;
+}
+
+fn note_at_capacity(graph: *graph_t, amount: u64) void {
+    bump_by(&graph.stats.rejected_at_capacity, amount);
+    bump_by(&graph.diag_at_capacity, amount);
+}
+
+fn note_generations_exhausted(graph: *graph_t, amount: u64) void {
+    bump_by(&graph.stats.rejected_generation_exhausted, amount);
+    bump_by(&graph.diag_generation_exhausted, amount);
+}
+
+/// Mark the Active entry and the deferred record of a window as seen in the open refresh.
+///
+/// The mark is written unconditionally; `refresh_begin` clears every mark, so it is observable
+/// only while a refresh is open.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] window HWND whose entry and record (whichever exist) are marked.
+/// @note Owner thread only; Retiring entries are never marked.
+pub fn mark_seen(graph: *graph_t, window: u64) void {
+    if (find_active(graph, window)) |slot| graph.entries[slot].seen = true;
+    if (find_deferred(graph, window)) |slot| graph.deferred[slot].seen = true;
+}
+
+/// Follow the owner chain of a candidate parent through deferred records.
+///
+/// Starting at `parent`, the chain follows each deferred record's `parent_window` (always nonzero)
+/// for at most 65 steps and stops at an Active entry or at a window with no deferred record.
+///
+/// @param[in] graph Non-null graph; never written.
+/// @param[in] window The window being offered.
+/// @param[in] parent Its candidate parent HWND (nonzero).
+/// @return true when `parent == window`, when the chain reaches `window`, or when it does not end
+///         within 65 steps (a pre-existing cycle).
+/// @note Owner thread only; pure read.
+pub fn deferred_chain_cycle(graph: *const graph_t, window: u64, parent: u64) bool {
+    if (parent == window) return true;
+    var cursor = parent;
+    var steps: u32 = 0;
+    while (steps <= 65) : (steps += 1) {
+        if (find_active(graph, cursor) != null) return false;
+        const slot = find_deferred(graph, cursor) orelse return false;
+        const next = graph.deferred[slot].record.parent_window;
+        if (next == window) return true;
+        cursor = next;
+    }
+    return true;
+}
+
+/// Build the persistent record for a window from validated facts.
+///
+/// `last_stamp` and `last_captured_ms` are set; `admit_*` stay zero (the admission step sets them);
+/// `generation`, `parent_generation`, `seq` and the application key are left zero.
+///
+/// @param[in] facts Non-null validated snapshot.
+/// @param[in] t64 Unwrapped 64-bit tick of `facts.captured_ms`.
+/// @param[in] role Role code of the verdict.
+/// @param[in] parent_window Parent HWND of the verdict, 0 = none.
+/// @return The record value; title bytes are copied over the stated length only.
+/// @note Pure; thread-safe.
+pub fn record_from_facts(facts: *const facts_t, t64: u64, role: u32, parent_window: u64) record_t {
+    var rec = record_init();
+    rec.window = facts.window;
+    rec.parent_window = parent_window;
+    rec.process_start_time = facts.process_start_time;
+    rec.class_hash = class_hash_of(class_bytes(facts));
+    rec.last_stamp = facts.stamp;
+    rec.last_captured_ms = t64;
+    rec.x = facts.x;
+    rec.y = facts.y;
+    rec.width = facts.width;
+    rec.height = facts.height;
+    rec.role = role;
+    rec.state = derive_state(facts);
+    rec.dpi = facts.dpi;
+    rec.min_width = facts.min_width;
+    rec.min_height = facts.min_height;
+    rec.process_id = facts.process_id;
+    rec.thread_id = facts.thread_id;
+    const title = title_bytes(facts);
+    rec.title_length = @intCast(title.len);
+    @memcpy(rec.title[0..title.len], title);
+    return rec;
+}
+
+const source_kind_t = enum(u8) {
+    /// The candidate is a deferred record.
+    Deferred,
+    /// The candidate is a retired cascade descendant that is being re-announced.
+    Cascade,
+};
+
+const PrimaryParent: u8 = 0xFF;
+const QueueCapacity = MaxDeferred + MaxEntries;
+
+const candidate_t = struct {
+    source: source_kind_t = .Deferred,
+    index: u8 = 0,
+    parent_item: u8 = PrimaryParent,
+};
+
+/// The children that one admission flushes, in admission order.
+const flush_plan_t = struct {
+    /// Number of admitted candidates in `items`.
+    count: u32 = 0,
+    /// Candidates cut off by the remaining capacity or generations.
+    cut: u32 = 0,
+    /// True when the slot budget (not the generation budget) bound the flush.
+    cut_by_slots: bool = true,
+    /// Admission order; `parent_item` indexes this array or is `PrimaryParent`.
+    items: [MaxEntries]candidate_t = [_]candidate_t{.{}} ** MaxEntries,
+    /// Cascade-member slots that are re-announced by this flush.
+    cascade_admitted: [MaxEntries]bool = [_]bool{false} ** MaxEntries,
+};
+
+const flush_scan_t = struct {
+    queue: [QueueCapacity]candidate_t = [_]candidate_t{.{}} ** QueueCapacity,
+    length: u32 = 0,
+    order: [MaxDeferred]u8 = [_]u8{0} ** MaxDeferred,
+    order_length: u32 = 0,
+    deferred_taken: [MaxDeferred]bool = [_]bool{false} ** MaxDeferred,
+    cascade_taken: [MaxEntries]bool = [_]bool{false} ** MaxEntries,
+
+    fn push_children(self: *flush_scan_t, graph: *const graph_t, cascade: ?*const cascade_t, parent_window: u64, parent_item: u8) void {
+        for (self.order[0..self.order_length]) |index| {
+            if (self.deferred_taken[index]) continue;
+            if (graph.deferred[index].record.parent_window != parent_window) continue;
+            self.deferred_taken[index] = true;
+            self.queue[self.length] = .{ .source = .Deferred, .index = index, .parent_item = parent_item };
+            self.length += 1;
+        }
+        const members = cascade orelse return;
+        var position = members.count - 1;
+        while (position > 0) {
+            position -= 1;
+            const slot = members.slots[position];
+            if (self.cascade_taken[slot]) continue;
+            if (graph.entries[slot].record.parent_window != parent_window) continue;
+            self.cascade_taken[slot] = true;
+            self.queue[self.length] = .{ .source = .Cascade, .index = slot, .parent_item = parent_item };
+            self.length += 1;
+        }
+    }
+};
+
+/// Plan the flush of deferred children (and re-announced cascade descendants) of a new entry.
+///
+/// A FIFO worklist is seeded with the deferred records whose `parent_window` equals the
+/// primary window in ascending `seq`, followed by the cascade descendants (when given) whose stored
+/// parent is that window in ascending original generation. Each admitted candidate appends its
+/// own children to the tail. At most `budget` candidates are admitted; the rest of the worklist
+/// is the cut. Deferred records of the primary window itself are never candidates.
+fn plan_flush(graph: *const graph_t, primary_window: u64, cascade: ?*const cascade_t, budget: u32, out: *flush_plan_t) void {
+    var scan = flush_scan_t{};
+    for (&graph.deferred, 0..) |*slot, index| {
+        if (!slot.used or slot.record.window == primary_window) {
+            scan.deferred_taken[index] = true;
+            continue;
+        }
+        var hole = scan.order_length;
+        while (hole > 0 and graph.deferred[scan.order[hole - 1]].record.seq > slot.record.seq) : (hole -= 1) {
+            scan.order[hole] = scan.order[hole - 1];
+        }
+        scan.order[hole] = @intCast(index);
+        scan.order_length += 1;
+    }
+    scan.push_children(graph, cascade, primary_window, PrimaryParent);
+    var head: u32 = 0;
+    while (head < scan.length) : (head += 1) {
+        const candidate = scan.queue[head];
+        if (out.count >= budget) {
+            out.cut += 1;
+            continue;
+        }
+        out.items[out.count] = candidate;
+        out.count += 1;
+        const record = switch (candidate.source) {
+            .Deferred => &graph.deferred[candidate.index].record,
+            .Cascade => &graph.entries[candidate.index].record,
+        };
+        if (candidate.source == .Cascade) out.cascade_admitted[candidate.index] = true;
+        scan.push_children(graph, cascade, record.window, @intCast(out.count - 1));
+    }
+}
+
+/// Write the planned children as Active entries, each followed by its Announce event.
+fn apply_flush(graph: *graph_t, flush: *const flush_plan_t, primary_generation: u64, tally: *tally_t) void {
+    var generations = [_]u64{0} ** MaxEntries;
+    for (flush.items[0..flush.count], 0..) |item, position| {
+        const slot = find_free_entry(graph) orelse unreachable;
+        var rec: record_t = undefined;
+        var seen = false;
+        switch (item.source) {
+            .Deferred => {
+                rec = graph.deferred[item.index].record;
+                seen = graph.deferred[item.index].seen;
+                graph.deferred[item.index] = .{ .used = false, .seen = false, .record = record_init() };
+            },
+            .Cascade => {
+                rec = graph.entries[item.index].record;
+                seen = graph.entries[item.index].seen;
+            },
+        }
+        graph.generations_issued += 1;
+        rec.generation = graph.generations_issued;
+        rec.parent_generation = if (item.parent_item == PrimaryParent) primary_generation else generations[item.parent_item];
+        rec.admit_stamp = rec.last_stamp;
+        rec.admit_captured_ms = rec.last_captured_ms;
+        rec.seq = 0;
+        rec.retire_reason = 0;
+        generations[position] = rec.generation;
+        graph.entries[slot] = .{ .state = .Active, .seen = seen, .record = rec };
+        const ev = event_from_record(graph, &rec, EventAnnounce, ChangeMask, 0);
+        if (ring_push_or_coalesce(graph, &ev)) tally.events += 1;
+        bump(&graph.stats.admitted);
+        tally.admitted += 1;
+    }
+    if (flush.cut > 0) {
+        if (flush.cut_by_slots) note_at_capacity(graph, flush.cut) else note_generations_exhausted(graph, flush.cut);
+    }
+}
+
+/// Re-defer the cascade descendants that were not re-announced, in ascending original generation.
+///
+/// Used only for a Reclassified retirement of the same incarnation (header rule): the descendants
+/// are still alive and still owned by that HWND, so their stored records return to the deferred
+/// set with new ages, inheriting the seen mark of the entry they replace. Each insert may evict the
+/// oldest deferred record.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] cascade Non-null cascade whose members are now Retiring.
+/// @param[in] admitted Per entry slot: true when the member was re-announced by the flush.
+/// @param[in,out] tally Non-null; `dropped` grows on eviction.
+/// @note Owner thread only; no callback; no allocation; infallible.
+pub fn redefer_descendants(graph: *graph_t, cascade: *const cascade_t, admitted: *const [MaxEntries]bool, tally: *tally_t) void {
+    var position = cascade.count - 1;
+    while (position > 0) {
+        position -= 1;
+        const slot = cascade.slots[position];
+        if (admitted[slot]) continue;
+        const record = graph.entries[slot].record;
+        defer_insert(graph, &record, graph.entries[slot].seen, tally);
+    }
+}
+
+fn run_lookup(graph: *graph_t, facts: *const facts_t, key: *[MaxAppKeyBytes]u8, key_length: *u32) ?status_t {
+    const callback = graph.config.app_key_lookup orelse unreachable;
+    var length: u32 = 0;
+    key.* = [_]u8{0} ** MaxAppKeyBytes;
+    if (callback(graph.config.app_key_context, facts, key, MaxAppKeyBytes, &length) != 0) {
+        bump(&graph.stats.lookup_failures);
+        return .LookupFailed;
+    }
+    if (length == 0 or length > MaxAppKeyBytes or !app_key_valid(key[0..length])) {
+        bump(&graph.stats.app_key_invalid);
+        return .AppKeyInvalid;
+    }
+    key_length.* = length;
+    return null;
+}
+
+const call_t = struct {
+    graph: *graph_t,
+    facts: *const facts_t,
+    t64: u64,
+    l_slot: ?usize,
+    d_slot: ?usize,
+    tally: tally_t = .{},
+};
+
+fn commit_ok(graph: *graph_t, stamp: u64, t64: u64) void {
+    graph.stamp_high_water = @max(graph.stamp_high_water, stamp);
+    graph.tick_base = @max(graph.tick_base, t64);
+}
+
+fn write_observation(out: *observation_t, window: u64, tally: *const tally_t, disposition: u32, role: u32, generation: u64, retired_generation: u64, reason: u32) void {
+    out.* = .{
+        .window = window,
+        .generation = generation,
+        .retired_generation = retired_generation,
+        .disposition = disposition,
+        .role = role,
+        .reason = reason,
+        .events_queued = tally.events,
+        .entries_admitted = tally.admitted,
+        .entries_retired = tally.retired,
+        .deferred_dropped = tally.dropped,
+        .reserved0 = 0,
+    };
+}
+
+fn observe_suspended(call: *call_t, out: *observation_t) status_t {
+    bump(&call.graph.stats.suspended);
+    commit_ok(call.graph, call.facts.stamp, call.t64);
+    write_observation(out, call.facts.window, &call.tally, DispositionSuspended, 0, 0, 0, ReasonNone);
+    return .Ok;
+}
+
+fn observe_not_exported(call: *call_t, reason: u32, out: *observation_t) status_t {
+    const graph = call.graph;
+    var retired_generation: u64 = 0;
+    var disposition: u32 = DispositionExcluded;
+    if (call.l_slot) |slot| {
+        var cascade = cascade_t{};
+        collect_cascade(graph, slot, &cascade);
+        if (cascade.count > ring_room(graph)) return reject_queue_full(graph);
+        retired_generation = graph.entries[slot].record.generation;
+        retire_cascade(graph, &cascade, reason, &call.tally);
+        disposition = DispositionRetired;
+    } else if (call.d_slot) |slot| {
+        drop_deferred(graph, slot, &call.tally);
+    }
+    commit_ok(graph, call.facts.stamp, call.t64);
+    write_observation(out, call.facts.window, &call.tally, disposition, 0, 0, retired_generation, reason);
+    return .Ok;
+}
+
+fn diff_mask(rec: *const record_t, facts: *const facts_t, state: u32) u32 {
+    var mask: u32 = 0;
+    if (rec.x != facts.x or rec.y != facts.y or rec.width != facts.width or rec.height != facts.height) mask |= ChangeRect;
+    if (rec.state != state) mask |= ChangeState;
+    if (rec.dpi != facts.dpi) mask |= ChangeDpi;
+    if (!std.mem.eql(u8, rec.title[0..rec.title_length], title_bytes(facts))) mask |= ChangeTitle;
+    if (rec.min_width != facts.min_width or rec.min_height != facts.min_height) mask |= ChangeMinSize;
+    return mask;
+}
+
+fn observe_update(call: *call_t, slot: usize, out: *observation_t) status_t {
+    const graph = call.graph;
+    const facts = call.facts;
+    const rec = &graph.entries[slot].record;
+    const state = derive_state(facts);
+    const mask = diff_mask(rec, facts, state);
+    if (mask != 0 and ring_merge_target(graph, rec.window, rec.generation) == null and ring_room(graph) == 0) {
+        return reject_queue_full(graph);
+    }
+    rec.last_stamp = facts.stamp;
+    rec.last_captured_ms = call.t64;
+    var disposition: u32 = DispositionUnchanged;
+    if (mask != 0) {
+        rec.x = facts.x;
+        rec.y = facts.y;
+        rec.width = facts.width;
+        rec.height = facts.height;
+        rec.state = state;
+        rec.dpi = facts.dpi;
+        rec.min_width = facts.min_width;
+        rec.min_height = facts.min_height;
+        const title = title_bytes(facts);
+        @memset(&rec.title, 0);
+        @memcpy(rec.title[0..title.len], title);
+        rec.title_length = @intCast(title.len);
+        const ev = event_from_record(graph, rec, EventUpdate, mask, 0);
+        if (ring_push_or_coalesce(graph, &ev)) call.tally.events += 1;
+        disposition = DispositionUpdated;
+    }
+    commit_ok(graph, facts.stamp, call.t64);
+    write_observation(out, facts.window, &call.tally, disposition, rec.role, rec.generation, 0, ReasonNone);
+    return .Ok;
+}
+
+const replacement_t = enum {
+    /// No replacement entry or record (retire-only).
+    None,
+    /// Announce a new generation.
+    Admit,
+    /// Store a deferred record.
+    Defer,
+};
+
+const key_source_t = enum {
+    /// Ask `app_key_lookup`.
+    Lookup,
+    /// Reuse the key of the matching deferred record.
+    Deferred,
+    /// Reuse the key of the live entry being reclassified.
+    Entry,
+};
+
+const shortfall_t = enum {
+    /// No shortfall.
+    None,
+    /// 64 exported entries.
+    AtCapacity,
+    /// No generation left.
+    Generations,
+    /// The key lookup failed or returned an invalid key (already counted).
+    Lookup,
+};
+
+const plan_t = struct {
+    retire: bool = false,
+    cause: u32 = ReasonNone,
+    redefer: bool = false,
+    cycle_forced: bool = false,
+    shortfall: shortfall_t = .None,
+    want: replacement_t = .None,
+    key_source: key_source_t = .Lookup,
+    drop_d: bool = false,
+    cascade: cascade_t = .{},
+    flush: flush_plan_t = .{},
+};
+
+fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) status_t {
+    const graph = call.graph;
+    const facts = call.facts;
+    var plan = plan_t{};
+
+    // Stage 4a: identity of the live entry (before the cycle check), then role/parent change.
+    if (call.l_slot) |slot| {
+        const rec = &graph.entries[slot].record;
+        if (!identity_equal(rec, facts)) {
+            plan.cause = ReasonIncarnationChanged;
+        } else if (verdict.role != rec.role or verdict.parent_window != rec.parent_window) {
+            plan.cause = ReasonReclassified;
+        } else {
+            return observe_update(call, slot, out);
+        }
+        plan.retire = true;
+        plan.redefer = plan.cause == ReasonReclassified;
+        collect_cascade(graph, slot, &plan.cascade);
+    }
+    // Stage 4b: a deferred record of another incarnation is dropped; its key is never reused.
+    if (call.d_slot) |slot| plan.drop_d = !identity_equal(&graph.deferred[slot].record, facts);
+
+    // Stage 5a: cycle check, including the cascade-set rule.
+    var chain_cycle = false;
+    var cascade_cycle = false;
+    if (verdict.parent_window != 0) {
+        chain_cycle = deferred_chain_cycle(graph, facts.window, verdict.parent_window);
+        cascade_cycle = !chain_cycle and plan.retire and cascade_has_window(graph, &plan.cascade, verdict.parent_window);
+    }
+    if (chain_cycle or cascade_cycle) {
+        const forced = plan.retire and (plan.cause == ReasonIncarnationChanged or cascade_cycle);
+        if (!forced) {
+            bump(&graph.stats.rejected_cycle);
+            if (call.d_slot) |slot| drop_deferred(graph, slot, &call.tally);
+            return .Cycle;
+        }
+        plan.cycle_forced = true;
+        plan.redefer = false;
+    } else if (verdict.parent_window == 0 or find_active(graph, verdict.parent_window) != null) {
+        plan.want = .Admit;
+    } else {
+        plan.want = .Defer;
+    }
+
+    // Stage 5b: capacity and generations for the primary admission.
+    const free: u32 = MaxEntries - exported_count(graph);
+    const generations_left: u64 = std.math.maxInt(u64) - graph.generations_issued;
+    if (plan.want == .Admit and (free == 0 or generations_left == 0)) {
+        const by_slots = free == 0;
+        if (!plan.retire) {
+            if (by_slots) {
+                note_at_capacity(graph, 1);
+                return .AtCapacity;
+            }
+            note_generations_exhausted(graph, 1);
+            return .GenerationExhausted;
+        }
+        plan.shortfall = if (by_slots) .AtCapacity else .Generations;
+        plan.want = .None;
+    }
+    if (plan.want == .Admit) {
+        const slots_after: u32 = free - 1;
+        const generations_after: u64 = generations_left - 1;
+        plan.flush.cut_by_slots = slots_after <= generations_after;
+        const budget: u32 = @intCast(@min(@as(u64, slots_after), generations_after));
+        plan_flush(graph, facts.window, if (plan.redefer) &plan.cascade else null, budget, &plan.flush);
+    }
+
+    // Stage 5c: room for the whole plan in the event ring (QueueFull changes nothing).
+    var needed: u32 = if (plan.retire) plan.cascade.count else 0;
+    if (plan.want == .Admit) needed += 1 + plan.flush.count;
+    if (needed > ring_room(graph)) return reject_queue_full(graph);
+
+    // Stage 5d: the single key lookup (or a stored key).
+    var key = [_]u8{0} ** MaxAppKeyBytes;
+    var key_length: u32 = 0;
+    if (plan.want != .None) {
+        if (plan.cause == ReasonReclassified) {
+            plan.key_source = .Entry;
+        } else if (call.d_slot != null and !plan.drop_d) {
+            plan.key_source = .Deferred;
+        }
+        switch (plan.key_source) {
+            .Entry => {
+                const rec = &graph.entries[call.l_slot orelse unreachable].record;
+                key_length = rec.app_key_length;
+                key = rec.app_key;
+            },
+            .Deferred => {
+                const rec = &graph.deferred[call.d_slot orelse unreachable].record;
+                key_length = rec.app_key_length;
+                key = rec.app_key;
+            },
+            .Lookup => if (run_lookup(graph, facts, &key, &key_length)) |failure| {
+                if (!plan.retire) return failure;
+                plan.shortfall = .Lookup;
+                plan.want = .None;
+                plan.flush = .{};
+            },
+        }
+    }
+    return apply_eligible(call, &plan, verdict, &key, key_length, out);
+}
+
+fn apply_eligible(call: *call_t, plan: *plan_t, verdict: eligible_t, key: *const [MaxAppKeyBytes]u8, key_length: u32, out: *observation_t) status_t {
+    const graph = call.graph;
+    const facts = call.facts;
+    const tally = &call.tally;
+    if (plan.cycle_forced) bump(&graph.stats.rejected_cycle);
+    switch (plan.shortfall) {
+        .AtCapacity => note_at_capacity(graph, 1),
+        .Generations => note_generations_exhausted(graph, 1),
+        .Lookup, .None => {},
+    }
+    var retired_generation: u64 = 0;
+    if (plan.retire) {
+        if (plan.cause == ReasonReclassified) bump(&graph.stats.reclassified);
+        retired_generation = graph.entries[call.l_slot orelse unreachable].record.generation;
+        retire_cascade(graph, &plan.cascade, plan.cause, tally);
+    }
+    if (plan.drop_d) drop_deferred(graph, call.d_slot orelse unreachable, tally);
+
+    var generation: u64 = 0;
+    switch (plan.want) {
+        .Admit => {
+            var rec = record_from_facts(facts, call.t64, verdict.role, verdict.parent_window);
+            rec.app_key = key.*;
+            rec.app_key_length = key_length;
+            rec.admit_stamp = facts.stamp;
+            rec.admit_captured_ms = call.t64;
+            if (verdict.parent_window != 0) {
+                const parent = find_active(graph, verdict.parent_window) orelse unreachable;
+                rec.parent_generation = graph.entries[parent].record.generation;
+            }
+            graph.generations_issued += 1;
+            generation = graph.generations_issued;
+            rec.generation = generation;
+            const slot = find_free_entry(graph) orelse unreachable;
+            graph.entries[slot] = .{ .state = .Active, .seen = true, .record = rec };
+            if (call.d_slot) |d_slot| {
+                if (!plan.drop_d) graph.deferred[d_slot] = .{ .used = false, .seen = false, .record = record_init() };
+            }
+            const ev = event_from_record(graph, &rec, EventAnnounce, ChangeMask, 0);
+            if (ring_push_or_coalesce(graph, &ev)) tally.events += 1;
+            bump(&graph.stats.admitted);
+            tally.admitted += 1;
+            apply_flush(graph, &plan.flush, generation, tally);
+        },
+        .Defer => {
+            var rec = record_from_facts(facts, call.t64, verdict.role, verdict.parent_window);
+            rec.app_key = key.*;
+            rec.app_key_length = key_length;
+            if (call.d_slot != null and !plan.drop_d) {
+                const slot = call.d_slot orelse unreachable;
+                rec.seq = graph.deferred[slot].record.seq;
+                graph.deferred[slot] = .{ .used = true, .seen = true, .record = rec };
+            } else {
+                defer_insert(graph, &rec, true, tally);
+            }
+        },
+        .None => {},
+    }
+    if (plan.redefer) redefer_descendants(graph, &plan.cascade, &plan.flush.cascade_admitted, tally);
+
+    commit_ok(graph, facts.stamp, call.t64);
+    var disposition: u32 = DispositionRetired;
+    var reason: u32 = plan.cause;
+    var role: u32 = 0;
+    switch (plan.want) {
+        .Admit => {
+            disposition = if (plan.cause == ReasonReclassified) DispositionReclassified else DispositionAdmitted;
+            role = verdict.role;
+        },
+        .Defer => {
+            disposition = DispositionDeferred;
+            role = verdict.role;
+            if (!plan.retire) reason = ReasonParentPending;
+        },
+        .None => {},
+    }
+    write_observation(out, facts.window, tally, disposition, role, generation, retired_generation, reason);
+    return .Ok;
+}
+
+/// Offer one fact snapshot after the common guards have passed and `busy` is set.
+///
+/// This is the body shared by `observe` and the refresh engine's offer call. Stage order: facts
+/// validation (InvalidFacts); StaleFacts against the stamp of the Active entry or else the
+/// deferred record; classification; Suspended; NotExported (retire the cascade or drop the
+/// deferred record); for Eligible facts: identity check of the live entry BEFORE the cycle check,
+/// role/parent change (Reclassified), deferred-record identity check, cycle check (including the
+/// cascade-set rule), capacity and generations, ring room for the whole plan (QueueFull), the single
+/// lookup, then the infallible apply. Every Ok marks the window's entry and record seen and advances
+/// `stamp_high_water` and `tick_base`.
+///
+/// @param[in,out] graph Non-null graph with `busy` set by `enter`.
+/// @param[in] facts Non-null stack-local copy of the caller's facts; it is the only copy used and
+///                  the one passed to the lookup callback.
+/// @param[out] out Non-null; fully written on Ok, unchanged otherwise.
+/// @return Ok; InvalidFacts; StaleFacts; Cycle; AtCapacity; GenerationExhausted; QueueFull;
+///         LookupFailed; AppKeyInvalid. A shortfall met while a retirement is forced is not returned.
+/// @note Owner thread only; the only callback is `app_key_lookup`; no allocation.
+pub fn observe_locked(graph: *graph_t, facts: *const facts_t, out: *observation_t) status_t {
+    if (!validate_facts(facts)) {
+        bump(&graph.stats.rejected_invalid_facts);
+        return .InvalidFacts;
+    }
+    var call = call_t{
+        .graph = graph,
+        .facts = facts,
+        .t64 = unwrap_tick(graph.tick_base, facts.captured_ms),
+        .l_slot = find_active(graph, facts.window),
+        .d_slot = find_deferred(graph, facts.window),
+    };
+    var reference: u64 = 0;
+    if (call.l_slot) |slot| {
+        reference = graph.entries[slot].record.last_stamp;
+    } else if (call.d_slot) |slot| {
+        reference = graph.deferred[slot].record.last_stamp;
+    }
+    if (facts.stamp < reference) {
+        bump(&graph.stats.rejected_stale_facts);
+        return .StaleFacts;
+    }
+    const status = switch (classify(facts, graph.config.uac_mode)) {
+        .Suspended => observe_suspended(&call, out),
+        .NotExported => |reason| observe_not_exported(&call, reason, out),
+        .Eligible => |verdict| observe_eligible(&call, verdict, out),
+    };
+    if (status == .Ok) mark_seen(graph, facts.window);
+    return status;
+}
+
+/// Offer one fact snapshot: classify, then admit, update, defer or retire.
+///
+/// Applies the common call rules (`enter`), copies the caller's facts to a stack local and runs
+/// `observe_locked` on the copy; see that function for the stage order and the header for the
+/// outcome table.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] epoch Captured session epoch.
+/// @param[in] facts Non-null borrowed snapshot; copied at entry, never retained or modified.
+/// @param[out] out Non-null; fully written on Ok, unchanged otherwise.
+/// @return Ok; WrongThread, Reentrant or StaleEpoch per `enter`; the statuses of `observe_locked`.
+/// @note Owner thread only; the lookup callback receives the stack copy; no allocation.
+pub fn observe(graph: *graph_t, epoch: u64, facts: *const facts_t, out: *observation_t) status_t {
+    if (enter(graph, epoch)) |status| return status;
+    defer leave(graph);
+    const local = facts.*;
+    return observe_locked(graph, &local, out);
+}
+
+/// Apply a window-destroyed hint without trusting it blindly.
+///
+/// With e64 the event time unwrapped against `tick_base`: the Active entry of the window retires
+/// (reason Destroyed, descendants ParentRetired, never re-deferred) iff
+/// `hint_stamp > admit_stamp` and not `e64 < admit_captured_ms` (plain 64-bit compare; equal
+/// ticks count as destroyed). The deferred record of the window is dropped iff
+/// `hint_stamp > last_stamp` and not `e64 < last_captured_ms`. Retiring entries are never touched.
+/// Ring room for the RetireIntent events is proven first (QueueFull changes nothing).
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] epoch Captured session epoch.
+/// @param[in] window Nonzero HWND.
+/// @param[in] hint_stamp Nonzero observer stamp of the hint.
+/// @param[in] event_time_ms Raw 32-bit tick of the destroy event.
+/// @param[out] out Non-null; written fully on Ok: Retired when an entry moved to Retiring, else
+///             Unchanged (generation and role describe a still-live entry, deferred_dropped may be 1).
+/// @return Ok; InvalidArgument for window 0 or stamp 0; QueueFull; WrongThread, Reentrant or
+///         StaleEpoch per `enter`.
+/// @note Owner thread only; no callback; no allocation. `stamp_high_water` and `tick_base`
+///       advance on Ok.
+pub fn note_destroyed(graph: *graph_t, epoch: u64, window: u64, hint_stamp: u64, event_time_ms: u32, out: *observation_t) status_t {
+    if (enter(graph, epoch)) |status| return status;
+    defer leave(graph);
+    if (window == 0 or hint_stamp == 0) return .InvalidArgument;
+    const e64 = unwrap_tick(graph.tick_base, event_time_ms);
+    var tally = tally_t{};
+    var cascade = cascade_t{};
+    var retire_slot: ?usize = null;
+    const live = find_active(graph, window);
+    if (live) |slot| {
+        const rec = &graph.entries[slot].record;
+        if (hint_stamp > rec.admit_stamp and !(e64 < rec.admit_captured_ms)) {
+            retire_slot = slot;
+            collect_cascade(graph, slot, &cascade);
+            if (cascade.count > ring_room(graph)) return reject_queue_full(graph);
+        }
+    }
+    var retired_generation: u64 = 0;
+    if (retire_slot) |slot| {
+        retired_generation = graph.entries[slot].record.generation;
+        retire_cascade(graph, &cascade, ReasonDestroyed, &tally);
+    }
+    if (find_deferred(graph, window)) |slot| {
+        const rec = &graph.deferred[slot].record;
+        if (hint_stamp > rec.last_stamp and !(e64 < rec.last_captured_ms)) drop_deferred(graph, slot, &tally);
+    }
+    commit_ok(graph, hint_stamp, e64);
+    if (retire_slot != null) {
+        write_observation(out, window, &tally, DispositionRetired, 0, 0, retired_generation, ReasonDestroyed);
+    } else if (live) |slot| {
+        const rec = &graph.entries[slot].record;
+        write_observation(out, window, &tally, DispositionUnchanged, rec.role, rec.generation, 0, ReasonNone);
+    } else {
+        write_observation(out, window, &tally, DispositionUnchanged, 0, 0, 0, ReasonNone);
+    }
+    return .Ok;
+}
+
+// Refresh engine: appended by the next stage.
 // Test-only fixtures.
 
 const testing = std.testing;
@@ -1423,8 +2447,8 @@ fn call_eql_fold(a: []const u8, b: []const u8) bool {
     return @call(.never_inline, ascii_eql_ignore_case, .{ a, b });
 }
 
-fn call_before(a: u32, b: u32) bool {
-    return @call(.never_inline, time_before, .{ a, b });
+fn call_unwrap(base: u64, t32: u32) u64 {
+    return @call(.never_inline, unwrap_tick, .{ base, t32 });
 }
 
 fn call_state(facts: *const facts_t) u32 {
@@ -1498,11 +2522,11 @@ fn fixture_facts() facts_t {
 }
 
 fn eligible(role: u32, parent_window: u64) verdict_t {
-    return .{ .eligible = .{ .role = role, .parent_window = parent_window } };
+    return .{ .Eligible = .{ .role = role, .parent_window = parent_window } };
 }
 
 fn excluded(reason: u32) verdict_t {
-    return .{ .not_exported = reason };
+    return .{ .NotExported = reason };
 }
 
 const row_t = struct {
@@ -1551,9 +2575,9 @@ const UacCredentialName = "Credential Dialog Xaml Host";
 const Matrix = [_]row_t{
     // Step 0.
     .{ .name = "plain top-level", .expect = eligible(RoleToplevel, 0) },
-    .{ .name = "off input desktop is suspended", .flags_clear = FactOnInputDesktop, .expect = .suspended },
-    .{ .name = "off input desktop beats invisible", .flags_clear = FactOnInputDesktop | FactVisible, .expect = .suspended },
-    .{ .name = "off input desktop beats excluded class", .class = "Progman", .flags_clear = FactOnInputDesktop, .expect = .suspended },
+    .{ .name = "off input desktop is suspended", .flags_clear = FactOnInputDesktop, .expect = .Suspended },
+    .{ .name = "off input desktop beats invisible", .flags_clear = FactOnInputDesktop | FactVisible, .expect = .Suspended },
+    .{ .name = "off input desktop beats excluded class", .class = "Progman", .flags_clear = FactOnInputDesktop, .expect = .Suspended },
     .{ .name = "invisible", .flags_clear = FactVisible, .expect = excluded(ReasonNotVisible) },
     .{ .name = "invisible beats excluded class", .class = "Progman", .flags_clear = FactVisible, .expect = excluded(ReasonNotVisible) },
     .{ .name = "invisible beats agent", .flags_set = FactAgentOwned, .flags_clear = FactVisible, .expect = excluded(ReasonNotVisible) },
@@ -1587,7 +2611,9 @@ const Matrix = [_]row_t{
     .{ .name = "agent window excluded even owned", .flags_set = FactAgentOwned, .owned = true, .expect = excluded(ReasonExcludedAgent) },
     .{ .name = "preedit role", .flags_set = AgentPreeditFlags, .expect = eligible(RoleImePreedit, 0) },
     .{ .name = "preedit skips child step", .flags_set = AgentPreeditFlags, .child = true, .expect = eligible(RoleImePreedit, 0) },
-    .{ .name = "preedit skips owner and menu steps", .flags_set = AgentPreeditFlags, .style = PopupNoCaption, .owned = true, .expect = eligible(RoleImePreedit, 0) },
+    .{ .name = "preedit skips owner and menu steps", .flags_set = AgentPreeditFlags, .style = PopupNoCaption, .owned = true, .expect = eligible(RoleImePreedit, OwnerRootWindow) },
+    .{ .name = "preedit ownerless has no parent", .flags_set = AgentPreeditFlags, .expect = eligible(RoleImePreedit, 0) },
+    .{ .name = "preedit with hidden owner has no parent", .flags_set = AgentPreeditFlags | FactOwnerHidden, .owned = true, .expect = eligible(RoleImePreedit, 0) },
     .{ .name = "preedit skips tooltip step", .flags_set = AgentPreeditFlags, .ex_style = ExStyleNoActivate, .expect = eligible(RoleImePreedit, 0) },
     .{ .name = "preedit still hits zero width", .flags_set = AgentPreeditFlags, .width = 0, .expect = excluded(ReasonZeroArea) },
     .{ .name = "preedit still hits zero height", .flags_set = AgentPreeditFlags, .height = 0, .expect = excluded(ReasonZeroArea) },
@@ -1660,6 +2686,19 @@ const Matrix = [_]row_t{
     .{ .name = "owned with app-window falls to top-level", .owned = true, .ex_style = ExStyleAppWindow, .expect = eligible(RoleToplevel, 0) },
     .{ .name = "ownerless with app-window", .ex_style = ExStyleAppWindow, .expect = eligible(RoleToplevel, 0) },
     .{ .name = "dialog zero area", .owned = true, .height = 0, .expect = excluded(ReasonZeroArea) },
+    // Hidden owner: the window is judged as not owned in steps 4 to 7.
+    .{ .name = "hidden owner keeps a menu class a menu without a parent", .class = "#32768", .owned = true, .flags_set = FactOwnerHidden, .expect = eligible(RoleMenu, 0) },
+    .{ .name = "hidden owner combo list box is a menu without a parent", .class = "ComboLBox", .owned = true, .flags_set = FactOwnerHidden, .expect = eligible(RoleMenu, 0) },
+    .{ .name = "hidden owner popup style is no menu", .style = PopupNoCaption, .owned = true, .flags_set = FactOwnerHidden, .expect = eligible(RoleToplevel, 0) },
+    .{ .name = "hidden owner popup with no-activate is a tooltip without a parent", .style = PopupNoCaption, .ex_style = ExStyleNoActivate, .owned = true, .flags_set = FactOwnerHidden, .expect = eligible(RoleTooltip, 0) },
+    .{ .name = "hidden owner tooltip class has no parent", .class = "tooltips_class32", .owned = true, .flags_set = FactOwnerHidden, .expect = eligible(RoleTooltip, 0) },
+    .{ .name = "hidden owner tool window is no tooltip", .ex_style = ExStyleToolWindow, .owned = true, .flags_set = FactOwnerHidden, .expect = eligible(RoleToplevel, 0) },
+    .{ .name = "hidden owner dialog is a top-level", .owned = true, .flags_set = FactOwnerHidden, .expect = eligible(RoleToplevel, 0) },
+    .{ .name = "hidden owner app-window stays a top-level", .owned = true, .ex_style = ExStyleAppWindow, .flags_set = FactOwnerHidden, .expect = eligible(RoleToplevel, 0) },
+    .{ .name = "hidden owner credential dialog is unaffected", .class = UacCredentialName, .image = "consent.exe", .owned = true, .flags_set = FactOwnerHidden, .expect = eligible(RoleUacConsent, 0) },
+    .{ .name = "hidden owner child window is still a child", .owned = true, .child = true, .flags_set = FactOwnerHidden, .expect = excluded(ReasonChild) },
+    .{ .name = "hidden owner window still hits zero area", .owned = true, .height = 0, .flags_set = FactOwnerHidden, .expect = excluded(ReasonZeroArea) },
+    .{ .name = "hidden owner preedit keeps ImePreedit without a parent", .owned = true, .flags_set = AgentPreeditFlags | FactOwnerHidden, .expect = eligible(RoleImePreedit, 0) },
     // Step 8.
     .{ .name = "zero width", .width = 0, .expect = excluded(ReasonZeroArea) },
     .{ .name = "zero height", .height = 0, .expect = excluded(ReasonZeroArea) },
@@ -1830,7 +2869,7 @@ test "validate_facts rejects each violated rule and nothing else" {
     facts.owner_root = 6;
     try testing.expect(call_validate(&facts));
 
-    var bit: u5 = 12;
+    var bit: u5 = 13;
     while (true) : (bit += 1) {
         facts = base;
         facts.flags |= @as(u32, 1) << bit;
@@ -2093,22 +3132,21 @@ test "ascii_eql_ignore_case folds only ASCII letters over the full length" {
     }
 }
 
-test "time_before is wrap-safe signed 32-bit order" {
-    try testing.expect(call_before(0, 1));
-    try testing.expect(!call_before(1, 0));
-    try testing.expect(!call_before(5, 5));
-    try testing.expect(!call_before(0, 0));
-    try testing.expect(call_before(0xFFFF_FFFE, 1));
-    try testing.expect(!call_before(1, 0xFFFF_FFFE));
-    try testing.expect(call_before(0xFFFF_FFFF, 0));
-    try testing.expect(!call_before(0, 0xFFFF_FFFF));
-    try testing.expect(call_before(0x7FFF_FFF0, 0x8000_0010));
-    try testing.expect(!call_before(0x8000_0010, 0x7FFF_FFF0));
-    try testing.expect(call_before(0, 0x7FFF_FFFF));
-    try testing.expect(!call_before(0x7FFF_FFFF, 0));
-    // Exactly half the range apart is negative in both directions (documented ambiguity).
-    try testing.expect(call_before(0, 0x8000_0000));
-    try testing.expect(call_before(0x8000_0000, 0));
+test "unwrap_tick resolves a raw tick to the 64-bit value nearest the base" {
+    const base: u64 = TickBaseStart + 1000;
+    try testing.expectEqual(TickBaseStart + 1000, call_unwrap(base, 1000));
+    try testing.expectEqual(TickBaseStart + 1005, call_unwrap(base, 1005));
+    try testing.expectEqual(TickBaseStart + 990, call_unwrap(base, 990));
+    // Across the 32-bit wrap: base just below 2^33, raw tick just past the wrap.
+    const high: u64 = 2 * TickBaseStart - 16;
+    try testing.expectEqual(2 * TickBaseStart + 16, call_unwrap(high, 16));
+    try testing.expectEqual(2 * TickBaseStart - 32, call_unwrap(high, 0xFFFF_FFE0));
+    // Plus and minus 2^31 - 1 are exact; exactly 2^31 aliases to the earlier value.
+    try testing.expectEqual(base + 0x7FFF_FFFF, call_unwrap(base, @truncate(base +% 0x7FFF_FFFF)));
+    try testing.expectEqual(base - 0x7FFF_FFFF, call_unwrap(base, @truncate(base -% 0x7FFF_FFFF)));
+    try testing.expectEqual(base - 0x8000_0000, call_unwrap(base, @truncate(base +% 0x8000_0000)));
+    // The smallest legal base never underflows.
+    try testing.expectEqual(TickBaseStart - 0x8000_0000 + 0, call_unwrap(TickBaseStart, 0x8000_0000));
 }
 
 test "derive_state maps facts to protocol bits and never sets Activated" {
@@ -2199,8 +3237,8 @@ test "record_init returns an all-zero record" {
     try testing.expectEqual(@as(u32, 0), rec.min_height);
     try testing.expectEqual(@as(u32, 0), rec.process_id);
     try testing.expectEqual(@as(u32, 0), rec.thread_id);
-    try testing.expectEqual(@as(u32, 0), rec.admit_captured_ms);
-    try testing.expectEqual(@as(u32, 0), rec.last_captured_ms);
+    try testing.expectEqual(@as(u64, 0), rec.admit_captured_ms);
+    try testing.expectEqual(@as(u64, 0), rec.last_captured_ms);
     try testing.expectEqual(@as(u32, 0), rec.retire_reason);
     try testing.expectEqual(@as(u32, 0), rec.title_length);
     try testing.expectEqual(@as(u32, 0), rec.app_key_length);
@@ -2488,6 +3526,7 @@ test "create validates every configuration field and builds a zeroed graph" {
     try testing.expectEqual(std.Thread.getCurrentId(), graph.owner_thread);
     try testing.expect(!graph.busy and !graph.refresh_open and !graph.have_diag);
     try testing.expectEqual(@as(u64, 1), graph.next_seq);
+    try testing.expectEqual(TickBaseStart, graph.tick_base);
     try testing.expectEqual(@as(u64, 0), graph.generations_issued);
     try testing.expectEqual(@as(u32, 0), graph.ring_len);
     try testing.expectEqual(@as(u32, MaxEntries), call_count_state(graph, .Free));
@@ -3330,4 +4369,2522 @@ test "capacity diagnostic takes its first sample even at clock zero and guards t
     try testing.expectEqual(status_t.Reentrant, call_take_diag(graph, &diag));
     graph.busy = false;
     try testing.expectEqual(@as(u64, 1), graph.diag_queue_full);
+}
+
+// Planning engine fixtures and tests (layer 2b1).
+
+const lookup_mode_t = enum { Ok, Fail, Invalid, Empty, TooLong, Reenter, MutateCaller };
+
+const lookup_probe_t = struct {
+    mode: lookup_mode_t = .Ok,
+    calls: u32 = 0,
+    last_window: u64 = 0,
+    last_pointer: usize = 0,
+    last_class_length: u32 = 0,
+    graph: ?*graph_t = null,
+    caller: ?*facts_t = null,
+    reenter_observe: status_t = .Ok,
+    reenter_check: status_t = .Ok,
+    reenter_note: status_t = .Ok,
+    reenter_next: status_t = .Ok,
+};
+
+var lookup_probe: lookup_probe_t = .{};
+
+/// Programmable lookup: key is "a-<window hex>-<call number>" unless the mode says otherwise.
+fn probe_lookup(context: ?*anyopaque, facts: [*c]const facts_t, key: [*c]u8, capacity: u32, length: [*c]u32) callconv(.C) c_int {
+    _ = context;
+    lookup_probe.calls += 1;
+    lookup_probe.last_window = facts.*.window;
+    lookup_probe.last_pointer = @intFromPtr(facts);
+    lookup_probe.last_class_length = facts.*.class_length;
+    switch (lookup_probe.mode) {
+        .Fail => return 7,
+        .Invalid => {
+            const text = "x-bad";
+            @memcpy(key[0..text.len], text);
+            length.* = text.len;
+            return 0;
+        },
+        .Empty => {
+            length.* = 0;
+            return 0;
+        },
+        .TooLong => {
+            length.* = capacity + 1;
+            return 0;
+        },
+        .Reenter => {
+            const graph = lookup_probe.graph.?;
+            var other = fixture_facts();
+            var obs = std.mem.zeroes(observation_t);
+            var ev = std.mem.zeroes(event_t);
+            lookup_probe.reenter_observe = call_observe(graph, TestEpoch, &other, &obs);
+            lookup_probe.reenter_check = call_check_action(graph, TestEpoch, 1, 1);
+            lookup_probe.reenter_note = call_note_destroyed(graph, TestEpoch, 1, 1, 1, &obs);
+            lookup_probe.reenter_next = call_next_event(graph, TestEpoch, &ev);
+        },
+        .MutateCaller => {
+            const caller = lookup_probe.caller.?;
+            caller.title_length = 0xFFFF_FFFF;
+            caller.class_length = 0;
+            caller.width = 0;
+        },
+        .Ok => {},
+    }
+    const written = std.fmt.bufPrint(key[0..capacity], "a-{x}-{d}", .{ facts.*.window, lookup_probe.calls }) catch return 1;
+    length.* = @intCast(written.len);
+    return 0;
+}
+
+fn probe_graph(allocator: std.mem.Allocator) !*graph_t {
+    lookup_probe = .{};
+    test_clock = .{};
+    var config = test_config(TestEpoch);
+    config.app_key_lookup = probe_lookup;
+    const graph = try call_create(allocator, &config);
+    lookup_probe.graph = graph;
+    return graph;
+}
+
+fn expected_key(buffer: []u8, window: u64, call_number: u32) []const u8 {
+    return std.fmt.bufPrint(buffer, "a-{x}-{d}", .{ window, call_number }) catch unreachable;
+}
+
+fn call_observe(graph: *graph_t, epoch: u64, facts: *const facts_t, out: *observation_t) status_t {
+    return @call(.never_inline, observe, .{ graph, epoch, facts, out });
+}
+
+fn call_observe_locked(graph: *graph_t, facts: *const facts_t, out: *observation_t) status_t {
+    return @call(.never_inline, observe_locked, .{ graph, facts, out });
+}
+
+fn call_note_destroyed(graph: *graph_t, epoch: u64, window: u64, hint_stamp: u64, event_time_ms: u32, out: *observation_t) status_t {
+    return @call(.never_inline, note_destroyed, .{ graph, epoch, window, hint_stamp, event_time_ms, out });
+}
+
+fn call_collect_cascade(graph: *const graph_t, root: usize, out: *cascade_t) void {
+    @call(.never_inline, collect_cascade, .{ graph, root, out });
+}
+
+fn call_cascade_has_window(graph: *const graph_t, cascade: *const cascade_t, window: u64) bool {
+    return @call(.never_inline, cascade_has_window, .{ graph, cascade, window });
+}
+
+fn call_event_from_record(graph: *const graph_t, rec: *const record_t, kind: u32, mask: u32, reason: u32) event_t {
+    return @call(.never_inline, event_from_record, .{ graph, rec, kind, mask, reason });
+}
+
+fn call_retire_cascade(graph: *graph_t, cascade: *const cascade_t, root_reason: u32, tally: *tally_t) void {
+    @call(.never_inline, retire_cascade, .{ graph, cascade, root_reason, tally });
+}
+
+fn call_drop_deferred(graph: *graph_t, slot: usize, tally: *tally_t) void {
+    @call(.never_inline, drop_deferred, .{ graph, slot, tally });
+}
+
+fn call_defer_insert(graph: *graph_t, rec: *const record_t, seen: bool, tally: *tally_t) void {
+    @call(.never_inline, defer_insert, .{ graph, rec, seen, tally });
+}
+
+fn call_redefer(graph: *graph_t, cascade: *const cascade_t, admitted: *const [MaxEntries]bool, tally: *tally_t) void {
+    @call(.never_inline, redefer_descendants, .{ graph, cascade, admitted, tally });
+}
+
+fn call_mark_seen(graph: *graph_t, window: u64) void {
+    @call(.never_inline, mark_seen, .{ graph, window });
+}
+
+fn call_chain_cycle(graph: *const graph_t, window: u64, parent: u64) bool {
+    return @call(.never_inline, deferred_chain_cycle, .{ graph, window, parent });
+}
+
+fn call_record_from_facts(facts: *const facts_t, t64: u64, role: u32, parent_window: u64) record_t {
+    return @call(.never_inline, record_from_facts, .{ facts, t64, role, parent_window });
+}
+
+fn call_classify_public(facts: *const facts_t, uac_mode: u32, out: *c.interop_window_verdict_t) status_t {
+    return @call(.never_inline, classify_public, .{ facts, uac_mode, out });
+}
+
+fn call_bump_by(counter: *u64, amount: u64) void {
+    @call(.never_inline, bump_by, .{ counter, amount });
+}
+
+fn call_merge_target(graph: *graph_t, window: u64, generation: u64) ?*event_t {
+    return @call(.never_inline, ring_merge_target, .{ graph, window, generation });
+}
+
+fn window_facts(window: u64, stamp: u64) facts_t {
+    var facts = fixture_facts();
+    facts.window = window;
+    facts.root = window;
+    facts.stamp = stamp;
+    return facts;
+}
+
+/// Owned dialog (role Dialog, parent owner) of `owner`.
+fn owned_facts(window: u64, owner: u64, stamp: u64) facts_t {
+    var facts = window_facts(window, stamp);
+    facts.owner = owner;
+    facts.owner_root = owner;
+    return facts;
+}
+
+fn sentinel_observation() observation_t {
+    var obs: observation_t = undefined;
+    @memset(std.mem.asBytes(&obs), 0xA5);
+    return obs;
+}
+
+fn state_digest(graph: *const graph_t) u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(std.mem.asBytes(&graph.entries));
+    hasher.update(std.mem.asBytes(&graph.deferred));
+    hasher.update(std.mem.asBytes(&graph.ring));
+    hasher.update(std.mem.asBytes(&graph.ring_head));
+    hasher.update(std.mem.asBytes(&graph.ring_len));
+    hasher.update(std.mem.asBytes(&graph.generations_issued));
+    hasher.update(std.mem.asBytes(&graph.next_seq));
+    hasher.update(std.mem.asBytes(&graph.stamp_high_water));
+    hasher.update(std.mem.asBytes(&graph.tick_base));
+    return hasher.final();
+}
+
+/// Structural invariants of the graph; called after every operation of the scenario tests.
+fn check_invariants(graph: *const graph_t) !void {
+    var exported: u32 = 0;
+    for (&graph.entries, 0..) |*entry, index| {
+        if (entry.state == .Free) continue;
+        exported += 1;
+        const rec = &entry.record;
+        try testing.expect(rec.window != 0);
+        try testing.expect(rec.generation != 0 and rec.generation <= graph.generations_issued);
+        try testing.expectEqual(@as(u64, 0), rec.seq);
+        for (graph.entries[index + 1 ..]) |*other| {
+            if (other.state == .Free) continue;
+            try testing.expect(other.record.generation != rec.generation);
+            if (entry.state == .Active and other.state == .Active) try testing.expect(other.record.window != rec.window);
+        }
+        if (entry.state == .Retiring) {
+            try testing.expect(rec.retire_reason != 0);
+            continue;
+        }
+        try testing.expectEqual(@as(u32, 0), rec.retire_reason);
+        try testing.expect(rec.app_key_length >= MinAppKeyBytes and rec.app_key_length <= MaxAppKeyBytes);
+        if (rec.parent_window == 0) {
+            try testing.expectEqual(@as(u64, 0), rec.parent_generation);
+            continue;
+        }
+        var found = false;
+        for (&graph.entries) |*parent| {
+            if (parent.state != .Active or parent.record.window != rec.parent_window) continue;
+            found = true;
+            try testing.expectEqual(parent.record.generation, rec.parent_generation);
+            try testing.expect(parent.record.generation < rec.generation);
+        }
+        try testing.expect(found);
+    }
+    try testing.expect(exported <= MaxEntries);
+    for (&graph.deferred, 0..) |*slot, index| {
+        if (!slot.used) continue;
+        const rec = &slot.record;
+        try testing.expect(rec.window != 0 and rec.seq != 0);
+        try testing.expectEqual(@as(u64, 0), rec.generation);
+        try testing.expect(rec.parent_window != 0 and rec.parent_window != rec.window);
+        try testing.expect(rec.app_key_length >= MinAppKeyBytes);
+        for (&graph.entries) |*entry| {
+            if (entry.state == .Active) try testing.expect(entry.record.window != rec.window);
+        }
+        for (graph.deferred[index + 1 ..]) |*other| {
+            if (!other.used) continue;
+            try testing.expect(other.record.seq != rec.seq);
+            try testing.expect(other.record.window != rec.window);
+        }
+        var cursor = rec.parent_window;
+        var steps: u32 = 0;
+        while (true) : (steps += 1) {
+            try testing.expect(steps <= MaxDeferred);
+            var next: ?u64 = null;
+            for (&graph.deferred) |*hop| {
+                if (hop.used and hop.record.window == cursor) next = hop.record.parent_window;
+            }
+            cursor = next orelse break;
+            try testing.expect(cursor != rec.window);
+        }
+    }
+    try testing.expect(graph.ring_len <= EventCapacity and graph.ring_head < EventCapacity);
+}
+
+/// Offer facts, expect Ok and valid invariants.
+fn offer(graph: *graph_t, facts: *const facts_t) !observation_t {
+    var obs = sentinel_observation();
+    try testing.expectEqual(status_t.Ok, call_observe(graph, TestEpoch, facts, &obs));
+    try check_invariants(graph);
+    return obs;
+}
+
+/// Offer facts, expect a non-Ok status, an untouched observation and (unless `mutates`) an untouched graph.
+fn offer_fails(graph: *graph_t, facts: *const facts_t, want: status_t) !void {
+    var obs = sentinel_observation();
+    const before = state_digest(graph);
+    try testing.expectEqual(want, call_observe(graph, TestEpoch, facts, &obs));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing.expectEqual(before, state_digest(graph));
+    try check_invariants(graph);
+}
+
+fn destroy_hint(graph: *graph_t, window: u64, stamp: u64, tick: u32) !observation_t {
+    var obs = sentinel_observation();
+    try testing.expectEqual(status_t.Ok, call_note_destroyed(graph, TestEpoch, window, stamp, tick, &obs));
+    try check_invariants(graph);
+    return obs;
+}
+
+fn next_ev(graph: *graph_t) !event_t {
+    var ev = std.mem.zeroes(event_t);
+    try testing.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &ev));
+    return ev;
+}
+
+fn drain_events(graph: *graph_t, events: []event_t) !usize {
+    return pop_all(graph, events);
+}
+
+fn expect_ev(ev: event_t, kind: u32, window: u64, generation: u64, parent_window: u64, parent_generation: u64, reason: u32) !void {
+    try testing.expectEqual(kind, ev.kind);
+    try testing.expectEqual(window, ev.window);
+    try testing.expectEqual(generation, ev.generation);
+    try testing.expectEqual(parent_window, ev.parent_window);
+    try testing.expectEqual(parent_generation, ev.parent_generation);
+    try testing.expectEqual(reason, ev.reason);
+    try testing.expectEqual(TestEpoch, ev.session_epoch);
+    try testing.expectEqual(@as(u32, 0), ev.reserved0);
+}
+
+fn expect_obs(obs: observation_t, disposition: u32, role: u32, generation: u64, retired_generation: u64, reason: u32) !void {
+    try testing.expectEqual(disposition, obs.disposition);
+    try testing.expectEqual(role, obs.role);
+    try testing.expectEqual(generation, obs.generation);
+    try testing.expectEqual(retired_generation, obs.retired_generation);
+    try testing.expectEqual(reason, obs.reason);
+    try testing.expectEqual(@as(u32, 0), obs.reserved0);
+}
+
+fn expect_counts(obs: observation_t, events: u32, admitted: u32, retired: u32, dropped: u32) !void {
+    try testing.expectEqual(events, obs.events_queued);
+    try testing.expectEqual(admitted, obs.entries_admitted);
+    try testing.expectEqual(retired, obs.entries_retired);
+    try testing.expectEqual(dropped, obs.deferred_dropped);
+}
+
+fn live_generation(graph: *const graph_t, window: u64) u64 {
+    var live = std.mem.zeroes(live_t);
+    if (call_find_live(graph, window, &live) != .Ok) return 0;
+    return live.generation;
+}
+
+fn current_stats(graph: *const graph_t) stats_t {
+    var stats = std.mem.zeroes(stats_t);
+    std.debug.assert(call_get_stats(graph, &stats) == .Ok);
+    return stats;
+}
+
+test "first admission announces the full payload with the looked-up key" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = window_facts(0x1000, 10);
+    facts.captured_ms = 5000;
+    facts.x = 5;
+    facts.y = -7;
+    facts.min_width = 100;
+    facts.min_height = 50;
+    facts.dpi = 144;
+    set_title(&facts, "Doc");
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
+    try expect_counts(obs, 1, 1, 0, 0);
+    try testing.expectEqual(@as(u64, 0x1000), obs.window);
+    try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
+    try testing.expect(lookup_probe.last_pointer != @intFromPtr(&facts));
+    try testing.expectEqual(@as(u64, 0x1000), lookup_probe.last_window);
+
+    const ev = try next_ev(graph);
+    try expect_ev(ev, EventAnnounce, 0x1000, 1, 0, 0, 0);
+    try testing.expectEqual(@as(i32, 5), ev.x);
+    try testing.expectEqual(@as(i32, -7), ev.y);
+    try testing.expectEqual(@as(u32, 640), ev.width);
+    try testing.expectEqual(@as(u32, 480), ev.height);
+    try testing.expectEqual(RoleToplevel, ev.role);
+    try testing.expectEqual(StateResizable | StateMaximizable | StateMinimizable, ev.state);
+    try testing.expectEqual(@as(u32, 144), ev.dpi);
+    try testing.expectEqual(@as(u32, 100), ev.min_width);
+    try testing.expectEqual(@as(u32, 50), ev.min_height);
+    try testing.expectEqual(@as(u32, 4242), ev.process_id);
+    try testing.expectEqual(ChangeMask, ev.changed_mask);
+    try testing.expectEqual(@as(u32, 3), ev.title_length);
+    try testing.expectEqualStrings("Doc", ev.title[0..3]);
+    try testing.expect(std.mem.allEqual(u8, ev.title[3..], 0));
+    var key_buffer: [64]u8 = undefined;
+    const key = expected_key(&key_buffer, 0x1000, 1);
+    try testing.expectEqual(@as(u32, @intCast(key.len)), ev.app_key_length);
+    try testing.expectEqualStrings(key, ev.app_key[0..key.len]);
+    try testing.expect(std.mem.allEqual(u8, ev.app_key[key.len..], 0));
+
+    const slot = call_find_active(graph, 0x1000).?;
+    const rec = &graph.entries[slot].record;
+    try testing.expectEqual(@as(u64, 10), rec.admit_stamp);
+    try testing.expectEqual(@as(u64, 10), rec.last_stamp);
+    try testing.expectEqual(TickBaseStart + 5000, rec.admit_captured_ms);
+    try testing.expectEqual(TickBaseStart + 5000, rec.last_captured_ms);
+    try testing.expectEqual(TickBaseStart + 5000, graph.tick_base);
+    try testing.expectEqual(@as(u64, 10), graph.stamp_high_water);
+    try testing.expectEqual(@as(u64, 1), graph.generations_issued);
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.admitted);
+    try testing.expectEqual(@as(u64, 1), stats.events_queued);
+    try testing.expectEqual(@as(u64, 0), stats.events_coalesced);
+    try testing.expectEqual(@as(u64, 1), live_generation(graph, 0x1000));
+}
+
+test "the lookup receives a stack copy of the facts, never the caller's struct" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = window_facts(0x1000, 10);
+    lookup_probe.mode = .MutateCaller;
+    lookup_probe.caller = &facts;
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
+    // The callback corrupted the caller's struct; the copy that was validated and stored is intact.
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), facts.title_length);
+    try testing.expectEqual(@as(u32, 7), lookup_probe.last_class_length);
+    const ev = try next_ev(graph);
+    try testing.expectEqual(@as(u32, 18), ev.title_length);
+    try testing.expectEqualStrings("Untitled - Notepad", ev.title[0..18]);
+    try testing.expectEqual(@as(u32, 640), ev.width);
+    try testing.expectEqual(@as(u32, 640), graph.entries[call_find_active(graph, 0x1000).?].record.width);
+}
+
+fn admit_top(graph: *graph_t, window: u64, stamp: u64) !observation_t {
+    var facts = window_facts(window, stamp);
+    const obs = try offer(graph, &facts);
+    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    return obs;
+}
+
+fn admit_dialog(graph: *graph_t, window: u64, owner: u64, stamp: u64) !observation_t {
+    var facts = owned_facts(window, owner, stamp);
+    return offer(graph, &facts);
+}
+
+const mutation_t = struct {
+    name: []const u8,
+    mask: u32,
+    apply: *const fn (*facts_t) void,
+};
+
+fn mutate_x(facts: *facts_t) void {
+    facts.x += 1;
+}
+fn mutate_y(facts: *facts_t) void {
+    facts.y -= 1;
+}
+fn mutate_width(facts: *facts_t) void {
+    facts.width += 1;
+}
+fn mutate_height(facts: *facts_t) void {
+    facts.height += 1;
+}
+fn mutate_iconic(facts: *facts_t) void {
+    facts.flags |= FactIconic;
+}
+fn mutate_zoomed(facts: *facts_t) void {
+    facts.flags |= FactZoomed;
+}
+fn mutate_style(facts: *facts_t) void {
+    facts.style &= ~StyleThickFrame;
+}
+fn mutate_dpi(facts: *facts_t) void {
+    facts.dpi = 192;
+}
+fn mutate_title(facts: *facts_t) void {
+    set_title(facts, "Renamed");
+}
+fn mutate_title_empty(facts: *facts_t) void {
+    set_title(facts, "");
+}
+fn mutate_title_same_length(facts: *facts_t) void {
+    set_title(facts, "Untitled - Notepaf");
+}
+fn mutate_min_width(facts: *facts_t) void {
+    facts.min_width = 10;
+}
+fn mutate_min_height(facts: *facts_t) void {
+    facts.min_height = 10;
+}
+fn mutate_everything(facts: *facts_t) void {
+    mutate_x(facts);
+    mutate_iconic(facts);
+    mutate_dpi(facts);
+    mutate_title(facts);
+    mutate_min_width(facts);
+}
+
+const Mutations = [_]mutation_t{
+    .{ .name = "x", .mask = ChangeRect, .apply = mutate_x },
+    .{ .name = "y", .mask = ChangeRect, .apply = mutate_y },
+    .{ .name = "width", .mask = ChangeRect, .apply = mutate_width },
+    .{ .name = "height", .mask = ChangeRect, .apply = mutate_height },
+    .{ .name = "iconic", .mask = ChangeState, .apply = mutate_iconic },
+    .{ .name = "zoomed", .mask = ChangeState, .apply = mutate_zoomed },
+    .{ .name = "thick frame", .mask = ChangeState, .apply = mutate_style },
+    .{ .name = "dpi", .mask = ChangeDpi, .apply = mutate_dpi },
+    .{ .name = "title", .mask = ChangeTitle, .apply = mutate_title },
+    .{ .name = "title emptied", .mask = ChangeTitle, .apply = mutate_title_empty },
+    .{ .name = "title same length", .mask = ChangeTitle, .apply = mutate_title_same_length },
+    .{ .name = "min width", .mask = ChangeMinSize, .apply = mutate_min_width },
+    .{ .name = "min height", .mask = ChangeMinSize, .apply = mutate_min_height },
+    .{ .name = "everything", .mask = ChangeRect | ChangeState | ChangeDpi | ChangeTitle | ChangeMinSize, .apply = mutate_everything },
+};
+
+test "each fact group maps to its change bit in a queued Update" {
+    for (Mutations) |mutation| {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x1000, 10);
+        _ = try next_ev(graph);
+        var facts = window_facts(0x1000, 11);
+        facts.captured_ms = 1100;
+        mutation.apply(&facts);
+        const obs = try offer(graph, &facts);
+        testing.expectEqual(DispositionUpdated, obs.disposition) catch |err| {
+            std.debug.print("mutation failed: {s}\n", .{mutation.name});
+            return err;
+        };
+        try expect_obs(obs, DispositionUpdated, RoleToplevel, 1, 0, ReasonNone);
+        try expect_counts(obs, 1, 0, 0, 0);
+        const ev = try next_ev(graph);
+        try expect_ev(ev, EventUpdate, 0x1000, 1, 0, 0, 0);
+        testing.expectEqual(mutation.mask, ev.changed_mask) catch |err| {
+            std.debug.print("mutation mask failed: {s}\n", .{mutation.name});
+            return err;
+        };
+        // The update carries the full new payload, not just the changed group.
+        try testing.expectEqual(facts.x, ev.x);
+        try testing.expectEqual(facts.y, ev.y);
+        try testing.expectEqual(facts.width, ev.width);
+        try testing.expectEqual(facts.height, ev.height);
+        try testing.expectEqual(derive_state(&facts), ev.state);
+        try testing.expectEqual(facts.dpi, ev.dpi);
+        try testing.expectEqual(facts.min_width, ev.min_width);
+        try testing.expectEqual(facts.min_height, ev.min_height);
+        try testing.expectEqual(facts.title_length, ev.title_length);
+        try testing.expectEqualSlices(u8, title_bytes(&facts), ev.title[0..ev.title_length]);
+        try testing.expect(ev.app_key_length >= MinAppKeyBytes);
+        const stats = current_stats(graph);
+        try testing.expectEqual(@as(u64, 1), stats.updates_queued);
+        try testing.expectEqual(@as(u64, 11), stats.stamp_high_water);
+        const record = &graph.entries[call_find_active(graph, 0x1000).?].record;
+        try testing.expectEqual(@as(u64, 10), record.admit_stamp);
+        try testing.expectEqual(@as(u64, 11), record.last_stamp);
+        try testing.expectEqual(TickBaseStart + 1100, record.last_captured_ms);
+        try testing.expectEqual(derive_state(&facts), record.state);
+    }
+}
+
+test "updates coalesce into a pending Announce or Update and OR their masks" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x1000, 10);
+    // First change merges into the unconsumed Announce.
+    var facts = window_facts(0x1000, 11);
+    facts.x = 99;
+    var obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionUpdated, RoleToplevel, 1, 0, ReasonNone);
+    try expect_counts(obs, 0, 0, 0, 0);
+    try testing.expectEqual(@as(u32, 1), graph.ring_len);
+    try testing.expectEqual(@as(i32, 99), graph.ring[graph.ring_head].x);
+    try testing.expectEqual(EventAnnounce, graph.ring[graph.ring_head].kind);
+    try testing.expectEqual(ChangeMask, graph.ring[graph.ring_head].changed_mask);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).events_coalesced);
+    var ev = try next_ev(graph);
+    try testing.expectEqual(@as(i32, 99), ev.x);
+    // After the drain a new change appends an Update; the next one merges into it.
+    facts = window_facts(0x1000, 12);
+    facts.x = 99;
+    facts.dpi = 120;
+    obs = try offer(graph, &facts);
+    try expect_counts(obs, 1, 0, 0, 0);
+    facts = window_facts(0x1000, 13);
+    facts.x = 99;
+    facts.dpi = 120;
+    set_title(&facts, "T");
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionUpdated, RoleToplevel, 1, 0, ReasonNone);
+    try expect_counts(obs, 0, 0, 0, 0);
+    try testing.expectEqual(@as(u32, 1), graph.ring_len);
+    ev = try next_ev(graph);
+    try expect_ev(ev, EventUpdate, 0x1000, 1, 0, 0, 0);
+    try testing.expectEqual(ChangeDpi | ChangeTitle, ev.changed_mask);
+    try testing.expectEqual(@as(u32, 1), ev.title_length);
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 2), stats.events_coalesced);
+    try testing.expectEqual(@as(u64, 2), stats.events_queued);
+    try testing.expectEqual(@as(u64, 1), stats.updates_queued);
+}
+
+test "an identical offer is Unchanged, queues nothing and still advances stamp and tick" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x1000, 10);
+    _ = try next_ev(graph);
+    var facts = window_facts(0x1000, 10);
+    var obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+    try expect_counts(obs, 0, 0, 0, 0);
+    // Equal stamps are accepted; a later stamp and tick move the record forward.
+    facts = window_facts(0x1000, 20);
+    facts.captured_ms = 7000;
+    // Bytes past the stated lengths and the enabled flag are not part of the comparison.
+    facts.title[facts.title_length] = 'Z';
+    facts.flags &= ~FactEnabled;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    const record = &graph.entries[call_find_active(graph, 0x1000).?].record;
+    try testing.expectEqual(@as(u64, 20), record.last_stamp);
+    try testing.expectEqual(TickBaseStart + 7000, record.last_captured_ms);
+    try testing.expectEqual(@as(u64, 10), record.admit_stamp);
+    try testing.expectEqual(@as(u64, 20), graph.stamp_high_water);
+    try testing.expectEqual(TickBaseStart + 7000, graph.tick_base);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).admitted);
+    try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
+}
+
+test "an older tick advances the record but never moves the tick base backwards" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = window_facts(0x1000, 10);
+    facts.captured_ms = 9000;
+    _ = try offer(graph, &facts);
+    try testing.expectEqual(TickBaseStart + 9000, graph.tick_base);
+    facts.stamp = 11;
+    facts.captured_ms = 8500;
+    _ = try offer(graph, &facts);
+    try testing.expectEqual(TickBaseStart + 9000, graph.tick_base);
+    const record = &graph.entries[call_find_active(graph, 0x1000).?].record;
+    try testing.expectEqual(TickBaseStart + 8500, record.last_captured_ms);
+    try testing.expectEqual(TickBaseStart + 9000, record.admit_captured_ms);
+    // A failing call (StaleFacts) never moves the base either.
+    facts.stamp = 5;
+    facts.captured_ms = 60_000;
+    try offer_fails(graph, &facts, .StaleFacts);
+    try testing.expectEqual(TickBaseStart + 9000, graph.tick_base);
+    try testing.expectEqual(@as(u64, 11), graph.stamp_high_water);
+}
+
+test "an Update that cannot be queued returns QueueFull unless a pending event absorbs it" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x1000, 10);
+    _ = try next_ev(graph);
+    fill_ring(graph, EventCapacity);
+    var facts = window_facts(0x1000, 11);
+    facts.x = 3;
+    try offer_fails(graph, &facts, .QueueFull);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
+    try testing.expectEqual(@as(u64, 1), graph.diag_queue_full);
+    try testing.expectEqual(@as(i32, 10), graph.entries[call_find_active(graph, 0x1000).?].record.x);
+    // Pending Update for this window absorbs the next change even though the ring is full.
+    _ = try next_ev(graph);
+    var obs = try offer(graph, &facts);
+    try expect_counts(obs, 1, 0, 0, 0);
+    try testing.expectEqual(@as(u32, EventCapacity), graph.ring_len);
+    facts.stamp = 12;
+    facts.y = 8;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionUpdated, RoleToplevel, 1, 0, ReasonNone);
+    try expect_counts(obs, 0, 0, 0, 0);
+    const ev = graph.ring[(graph.ring_head + graph.ring_len - 1) & (EventCapacity - 1)];
+    try testing.expectEqual(ChangeRect, ev.changed_mask);
+    try testing.expectEqual(@as(i32, 8), ev.y);
+    // An unchanged offer needs no room at all.
+    facts.stamp = 13;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+}
+
+test "a child whose parent is absent is deferred, then flushed in age order behind its parent" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var obs = try admit_dialog(graph, 0x200, 0x100, 10);
+    try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    try expect_counts(obs, 0, 0, 0, 0);
+    obs = try admit_dialog(graph, 0x300, 0x100, 11);
+    try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing.expectEqual(@as(u32, 2), lookup_probe.calls);
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    const first = &graph.deferred[call_find_deferred(graph, 0x200).?];
+    try testing.expectEqual(@as(u64, 1), first.record.seq);
+    try testing.expectEqual(@as(u64, 0), first.record.generation);
+    try testing.expectEqual(@as(u64, 0x100), first.record.parent_window);
+    try testing.expect(first.seen);
+    try testing.expectEqual(@as(u64, 2), graph.deferred[call_find_deferred(graph, 0x300).?].record.seq);
+    var stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 2), stats.deferred_added);
+    try testing.expectEqual(@as(u64, 0), stats.admitted);
+    try testing.expectEqual(@as(u32, 2), stats.deferred_count);
+
+    obs = try admit_top(graph, 0x100, 12);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
+    try expect_counts(obs, 3, 3, 0, 0);
+    try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    var events: [8]event_t = undefined;
+    try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+    try expect_ev(events[0], EventAnnounce, 0x100, 1, 0, 0, 0);
+    try expect_ev(events[1], EventAnnounce, 0x200, 2, 0x100, 1, 0);
+    try expect_ev(events[2], EventAnnounce, 0x300, 3, 0x100, 1, 0);
+    try testing.expectEqual(RoleDialog, events[1].role);
+    var key_buffer: [64]u8 = undefined;
+    const kept = expected_key(&key_buffer, 0x200, 1);
+    try testing.expectEqualStrings(kept, events[1].app_key[0..events[1].app_key_length]);
+    try testing.expectEqual(ChangeMask, events[1].changed_mask);
+    stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 3), stats.admitted);
+    try testing.expectEqual(@as(u64, 3), stats.events_queued);
+    // Flushed children keep the stamp of their last accepted facts as the admission stamp.
+    try testing.expectEqual(@as(u64, 10), graph.entries[call_find_active(graph, 0x200).?].record.admit_stamp);
+    try testing.expectEqual(@as(u64, 12), graph.stamp_high_water);
+}
+
+test "re-offering a deferred window updates its record in place without a new lookup" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = owned_facts(0x200, 0x100, 10);
+    _ = try offer(graph, &facts);
+    _ = try admit_dialog(graph, 0x300, 0x100, 11);
+    facts = owned_facts(0x200, 0x100, 12);
+    facts.captured_ms = 4000;
+    set_title(&facts, "second");
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    try testing.expectEqual(@as(u32, 2), lookup_probe.calls);
+    const record = &graph.deferred[call_find_deferred(graph, 0x200).?].record;
+    try testing.expectEqual(@as(u64, 1), record.seq);
+    try testing.expectEqual(@as(u64, 12), record.last_stamp);
+    try testing.expectEqual(TickBaseStart + 4000, record.last_captured_ms);
+    try testing.expectEqual(@as(u64, 0), record.admit_stamp);
+    try testing.expectEqual(@as(u32, 6), record.title_length);
+    try testing.expectEqual(@as(u64, 2), current_stats(graph).deferred_added);
+    // Older stamps are stale for a deferred record too.
+    facts.stamp = 11;
+    try offer_fails(graph, &facts, .StaleFacts);
+    // When the parent becomes Active the deferred window is admitted from its record's key.
+    _ = try admit_top(graph, 0x100, 13);
+    var events: [8]event_t = undefined;
+    try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+    try expect_ev(events[1], EventAnnounce, 0x200, 2, 0x100, 1, 0);
+    try testing.expectEqualStrings("second", events[1].title[0..events[1].title_length]);
+}
+
+test "a deferred window offered with an Active parent is admitted from the stored key" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = owned_facts(0x200, 0x100, 10);
+    _ = try offer(graph, &facts);
+    // The window's owner changed to an already announced window before the parent ever arrived.
+    _ = try admit_top(graph, 0x50, 11);
+    _ = try next_ev(graph);
+    facts = owned_facts(0x200, 0x50, 12);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleDialog, 2, 0, ReasonNone);
+    try expect_counts(obs, 1, 1, 0, 0);
+    try testing.expectEqual(@as(u32, 2), lookup_probe.calls);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    const ev = try next_ev(graph);
+    try expect_ev(ev, EventAnnounce, 0x200, 2, 0x50, 1, 0);
+    var key_buffer: [64]u8 = undefined;
+    try testing.expectEqualStrings(expected_key(&key_buffer, 0x200, 1), ev.app_key[0..ev.app_key_length]);
+}
+
+fn discard_events(graph: *graph_t) u32 {
+    var ev = std.mem.zeroes(event_t);
+    var count: u32 = 0;
+    while (call_next_event(graph, TestEpoch, &ev) == .Ok) count += 1;
+    return count;
+}
+
+/// Admit `count` ownerless top-level windows 0x8000, 0x8001, ... and drain their Announce events.
+fn fill_graph(graph: *graph_t, count: u32) !void {
+    var index: u32 = 0;
+    while (index < count) : (index += 1) {
+        _ = try admit_top(graph, 0x8000 + index, 100 + index);
+        _ = discard_events(graph);
+    }
+}
+
+fn set_generations_issued(graph: *graph_t, value: u64) void {
+    graph.generations_issued = value;
+}
+
+/// Like `offer_fails` for statuses that may legitimately change the graph (the Cycle drop).
+fn offer_status(graph: *graph_t, facts: *const facts_t, want: status_t) !void {
+    var obs = sentinel_observation();
+    try testing.expectEqual(want, call_observe(graph, TestEpoch, facts, &obs));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try check_invariants(graph);
+}
+
+const Permutations = [_][3]usize{
+    .{ 0, 1, 2 }, .{ 0, 2, 1 }, .{ 1, 0, 2 }, .{ 1, 2, 0 }, .{ 2, 0, 1 }, .{ 2, 1, 0 },
+};
+
+test "a three-deep chain is announced root first whatever the arrival order" {
+    for (Permutations) |order| {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        const chain = [3]facts_t{
+            window_facts(0x100, 0),
+            owned_facts(0x200, 0x100, 0),
+            owned_facts(0x300, 0x200, 0),
+        };
+        var stamp: u64 = 10;
+        for (order) |which| {
+            var facts = chain[which];
+            facts.stamp = stamp;
+            stamp += 1;
+            _ = try offer(graph, &facts);
+        }
+        try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
+        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        var events: [8]event_t = undefined;
+        try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+        try expect_ev(events[0], EventAnnounce, 0x100, 1, 0, 0, 0);
+        try expect_ev(events[1], EventAnnounce, 0x200, 2, 0x100, 1, 0);
+        try expect_ev(events[2], EventAnnounce, 0x300, 3, 0x200, 2, 0);
+        try testing.expectEqual(@as(u64, 3), graph.generations_issued);
+    }
+}
+
+test "flushed children are admitted breadth first in deferral age order" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    const arrivals = [_]facts_t{
+        owned_facts(0x302, 0x202, 10),
+        owned_facts(0x301, 0x201, 11),
+        owned_facts(0x202, 0x100, 12),
+        owned_facts(0x201, 0x100, 13),
+    };
+    for (arrivals) |facts| {
+        const obs = try offer(graph, &facts);
+        try testing.expectEqual(DispositionDeferred, obs.disposition);
+    }
+    const obs = try admit_top(graph, 0x100, 14);
+    try expect_counts(obs, 5, 5, 0, 0);
+    var events: [8]event_t = undefined;
+    try testing.expectEqual(@as(usize, 5), try drain_events(graph, &events));
+    try expect_ev(events[0], EventAnnounce, 0x100, 1, 0, 0, 0);
+    try expect_ev(events[1], EventAnnounce, 0x202, 2, 0x100, 1, 0);
+    try expect_ev(events[2], EventAnnounce, 0x201, 3, 0x100, 1, 0);
+    try expect_ev(events[3], EventAnnounce, 0x302, 4, 0x202, 2, 0);
+    try expect_ev(events[4], EventAnnounce, 0x301, 5, 0x201, 3, 0);
+}
+
+test "owner cycles through deferred records return Cycle and drop only the offered window's record" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    // Self ownership.
+    var facts = owned_facts(0x100, 0x100, 10);
+    try offer_fails(graph, &facts, .Cycle);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
+    try testing.expectEqual(@as(u32, 0), lookup_probe.calls);
+    // Two-window cycle A -> B -> A.
+    facts = owned_facts(0x100, 0x200, 11);
+    var obs = try offer(graph, &facts);
+    try testing.expectEqual(DispositionDeferred, obs.disposition);
+    facts = owned_facts(0x200, 0x100, 12);
+    try offer_fails(graph, &facts, .Cycle);
+    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    // Three-window cycle A -> B -> C -> A.
+    facts = owned_facts(0x200, 0x300, 13);
+    obs = try offer(graph, &facts);
+    try testing.expectEqual(DispositionDeferred, obs.disposition);
+    facts = owned_facts(0x300, 0x100, 14);
+    try offer_fails(graph, &facts, .Cycle);
+    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing.expectEqual(@as(u64, 3), current_stats(graph).rejected_cycle);
+    // A window with its own deferred record: Cycle drops that record (the documented mutation).
+    facts = owned_facts(0x400, 0x900, 15);
+    _ = try offer(graph, &facts);
+    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    facts = owned_facts(0x400, 0x400, 16);
+    try offer_status(graph, &facts, .Cycle);
+    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x400));
+    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    var stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 4), stats.rejected_cycle);
+    try testing.expectEqual(@as(u64, 1), stats.deferred_dropped);
+    try testing.expectEqual(@as(u64, 0), stats.deferred_evicted);
+    // A self-owned window that classification excludes is reported as excluded, not as a cycle.
+    facts = owned_facts(0x500, 0x500, 17);
+    facts.root = 0x501;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionExcluded, 0, 0, 0, ReasonChild);
+    stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 4), stats.rejected_cycle);
+}
+
+test "a live window offered with an owner cycle stays unchanged" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = discard_events(graph);
+    var facts = owned_facts(0x100, 0x100, 11);
+    try offer_fails(graph, &facts, .Cycle);
+    // Via a deferred chain: 0x300 waits for 0x100; 0x100 is made to depend on 0x300.
+    facts = owned_facts(0x300, 0x100, 12);
+    const obs = try offer(graph, &facts);
+    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    _ = discard_events(graph);
+    // 0x500 waits for 0x600 which waits for 0x700 (absent): 0x700 owned by 0x500 would close the loop.
+    facts = owned_facts(0x500, 0x600, 13);
+    _ = try offer(graph, &facts);
+    facts = owned_facts(0x600, 0x700, 14);
+    _ = try offer(graph, &facts);
+    facts = owned_facts(0x700, 0x500, 15);
+    try offer_fails(graph, &facts, .Cycle);
+    // The stored chain walk gives up after 65 steps: an injected loop that never reaches the window.
+    inject_deferred(graph, 40, 0xA00);
+    inject_deferred(graph, 41, 0xB00);
+    graph.deferred[40].record.parent_window = 0xB00;
+    graph.deferred[41].record.parent_window = 0xA00;
+    try testing.expect(call_chain_cycle(graph, 0xC00, 0xA00));
+    try testing.expect(!call_chain_cycle(graph, 0xC00, 0x100));
+    try testing.expect(call_chain_cycle(graph, 0x100, 0x100));
+}
+
+test "identity change retires the old generation and its descendants and admits a fresh generation" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x200, 0x100, 11);
+    _ = discard_events(graph);
+    var facts = window_facts(0x100, 12);
+    facts.process_id = 9999;
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 3, 1, ReasonIncarnationChanged);
+    try expect_counts(obs, 3, 1, 2, 0);
+    var events: [8]event_t = undefined;
+    try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+    try expect_ev(events[0], EventRetireIntent, 0x200, 2, 0x100, 1, ReasonParentRetired);
+    try expect_ev(events[1], EventRetireIntent, 0x100, 1, 0, 0, ReasonIncarnationChanged);
+    try expect_ev(events[2], EventAnnounce, 0x100, 3, 0, 0, 0);
+    try testing.expectEqual(@as(u32, 0), events[0].changed_mask);
+    try testing.expectEqual(@as(u32, 4242), events[1].process_id);
+    try testing.expectEqual(@as(u32, 9999), events[2].process_id);
+    try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing.expectEqual(@as(u32, 2), call_count_state(graph, .Retiring));
+    try testing.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 0x100, 1));
+    try testing.expectEqual(status_t.Ok, call_check_action(graph, TestEpoch, 0x100, 3));
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 2), stats.retire_intents);
+    try testing.expectEqual(@as(u64, 0), stats.reclassified);
+    // The child is not re-deferred: its next offer admits it under the new parent generation.
+    facts = owned_facts(0x200, 0x100, 13);
+    const child = try offer(graph, &facts);
+    try expect_obs(child, DispositionAdmitted, RoleDialog, 4, 0, ReasonNone);
+    const ev = try next_ev(graph);
+    try expect_ev(ev, EventAnnounce, 0x200, 4, 0x100, 3, 0);
+}
+
+test "identity change of a thread, start time or class also forces a replacement" {
+    const mutators = [_]*const fn (*facts_t) void{ mutate_thread, mutate_start_time, mutate_class, mutate_start_unknown };
+    for (mutators) |mutator| {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = discard_events(graph);
+        var facts = window_facts(0x100, 11);
+        mutator(&facts);
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionAdmitted, RoleToplevel, 2, 1, ReasonIncarnationChanged);
+    }
+}
+
+fn mutate_thread(facts: *facts_t) void {
+    facts.thread_id += 1;
+}
+fn mutate_start_time(facts: *facts_t) void {
+    facts.process_start_time += 1;
+}
+fn mutate_class(facts: *facts_t) void {
+    set_class(facts, "Other");
+}
+fn mutate_start_unknown(facts: *facts_t) void {
+    facts.process_start_time = 0;
+}
+
+test "identity change keeps the retirement when the replacement cannot be admitted" {
+    // Lookup failure.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = discard_events(graph);
+        lookup_probe.mode = .Fail;
+        var facts = window_facts(0x100, 11);
+        facts.process_id = 9999;
+        var obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
+        try expect_counts(obs, 1, 0, 1, 0);
+        try testing.expectEqual(@as(u64, 1), current_stats(graph).lookup_failures);
+        try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Retiring));
+        try testing.expectEqual(@as(?usize, null), call_find_active(graph, 0x100));
+        // The next offer retries and now admits.
+        lookup_probe.mode = .Ok;
+        facts.stamp = 12;
+        obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionAdmitted, RoleToplevel, 2, 0, ReasonNone);
+    }
+    // Invalid key.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = discard_events(graph);
+        lookup_probe.mode = .Invalid;
+        var facts = window_facts(0x100, 11);
+        facts.thread_id = 1;
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
+        try testing.expectEqual(@as(u64, 1), current_stats(graph).app_key_invalid);
+    }
+    // No free slot: the retiring entry keeps its slot.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        try fill_graph(graph, 63);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = discard_events(graph);
+        var facts = window_facts(0x100, 11);
+        facts.process_id = 9999;
+        var obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionRetired, 0, 0, 64, ReasonIncarnationChanged);
+        const stats = current_stats(graph);
+        try testing.expectEqual(@as(u64, 1), stats.rejected_at_capacity);
+        try testing.expectEqual(@as(u64, 1), graph.diag_at_capacity);
+        try testing.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
+        facts.stamp = 12;
+        try offer_fails(graph, &facts, .AtCapacity);
+        const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
+        try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, 64, &proof));
+        obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionAdmitted, RoleToplevel, 65, 0, ReasonNone);
+    }
+    // No generation left.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = discard_events(graph);
+        set_generations_issued(graph, std.math.maxInt(u64));
+        var facts = window_facts(0x100, 11);
+        facts.process_id = 9999;
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
+        const stats = current_stats(graph);
+        try testing.expectEqual(@as(u64, 1), stats.rejected_generation_exhausted);
+        try testing.expectEqual(@as(u64, 1), graph.diag_generation_exhausted);
+        try testing.expectEqual(@as(u64, 0), stats.rejected_at_capacity);
+    }
+    // Self ownership of the replacement.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = discard_events(graph);
+        var facts = owned_facts(0x100, 0x100, 11);
+        facts.process_id = 9999;
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
+        try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
+        try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
+    }
+    // The replacement's new owner is one of the retired descendants.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = try admit_dialog(graph, 0x200, 0x100, 11);
+        _ = discard_events(graph);
+        var facts = owned_facts(0x100, 0x200, 12);
+        facts.process_id = 9999;
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
+        try expect_counts(obs, 2, 0, 2, 0);
+        try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
+        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    }
+    // The replacement's new owner leads back to the window through a deferred record.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = discard_events(graph);
+        // A capacity-cut leftover of 0x100: deferred although its parent 0x100 is Active.
+        inject_deferred(graph, 0, 0x600);
+        graph.deferred[0].record.parent_window = 0x100;
+        graph.deferred[0].record.app_key_length = 3;
+        @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
+        var facts = owned_facts(0x100, 0x600, 14);
+        facts.process_id = 9999;
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
+        try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+        try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
+    }
+}
+
+test "identity change whose replacement must wait for its parent is deferred with a fresh key" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = discard_events(graph);
+    var facts = owned_facts(0x100, 0x777, 11);
+    facts.process_id = 9999;
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 1, ReasonIncarnationChanged);
+    try expect_counts(obs, 1, 0, 1, 0);
+    try testing.expectEqual(@as(u32, 2), lookup_probe.calls);
+    const record = &graph.deferred[call_find_deferred(graph, 0x100).?].record;
+    var key_buffer: [64]u8 = undefined;
+    try testing.expectEqualStrings(expected_key(&key_buffer, 0x100, 2), record.app_key[0..record.app_key_length]);
+    const ev = try next_ev(graph);
+    try expect_ev(ev, EventRetireIntent, 0x100, 1, 0, 0, ReasonIncarnationChanged);
+}
+
+/// Q=0x50 (g1), P=0x100 (g2), C1=0x200 (g3) and C2=0x300 (g4) owned by P, G=0x400 (g5) owned by C1.
+fn build_family(graph: *graph_t) !void {
+    _ = try admit_top(graph, 0x50, 10);
+    _ = try admit_top(graph, 0x100, 11);
+    _ = try admit_dialog(graph, 0x200, 0x100, 12);
+    _ = try admit_dialog(graph, 0x300, 0x100, 13);
+    _ = try admit_dialog(graph, 0x400, 0x200, 14);
+    try testing.expectEqual(@as(u32, 5), discard_events(graph));
+}
+
+/// P gains the owner Q and loses nothing else: role Dialog, parent Q.
+fn reclassify_facts(stamp: u64) facts_t {
+    return owned_facts(0x100, 0x50, stamp);
+}
+
+test "reclassification retires the cascade descending and re-announces it behind the new parent" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    try build_family(graph);
+    const lookups = lookup_probe.calls;
+    var facts = reclassify_facts(20);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionReclassified, RoleDialog, 6, 2, ReasonReclassified);
+    try expect_counts(obs, 8, 4, 4, 0);
+    try testing.expectEqual(lookups, lookup_probe.calls);
+    var events: [12]event_t = undefined;
+    try testing.expectEqual(@as(usize, 8), try drain_events(graph, &events));
+    try expect_ev(events[0], EventRetireIntent, 0x400, 5, 0x200, 3, ReasonParentRetired);
+    try expect_ev(events[1], EventRetireIntent, 0x300, 4, 0x100, 2, ReasonParentRetired);
+    try expect_ev(events[2], EventRetireIntent, 0x200, 3, 0x100, 2, ReasonParentRetired);
+    try expect_ev(events[3], EventRetireIntent, 0x100, 2, 0, 0, ReasonReclassified);
+    try expect_ev(events[4], EventAnnounce, 0x100, 6, 0x50, 1, 0);
+    try expect_ev(events[5], EventAnnounce, 0x200, 7, 0x100, 6, 0);
+    try expect_ev(events[6], EventAnnounce, 0x300, 8, 0x100, 6, 0);
+    try expect_ev(events[7], EventAnnounce, 0x400, 9, 0x200, 7, 0);
+    try testing.expectEqual(RoleToplevel, events[3].role);
+    try testing.expectEqual(RoleDialog, events[4].role);
+    // Keys are reused: neither the new parent nor its descendants triggered a lookup.
+    var key_buffer: [64]u8 = undefined;
+    try testing.expectEqualStrings(expected_key(&key_buffer, 0x100, 2), events[4].app_key[0..events[4].app_key_length]);
+    try testing.expectEqualStrings(expected_key(&key_buffer, 0x200, 3), events[5].app_key[0..events[5].app_key_length]);
+    try testing.expectEqualStrings(expected_key(&key_buffer, 0x400, 5), events[7].app_key[0..events[7].app_key_length]);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    var retiring: [8]retiring_entry_t = undefined;
+    var total: u32 = 0;
+    try testing.expectEqual(status_t.Ok, call_list_retiring(graph, &retiring, 8, &total));
+    try testing.expectEqual(@as(u32, 4), total);
+    try testing.expectEqual(@as(u64, 2), retiring[0].generation);
+    try testing.expectEqual(ReasonReclassified, retiring[0].reason);
+    try testing.expectEqual(ReasonParentRetired, retiring[3].reason);
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.reclassified);
+    try testing.expectEqual(@as(u64, 4), stats.retire_intents);
+    try testing.expectEqual(@as(u64, 9), stats.admitted);
+    try testing.expectEqual(@as(u64, 13), stats.events_queued);
+    // Admission stamps of re-announced descendants are their last accepted facts.
+    try testing.expectEqual(@as(u64, 12), graph.entries[call_find_active(graph, 0x200).?].record.admit_stamp);
+    try testing.expectEqual(@as(u64, 20), graph.entries[call_find_active(graph, 0x100).?].record.admit_stamp);
+}
+
+test "reclassifying a window under its own descendant retires the cascade and defers nothing" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x200, 0x100, 11);
+    _ = discard_events(graph);
+    var facts = owned_facts(0x100, 0x200, 12);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonReclassified);
+    try expect_counts(obs, 2, 0, 2, 0);
+    var events: [4]event_t = undefined;
+    try testing.expectEqual(@as(usize, 2), try drain_events(graph, &events));
+    try expect_ev(events[0], EventRetireIntent, 0x200, 2, 0x100, 1, ReasonParentRetired);
+    try expect_ev(events[1], EventRetireIntent, 0x100, 1, 0, 0, ReasonReclassified);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.rejected_cycle);
+    try testing.expectEqual(@as(u64, 1), stats.reclassified);
+    // A plain deferred-chain cycle on a live window is a Cycle status, not a forced retirement.
+    _ = try admit_top(graph, 0x700, 13);
+    _ = discard_events(graph);
+    inject_deferred(graph, 0, 0x800);
+    graph.deferred[0].record.parent_window = 0x700;
+    graph.deferred[0].record.app_key_length = 3;
+    @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
+    facts = owned_facts(0x700, 0x800, 14);
+    try offer_fails(graph, &facts, .Cycle);
+    try testing.expect(call_find_active(graph, 0x700) != null);
+}
+
+test "reclassification toward an unannounced parent defers the window and re-defers its descendants" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x200, 0x100, 11);
+    _ = try admit_dialog(graph, 0x300, 0x100, 12);
+    _ = discard_events(graph);
+    var facts = owned_facts(0x100, 0x900, 20);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 1, ReasonReclassified);
+    try expect_counts(obs, 3, 0, 3, 0);
+    try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
+    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    const seq_p = graph.deferred[call_find_deferred(graph, 0x100).?].record.seq;
+    const seq_c1 = graph.deferred[call_find_deferred(graph, 0x200).?].record.seq;
+    const seq_c2 = graph.deferred[call_find_deferred(graph, 0x300).?].record.seq;
+    try testing.expect(seq_p < seq_c1 and seq_c1 < seq_c2);
+    try testing.expectEqual(@as(u64, 0x900), graph.deferred[call_find_deferred(graph, 0x100).?].record.parent_window);
+    try testing.expectEqual(@as(u64, 0x100), graph.deferred[call_find_deferred(graph, 0x200).?].record.parent_window);
+    try testing.expectEqual(@as(u64, 3), discard_events(graph));
+    // The missing owner arrives: owner, window, then its children, each after its parent.
+    const root = try admit_top(graph, 0x900, 21);
+    try expect_counts(root, 4, 4, 0, 0);
+    var events: [6]event_t = undefined;
+    try testing.expectEqual(@as(usize, 4), try drain_events(graph, &events));
+    try expect_ev(events[0], EventAnnounce, 0x900, 4, 0, 0, 0);
+    try expect_ev(events[1], EventAnnounce, 0x100, 5, 0x900, 4, 0);
+    try expect_ev(events[2], EventAnnounce, 0x200, 6, 0x100, 5, 0);
+    try expect_ev(events[3], EventAnnounce, 0x300, 7, 0x100, 5, 0);
+    var key_buffer: [64]u8 = undefined;
+    try testing.expectEqualStrings(expected_key(&key_buffer, 0x100, 1), events[1].app_key[0..events[1].app_key_length]);
+}
+
+test "reclassification with one free slot admits the window and leaves its descendants deferred" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x50, 9);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x200, 0x100, 11);
+    _ = try admit_dialog(graph, 0x300, 0x100, 12);
+    try fill_graph(graph, 59);
+    _ = discard_events(graph);
+    var facts = reclassify_facts(20);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionReclassified, RoleDialog, 64, 2, ReasonReclassified);
+    try expect_counts(obs, 4, 1, 3, 0);
+    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 2), stats.rejected_at_capacity);
+    try testing.expectEqual(@as(u64, 2), graph.diag_at_capacity);
+    try testing.expect(graph.deferred[call_find_deferred(graph, 0x200).?].record.seq < graph.deferred[call_find_deferred(graph, 0x300).?].record.seq);
+    // Slots return when the coordinator completes the three retirements; the deferred children come back.
+    const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
+    const lookups = lookup_probe.calls;
+    for ([_]u64{ 2, 3, 4 }, [_]u64{ 0x100, 0x200, 0x300 }) |generation, window| {
+        try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, window, generation, &proof));
+    }
+    facts = owned_facts(0x200, 0x100, 21);
+    const child = try offer(graph, &facts);
+    try expect_obs(child, DispositionAdmitted, RoleDialog, 65, 0, ReasonNone);
+    try testing.expectEqual(lookups, lookup_probe.calls);
+    const ev = try next_ev(graph);
+    try expect_ev(ev, EventRetireIntent, 0x300, 4, 0x100, 2, ReasonParentRetired);
+}
+
+test "reclassification with a cut flush keeps the unadmitted descendant deferred" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x50, 9);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x200, 0x100, 11);
+    _ = try admit_dialog(graph, 0x300, 0x100, 12);
+    try fill_graph(graph, 58);
+    _ = discard_events(graph);
+    var facts = reclassify_facts(20);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionReclassified, RoleDialog, 63, 2, ReasonReclassified);
+    try expect_counts(obs, 5, 2, 3, 0);
+    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing.expect(call_find_deferred(graph, 0x300) != null);
+    try testing.expect(call_find_active(graph, 0x200) != null);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_at_capacity);
+}
+
+test "reclassification with no free slot degrades to retire-only and retries on the next offer" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x50, 9);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x200, 0x100, 11);
+    _ = try admit_dialog(graph, 0x300, 0x100, 12);
+    try fill_graph(graph, 60);
+    _ = discard_events(graph);
+    try testing.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
+    var facts = reclassify_facts(20);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionRetired, 0, 0, 2, ReasonReclassified);
+    try expect_counts(obs, 3, 0, 3, 0);
+    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_at_capacity);
+    try testing.expectEqual(@as(u32, 3), discard_events(graph));
+    facts.stamp = 21;
+    try offer_fails(graph, &facts, .AtCapacity);
+    const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
+    for ([_]u64{ 2, 3, 4 }, [_]u64{ 0x100, 0x200, 0x300 }) |generation, window| {
+        try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, window, generation, &proof));
+    }
+    const retry = try offer(graph, &facts);
+    try expect_obs(retry, DispositionAdmitted, RoleDialog, 65, 0, ReasonNone);
+    try expect_counts(retry, 3, 3, 0, 0);
+    var events: [4]event_t = undefined;
+    try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+    try expect_ev(events[0], EventAnnounce, 0x100, 65, 0x50, 1, 0);
+    try expect_ev(events[1], EventAnnounce, 0x200, 66, 0x100, 65, 0);
+    try expect_ev(events[2], EventAnnounce, 0x300, 67, 0x100, 65, 0);
+}
+
+test "a role change without a parent change also reclassifies" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = discard_events(graph);
+    var facts = window_facts(0x100, 11);
+    facts.ex_style = ExStyleNoActivate;
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionReclassified, RoleTooltip, 2, 1, ReasonReclassified);
+    try expect_counts(obs, 2, 1, 1, 0);
+    // The class is part of the identity, so a class change is an incarnation change instead.
+    facts = window_facts(0x100, 12);
+    facts.ex_style = ExStyleNoActivate;
+    set_class(&facts, "tooltips_class32");
+    const other = try offer(graph, &facts);
+    try expect_obs(other, DispositionAdmitted, RoleTooltip, 3, 2, ReasonIncarnationChanged);
+}
+
+test "retirement for every non-reclassify cause leaves the descendants retired and not deferred" {
+    // Classified as not exported.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = try admit_dialog(graph, 0x200, 0x100, 11);
+        _ = try admit_dialog(graph, 0x300, 0x100, 12);
+        _ = discard_events(graph);
+        var facts = window_facts(0x100, 13);
+        facts.flags &= ~FactVisible;
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonNotVisible);
+        try expect_counts(obs, 3, 0, 3, 0);
+        var events: [4]event_t = undefined;
+        try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+        try expect_ev(events[0], EventRetireIntent, 0x300, 3, 0x100, 1, ReasonParentRetired);
+        try expect_ev(events[1], EventRetireIntent, 0x200, 2, 0x100, 1, ReasonParentRetired);
+        try expect_ev(events[2], EventRetireIntent, 0x100, 1, 0, 0, ReasonNotVisible);
+        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing.expectEqual(@as(u64, 0), current_stats(graph).reclassified);
+        // The child returns through its own next offer, deferred behind the vanished parent.
+        const child = try admit_dialog(graph, 0x200, 0x100, 14);
+        try expect_obs(child, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    }
+    // Destroy hint.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = try admit_dialog(graph, 0x200, 0x100, 11);
+        _ = discard_events(graph);
+        const obs = try destroy_hint(graph, 0x100, 12, 2000);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+        try expect_counts(obs, 2, 0, 2, 0);
+        var events: [4]event_t = undefined;
+        try testing.expectEqual(@as(usize, 2), try drain_events(graph, &events));
+        try expect_ev(events[0], EventRetireIntent, 0x200, 2, 0x100, 1, ReasonParentRetired);
+        try expect_ev(events[1], EventRetireIntent, 0x100, 1, 0, 0, ReasonDestroyed);
+        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    }
+}
+
+test "a window that is not exported is Excluded and drops its deferred record" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = window_facts(0x100, 10);
+    set_class(&facts, "Progman");
+    var obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionExcluded, 0, 0, 0, ReasonExcludedClass);
+    try expect_counts(obs, 0, 0, 0, 0);
+    try testing.expectEqual(@as(u32, 0), lookup_probe.calls);
+    try testing.expectEqual(@as(u64, 10), graph.stamp_high_water);
+    facts = owned_facts(0x200, 0x900, 11);
+    _ = try offer(graph, &facts);
+    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    facts = owned_facts(0x200, 0x900, 12);
+    facts.width = 0;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionExcluded, 0, 0, 0, ReasonZeroArea);
+    try expect_counts(obs, 0, 0, 0, 1);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+}
+
+test "an off-desktop offer is Suspended and changes no entry, record or event" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x200, 0x900, 11);
+    _ = discard_events(graph);
+    var facts = window_facts(0x100, 20);
+    facts.captured_ms = 3000;
+    facts.flags &= ~(FactOnInputDesktop | FactVisible);
+    facts.width = 0;
+    const before = state_digest(graph);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionSuspended, 0, 0, 0, ReasonNone);
+    try expect_counts(obs, 0, 0, 0, 0);
+    try testing.expectEqual(@as(u64, 0x100), obs.window);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).suspended);
+    // Only the stamp high-water mark and the tick base advance (an Ok call).
+    try testing.expect(before != state_digest(graph));
+    try testing.expectEqual(@as(u64, 20), graph.stamp_high_water);
+    try testing.expectEqual(TickBaseStart + 3000, graph.tick_base);
+    try testing.expectEqual(@as(u64, 10), graph.entries[call_find_active(graph, 0x100).?].record.last_stamp);
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    // A stale Suspended offer is rejected before classification.
+    facts.stamp = 9;
+    try offer_fails(graph, &facts, .StaleFacts);
+}
+
+test "64 exported entries refuse a 65th window, evict nothing and free a slot only after completion" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    try fill_graph(graph, 64);
+    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    var facts = window_facts(0x100, 500);
+    try offer_fails(graph, &facts, .AtCapacity);
+    var stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.rejected_at_capacity);
+    try testing.expectEqual(@as(u64, 1), graph.diag_at_capacity);
+    try testing.expectEqual(@as(u32, 64), lookup_probe.calls);
+    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    // Deferral consumes no exported capacity.
+    var dialog = owned_facts(0x200, 0x900, 501);
+    const deferred = try offer(graph, &dialog);
+    try testing.expectEqual(DispositionDeferred, deferred.disposition);
+    // A destroyed window keeps its slot while quarantined.
+    const retired = try destroy_hint(graph, 0x8000, 1000, 5000);
+    try expect_obs(retired, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+    facts.stamp = 502;
+    try offer_fails(graph, &facts, .AtCapacity);
+    stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 2), stats.rejected_at_capacity);
+    const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
+    try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x8000, 1, &proof));
+    const admitted = try offer(graph, &facts);
+    try expect_obs(admitted, DispositionAdmitted, RoleToplevel, 65, 0, ReasonNone);
+    try testing.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
+}
+
+test "a flush cut by capacity leaves the youngest children deferred and counts them" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = owned_facts(0x201, 0x100, 10);
+    _ = try offer(graph, &facts);
+    facts = owned_facts(0x202, 0x100, 11);
+    _ = try offer(graph, &facts);
+    facts = owned_facts(0x301, 0x201, 12);
+    _ = try offer(graph, &facts);
+    facts = owned_facts(0x302, 0x202, 13);
+    _ = try offer(graph, &facts);
+    try fill_graph(graph, 62);
+    // Two slots remain: the parent and its oldest child.
+    const obs = try admit_top(graph, 0x100, 20);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 63, 0, ReasonNone);
+    try expect_counts(obs, 2, 2, 0, 0);
+    try testing.expect(call_find_active(graph, 0x201) != null);
+    try testing.expect(call_find_active(graph, 0x202) == null);
+    try testing.expect(call_find_active(graph, 0x301) == null);
+    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    // Two candidates were in the worklist when the budget ran out (the sibling and the grandchild).
+    try testing.expectEqual(@as(u64, 2), current_stats(graph).rejected_at_capacity);
+    try testing.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
+}
+
+test "a 65th deferred record evicts the oldest deferral" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var index: u64 = 0;
+    while (index < MaxDeferred) : (index += 1) {
+        var facts = owned_facts(0x1000 + index, 0x9000, 10 + index);
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        try expect_counts(obs, 0, 0, 0, 0);
+    }
+    try testing.expectEqual(@as(u32, 64), call_count_deferred(graph));
+    try testing.expectEqual(@as(u64, 1), graph.deferred[call_find_deferred(graph, 0x1000).?].record.seq);
+    var facts = owned_facts(0x2000, 0x9000, 100);
+    var obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    try expect_counts(obs, 0, 0, 0, 1);
+    try testing.expectEqual(@as(u32, 64), call_count_deferred(graph));
+    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x1000));
+    try testing.expectEqual(@as(u64, 65), graph.deferred[call_find_deferred(graph, 0x2000).?].record.seq);
+    var stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.deferred_evicted);
+    try testing.expectEqual(@as(u64, 0), stats.deferred_dropped);
+    try testing.expectEqual(@as(u64, 65), stats.deferred_added);
+    try testing.expectEqual(@as(u64, 1), graph.diag_deferred_evicted);
+    // The evicted window comes back through its next offer and evicts the then-oldest record.
+    facts = owned_facts(0x1000, 0x9000, 101);
+    obs = try offer(graph, &facts);
+    try expect_counts(obs, 0, 0, 0, 1);
+    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x1001));
+    try testing.expectEqual(@as(u64, 66), graph.deferred[call_find_deferred(graph, 0x1000).?].record.seq);
+    try testing.expectEqual(@as(u32, 66), lookup_probe.calls);
+    stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 2), stats.deferred_evicted);
+}
+
+test "lookup failure, invalid keys and re-entry publish nothing" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = window_facts(0x100, 10);
+    lookup_probe.mode = .Fail;
+    try offer_fails(graph, &facts, .LookupFailed);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).lookup_failures);
+    // The failing lookup also guards deferral.
+    var dialog = owned_facts(0x200, 0x900, 11);
+    try offer_fails(graph, &dialog, .LookupFailed);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    for ([_]lookup_mode_t{ .Invalid, .Empty, .TooLong }) |mode| {
+        lookup_probe.mode = mode;
+        try offer_fails(graph, &facts, .AppKeyInvalid);
+    }
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 2), stats.lookup_failures);
+    try testing.expectEqual(@as(u64, 3), stats.app_key_invalid);
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    // A callback that calls back into the graph sees Reentrant for every entry point.
+    lookup_probe.mode = .Reenter;
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
+    try testing.expectEqual(status_t.Reentrant, lookup_probe.reenter_observe);
+    try testing.expectEqual(status_t.Reentrant, lookup_probe.reenter_check);
+    try testing.expectEqual(status_t.Reentrant, lookup_probe.reenter_note);
+    try testing.expectEqual(status_t.Reentrant, lookup_probe.reenter_next);
+    try testing.expect(!graph.busy);
+    try testing.expectEqual(@as(u32, 1), graph.ring_len);
+}
+
+test "QueueFull changes nothing and the same offer succeeds after a drain" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    fill_ring(graph, EventCapacity);
+    var facts = window_facts(0x100, 10);
+    try offer_fails(graph, &facts, .QueueFull);
+    try testing.expectEqual(@as(u32, 0), lookup_probe.calls);
+    var stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.rejected_queue_full);
+    try testing.expectEqual(@as(u64, 1), graph.diag_queue_full);
+    _ = try next_ev(graph);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
+    _ = discard_events(graph);
+
+    // The whole plan must fit: parent plus three deferred children need four events.
+    var child = owned_facts(0x201, 0x300, 11);
+    _ = try offer(graph, &child);
+    child = owned_facts(0x202, 0x300, 12);
+    _ = try offer(graph, &child);
+    child = owned_facts(0x203, 0x300, 13);
+    _ = try offer(graph, &child);
+    fill_ring(graph, EventCapacity - 3);
+    var parent = window_facts(0x300, 14);
+    try offer_fails(graph, &parent, .QueueFull);
+    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    _ = try next_ev(graph);
+    const flushed = try offer(graph, &parent);
+    try expect_counts(flushed, 4, 4, 0, 0);
+    _ = discard_events(graph);
+
+    // Retirement of a cascade needs one event per member (three children and the parent).
+    fill_ring(graph, EventCapacity - 3);
+    var hidden = window_facts(0x300, 20);
+    hidden.flags &= ~FactVisible;
+    try offer_fails(graph, &hidden, .QueueFull);
+    var hint = sentinel_observation();
+    const before = state_digest(graph);
+    try testing.expectEqual(status_t.QueueFull, call_note_destroyed(graph, TestEpoch, 0x300, 50, 9000, &hint));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&hint), 0xA5));
+    try testing.expectEqual(before, state_digest(graph));
+    _ = try next_ev(graph);
+    const retired = try offer(graph, &hidden);
+    try expect_obs(retired, DispositionRetired, 0, 0, 2, ReasonNotVisible);
+    try expect_counts(retired, 4, 0, 4, 0);
+    stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 4), stats.rejected_queue_full);
+    try testing.expectEqual(@as(u64, 4), graph.diag_queue_full);
+}
+
+test "QueueFull on a forced retirement counts nothing else and keeps the entry live" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = discard_events(graph);
+    fill_ring(graph, EventCapacity);
+    var facts = owned_facts(0x100, 0x100, 11);
+    facts.process_id = 9999;
+    try offer_fails(graph, &facts, .QueueFull);
+    try testing.expectEqual(@as(u64, 0), current_stats(graph).rejected_cycle);
+    try testing.expect(call_find_active(graph, 0x100) != null);
+    var obs = sentinel_observation();
+    const before = state_digest(graph);
+    try testing.expectEqual(status_t.QueueFull, call_note_destroyed(graph, TestEpoch, 0x100, 50, 9000, &obs));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing.expectEqual(before, state_digest(graph));
+    try testing.expectEqual(@as(u64, 2), current_stats(graph).rejected_queue_full);
+    try testing.expectEqual(@as(u64, 2), graph.diag_queue_full);
+}
+
+test "generations grow by one, run out cleanly and leave existing entries working" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    set_generations_issued(graph, std.math.maxInt(u64) - 2);
+    var obs = try admit_top(graph, 0x100, 10);
+    try testing.expectEqual(std.math.maxInt(u64) - 1, obs.generation);
+    obs = try admit_top(graph, 0x200, 11);
+    try testing.expectEqual(std.math.maxInt(u64), obs.generation);
+    _ = discard_events(graph);
+    var facts = window_facts(0x300, 12);
+    try offer_fails(graph, &facts, .GenerationExhausted);
+    var stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.rejected_generation_exhausted);
+    try testing.expectEqual(@as(u64, 1), graph.diag_generation_exhausted);
+    try testing.expectEqual(@as(u64, 0), stats.rejected_at_capacity);
+    // Deferral needs no generation, so it still works.
+    var dialog = owned_facts(0x400, 0x900, 13);
+    const deferred = try offer(graph, &dialog);
+    try testing.expectEqual(DispositionDeferred, deferred.disposition);
+    // Existing entries keep updating, passing checks and retiring.
+    facts = window_facts(0x100, 14);
+    facts.x = 50;
+    obs = try offer(graph, &facts);
+    try testing.expectEqual(DispositionUpdated, obs.disposition);
+    try testing.expectEqual(status_t.Ok, call_check_action(graph, TestEpoch, 0x200, std.math.maxInt(u64)));
+    obs = try destroy_hint(graph, 0x200, 100, 9000);
+    try testing.expectEqual(DispositionRetired, obs.disposition);
+    stats = current_stats(graph);
+    try testing.expectEqual(std.math.maxInt(u64), stats.generations_issued);
+}
+
+test "a flush cut by the last generations counts them as generation exhaustion" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = owned_facts(0x201, 0x100, 10);
+    _ = try offer(graph, &facts);
+    facts = owned_facts(0x202, 0x100, 11);
+    _ = try offer(graph, &facts);
+    set_generations_issued(graph, std.math.maxInt(u64) - 2);
+    const obs = try admit_top(graph, 0x100, 12);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, std.math.maxInt(u64) - 1, 0, ReasonNone);
+    try expect_counts(obs, 2, 2, 0, 0);
+    try testing.expect(call_find_deferred(graph, 0x202) != null);
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.rejected_generation_exhausted);
+    try testing.expectEqual(@as(u64, 0), stats.rejected_at_capacity);
+}
+
+test "reusing an HWND always yields a fresh generation and a late completion cannot touch it" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = discard_events(graph);
+    _ = try destroy_hint(graph, 0x100, 20, 5000);
+    var facts = window_facts(0x100, 21);
+    facts.process_id = 777;
+    var obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 2, 0, ReasonNone);
+    // The same tuple after completing the first quarantine is still a new generation.
+    const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
+    try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, 1, &proof));
+    try testing.expectEqual(status_t.Stale, call_complete_retire(graph, TestEpoch, 0x100, 1, &proof));
+    try testing.expectEqual(@as(u64, 2), live_generation(graph, 0x100));
+    _ = try destroy_hint(graph, 0x100, 30, 6000);
+    obs = try admit_top(graph, 0x100, 31);
+    try testing.expectEqual(@as(u64, 3), obs.generation);
+    try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, 2, &proof));
+    try testing.expectEqual(@as(u64, 3), live_generation(graph, 0x100));
+    // The stale-facts reference is the Active entry only: a retired window accepts any stamp.
+    _ = try destroy_hint(graph, 0x100, 40, 7000);
+    facts = window_facts(0x100, 5);
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 4, 0, ReasonNone);
+}
+
+test "stale epochs, invalid facts and stale facts are rejected before any state change" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = discard_events(graph);
+    var facts = window_facts(0x100, 11);
+    facts.x = 4;
+    var obs = sentinel_observation();
+    var before = state_digest(graph);
+    try testing.expectEqual(status_t.StaleEpoch, call_observe(graph, TestEpoch + 1, &facts, &obs));
+    try testing.expectEqual(status_t.StaleEpoch, call_observe(graph, 0, &facts, &obs));
+    try testing.expectEqual(status_t.StaleEpoch, call_note_destroyed(graph, TestEpoch + 1, 0x100, 50, 9000, &obs));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing.expectEqual(before, state_digest(graph));
+    try testing.expectEqual(@as(u64, 3), current_stats(graph).rejected_stale_epoch);
+    // Invalid facts win over staleness.
+    facts.stamp = 0;
+    try offer_fails(graph, &facts, .InvalidFacts);
+    facts = window_facts(0x100, 11);
+    facts.dpi = 50;
+    try offer_fails(graph, &facts, .InvalidFacts);
+    facts = window_facts(0x100, 11);
+    facts.owner = 0x50;
+    facts.flags |= FactOwnerHidden;
+    facts.owner_root = 0;
+    try offer_fails(graph, &facts, .InvalidFacts);
+    try testing.expectEqual(@as(u64, 3), current_stats(graph).rejected_invalid_facts);
+    // Older stamps are stale; equal stamps are accepted.
+    facts = window_facts(0x100, 9);
+    try offer_fails(graph, &facts, .StaleFacts);
+    facts.stamp = 10;
+    obs = try offer(graph, &facts);
+    try testing.expectEqual(DispositionUnchanged, obs.disposition);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_stale_facts);
+    before = state_digest(graph);
+    // note_destroyed argument checks.
+    obs = sentinel_observation();
+    try testing.expectEqual(status_t.InvalidArgument, call_note_destroyed(graph, TestEpoch, 0, 50, 9000, &obs));
+    try testing.expectEqual(status_t.InvalidArgument, call_note_destroyed(graph, TestEpoch, 0x100, 0, 9000, &obs));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing.expectEqual(before, state_digest(graph));
+}
+
+/// One simulated day in milliseconds.
+const DayMs: u64 = 86_400_000;
+
+fn admit_at(graph: *graph_t, window: u64, stamp: u64, tick: u32) !observation_t {
+    var facts = window_facts(window, stamp);
+    facts.captured_ms = tick;
+    const obs = try offer(graph, &facts);
+    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    return obs;
+}
+
+test "a genuine destroy hint retires the live entry and advances the high-water marks" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_at(graph, 0x100, 10, 5000);
+    _ = discard_events(graph);
+    const obs = try destroy_hint(graph, 0x100, 11, 5100);
+    try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+    try expect_counts(obs, 1, 0, 1, 0);
+    try testing.expectEqual(@as(u64, 0x100), obs.window);
+    try testing.expectEqual(@as(u64, 11), graph.stamp_high_water);
+    try testing.expectEqual(TickBaseStart + 5100, graph.tick_base);
+    try testing.expectEqual(@as(?usize, null), call_find_active(graph, 0x100));
+    const ev = try next_ev(graph);
+    try expect_ev(ev, EventRetireIntent, 0x100, 1, 0, 0, ReasonDestroyed);
+    try testing.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 0x100, 1));
+    // Retiring entries are never touched by a second hint.
+    const again = try destroy_hint(graph, 0x100, 12, 5200);
+    try expect_obs(again, DispositionUnchanged, 0, 0, 0, ReasonNone);
+    try expect_counts(again, 0, 0, 0, 0);
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Retiring));
+}
+
+test "a destroy hint older than the admitting facts is ignored" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_at(graph, 0x100, 10, 5000);
+    _ = discard_events(graph);
+    // Stamp clause: equal and lower stamps carry no authority over the admitting facts.
+    var obs = try destroy_hint(graph, 0x100, 10, 6000);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+    obs = try destroy_hint(graph, 0x100, 9, 6000);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+    try testing.expectEqual(@as(u64, 10), graph.stamp_high_water);
+    // Tick clause: the event happened 1 and 10 ms before the facts that admitted the entry.
+    obs = try destroy_hint(graph, 0x100, 11, 4999);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+    obs = try destroy_hint(graph, 0x100, 12, 4990);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing.expect(call_find_active(graph, 0x100) != null);
+    try testing.expectEqual(@as(u64, 12), graph.stamp_high_water);
+    // Equal ticks count as destroyed (documented conservative churn).
+    obs = try destroy_hint(graph, 0x100, 13, 5000);
+    try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+}
+
+test "a destroy hint for a deferred record needs both a newer stamp and a non-older tick" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = owned_facts(0x200, 0x900, 10);
+    facts.captured_ms = 5000;
+    _ = try offer(graph, &facts);
+    var obs = try destroy_hint(graph, 0x200, 10, 6000);
+    try expect_obs(obs, DispositionUnchanged, 0, 0, 0, ReasonNone);
+    try expect_counts(obs, 0, 0, 0, 0);
+    obs = try destroy_hint(graph, 0x200, 11, 4999);
+    try expect_counts(obs, 0, 0, 0, 0);
+    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    obs = try destroy_hint(graph, 0x200, 11, 5000);
+    try expect_obs(obs, DispositionUnchanged, 0, 0, 0, ReasonNone);
+    try expect_counts(obs, 0, 0, 0, 1);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+    // Nothing known about the window at all.
+    obs = try destroy_hint(graph, 0x777, 12, 5000);
+    try expect_obs(obs, DispositionUnchanged, 0, 0, 0, ReasonNone);
+    try expect_counts(obs, 0, 0, 0, 0);
+}
+
+test "tick wrap: a destroy across the 32-bit wrap retires, one just before the admission does not" {
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_at(graph, 0x100, 10, 0xFFFF_FFF0);
+        const obs = try destroy_hint(graph, 0x100, 11, 0x0000_0010);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+        try testing.expectEqual(@as(u64, 0x1_0000_0010) + TickBaseStart - 0x1_0000_0000, graph.tick_base);
+    }
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        _ = try admit_at(graph, 0x100, 10, 0xFFFF_FFF0);
+        const obs = try destroy_hint(graph, 0x100, 11, 0xFFFF_FFE0);
+        try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+        // A stale hint 10 ms before an admission close to the wrap point.
+        _ = try destroy_hint(graph, 0x100, 12, 0xFFFF_FFE6);
+        try testing.expect(call_find_active(graph, 0x100) != null);
+    }
+}
+
+test "destroy hints still work 30 and 60 simulated days after the admission" {
+    for ([_]u64{ 30, 60 }) |days| {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        const admit_tick: u64 = 0xFFFF_0000;
+        _ = try admit_at(graph, 0x100, 10, @truncate(admit_tick));
+        _ = try admit_at(graph, 0x200, 11, @truncate(admit_tick));
+        // One tick-carrying Ok call per simulated day (the real cadence is 250 ms).
+        var day: u64 = 1;
+        while (day <= days) : (day += 1) {
+            var keepalive = window_facts(0x200, 11 + day);
+            keepalive.captured_ms = @truncate(admit_tick + day * DayMs);
+            const obs = try offer(graph, &keepalive);
+            try testing.expectEqual(DispositionUnchanged, obs.disposition);
+        }
+        try testing.expectEqual(TickBaseStart - 0x1_0000 + days * DayMs, graph.tick_base);
+        const final_tick: u32 = @truncate(admit_tick + days * DayMs);
+        const obs = try destroy_hint(graph, 0x100, 1000, final_tick);
+        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+        // A hint from the middle of the long interval would be stale; one from 10 ms ago is not.
+        const recent = try destroy_hint(graph, 0x200, 1001, final_tick -% 10);
+        try expect_obs(recent, DispositionRetired, 0, 0, 2, ReasonDestroyed);
+    }
+}
+
+test "without a tick-carrying call for longer than half the range the unwrap can alias" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_at(graph, 0x100, 10, 0xFFFF_0000);
+    // 30 days later but no Ok call in between: the single 32-bit jump reads as negative and is ignored.
+    const obs = try destroy_hint(graph, 0x100, 11, @truncate(0xFFFF_0000 + 30 * DayMs));
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+    // The next refresh-style offer or hint inside the window of validity corrects it.
+    const later = try destroy_hint(graph, 0x100, 12, 0xFFFF_0000);
+    try expect_obs(later, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+}
+
+test "OwnerHidden promotes an owned window and a later flag change reclassifies it" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var facts = owned_facts(0x200, 0x900, 10);
+    var obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    // The observer found the owner never exportable: the window is a top-level now and uses the stored key.
+    facts = owned_facts(0x200, 0x900, 11);
+    facts.flags |= FactOwnerHidden;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
+    try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
+    var ev = try next_ev(graph);
+    try expect_ev(ev, EventAnnounce, 0x200, 1, 0, 0, 0);
+    // The owner became exportable again: Dialog under an owner that is not announced.
+    facts = owned_facts(0x200, 0x900, 12);
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 1, ReasonReclassified);
+    try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
+    ev = try next_ev(graph);
+    try expect_ev(ev, EventRetireIntent, 0x200, 1, 0, 0, ReasonReclassified);
+    facts = owned_facts(0x200, 0x900, 13);
+    facts.flags |= FactOwnerHidden;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 2, 0, ReasonNone);
+    // Flag changes that leave role and parent alone are not changes at all.
+    facts = owned_facts(0x300, 0x900, 14);
+    facts.ex_style = ExStyleAppWindow;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 3, 0, ReasonNone);
+    facts.stamp = 15;
+    facts.flags |= FactOwnerHidden;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 3, 0, ReasonNone);
+    facts.stamp = 16;
+    facts.flags &= ~FactOwnerHidden;
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 3, 0, ReasonNone);
+}
+
+test "an IME preedit window follows its owner and loses the parent when the owner is hidden" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var preedit = owned_facts(0x400, 0x100, 10);
+    preedit.flags |= FactAgentOwned | FactAgentPreedit;
+    var obs = try offer(graph, &preedit);
+    try expect_obs(obs, DispositionDeferred, RoleImePreedit, 0, 0, ReasonParentPending);
+    obs = try admit_top(graph, 0x100, 11);
+    try expect_counts(obs, 2, 2, 0, 0);
+    var events: [4]event_t = undefined;
+    try testing.expectEqual(@as(usize, 2), try drain_events(graph, &events));
+    try expect_ev(events[1], EventAnnounce, 0x400, 2, 0x100, 1, 0);
+    try testing.expectEqual(RoleImePreedit, events[1].role);
+    // The observer now reports the owner as hidden: no parent, so the role is the same but the parent changed.
+    preedit = owned_facts(0x400, 0x100, 12);
+    preedit.flags |= FactAgentOwned | FactAgentPreedit | FactOwnerHidden;
+    obs = try offer(graph, &preedit);
+    try expect_obs(obs, DispositionReclassified, RoleImePreedit, 3, 2, ReasonReclassified);
+    // An ownerless preedit has no parent either.
+    preedit = window_facts(0x500, 13);
+    preedit.flags |= FactAgentOwned | FactAgentPreedit;
+    obs = try offer(graph, &preedit);
+    try expect_obs(obs, DispositionAdmitted, RoleImePreedit, 4, 0, ReasonNone);
+}
+
+test "classify_public reports the pure verdict in the C struct" {
+    var facts = fixture_facts();
+    var verdict: c.interop_window_verdict_t = undefined;
+    @memset(std.mem.asBytes(&verdict), 0xA5);
+    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+    try testing.expectEqual(@as(u32, 1), verdict.kind);
+    try testing.expectEqual(RoleToplevel, verdict.role);
+    try testing.expectEqual(@as(u32, 0), verdict.reason);
+    try testing.expectEqual(@as(u32, 0), verdict.reserved0);
+    try testing.expectEqual(@as(u64, 0), verdict.parent_window);
+
+    facts.owner = OwnerWindow;
+    facts.owner_root = OwnerRootWindow;
+    @memset(std.mem.asBytes(&verdict), 0xA5);
+    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacAuto, &verdict));
+    try testing.expectEqual(@as(u32, 1), verdict.kind);
+    try testing.expectEqual(RoleDialog, verdict.role);
+    try testing.expectEqual(OwnerRootWindow, verdict.parent_window);
+    facts.flags |= FactOwnerHidden;
+    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacAuto, &verdict));
+    try testing.expectEqual(RoleToplevel, verdict.role);
+    try testing.expectEqual(@as(u64, 0), verdict.parent_window);
+
+    facts = fixture_facts();
+    set_class(&facts, "Progman");
+    @memset(std.mem.asBytes(&verdict), 0xA5);
+    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+    try testing.expectEqual(@as(u32, 2), verdict.kind);
+    try testing.expectEqual(@as(u32, 0), verdict.role);
+    try testing.expectEqual(ReasonExcludedClass, verdict.reason);
+    try testing.expectEqual(@as(u32, 0), verdict.reserved0);
+    try testing.expectEqual(@as(u64, 0), verdict.parent_window);
+
+    facts = fixture_facts();
+    facts.flags &= ~FactOnInputDesktop;
+    facts.owner = OwnerWindow;
+    facts.owner_root = OwnerRootWindow;
+    @memset(std.mem.asBytes(&verdict), 0xA5);
+    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+    try testing.expectEqual(@as(u32, 3), verdict.kind);
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&verdict)[4..], 0));
+
+    // UAC modes reach the classifier.
+    facts = fixture_facts();
+    set_class(&facts, UacCredentialName);
+    set_image(&facts, "consent.exe");
+    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+    try testing.expectEqual(RoleUacConsent, verdict.role);
+    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacNative, &verdict));
+    try testing.expectEqual(@as(u32, 2), verdict.kind);
+    try testing.expectEqual(ReasonUacNativeHidden, verdict.reason);
+}
+
+test "classify_public rejects bad arguments and invalid facts and leaves the verdict alone" {
+    var facts = fixture_facts();
+    var verdict: c.interop_window_verdict_t = undefined;
+    @memset(std.mem.asBytes(&verdict), 0xA5);
+    try testing.expectEqual(status_t.InvalidArgument, call_classify_public(&facts, 3, &verdict));
+    try testing.expectEqual(status_t.InvalidArgument, call_classify_public(&facts, 0xFFFF_FFFF, &verdict));
+    facts.stamp = 0;
+    try testing.expectEqual(status_t.InvalidFacts, call_classify_public(&facts, UacWindow, &verdict));
+    facts = fixture_facts();
+    facts.flags |= FactOwnerHidden;
+    try testing.expectEqual(status_t.InvalidFacts, call_classify_public(&facts, UacWindow, &verdict));
+    // The argument check comes first, as for the other pure checks of the C function.
+    try testing.expectEqual(status_t.InvalidArgument, call_classify_public(&facts, 9, &verdict));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&verdict), 0xA5));
+    facts.owner = OwnerWindow;
+    facts.owner_root = OwnerRootWindow;
+    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+}
+
+test "OwnerHidden is valid only together with an owner" {
+    var facts = fixture_facts();
+    facts.flags |= FactOwnerHidden;
+    try testing.expect(!call_validate(&facts));
+    facts.owner = OwnerWindow;
+    facts.owner_root = OwnerRootWindow;
+    try testing.expect(call_validate(&facts));
+    facts.flags &= ~FactOwnerHidden;
+    try testing.expect(call_validate(&facts));
+    try testing.expectEqual(@as(u32, 0x1FFF), FactMask);
+    try testing.expectEqual(@as(u32, 1 << 12), FactOwnerHidden);
+}
+
+fn link_child(rec: *record_t, parent_window: u64, parent_generation: u64) void {
+    rec.parent_window = parent_window;
+    rec.parent_generation = parent_generation;
+}
+
+/// A(g5) with children B(g6) and D(g7) and grandchild C(g9); unrelated E, a Retiring lookalike and a wrong-generation lookalike.
+fn inject_tree(graph: *graph_t) void {
+    _ = inject_entry(graph, 3, .Active, 0xA, 5);
+    link_child(inject_entry(graph, 7, .Active, 0xB, 6), 0xA, 5);
+    link_child(inject_entry(graph, 1, .Active, 0xC, 9), 0xB, 6);
+    link_child(inject_entry(graph, 20, .Active, 0xD, 7), 0xA, 5);
+    link_child(inject_entry(graph, 2, .Active, 0xE, 8), 0xF, 1);
+    link_child(inject_entry(graph, 4, .Retiring, 0x10, 10), 0xA, 5);
+    link_child(inject_entry(graph, 5, .Active, 0x11, 11), 0xA, 4);
+    for ([_]usize{ 3, 7, 1, 20, 2, 4, 5 }) |slot| {
+        const rec = &graph.entries[slot].record;
+        rec.app_key_length = 3;
+        @memcpy(rec.app_key[0..3], "a-k");
+        rec.dpi = 96;
+        rec.width = 10;
+        rec.height = 10;
+        const title = "title";
+        @memcpy(rec.title[0..title.len], title);
+        rec.title_length = title.len;
+    }
+    graph.generations_issued = 11;
+}
+
+test "collect_cascade gathers Active descendants by exact parent pair, descending by generation" {
+    const graph = try test_graph(testing.allocator, TestEpoch);
+    defer call_destroy(graph);
+    inject_tree(graph);
+    var cascade = cascade_t{};
+    call_collect_cascade(graph, 3, &cascade);
+    try testing.expectEqual(@as(u32, 4), cascade.count);
+    try testing.expectEqualSlices(u8, &[_]u8{ 1, 20, 7, 3 }, cascade.slots[0..4]);
+    try testing.expect(call_cascade_has_window(graph, &cascade, 0xA));
+    try testing.expect(call_cascade_has_window(graph, &cascade, 0xC));
+    try testing.expect(!call_cascade_has_window(graph, &cascade, 0xE));
+    try testing.expect(!call_cascade_has_window(graph, &cascade, 0x10));
+    try testing.expect(!call_cascade_has_window(graph, &cascade, 0x11));
+    // A leaf is its own cascade.
+    call_collect_cascade(graph, 1, &cascade);
+    try testing.expectEqual(@as(u32, 1), cascade.count);
+    try testing.expectEqual(@as(u8, 1), cascade.slots[0]);
+}
+
+test "retire_cascade keeps records, marks Retiring and queues children before the root" {
+    const graph = try test_graph(testing.allocator, TestEpoch);
+    defer call_destroy(graph);
+    inject_tree(graph);
+    var cascade = cascade_t{};
+    call_collect_cascade(graph, 3, &cascade);
+    var tally = tally_t{};
+    call_retire_cascade(graph, &cascade, ReasonDestroyed, &tally);
+    try testing.expectEqual(@as(u32, 4), tally.events);
+    try testing.expectEqual(@as(u32, 4), tally.retired);
+    try testing.expectEqual(@as(u32, 0), tally.admitted);
+    for ([_]usize{ 3, 7, 1, 20 }) |slot| try testing.expectEqual(slot_state_t.Retiring, graph.entries[slot].state);
+    try testing.expectEqual(slot_state_t.Active, graph.entries[2].state);
+    try testing.expectEqual(ReasonDestroyed, graph.entries[3].record.retire_reason);
+    try testing.expectEqual(ReasonParentRetired, graph.entries[7].record.retire_reason);
+    var events: [6]event_t = undefined;
+    try testing.expectEqual(@as(usize, 4), try drain_events(graph, &events));
+    const expected = [_][3]u64{ .{ 0xC, 9, ReasonParentRetired }, .{ 0xD, 7, ReasonParentRetired }, .{ 0xB, 6, ReasonParentRetired }, .{ 0xA, 5, ReasonDestroyed } };
+    for (expected, events[0..4]) |want, got| {
+        try testing.expectEqual(want[0], got.window);
+        try testing.expectEqual(want[1], got.generation);
+        try testing.expectEqual(@as(u32, @intCast(want[2])), got.reason);
+        try testing.expectEqual(EventRetireIntent, got.kind);
+        try testing.expectEqual(@as(u32, 0), got.changed_mask);
+        try testing.expectEqualStrings("title", got.title[0..got.title_length]);
+        try testing.expectEqualStrings("a-k", got.app_key[0..got.app_key_length]);
+    }
+    try testing.expectEqual(@as(u64, 4), current_stats(graph).retire_intents);
+}
+
+test "event_from_record copies every payload field and leaves the rest zero" {
+    const graph = try test_graph(testing.allocator, TestEpoch);
+    defer call_destroy(graph);
+    var facts = fixture_facts();
+    facts.min_width = 7;
+    facts.min_height = 9;
+    var rec = call_record_from_facts(&facts, TickBaseStart + 77, RoleDialog, 0x55);
+    rec.generation = 12;
+    rec.parent_generation = 4;
+    rec.app_key_length = 3;
+    @memcpy(rec.app_key[0..3], "p-z");
+    const ev = call_event_from_record(graph, &rec, EventUpdate, ChangeDpi, ReasonDestroyed);
+    try expect_ev(ev, EventUpdate, facts.window, 12, 0x55, 4, ReasonDestroyed);
+    try testing.expectEqual(RoleDialog, ev.role);
+    try testing.expectEqual(ChangeDpi, ev.changed_mask);
+    try testing.expectEqual(facts.x, ev.x);
+    try testing.expectEqual(@as(u32, 7), ev.min_width);
+    try testing.expectEqual(@as(u32, 9), ev.min_height);
+    try testing.expectEqual(facts.process_id, ev.process_id);
+    try testing.expectEqual(derive_state(&facts), ev.state);
+    try testing.expectEqual(@as(u32, 3), ev.app_key_length);
+    try testing.expectEqualStrings("p-z", ev.app_key[0..3]);
+    try testing.expectEqualSlices(u8, title_bytes(&facts), ev.title[0..ev.title_length]);
+    try testing.expect(std.mem.allEqual(u8, ev.app_key[3..], 0));
+}
+
+test "record_from_facts copies identity and geometry and only the stated title bytes" {
+    var facts = fixture_facts();
+    facts.title[facts.title_length] = 'Q';
+    facts.stamp = 77;
+    const rec = call_record_from_facts(&facts, TickBaseStart + 5, RoleToplevel, 0);
+    try testing.expectEqual(facts.window, rec.window);
+    try testing.expectEqual(@as(u64, 77), rec.last_stamp);
+    try testing.expectEqual(@as(u64, 0), rec.admit_stamp);
+    try testing.expectEqual(TickBaseStart + 5, rec.last_captured_ms);
+    try testing.expectEqual(@as(u64, 0), rec.admit_captured_ms);
+    try testing.expectEqual(facts.process_start_time, rec.process_start_time);
+    try testing.expectEqual(call_hash(call_class_bytes(&facts)), rec.class_hash);
+    try testing.expect(call_identity(&rec, &facts));
+    try testing.expectEqual(facts.title_length, rec.title_length);
+    try testing.expectEqual(@as(u8, 0), rec.title[rec.title_length]);
+    try testing.expectEqual(@as(u64, 0), rec.generation);
+    try testing.expectEqual(@as(u64, 0), rec.seq);
+    try testing.expectEqual(@as(u32, 0), rec.app_key_length);
+}
+
+test "defer_insert uses a saturating age and evicts the lowest index among equal ages" {
+    const graph = try test_graph(testing.allocator, TestEpoch);
+    defer call_destroy(graph);
+    graph.next_seq = std.math.maxInt(u64);
+    var tally = tally_t{};
+    var index: u64 = 0;
+    while (index < MaxDeferred) : (index += 1) {
+        var rec = record_init();
+        rec.window = 0x100 + index;
+        rec.parent_window = 0x9000;
+        rec.generation = 55;
+        rec.admit_stamp = 3;
+        rec.retire_reason = 4;
+        rec.app_key_length = 3;
+        call_defer_insert(graph, &rec, false, &tally);
+    }
+    try testing.expectEqual(@as(u32, 0), tally.dropped);
+    try testing.expectEqual(std.math.maxInt(u64), graph.next_seq);
+    try testing.expectEqual(std.math.maxInt(u64), graph.deferred[5].record.seq);
+    try testing.expectEqual(@as(u64, 0), graph.deferred[5].record.generation);
+    try testing.expectEqual(@as(u64, 0), graph.deferred[5].record.admit_stamp);
+    try testing.expectEqual(@as(u32, 0), graph.deferred[5].record.retire_reason);
+    var rec = record_init();
+    rec.window = 0x7777;
+    rec.parent_window = 0x9000;
+    rec.app_key_length = 3;
+    call_defer_insert(graph, &rec, true, &tally);
+    try testing.expectEqual(@as(u32, 1), tally.dropped);
+    try testing.expectEqual(@as(u64, 0x7777), graph.deferred[0].record.window);
+    try testing.expect(graph.deferred[0].seen);
+    try testing.expectEqual(@as(u64, 0x101), graph.deferred[1].record.window);
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.deferred_evicted);
+    try testing.expectEqual(@as(u64, 65), stats.deferred_added);
+    try testing.expectEqual(@as(u64, 0), stats.deferred_dropped);
+}
+
+test "drop_deferred empties the slot and counts a drop, not an eviction" {
+    const graph = try test_graph(testing.allocator, TestEpoch);
+    defer call_destroy(graph);
+    inject_deferred(graph, 9, 0x300);
+    var tally = tally_t{};
+    call_drop_deferred(graph, 9, &tally);
+    try testing.expectEqual(@as(u32, 1), tally.dropped);
+    try testing.expect(!graph.deferred[9].used);
+    try testing.expectEqual(@as(u64, 0), graph.deferred[9].record.window);
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.deferred_dropped);
+    try testing.expectEqual(@as(u64, 0), stats.deferred_evicted);
+}
+
+test "mark_seen marks the Active entry and the deferred record but never a Retiring entry" {
+    const graph = try test_graph(testing.allocator, TestEpoch);
+    defer call_destroy(graph);
+    _ = inject_entry(graph, 0, .Active, 0xA, 1);
+    _ = inject_entry(graph, 1, .Retiring, 0xB, 2);
+    inject_deferred(graph, 0, 0xC);
+    call_mark_seen(graph, 0xA);
+    call_mark_seen(graph, 0xB);
+    call_mark_seen(graph, 0xC);
+    call_mark_seen(graph, 0xD);
+    try testing.expect(graph.entries[0].seen);
+    try testing.expect(!graph.entries[1].seen);
+    try testing.expect(graph.deferred[0].seen);
+}
+
+test "bump_by adds and saturates" {
+    var counter: u64 = 5;
+    call_bump_by(&counter, 3);
+    try testing.expectEqual(@as(u64, 8), counter);
+    call_bump_by(&counter, std.math.maxInt(u64));
+    try testing.expectEqual(std.math.maxInt(u64), counter);
+}
+
+test "ring_merge_target returns the newest Announce or Update and stops at a RetireIntent" {
+    const graph = try test_graph(testing.allocator, TestEpoch);
+    defer call_destroy(graph);
+    try testing.expectEqual(@as(?*event_t, null), call_merge_target(graph, 5, 1));
+    queue_raw(graph, make_event(EventAnnounce, 5, 1));
+    queue_raw(graph, make_event(EventAnnounce, 6, 1));
+    queue_raw(graph, make_event(EventUpdate, 5, 1));
+    const target = call_merge_target(graph, 5, 1).?;
+    try testing.expectEqual(EventUpdate, target.kind);
+    try testing.expectEqual(@as(?*event_t, null), call_merge_target(graph, 5, 2));
+    queue_raw(graph, make_event(EventRetireIntent, 5, 1));
+    try testing.expectEqual(@as(?*event_t, null), call_merge_target(graph, 5, 1));
+    try testing.expect(call_merge_target(graph, 6, 1) != null);
+}
+
+test "seen marks follow entries through re-deferral, promotion and flush" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    try build_family(graph);
+    for (&graph.entries) |*entry| entry.seen = false;
+    // P is offered with an unannounced owner: P' is a fresh offer (seen), descendants inherit their entries' marks.
+    var facts = owned_facts(0x100, 0x900, 20);
+    _ = try offer(graph, &facts);
+    try testing.expect(graph.deferred[call_find_deferred(graph, 0x100).?].seen);
+    try testing.expect(!graph.deferred[call_find_deferred(graph, 0x200).?].seen);
+    try testing.expect(!graph.deferred[call_find_deferred(graph, 0x300).?].seen);
+    try testing.expect(!graph.deferred[call_find_deferred(graph, 0x400).?].seen);
+    _ = discard_events(graph);
+    // Marked deferred leftovers keep their mark through the flush; promoted entries keep the record's mark.
+    graph.deferred[call_find_deferred(graph, 0x300).?].seen = true;
+    _ = try admit_top(graph, 0x900, 21);
+    try testing.expect(graph.entries[call_find_active(graph, 0x900).?].seen);
+    try testing.expect(graph.entries[call_find_active(graph, 0x100).?].seen);
+    try testing.expect(!graph.entries[call_find_active(graph, 0x200).?].seen);
+    try testing.expect(graph.entries[call_find_active(graph, 0x300).?].seen);
+    // A plain Ok offer marks the window's Active entry, a retired entry carries no new mark.
+    facts = owned_facts(0x200, 0x100, 22);
+    _ = try offer(graph, &facts);
+    try testing.expect(graph.entries[call_find_active(graph, 0x200).?].seen);
+    try testing.expect(!graph.entries[call_find_active(graph, 0x400).?].seen);
+}
+
+test "a deferred record of another incarnation is dropped and its key is never reused" {
+    // Admission branch: the window reappears with a different process and an announced owner.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        var facts = owned_facts(0x200, 0x100, 10);
+        _ = try offer(graph, &facts);
+        _ = try admit_top(graph, 0x50, 11);
+        _ = discard_events(graph);
+        facts = owned_facts(0x200, 0x50, 12);
+        facts.process_id = 9999;
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionAdmitted, RoleDialog, 2, 0, ReasonNone);
+        try expect_counts(obs, 1, 1, 0, 1);
+        try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
+        const ev = try next_ev(graph);
+        var key_buffer: [64]u8 = undefined;
+        try testing.expectEqualStrings(expected_key(&key_buffer, 0x200, 3), ev.app_key[0..ev.app_key_length]);
+        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+    }
+    // Deferral branch: the new record gets a fresh lookup and a new age position.
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        var facts = owned_facts(0x200, 0x100, 10);
+        _ = try offer(graph, &facts);
+        facts = owned_facts(0x300, 0x100, 11);
+        _ = try offer(graph, &facts);
+        facts = owned_facts(0x200, 0x100, 12);
+        facts.thread_id += 5;
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        try expect_counts(obs, 0, 0, 0, 1);
+        try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
+        const record = &graph.deferred[call_find_deferred(graph, 0x200).?].record;
+        try testing.expectEqual(@as(u64, 3), record.seq);
+        try testing.expectEqual(@as(u32, 5), record.thread_id - 4243 + 0);
+        var key_buffer: [64]u8 = undefined;
+        try testing.expectEqualStrings(expected_key(&key_buffer, 0x200, 3), record.app_key[0..record.app_key_length]);
+        try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+        const stats = current_stats(graph);
+        try testing.expectEqual(@as(u64, 3), stats.deferred_added);
+        try testing.expectEqual(@as(u64, 1), stats.deferred_dropped);
+    }
+    // A lookup failure on the replacement leaves the old record untouched (nothing changed).
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        var facts = owned_facts(0x200, 0x100, 10);
+        _ = try offer(graph, &facts);
+        lookup_probe.mode = .Fail;
+        facts.process_id = 9999;
+        facts.stamp = 11;
+        try offer_fails(graph, &facts, .LookupFailed);
+        try testing.expectEqual(@as(u32, 4242), graph.deferred[call_find_deferred(graph, 0x200).?].record.process_id);
+    }
+}
+
+const consumer_t = struct {
+    live: std.AutoHashMap(u64, [2]u64),
+
+    fn init(allocator: std.mem.Allocator) consumer_t {
+        return .{ .live = std.AutoHashMap(u64, [2]u64).init(allocator) };
+    }
+
+    fn deinit(self: *consumer_t) void {
+        self.live.deinit();
+    }
+
+    /// Replay one event and check the stream guarantees: parents announced first, children retired first.
+    fn apply(self: *consumer_t, ev: *const event_t) !void {
+        switch (ev.kind) {
+            EventAnnounce => {
+                try testing.expect(!self.live.contains(ev.generation));
+                if (ev.parent_generation != 0) {
+                    const parent = self.live.get(ev.parent_generation) orelse return error.TestUnexpectedResult;
+                    try testing.expectEqual(ev.parent_window, parent[0]);
+                    try testing.expect(ev.parent_generation < ev.generation);
+                } else {
+                    try testing.expectEqual(@as(u64, 0), ev.parent_window);
+                }
+                try self.live.put(ev.generation, .{ ev.window, ev.parent_generation });
+            },
+            EventUpdate => try testing.expect(self.live.contains(ev.generation)),
+            else => {
+                try testing.expectEqual(EventRetireIntent, ev.kind);
+                try testing.expect(self.live.contains(ev.generation));
+                var values = self.live.valueIterator();
+                while (values.next()) |value| try testing.expect(value[1] != ev.generation);
+                _ = self.live.remove(ev.generation);
+            },
+        }
+    }
+
+    fn drain(self: *consumer_t, graph: *graph_t, limit: u32) !void {
+        var ev = std.mem.zeroes(event_t);
+        var taken: u32 = 0;
+        while (taken < limit and call_next_event(graph, TestEpoch, &ev) == .Ok) : (taken += 1) try self.apply(&ev);
+    }
+};
+
+const trace_totals_t = struct {
+    reclassified: u64 = 0,
+    updates: u64 = 0,
+    coalesced: u64 = 0,
+    evicted: u64 = 0,
+    at_capacity: u64 = 0,
+    cycle: u64 = 0,
+    queue_full: u64 = 0,
+    lookup_failures: u64 = 0,
+    stale_facts: u64 = 0,
+    flushed_children: u64 = 0,
+};
+
+fn random_trace_facts(random: std.Random, variants: []u32, base: u64, stamp: u64, tick: u32) facts_t {
+    const index = random.uintLessThan(usize, variants.len);
+    if (random.uintLessThan(u32, 9) == 0) variants[index] = random.int(u32);
+    var shape_prng = std.Random.DefaultPrng.init(@as(u64, variants[index]) *% 0x9E37_79B9 +% index);
+    const shape = shape_prng.random();
+    const window = base + index;
+    var facts = window_facts(window, stamp);
+    facts.captured_ms = tick;
+    facts.process_id = 4242 + shape.uintLessThan(u32, 2);
+    facts.x = shape.intRangeAtMost(i32, -3, 3);
+    if (random.uintLessThan(u32, 8) == 0) facts.x += 9;
+    if (random.uintLessThan(u32, 8) == 0) set_title(&facts, "other");
+    switch (shape.uintLessThan(u32, 14)) {
+        0 => facts.flags &= ~FactVisible,
+        1 => set_class(&facts, "Progman"),
+        2 => facts.width = 0,
+        3 => {
+            facts.ex_style = ExStyleNoActivate;
+            set_class(&facts, "tooltips_class32");
+        },
+        4 => set_class(&facts, "#32768"),
+        else => {},
+    }
+    if (shape.uintLessThan(u32, 3) != 0) {
+        var owner_index = shape.uintLessThan(usize, variants.len);
+        if (shape.uintLessThan(u32, 25) != 0 and owner_index == index) owner_index = (owner_index + 1) % variants.len;
+        facts.owner = base + owner_index;
+        facts.owner_root = facts.owner;
+        if (shape.uintLessThan(u32, 8) == 0) facts.flags |= FactOwnerHidden;
+        if (shape.uintLessThan(u32, 8) == 0) facts.ex_style |= ExStyleAppWindow;
+    }
+    return facts;
+}
+
+fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above: u32, drain_max: u32, totals: *trace_totals_t) !void {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var consumer = consumer_t.init(testing.allocator);
+    defer consumer.deinit();
+    var prng = std.Random.DefaultPrng.init(seed);
+    const random = prng.random();
+    const variants = try testing.allocator.alloc(u32, count);
+    defer testing.allocator.free(variants);
+    for (variants) |*variant| variant.* = random.int(u32);
+    var stamp: u64 = 100;
+    var tick: u32 = 0xFFFF_FF00;
+    var step: u32 = 0;
+    while (step < steps) : (step += 1) {
+        stamp += 1;
+        tick +%= random.uintLessThan(u32, 40);
+        const choice = random.uintLessThan(u32, 100);
+        var before: u64 = 0;
+        var status: status_t = .Ok;
+        var obs = sentinel_observation();
+        if (choice < 80) {
+            var facts = random_trace_facts(random, variants, base, stamp, tick);
+            if (random.uintLessThan(u32, 20) == 0) facts.stamp -= 3;
+            lookup_probe.mode = if (random.uintLessThan(u32, 30) == 0) .Fail else .Ok;
+            before = state_digest(graph);
+            status = call_observe(graph, TestEpoch, &facts, &obs);
+            lookup_probe.mode = .Ok;
+        } else if (choice < 88) {
+            const window = base + random.uintLessThan(u64, count);
+            before = state_digest(graph);
+            status = call_note_destroyed(graph, TestEpoch, window, stamp, tick, &obs);
+        } else if (choice < 94) {
+            var entries: [MaxEntries]retiring_entry_t = undefined;
+            var total: u32 = 0;
+            try testing.expectEqual(status_t.Ok, call_list_retiring(graph, &entries, MaxEntries, &total));
+            if (total != 0) {
+                const picked = entries[random.uintLessThan(u32, total)];
+                const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
+                try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, picked.window, picked.generation, &proof));
+            }
+            try check_invariants(graph);
+            continue;
+        } else {
+            try consumer.drain(graph, random.uintLessThan(u32, drain_max + 1));
+            try check_invariants(graph);
+            continue;
+        }
+        switch (status) {
+            .Ok => {
+                try testing.expect(!std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+                try testing.expect(obs.events_queued <= MaxCallEvents);
+            },
+            .Cycle => {},
+            .AtCapacity, .QueueFull, .LookupFailed, .StaleFacts => try testing.expectEqual(before, state_digest(graph)),
+            else => return error.TestUnexpectedResult,
+        }
+        try check_invariants(graph);
+        if (graph.ring_len > drain_above) try consumer.drain(graph, EventCapacity);
+    }
+    try consumer.drain(graph, EventCapacity);
+    // After a full drain the consumer's live set is exactly the Active entries.
+    try testing.expectEqual(@as(u32, @intCast(consumer.live.count())), call_count_state(graph, .Active));
+    for (&graph.entries) |*entry| {
+        if (entry.state == .Active) try testing.expect(consumer.live.contains(entry.record.generation));
+    }
+    const stats = current_stats(graph);
+    try testing.expectEqual(stats.events_queued, stats.events_drained);
+    try testing.expectEqual(@as(u32, 0), stats.events_pending);
+    try testing.expect(stats.admitted >= stats.retire_intents);
+    totals.reclassified += stats.reclassified;
+    totals.updates += stats.updates_queued;
+    totals.coalesced += stats.events_coalesced;
+    totals.evicted += stats.deferred_evicted;
+    totals.at_capacity += stats.rejected_at_capacity;
+    totals.cycle += stats.rejected_cycle;
+    totals.queue_full += stats.rejected_queue_full;
+    totals.lookup_failures += stats.lookup_failures;
+    totals.stale_facts += stats.rejected_stale_facts;
+}
+
+test "random operation traces keep every graph invariant and the event stream ordered" {
+    var totals = trace_totals_t{};
+    // Few windows: constant reuse, reclassification and incarnation churn.
+    try run_random_trace(0x5EED_0001, 0x100, 12, 4000, 150, 5, &totals);
+    try run_random_trace(0x5EED_0002, 0x100, 12, 4000, 150, 5, &totals);
+    // Many windows: capacity pressure, deferral overflow and cycles; a lazy consumer provokes QueueFull.
+    try run_random_trace(0x5EED_0003, 0x1000, 220, 8000, 150, 5, &totals);
+    try run_random_trace(0x5EED_0004, 0x1000, 220, 8000, 150, 5, &totals);
+    try run_random_trace(0x5EED_0005, 0x1000, 90, 6000, 256, 1, &totals);
+    // The generator really exercised the interesting paths.
+    try testing.expect(totals.reclassified > 20);
+    try testing.expect(totals.updates > 20);
+    try testing.expect(totals.coalesced > 5);
+    try testing.expect(totals.evicted > 0);
+    try testing.expect(totals.at_capacity > 20);
+    try testing.expect(totals.cycle > 5);
+    try testing.expect(totals.queue_full > 0);
+    try testing.expect(totals.lookup_failures > 5);
+    try testing.expect(totals.stale_facts > 5);
+}
+
+test "observe_locked runs the plan on the facts it is given without applying the call guards" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    graph.busy = true;
+    defer graph.busy = false;
+    var facts = window_facts(0x100, 10);
+    var obs = sentinel_observation();
+    try testing.expectEqual(status_t.Ok, call_observe_locked(graph, &facts, &obs));
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
+    // The refresh engine hands over its own stack copy: the lookup sees exactly that pointer.
+    try testing.expectEqual(@intFromPtr(&facts), lookup_probe.last_pointer);
+    facts.stamp = 0;
+    obs = sentinel_observation();
+    try testing.expectEqual(status_t.InvalidFacts, call_observe_locked(graph, &facts, &obs));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing.expectEqual(@as(u64, 1), graph.stats.rejected_invalid_facts);
 }
