@@ -3420,7 +3420,8 @@ errors. StaleEpoch on this read-only API changes no rejection counter. Every
 non-Ok result leaves all caller bytes and graph state/counters unchanged.
 
 The function uses fixed64-element stack staging and bounded sort/deduplication,
-no allocation, callback, clock, OS query, locks or graph busy mutation. Engine
+no allocation, callback, clock, native window query, locks or graph busy mutation
+(owner-thread validation retains the existing thread-identity guard). Engine
 and C ABI tests cover empty/mixed/full states, duplicate HWND generations,
 Deferred exclusion, exact free slots before/after proof completion, output
 tails, null/short/alias/misalignment/wrap errors, epoch/thread/reentrancy

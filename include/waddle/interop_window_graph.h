@@ -1256,4 +1256,37 @@ interop_window_graph_status_t interop_window_graph_list_retiring(const interop_w
                                                                  uint32_t capacity,
                                                                  uint32_t *count);
 
+/**
+ * @brief Copy the unique HWND values represented by Active or Retiring entries and count Free slots.
+ *
+ * The values are sorted by ascending numeric HWND. Equal HWNDs belonging to different generations
+ * appear once. Deferred records are excluded. `free_entry_count` counts Free graph entry slots, not
+ * the number of unique HWND values subtracted from InteropMaxWindows.
+ *
+ * @param[in] graph Non-NULL owner-thread graph handle; never written or retained.
+ * @param[in] session_epoch Exact epoch of this graph.
+ * @param[out] windows Non-NULL aligned array of `capacity` u64 elements. Capacity must be at least
+ *                     InteropMaxWindows. On Ok only the first `count` elements are written; the
+ *                     rest of the claimed array remains unchanged.
+ * @param[in] capacity Number of u64 elements claimed by the caller; the complete claimed range is
+ *                     validated for overflow and overlap before any output is written.
+ * @param[out] count Non-NULL aligned output; receives the number of unique nonzero Active/Retiring
+ *                   HWND values on Ok only.
+ * @param[out] free_entry_count Non-NULL aligned output; receives the exact count of Free entry slots
+ *                              on Ok only.
+ * @return Ok; InvalidArgument for a NULL/misaligned/overflowing/overlapping pointer or capacity
+ *         below InteropMaxWindows; WrongThread; Reentrant; StaleEpoch. Common guard precedence is
+ *         NULL graph, WrongThread, Reentrant, StaleEpoch, then InvalidArgument. StaleEpoch changes
+ *         no rejection counter. Every non-Ok result leaves graph state/counters and all caller bytes
+ *         unchanged.
+ * @note Owner thread only; no callback, clock, allocation, lock, wait, or graph mutation.
+ */
+interop_window_graph_status_t interop_window_graph_list_tracked_windows(
+    const interop_window_graph_t *graph,
+    uint64_t session_epoch,
+    uint64_t *windows,
+    uint32_t capacity,
+    uint32_t *count,
+    uint32_t *free_entry_count);
+
 #endif

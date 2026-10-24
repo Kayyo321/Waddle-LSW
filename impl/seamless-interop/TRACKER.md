@@ -964,7 +964,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Source, socketpair fault/stress/coverage/leak qualification remain pending.
     HEAD identifies this contract commit.
 
-- **Commit `HEAD`**: `docs(interop): record integrated peer Linux and Windows CI`
+- **Commit `dda77a2`**: `docs(interop): record integrated peer Linux and Windows CI`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total17.80%).
   - **Summary**: Exact57847b1 passes interop CI40128006140 Linux/native Windows
     and Native AV40128006121. Windows executes47 composed-core and84 C ABI
@@ -972,3 +972,15 @@ its uncompiled draft earns no credit until current acceptance passes.
     sanitizer and coverage gates pass. No live endpoint/native memory acceptance
     is implied; later native guard/snapshot source still requires fresh CI.
     [Qualification](ci_qualification_57847b1.json). HEAD is this evidence commit.
+
+- **Commit `HEAD`**: `feat(interop): snapshot tracked window keys and exact free slots`
+  - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
+  - **Summary**: Adds read-only sorted unique Active/Retiring HWND snapshot with
+    exact Free-slot count and complete staged C boundary validation. Lead keeps
+    prior bad-pointer regression alongside new guards; C consumer independently
+    tests duplicate generations and retirement completion. Full148/164 Zig,
+    C28/doubles65, leak-enabled sanitizer, coverage and six Windows cross-build
+    gates pass. Graph97.85% branches99.88% lines; ABI97.06% branches99.39% lines;
+    exact22 exports. Native execution pending. O5 preservation still open.
+    [Qualification](claude_window_graph/snapshot_qualification_2026_10_24.json).
+    HEAD identifies this implementation commit.

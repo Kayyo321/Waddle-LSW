@@ -1,0 +1,61 @@
+{
+  "qualification_utc": "2026-10-24T20:20:30.520492+00:00",
+  "source_revision": "containing snapshot implementation commit; exact hashes below",
+  "source_sha256": {
+    "src/interop/window_graph.zig": "800e9976c028284be4134716182f176437b56a3a3bac725c336a6bb87e55c388",
+    "src/interop/window_graph_abi.zig": "71bf6c2b2820832e0ab04ba5001ed1d0b201fa814cd1777aa3006772258034ec",
+    "include/waddle/interop_window_graph.h": "38676108ba7f6bc923ddbb8262e2a1aca5d950cd6ac57afb83b83aef7c5834b3",
+    "tests/interop/window_graph.c": "447206022bdf3d4f89279d50a04056a2d6e43edc02c6aadfcf98bc93ef2b65ac",
+    "scripts/interop_window_graph.mk": "521709aa053987be5a9264bb18f8048a5a9bdf3077da41e8fb7cfd09d4f6eefd",
+    "src/interop/window_observer_windows.c": "a1d88fc7036903a922935f2d988664fddb556b0839b1cabb0950b2b3a24328fe",
+    "tests/interop/window_observer_native_failures_windows.c": "da0ee61a8a2c2108ca1ac730f003c0449889b9f515ea8b64a6afd57c6b3b16c5",
+    ".github/workflows/interop_window_graph.yml": "fcbf294fb349d9806a9386ac0da95f47364dc50a35e269824d4426458b445853"
+  },
+  "command": "make -j1 -f scripts/interop_window_graph.mk window-graph-all WgBuild=/tmp/seamless_snapshot_native_20261024",
+  "exit_code": 0,
+  "log": "evidence/snapshot_2026_10_24/all.log",
+  "log_sha256": "6d2071704f13f8846e4e0e7fafc6c41fbd33a4f982372774c03dc9133438a9ff",
+  "tests": {
+    "graph_debug_and_release_safe": 148,
+    "abi_debug_and_release_safe": 164,
+    "C_consumer": 28,
+    "observer_API_double": 65
+  },
+  "coverage": {
+    "graph_lines": [
+      844,
+      845
+    ],
+    "graph_branches": [
+      593,
+      606
+    ],
+    "abi_lines": [
+      162,
+      163
+    ],
+    "abi_branches": [
+      66,
+      68
+    ],
+    "portable_observer_lines": [
+      624,
+      645
+    ],
+    "portable_observer_branches": [
+      358,
+      382
+    ],
+    "minimum_percent": 90,
+    "standard_compiler_trap_exclusions": {
+      "graph": 215,
+      "abi": 47
+    }
+  },
+  "memory": "C consumers passed ASan/LSan/UBSan detect_leaks=1; Zig Debug/ReleaseSafe std.testing allocator clean",
+  "exports": "22 exact T symbols equal public header; added only tracked snapshot",
+  "review": "Root verified no callbacks/clock/state mutation, exact Free states rather than unique-count subtraction, complete claimed output range checks and fully staged writes. Restored original bad-pointer observe/WrongThread regression alongside new snapshot case; shared guard batteries use valid snapshot arguments. Independent C fixture covers real duplicate generations and exact proof completion.",
+  "windows": "Six executables cross-built including separate real native smoke and synthetic native guard fixture; actual execution of new source pending CI.",
+  "progress_impact": 0,
+  "open": "Snapshot alone does not resolve O5 mailbox/lifecycle loss. Observer, native adapter and installed-session credit remain withheld."
+}

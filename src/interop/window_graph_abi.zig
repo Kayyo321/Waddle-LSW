@@ -659,6 +659,57 @@ export fn interop_window_graph_list_retiring(
     return status_code(status);
 }
 
+/// Copy the unique Active/Retiring HWND set and exact Free-slot count (header: interop_window_graph_list_tracked_windows).
+///
+/// @param[in] graph_handle Graph handle; NULL or misaligned is InvalidArgument. Never written.
+/// @param[in] epoch Exact graph epoch; checked after WrongThread/Reentrant and before argument errors.
+/// @param[out] windows Non-NULL aligned array of `capacity` u64 values; only `count` values are
+///                     copied on Ok. The complete claimed capacity is validated for overlap and
+///                     address wrap; the unused tail stays unchanged.
+/// @param[in] capacity Must be at least `InteropMaxWindows`.
+/// @param[out] count Non-NULL aligned; receives the unique nonzero Active/Retiring HWND count on Ok.
+/// @param[out] free_entry_count Non-NULL aligned; receives the exact Free entry-slot count on Ok.
+/// @return Ok; InvalidArgument; WrongThread; Reentrant; StaleEpoch. StaleEpoch changes no counter.
+///         Every non-Ok status leaves graph state/counters and all caller bytes unchanged.
+/// @note Owner thread only; no callback, clock, allocation, lock, wait or graph mutation.
+export fn interop_window_graph_list_tracked_windows(
+    graph_handle: ?*const graph_handle_t,
+    epoch: u64,
+    windows: ?*align(1) u64,
+    capacity: u32,
+    count: ?*align(1) u32,
+    free_entry_count: ?*align(1) u32,
+) c_int {
+    const graph_pointer = graph_of_const(graph_handle) orelse return StatusInvalidArgument;
+    const windows_span = if (capacity == 0) EmptySpan else array_span_of(u64, windows, capacity);
+    const count_span = span_of(u32, count);
+    const free_span = span_of(u32, free_entry_count);
+    const pointers_valid = capacity >= graph_t.MaxEntries and
+        spans_valid(&.{ graph_span(graph_pointer), windows_span, count_span, free_span });
+
+    var staged_windows: [graph_t.MaxEntries]u64 = undefined;
+    var staged_count: u32 = 0;
+    var staged_free_count: u32 = 0;
+    const engine_windows: ?[*]u64 = if (pointers_valid) @ptrCast(&staged_windows) else null;
+    const engine_count: ?*u32 = if (pointers_valid) &staged_count else null;
+    const engine_free_count: ?*u32 = if (pointers_valid) &staged_free_count else null;
+    const status = graph_t.list_tracked_windows(
+        graph_pointer,
+        epoch,
+        engine_windows,
+        capacity,
+        engine_count,
+        engine_free_count,
+    );
+    if (status == .Ok) {
+        const output: [*]u64 = @ptrCast(aligned_mut(u64, windows));
+        @memcpy(output[0..staged_count], staged_windows[0..staged_count]);
+        aligned_mut(u32, count).* = staged_count;
+        aligned_mut(u32, free_entry_count).* = staged_free_count;
+    }
+    return status_code(status);
+}
+
 // Test-only fixtures.
 const testing_t = std_t.testing;
 
@@ -717,7 +768,7 @@ fn fake_now(context: ?*anyopaque) callconv(.C) u64 {
     return clock.*;
 }
 
-const BatteryCount = 19;
+const BatteryCount = 20;
 
 /// Statuses of one call to every graph-taking export (destroy last) plus classify.
 const battery_t = struct {
@@ -894,6 +945,17 @@ fn call_list_retiring(
     return @call(.never_inline, interop_window_graph_list_retiring, .{ handle, entries, capacity, count });
 }
 
+fn call_list_tracked_windows(
+    handle: ?*const graph_handle_t,
+    epoch: u64,
+    windows: ?*align(1) u64,
+    capacity: u32,
+    count: ?*align(1) u32,
+    free_entry_count: ?*align(1) u32,
+) c_int {
+    return @call(.never_inline, interop_window_graph_list_tracked_windows, .{ handle, epoch, windows, capacity, count, free_entry_count });
+}
+
 fn accept_sink(context: ?*anyopaque, event: [*c]const event_t) callconv(.C) c_int {
     _ = context;
     _ = event;
@@ -911,7 +973,8 @@ fn run_battery(handle: ?*graph_handle_t, epoch: u64, result: *battery_t) void {
     var stats: stats_t = undefined;
     var live: live_t = undefined;
     var entries: [4]retiring_entry_t = undefined;
-    var windows: [4]u64 = undefined;
+    var windows: [64]u64 = undefined;
+    var free_count: u32 = 0;
     var stamp: u64 = 0;
     var count: u32 = 0;
     var delivered: u32 = 0;
@@ -935,6 +998,7 @@ fn run_battery(handle: ?*graph_handle_t, epoch: u64, result: *battery_t) void {
         call_stamp_high_water(handle, &stamp),
         call_find_live(handle, 0x9990, &live),
         call_list_retiring(handle, &entries[0], 4, &count),
+        call_list_tracked_windows(handle, epoch, &windows[0], 64, &count, &free_count),
         call_destroy(&slot),
     };
     result.slot_kept = slot == handle;
@@ -1355,15 +1419,19 @@ test "a pointer fault on a foreign thread is WrongThread and a stale epoch is St
     const Job = struct {
         handle: ?*graph_handle_t,
         status: c_int = -1,
+        snapshot_status: c_int = -1,
         fn run(job: *@This()) void {
             job.status = call_observe(job.handle, TestEpoch, null, null);
+            job.snapshot_status = call_list_tracked_windows(job.handle, 0, null, 0, null, null);
         }
     };
     var job: Job = .{ .handle = h.handle };
     const thread = try std_t.Thread.spawn(.{}, Job.run, .{&job});
     thread.join();
     try expect_status(.WrongThread, job.status);
+    try expect_status(.WrongThread, job.snapshot_status);
     try h.expect_unchanged(before);
+    try expect_status(.StaleEpoch, call_list_tracked_windows(h.handle, 0, null, 0, null, null));
     try expect_status(.StaleEpoch, call_observe(h.handle, 0, null, null));
     try expect_status(.InvalidArgument, call_observe(h.handle, TestEpoch, null, null));
 }
@@ -1433,6 +1501,118 @@ test "zero-capacity arrays ignore their pointer and truncation reports the full 
     try testing_t.expectEqual(@as(u64, 0x101), entries[0].window);
     try testing_t.expectEqual(@as(u64, 0), entries[1].window);
     try expect_status(.InvalidArgument, call_list_retiring(h.handle, null, 1, &count));
+}
+
+test "list_tracked_windows ABI stages sorted unique handles and exact Free slots" {
+    var h: harness_t = .{};
+    try h.open();
+    defer h.close();
+    var windows = [_]u64{0xCAFE} ** 66;
+    var count: u32 = 0x1234;
+    var free_count: u32 = 0x5678;
+    try expect_status(.Ok, call_list_tracked_windows(h.handle, TestEpoch, &windows[0], 64, &count, &free_count));
+    try testing_t.expectEqual(@as(u32, 0), count);
+    try testing_t.expectEqual(@as(u32, 64), free_count);
+    for (windows) |window| try testing_t.expectEqual(@as(u64, 0xCAFE), window);
+
+    const engine = h.engine();
+    engine.entries[12] = std_t.mem.zeroes(graph_t.entry_t);
+    engine.entries[12].state = .Active;
+    engine.entries[12].record.window = 0x500;
+    engine.entries[12].record.generation = 30;
+    engine.entries[4] = std_t.mem.zeroes(graph_t.entry_t);
+    engine.entries[4].state = .Retiring;
+    engine.entries[4].record.window = 0x300;
+    engine.entries[4].record.generation = 10;
+    engine.entries[6] = std_t.mem.zeroes(graph_t.entry_t);
+    engine.entries[6].state = .Retiring;
+    engine.entries[6].record.window = 0x500;
+    engine.entries[6].record.generation = 20;
+    engine.deferred[3] = std_t.mem.zeroes(graph_t.deferred_t);
+    engine.deferred[3].used = true;
+    engine.deferred[3].record.window = 0x50;
+    @memset(&windows, 0xA5A5A5A5A5A5A5A5);
+    count = 0x1111;
+    free_count = 0x2222;
+    try expect_status(.Ok, call_list_tracked_windows(h.handle, TestEpoch, &windows[0], 64, &count, &free_count));
+    try testing_t.expectEqual(@as(u32, 2), count);
+    try testing_t.expectEqual(@as(u32, 61), free_count);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 0x300, 0x500 }, windows[0..2]);
+    try testing_t.expectEqual(@as(u64, 0xA5A5A5A5A5A5A5A5), windows[2]);
+    try testing_t.expectEqual(@as(u64, 0xA5A5A5A5A5A5A5A5), windows[65]);
+
+    const proof: retire_proof_t = .{ .capture_stopped = 1, .pins_drained = 1 };
+    try expect_status(.Ok, call_complete_retire(h.handle, TestEpoch, 0x300, 10, &proof));
+    try expect_status(.Ok, call_list_tracked_windows(h.handle, TestEpoch, &windows[0], 64, &count, &free_count));
+    try testing_t.expectEqual(@as(u32, 1), count);
+    try testing_t.expectEqual(@as(u32, 62), free_count);
+    try testing_t.expectEqual(@as(u64, 0x500), windows[0]);
+
+    // Fill every remaining Free entry. The Active+Retiring generations for 0x500 consume two
+    // slots but contribute one HWND, so the exact free count and unique count differ.
+    for (&engine.entries, 0..) |*entry, index| {
+        if (entry.state != .Free) continue;
+        entry.* = std_t.mem.zeroes(graph_t.entry_t);
+        entry.state = if (index % 2 == 0) .Active else .Retiring;
+        entry.record.window = 0x1000 + index;
+        entry.record.generation = 100 + index;
+    }
+    try expect_status(.Ok, call_list_tracked_windows(h.handle, TestEpoch, &windows[0], 64, &count, &free_count));
+    try testing_t.expectEqual(@as(u32, 63), count);
+    try testing_t.expectEqual(@as(u32, 0), free_count);
+    try testing_t.expectEqual(@as(u64, 0x500), windows[0]);
+    for (windows[1..count], 1..) |window, index| try testing_t.expect(window > windows[index - 1]);
+    try testing_t.expectEqual(@as(u64, 0xA5A5A5A5A5A5A5A5), windows[63]);
+}
+
+test "list_tracked_windows ABI rejects malformed spans before reading or writing caller memory" {
+    var h: harness_t = .{};
+    try h.open();
+    defer h.close();
+    _ = try h.admit(0x100);
+    const before = try h.snapshot();
+    defer testing_t.allocator.free(before);
+    const engine = h.engine();
+    var windows = [_]u64{0xABCD} ** 64;
+    var count: u32 = 0x1234;
+    var free_count: u32 = 0x5678;
+
+    try expect_status(.InvalidArgument, call_list_tracked_windows(h.handle, TestEpoch, null, 64, &count, &free_count));
+    try expect_status(.InvalidArgument, call_list_tracked_windows(h.handle, TestEpoch, &windows[0], 63, &count, &free_count));
+    try expect_status(.InvalidArgument, call_list_tracked_windows(h.handle, TestEpoch, &windows[0], 64, null, &free_count));
+    try expect_status(.InvalidArgument, call_list_tracked_windows(h.handle, TestEpoch, &windows[0], 64, &count, null));
+
+    var bytes: [64 * @sizeOf(u64) + 32]u8 align(8) = [_]u8{0x5A} ** (64 * @sizeOf(u64) + 32);
+    const overlap_windows: ?*align(1) u64 = @ptrCast(&bytes[0]);
+    const overlap_count: ?*align(1) u32 = @ptrCast(&bytes[8]);
+    const overlap_free: ?*align(1) u32 = @ptrCast(&bytes[16]);
+    const bytes_before = bytes;
+    try expect_status(.InvalidArgument, call_list_tracked_windows(h.handle, TestEpoch, overlap_windows, 64, overlap_count, overlap_free));
+    try testing_t.expectEqualSlices(u8, &bytes_before, &bytes);
+
+    var scalar_pair: [8]u8 align(4) = [_]u8{0x6B} ** 8;
+    const same_count: ?*align(1) u32 = @ptrCast(&scalar_pair[0]);
+    const same_free: ?*align(1) u32 = @ptrCast(&scalar_pair[0]);
+    const scalar_before = scalar_pair;
+    try expect_status(.InvalidArgument, call_list_tracked_windows(h.handle, TestEpoch, &windows[0], 64, same_count, same_free));
+    try testing_t.expectEqualSlices(u8, &scalar_before, &scalar_pair);
+
+    const graph_pointer = engine;
+    const inside_graph: ?*align(1) u64 = @ptrFromInt(@intFromPtr(graph_pointer) + @offsetOf(graph_t.graph_t, "ring"));
+    try expect_status(.InvalidArgument, call_list_tracked_windows(h.handle, TestEpoch, inside_graph, 64, &count, &free_count));
+    const misaligned: ?*align(1) u64 = @ptrFromInt(@intFromPtr(&windows[0]) + 1);
+    try expect_status(.InvalidArgument, call_list_tracked_windows(h.handle, TestEpoch, misaligned, 64, &count, &free_count));
+    const wrapped: ?*align(1) u64 = @ptrFromInt(std_t.math.maxInt(usize) - 7);
+    try expect_status(.InvalidArgument, call_list_tracked_windows(h.handle, TestEpoch, wrapped, 64, &count, &free_count));
+
+    try expect_status(.StaleEpoch, call_list_tracked_windows(h.handle, TestEpoch + 1, null, 0, null, null));
+    var after_stats: stats_t = undefined;
+    try expect_status(.Ok, call_get_stats(h.handle, &after_stats));
+    try testing_t.expectEqual(@as(u64, 0), after_stats.rejected_stale_epoch);
+    try testing_t.expectEqual(@as(u32, 0x1234), count);
+    try testing_t.expectEqual(@as(u32, 0x5678), free_count);
+    try testing_t.expectEqualSlices(u64, &([_]u64{0xABCD} ** 64), &windows);
+    try h.expect_unchanged(before);
 }
 
 fn garbage_entries() ?*align(1) retiring_entry_t {

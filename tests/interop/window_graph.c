@@ -58,7 +58,7 @@
 /** @brief Size of the per-generation model tables of the random trace. */
 #define TraceMaxGeneration 131072u
 /** @brief Number of calls in the guard battery (destroy is the last one). */
-#define BatteryCount 19u
+#define BatteryCount 20u
 /** @brief Highest event index the shared event buffer holds. */
 #define EventBufferSize 512u
 /** @brief Byte used to poison output structs so "unchanged" is observable. */
@@ -192,6 +192,8 @@ static void run_battery(battery_t *b) {
     interop_window_live_t live;
     interop_window_retiring_entry_t entries[4];
     uint64_t windows[4];
+    uint64_t tracked_windows[InteropMaxWindows];
+    uint32_t free_count = 0;
     uint64_t stamp = 0;
     uint32_t count = 0;
     uint32_t delivered = 0;
@@ -217,6 +219,7 @@ static void run_battery(battery_t *b) {
     b->status[i++] = interop_window_graph_stamp_high_water(g, &stamp);
     b->status[i++] = interop_window_graph_find_live(g, 0x9990u, &live);
     b->status[i++] = interop_window_graph_list_retiring(g, entries, 4u, &count);
+    b->status[i++] = interop_window_graph_list_tracked_windows(g, ep, tracked_windows, InteropMaxWindows, &count, &free_count);
     b->status[i++] = interop_window_graph_destroy(&slot);
     b->slot_kept = (slot == g);
     b->classify_status = interop_window_graph_classify(&f, InteropWindowUacWindow, &verdict);
@@ -2796,6 +2799,51 @@ static int test_random_trace(void) {
     return h_free(&h);
 }
 
+/** @brief Independent C snapshot semantics, exact slot count, guard preservation and output tails. */
+static int test_tracked_snapshot(void) {
+    harness_t h;
+    uint64_t windows[InteropMaxWindows + 2u];
+    uint64_t first_generation = 0;
+    uint64_t second_generation = 0;
+    uint32_t count = 123u;
+    uint32_t free_count = 456u;
+    interop_window_observation_t observation;
+    interop_window_facts_t deferred;
+    Check(h_init(&h, 0x4242u, InteropWindowUacWindow) == 0);
+    poison(windows, sizeof windows);
+    Check(interop_window_graph_list_tracked_windows(h.graph, h.epoch, windows, InteropMaxWindows + 2u, &count, &free_count) == StOk);
+    Check(count == 0u && free_count == InteropMaxWindows && untouched(windows, sizeof windows));
+    Check(admit_top(&h, 0x300u, &first_generation) == 0);
+    Check(kill_window(&h, 0x300u, &observation) == 0);
+    Check(admit_top(&h, 0x300u, &second_generation) == 0);
+    Check(second_generation != first_generation);
+    Check(admit_top(&h, 0x100u, NULL) == 0);
+    fill_dialog(&deferred, 0x50u, 0x60u);
+    Check(h_observe(&h, &deferred, &observation) == StOk);
+    Check(observation.disposition == InteropWindowDispositionDeferred);
+    const interop_window_graph_stats_t before = stats_of(&h);
+    Check(interop_window_graph_list_tracked_windows(h.graph, h.epoch, windows, InteropMaxWindows + 2u, &count, &free_count) == StOk);
+    Check(count == 2u && free_count == InteropMaxWindows - 3u);
+    Check(windows[0] == 0x100u && windows[1] == 0x300u);
+    Check(untouched(&windows[2], sizeof windows - 2u * sizeof windows[0]));
+    Check(finish_retire(&h, 0x300u, first_generation) == 0);
+    Check(interop_window_graph_list_tracked_windows(h.graph, h.epoch, windows, InteropMaxWindows, &count, &free_count) == StOk);
+    Check(count == 2u && free_count == InteropMaxWindows - 2u);
+    const interop_window_graph_stats_t guard_before = stats_of(&h);
+    poison(windows, sizeof windows);
+    count = 123u;
+    free_count = 456u;
+    Check(interop_window_graph_list_tracked_windows(h.graph, h.epoch + 1u, NULL, 0u, &count, &free_count) == StStaleEpoch);
+    Check(interop_window_graph_list_tracked_windows(h.graph, h.epoch, windows, InteropMaxWindows - 1u, &count, &free_count) == StInvalidArgument);
+    Check(interop_window_graph_list_tracked_windows(h.graph, h.epoch, windows, InteropMaxWindows, &count, &count) == StInvalidArgument);
+    Check(interop_window_graph_list_tracked_windows(h.graph, h.epoch, windows, InteropMaxWindows, (uint32_t *)&windows[0], &free_count) == StInvalidArgument);
+    Check(count == 123u && free_count == 456u && untouched(windows, sizeof windows));
+    const interop_window_graph_stats_t guard_after = stats_of(&h);
+    Check(memcmp(&guard_before, &guard_after, sizeof guard_before) == 0);
+    Check(before.active_count == 2u && before.retiring_count == 1u && before.deferred_count == 1u);
+    return h_free(&h);
+}
+
 /* ---- Runner --------------------------------------------------------------------------------- */
 
 typedef struct test_case_t {
@@ -2827,6 +2875,7 @@ int main(void) {
         {"invalidate_all", test_invalidate_all},
         {"capacity_diagnostic", test_capacity_diagnostic},
         {"stats_and_find", test_stats_and_find},
+        {"tracked_snapshot", test_tracked_snapshot},
         {"wrong_thread", test_wrong_thread},
         {"reentrancy", test_reentrancy},
         {"epoch_isolation", test_epoch_isolation},

@@ -74,10 +74,10 @@ WgObsHdr := src/interop/window_observer_windows.h
 WgTestAbi := tests/interop/window_graph.c
 WgTestObs := tests/interop/window_observer_windows.c
 WgTestDbl := tests/interop/window_observer_api_double.h
-# The exact set of global text symbols of the ABI object: the 21 functions of include/waddle/interop_window_graph.h.
+# The exact set of global text symbols of the ABI object: the 22 functions of include/waddle/interop_window_graph.h.
 WgAbiSymbols := interop_window_graph_check_action interop_window_graph_classify interop_window_graph_complete_retire \
 	interop_window_graph_create interop_window_graph_destroy interop_window_graph_drain interop_window_graph_find_live \
-	interop_window_graph_get_stats interop_window_graph_invalidate_all interop_window_graph_list_retiring \
+	interop_window_graph_get_stats interop_window_graph_invalidate_all interop_window_graph_list_retiring interop_window_graph_list_tracked_windows \
 	interop_window_graph_next_event interop_window_graph_note_destroyed interop_window_graph_observe \
 	interop_window_graph_refresh_abort interop_window_graph_refresh_begin interop_window_graph_refresh_commit \
 	interop_window_graph_refresh_keep interop_window_graph_refresh_offer interop_window_graph_refresh_unseen \
@@ -89,7 +89,7 @@ WgAbiSymbols := interop_window_graph_check_action interop_window_graph_classify 
 window-graph-help:
 	@echo "Window-graph gates. Run from the worktree root. Outputs go under $(WgBuild)."
 	@echo "  window-graph-test        Zig unit tests (Debug and ReleaseSafe), ABI object, C ABI test, observer double test (executes)"
-	@echo "  window-graph-symbols     nm check: the ABI object exports exactly the 21 interop_window_graph_* functions (T symbols)"
+	@echo "  window-graph-symbols     nm check: the ABI object exports exactly the 22 interop_window_graph_* functions (T symbols)"
 	@echo "  window-graph-sanitizers  C ABI and observer tests under ASan+LSan+UBSan (executes)"
 	@echo "  window-graph-coverage    Zig line/branch via tests/av/coverage.py; gcov line/branch for observer portable C (executes)"
 	@echo "  window-graph-windows     Windows cross-compile and link checks only (NOT executed)"
@@ -110,16 +110,16 @@ window-graph-test: $(WgBuild)/window_graph_abi.o $(WgBuild)/window_graph_c_test 
 	$(WgBuild)/window_graph_c_test
 	$(WgBuild)/window_observer_test
 
-# Symbol check: the global text symbols (nm type T) of the ABI object are exactly WgAbiSymbols (21 names) and
+# Symbol check: the global text symbols (nm type T) of the ABI object are exactly WgAbiSymbols (22 names) and
 # exactly the functions the public header declares. Weak compiler-rt symbols (type W) are not T and are ignored.
 window-graph-symbols: $(WgBuild)/window_graph_abi.o
 	$(NM) -g --defined-only $(WgBuild)/window_graph_abi.o | awk '$$2=="T" {print $$3}' | LC_ALL=C sort > $(WgBuild)/abi_symbols_actual.txt
 	printf '%s\n' $(WgAbiSymbols) | LC_ALL=C sort > $(WgBuild)/abi_symbols_expected.txt
 	grep -o 'interop_window_graph_[a-z_]*(' $(WgHdrApi) | tr -d '(' | LC_ALL=C sort -u > $(WgBuild)/abi_symbols_header.txt
-	test "$$(wc -l < $(WgBuild)/abi_symbols_expected.txt)" -eq 21
+	test "$$(wc -l < $(WgBuild)/abi_symbols_expected.txt)" -eq 22
 	diff -u $(WgBuild)/abi_symbols_expected.txt $(WgBuild)/abi_symbols_actual.txt
 	diff -u $(WgBuild)/abi_symbols_expected.txt $(WgBuild)/abi_symbols_header.txt
-	@echo "window-graph-symbols: 21 exported T symbols, equal to the header declarations."
+	@echo "window-graph-symbols: 22 exported T symbols, equal to the header declarations."
 
 # ReleaseSafe, position-independent object of the Zig C ABI. Every C consumer links this one object.
 $(WgBuild)/window_graph_abi.o: $(wildcard $(WgZigCore) $(WgZigAbi) $(WgHdrApi)) | $(WgBuild)

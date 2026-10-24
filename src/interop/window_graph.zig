@@ -1357,6 +1357,62 @@ pub fn list_retiring(graph: *const graph_t, entries: ?[*]retiring_entry_t, capac
     return .Ok;
 }
 
+/// Snapshot every unique nonzero HWND represented by an Active or Retiring entry.
+///
+/// The result is sorted by ascending numeric HWND. Equal HWNDs across generations appear once.
+/// Deferred records are intentionally excluded. `out_free_entry_count` counts Free entry slots,
+/// not `MaxEntries - unique HWND count`, because an Active and Retiring generation may share an
+/// HWND while occupying distinct slots. This read-only query has the common thread/reentrancy
+/// guards followed by an epoch comparison (without changing rejection counters), then validates
+/// nullable output availability and minimum capacity. The C wrapper additionally checks complete
+/// address spans/alignment/aliases. No busy bit, graph field, counter, or output is
+/// changed unless every argument is valid.
+///
+/// @param[in] graph Non-null graph; never written.
+/// @param[in] epoch Exact session epoch; stale epochs are rejected without counter changes.
+/// @param[out] windows Non-null array of at least `MaxEntries` u64 values; only `count` elements
+///                     are written on Ok and the remainder is untouched.
+/// @param[in] capacity Number of u64 elements available; must be at least `MaxEntries`.
+/// @param[out] out_count Non-null; receives the unique tracked HWND count on Ok only.
+/// @param[out] out_free_entry_count Non-null; receives the exact Free entry-slot count on Ok only.
+/// @return Ok; WrongThread; Reentrant; StaleEpoch; InvalidArgument.
+/// @note Owner thread only; no callback, clock, allocation, lock, wait, or graph mutation.
+pub fn list_tracked_windows(
+    graph: *const graph_t,
+    epoch: u64,
+    windows: ?[*]u64,
+    capacity: u32,
+    out_count: ?*u32,
+    out_free_entry_count: ?*u32,
+) status_t {
+    if (guard_status(graph)) |status| return status;
+    if (epoch != graph.config.session_epoch) return .StaleEpoch;
+    if (windows == null or capacity < MaxEntries or out_count == null or out_free_entry_count == null)
+        return .InvalidArgument;
+
+    var staged: [MaxEntries]u64 = undefined;
+    var staged_count: usize = 0;
+    for (&graph.entries) |*entry| {
+        if (entry.state == .Free) continue;
+        const window = entry.record.window;
+        if (window == 0) continue;
+
+        var insert_at: usize = 0;
+        while (insert_at < staged_count and staged[insert_at] < window) : (insert_at += 1) {}
+        if (insert_at < staged_count and staged[insert_at] == window) continue;
+        var move_at: usize = staged_count;
+        while (move_at > insert_at) : (move_at -= 1) staged[move_at] = staged[move_at - 1];
+        staged[insert_at] = window;
+        staged_count += 1;
+    }
+
+    const free_count = count_state(graph, .Free);
+    @memcpy(windows.?[0..staged_count], staged[0..staged_count]);
+    out_count.?.* = @intCast(staged_count);
+    out_free_entry_count.?.* = free_count;
+    return .Ok;
+}
+
 /// End the quarantine of one retired generation after the coordinator's proof.
 ///
 /// Check order after `enter`: zero window or generation is InvalidArgument; no entry with the
@@ -3877,6 +3933,17 @@ fn call_list_retiring(graph: *const graph_t, entries: ?[*]retiring_entry_t, capa
     return @call(.never_inline, list_retiring, .{ graph, entries, capacity, out_count });
 }
 
+fn call_list_tracked_windows(
+    graph: *const graph_t,
+    epoch: u64,
+    windows: ?[*]u64,
+    capacity: u32,
+    out_count: ?*u32,
+    out_free_entry_count: ?*u32,
+) status_t {
+    return @call(.never_inline, list_tracked_windows, .{ graph, epoch, windows, capacity, out_count, out_free_entry_count });
+}
+
 fn call_complete_retire(graph: *graph_t, epoch: u64, window: u64, generation: u64, proof: *const proof_t) status_t {
     return @call(.never_inline, complete_retire, .{ graph, epoch, window, generation, proof });
 }
@@ -4584,6 +4651,96 @@ test "list_retiring orders by generation, reports the total and truncates" {
     for (&graph.entries) |*entry| entry.state = .Free;
     try testing_t.expectEqual(status_t.Ok, call_list_retiring(graph, &entries, MaxEntries, &count));
     try testing_t.expectEqual(@as(u32, 0), count);
+}
+
+test "list_tracked_windows sorts unique Active and Retiring handles and counts exact Free slots" {
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
+    defer call_destroy(graph);
+    _ = inject_entry(graph, 9, .Active, 0x500, 30);
+    _ = inject_entry(graph, 2, .Retiring, 0x300, 10);
+    _ = inject_entry(graph, 5, .Retiring, 0x500, 20);
+    _ = inject_entry(graph, 7, .Active, 0x100, 40);
+    inject_deferred(graph, 4, 0x050); // Deferred is not part of the tracked export set.
+
+    var windows = [_]u64{0xAAAA} ** (MaxEntries + 2);
+    var count: u32 = 0xDEAD;
+    var free_count: u32 = 0xBEEF;
+    try testing_t.expectEqual(status_t.Ok, call_list_tracked_windows(graph, TestEpoch, &windows, MaxEntries, &count, &free_count));
+    try testing_t.expectEqual(@as(u32, 3), count);
+    try testing_t.expectEqual(@as(u32, MaxEntries - 4), free_count);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 0x100, 0x300, 0x500 }, windows[0..count]);
+    try testing_t.expectEqual(@as(u64, 0xAAAA), windows[count]);
+    try testing_t.expectEqual(@as(u64, 0xAAAA), windows[MaxEntries + 1]);
+
+    // A completed exact retirement frees one slot even though the unique HWND count does not
+    // use the number of slots as its denominator.
+    const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
+    try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x300, 10, &proof));
+    try testing_t.expectEqual(status_t.Ok, call_list_tracked_windows(graph, TestEpoch, &windows, MaxEntries, &count, &free_count));
+    try testing_t.expectEqual(@as(u32, 2), count);
+    try testing_t.expectEqual(@as(u32, MaxEntries - 3), free_count);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 0x100, 0x500 }, windows[0..count]);
+}
+
+test "list_tracked_windows handles empty and full entry arrays without touching output tails" {
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
+    defer call_destroy(graph);
+    var windows = [_]u64{0xCAFE} ** (MaxEntries + 1);
+    var count: u32 = 11;
+    var free_count: u32 = 12;
+    try testing_t.expectEqual(status_t.Ok, call_list_tracked_windows(graph, TestEpoch, &windows, MaxEntries, &count, &free_count));
+    try testing_t.expectEqual(@as(u32, 0), count);
+    try testing_t.expectEqual(@as(u32, MaxEntries), free_count);
+    for (windows) |window| try testing_t.expectEqual(@as(u64, 0xCAFE), window);
+    try testing_t.expectEqual(@as(u64, 0xCAFE), windows[0]);
+    try testing_t.expectEqual(@as(u64, 0xCAFE), windows[MaxEntries]);
+
+    for (0..MaxEntries) |index| {
+        _ = inject_entry(graph, index, if (index % 2 == 0) .Active else .Retiring, 0x1000 + index, index + 1);
+    }
+    try testing_t.expectEqual(status_t.Ok, call_list_tracked_windows(graph, TestEpoch, &windows, MaxEntries, &count, &free_count));
+    try testing_t.expectEqual(@as(u32, MaxEntries), count);
+    try testing_t.expectEqual(@as(u32, 0), free_count);
+    for (windows[0..MaxEntries], 0..) |window, index| try testing_t.expectEqual(@as(u64, 0x1000 + index), window);
+    try testing_t.expectEqual(@as(u64, 0xCAFE), windows[MaxEntries]);
+}
+
+test "list_tracked_windows guards epoch before arguments and changes no counters or outputs" {
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
+    defer call_destroy(graph);
+    _ = inject_entry(graph, 0, .Active, 0x500, 1);
+    var windows = [_]u64{0xABCD} ** MaxEntries;
+    var count: u32 = 0x1234;
+    var free_count: u32 = 0x5678;
+    const entries_before = graph.entries;
+    const ring_before = graph.ring;
+    const stats_before = graph.stats;
+
+    try testing_t.expectEqual(status_t.StaleEpoch, call_list_tracked_windows(graph, TestEpoch + 1, null, 0, null, null));
+    try testing_t.expectEqual(status_t.StaleEpoch, call_list_tracked_windows(graph, 0, &windows, 0, &count, &free_count));
+    try testing_t.expectEqualSlices(u64, &([_]u64{0xABCD} ** MaxEntries), &windows);
+    try testing_t.expectEqual(@as(u32, 0x1234), count);
+    try testing_t.expectEqual(@as(u32, 0x5678), free_count);
+    try testing_t.expectEqualSlices(u8, std_t.mem.asBytes(&entries_before), std_t.mem.asBytes(&graph.entries));
+    try testing_t.expectEqualSlices(u8, std_t.mem.asBytes(&ring_before), std_t.mem.asBytes(&graph.ring));
+    try testing_t.expectEqualSlices(u8, std_t.mem.asBytes(&stats_before), std_t.mem.asBytes(&graph.stats));
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.rejected_stale_epoch);
+
+    graph.busy = true;
+    try testing_t.expectEqual(status_t.Reentrant, call_list_tracked_windows(graph, 0, null, 0, null, null));
+    graph.busy = false;
+    const saved_thread = graph.owner_thread;
+    graph.owner_thread = saved_thread + 1;
+    try testing_t.expectEqual(status_t.WrongThread, call_list_tracked_windows(graph, 0, null, 0, null, null));
+    graph.owner_thread = saved_thread;
+    try testing_t.expectEqual(status_t.InvalidArgument, call_list_tracked_windows(graph, TestEpoch, null, MaxEntries, &count, &free_count));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_list_tracked_windows(graph, TestEpoch, &windows, MaxEntries - 1, &count, &free_count));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_list_tracked_windows(graph, TestEpoch, &windows, MaxEntries, null, &free_count));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_list_tracked_windows(graph, TestEpoch, &windows, MaxEntries, &count, null));
+    try testing_t.expectEqual(@as(u32, 0x1234), count);
+    try testing_t.expectEqual(@as(u32, 0x5678), free_count);
+    try testing_t.expectEqualSlices(u64, &([_]u64{0xABCD} ** MaxEntries), &windows);
+    try testing_t.expectEqualSlices(u8, std_t.mem.asBytes(&stats_before), std_t.mem.asBytes(&graph.stats));
 }
 
 const ProofOk = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
