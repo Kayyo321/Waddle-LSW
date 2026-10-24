@@ -109,6 +109,8 @@ struct api_double_t {
     uint32_t remove_calls; /**< Number of remove_hook calls (failed ones included). */
     uint32_t remove_fail_at; /**< 1-based remove call number that fails; 0 = none. */
     uintptr_t removed_tokens[ApiDoubleMaxHooks]; /**< Token passed to remove call i (0-based). */
+    window_observer_t *start_during_remove; /**< One-shot observer start attempted from remove_hook. */
+    window_observer_status_t start_during_remove_status; /**< Result of the one-shot lifecycle interleave. */
 
     uint32_t tid; /**< Fake thread id returned for every thread except a registered helper. */
     uint64_t monotonic; /**< Value returned by monotonic_ms. */
@@ -409,6 +411,11 @@ static int api_double_remove_hook(void *context, uintptr_t hook) {
     dbl->remove_calls++;
     if (index < ApiDoubleMaxHooks) {
         dbl->removed_tokens[index] = hook;
+    }
+    if (dbl->start_during_remove != NULL) {
+        window_observer_t *observer = dbl->start_during_remove;
+        dbl->start_during_remove = NULL;
+        dbl->start_during_remove_status = window_observer_start(observer);
     }
     return dbl->remove_fail_at != 0u && dbl->remove_calls == dbl->remove_fail_at ? 1 : 0;
 }

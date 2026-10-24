@@ -114,7 +114,11 @@ static void fixture_close(fixture_t *f) {
         return;
     }
     if (f->observer != NULL) {
-        (void)window_observer_destroy(&f->observer);
+        const window_observer_status_t destroy_status = window_observer_destroy(&f->observer);
+        if (destroy_status == WindowObserverStatusUnhookFailed && f->dbl != NULL) {
+            f->dbl->remove_fail_at = 0u;
+            (void)window_observer_destroy(&f->observer);
+        }
     }
     if (f->graph != NULL) {
         (void)interop_window_graph_destroy(&f->graph);
@@ -526,7 +530,30 @@ done:
     return result;
 }
 
-/** A failing install at the 1st, 2nd or 3rd hook removes the installed ones in reverse and fails the state. */
+/** A second observer cannot claim the singleton during the first observer's remove_hook callback. */
+static int test_lifecycle_reservation_covers_hook_removal(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_t *other = NULL;
+    Require(f != NULL);
+    other = make_observer(f, 1u);
+    Require(other != NULL);
+    f->dbl->start_during_remove = other;
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    Require(f->dbl->start_during_remove == NULL);
+    Require(f->dbl->start_during_remove_status == WindowObserverStatusAlreadyActive);
+    Require(window_observer_start(other) == WindowObserverStatusOk);
+    Require(window_observer_stop(other) == WindowObserverStatusOk);
+    Require(window_observer_destroy(&other) == WindowObserverStatusOk);
+done:
+    if (other != NULL) {
+        (void)window_observer_destroy(&other);
+    }
+    fixture_close(f);
+    return result;
+}
+
+/** A failed install rolls back every acquired hook in reverse order and releases its reservation. */
 static int test_lifecycle_hook_failure_rollback(void) {
     int result = 0;
     for (uint32_t failing = 1u; failing <= 3u; failing++) {
@@ -543,24 +570,23 @@ static int test_lifecycle_hook_failure_rollback(void) {
             Require(d->removed_tokens[i] == d->install_tokens[failing - 2u - i]);
         }
         Require(obs_stats(f, &stats) == 0);
-        Require(stats.state == WindowObserverStateFailed);
+        Require(stats.state == WindowObserverStateStopped);
         hint(f, WindowObserverEventObjectShow, 0x30u); /* slot was released: ignored */
         Require(obs_stats(f, &stats) == 0);
         Require(stats.hints_received == 0u);
 
         d->install_fail_at = 0u;
-        Require(window_observer_start(f->observer) == WindowObserverStatusBadState);
-        Require(window_observer_stop(f->observer) == WindowObserverStatusBadState);
+        Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
         Require(do_pump(f, 1u) == WindowObserverStatusBadState);
         Require(window_observer_refresh_due(f->observer, d->monotonic) == 0);
         Require(window_observer_next_timeout_ms(f->observer, d->monotonic) == WindowObserverWaitForever);
 
-        other = make_observer(f, 1u); /* the rollback released the process-wide slot */
+        other = make_observer(f, 1u); /* the rollback released the process-wide lifecycle */
         Require(other != NULL);
         Require(window_observer_start(other) == WindowObserverStatusOk);
         Require(window_observer_stop(other) == WindowObserverStatusOk);
         Require(window_observer_destroy(&other) == WindowObserverStatusOk);
-        Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk); /* Failed observers can be destroyed */
+        Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
         Require(f->observer == NULL);
     done:
         fixture_close(f);
@@ -571,7 +597,7 @@ static int test_lifecycle_hook_failure_rollback(void) {
     return result;
 }
 
-/** A failing remove_hook at any position still attempts all three, fails the state and refuses restart. */
+/** Failed unhooks retain only failed tokens and remain retryable without releasing the lifecycle. */
 static int test_lifecycle_unhook_failure(void) {
     int result = 0;
     for (uint32_t failing = 1u; failing <= 3u; failing++) {
@@ -583,30 +609,81 @@ static int test_lifecycle_unhook_failure(void) {
         Require(f->dbl->remove_calls == 3u); /* every hook was still attempted */
         Require(obs_stats(f, &stats) == 0);
         Require(stats.state == WindowObserverStateFailed);
-        f->dbl->remove_fail_at = 0u;
+        window_observer_t *other = make_observer(f, 1u);
+        Require(other != NULL);
+        Require(window_observer_start(other) == WindowObserverStatusAlreadyActive);
         Require(window_observer_start(f->observer) == WindowObserverStatusBadState);
-        Require(window_observer_stop(f->observer) == WindowObserverStatusBadState);
+        f->dbl->remove_fail_at = 0u;
+        Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+        Require(f->dbl->remove_calls == 4u);
+        Require(f->dbl->removed_tokens[3] == f->dbl->install_tokens[2u - (failing - 1u)]);
+        Require(obs_stats(f, &stats) == 0);
+        Require(stats.state == WindowObserverStateStopped);
+        Require(window_observer_start(other) == WindowObserverStatusOk);
+        Require(window_observer_stop(other) == WindowObserverStatusOk);
+        Require(window_observer_destroy(&other) == WindowObserverStatusOk);
         Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
         Require(f->observer == NULL);
         fixture_close(f);
         f = NULL;
 
-        /* Destroy of a Started observer whose unhook fails: freed, UnhookFailed, slot released. */
+        /* Destroy failure keeps the handle and retries the retained hook on a later call. */
         f = fixture_open(0u, 1u, 1);
         Require(f != NULL);
         f->dbl->remove_fail_at = failing;
         Require(window_observer_destroy(&f->observer) == WindowObserverStatusUnhookFailed);
-        Require(f->observer == NULL);
-        Require(f->dbl->remove_calls == 3u);
-        f->observer = make_observer(f, 1u);
         Require(f->observer != NULL);
-        Require(window_observer_start(f->observer) == WindowObserverStatusOk);
+        Require(f->dbl->remove_calls == 3u);
+        other = make_observer(f, 1u);
+        Require(other != NULL);
+        Require(window_observer_start(other) == WindowObserverStatusAlreadyActive);
+        f->dbl->remove_fail_at = 0u;
+        Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+        Require(f->observer == NULL && f->dbl->remove_calls == 4u);
+        Require(window_observer_start(other) == WindowObserverStatusOk);
+        Require(window_observer_stop(other) == WindowObserverStatusOk);
+        Require(window_observer_destroy(&other) == WindowObserverStatusOk);
     done:
         fixture_close(f);
         if (result != 0) {
             return result;
         }
     }
+    return result;
+}
+
+/** Failed start rollback retains acquired hooks and the lifecycle reservation through destroy retries. */
+static int test_lifecycle_start_rollback_unhook_retry(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 0);
+    window_observer_t *other = NULL;
+    window_observer_stats_t stats;
+    Require(f != NULL);
+    f->dbl->install_fail_at = 2u;
+    f->dbl->remove_fail_at = 1u;
+    Require(window_observer_start(f->observer) == WindowObserverStatusHookFailed);
+    Require(f->dbl->install_calls == 2u && f->dbl->remove_calls == 1u);
+    Require(f->dbl->removed_tokens[0] == f->dbl->install_tokens[0]);
+    Require(obs_stats(f, &stats) == 0 && stats.state == WindowObserverStateFailed);
+
+    other = make_observer(f, 1u);
+    Require(other != NULL);
+    Require(window_observer_start(other) == WindowObserverStatusAlreadyActive);
+    f->dbl->remove_fail_at = 2u;
+    Require(window_observer_destroy(&f->observer) == WindowObserverStatusUnhookFailed);
+    Require(f->observer != NULL && f->dbl->remove_calls == 2u);
+    Require(window_observer_start(other) == WindowObserverStatusAlreadyActive);
+    f->dbl->remove_fail_at = 0u;
+    Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+    Require(f->observer == NULL && f->dbl->remove_calls == 3u);
+    Require(f->dbl->removed_tokens[2] == f->dbl->install_tokens[0]);
+    Require(window_observer_start(other) == WindowObserverStatusOk);
+    Require(window_observer_stop(other) == WindowObserverStatusOk);
+done:
+    if (other != NULL) {
+        (void)window_observer_destroy(&other);
+    }
+    fixture_close(f);
     return result;
 }
 
@@ -2728,16 +2805,16 @@ static int test_entry_arguments_and_threads(void) {
     Require(window_observer_refresh_due(f->observer, 100000u) == 0);
     Require(window_observer_next_timeout_ms(f->observer, 100000u) == WindowObserverWaitForever);
 
-    /* Failed (unhook failure): every lifecycle call is BadState or harmless. */
+    /* Failed (unhook failure): no pumping/restart; stop retries the retained hook. */
     Require(window_observer_start(f->observer) == WindowObserverStatusOk);
     f->dbl->remove_fail_at = f->dbl->remove_calls + 1u;
     Require(window_observer_stop(f->observer) == WindowObserverStatusUnhookFailed);
-    Require(window_observer_stop(f->observer) == WindowObserverStatusBadState);
     Require(window_observer_start(f->observer) == WindowObserverStatusBadState);
     Require(do_pump(f, 1u) == WindowObserverStatusBadState);
     Require(do_refresh(f) == WindowObserverStatusBadState);
     Require(window_observer_refresh_due(f->observer, 100000u) == 0);
     Require(window_observer_next_timeout_ms(f->observer, 100000u) == WindowObserverWaitForever);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
 done:
     fixture_close(f);
     return result;
@@ -2752,9 +2829,10 @@ static int test_start_zero_token(void) {
     f->dbl->next_token = 0u;
     Require(window_observer_start(f->observer) == WindowObserverStatusHookFailed);
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.state == WindowObserverStateFailed);
+    Require(stats.state == WindowObserverStateStopped);
     Require(f->dbl->install_calls == 1u && f->dbl->remove_calls == 0u);
-    Require(window_observer_start(f->observer) == WindowObserverStatusBadState);
+    Require(window_observer_start(f->observer) == WindowObserverStatusOk);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
     Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
 done:
     fixture_close(f);
@@ -3717,8 +3795,10 @@ static const test_case_t TestCases[] = {
     TestEntry(test_create_no_memory),
     TestEntry(test_lifecycle_start_stop_restart),
     TestEntry(test_lifecycle_second_observer),
+    TestEntry(test_lifecycle_reservation_covers_hook_removal),
     TestEntry(test_lifecycle_hook_failure_rollback),
     TestEntry(test_lifecycle_unhook_failure),
+    TestEntry(test_lifecycle_start_rollback_unhook_retry),
     TestEntry(test_lifecycle_destroy_started),
     TestEntry(test_lifecycle_wrong_thread),
     TestEntry(test_hint_filter_table),

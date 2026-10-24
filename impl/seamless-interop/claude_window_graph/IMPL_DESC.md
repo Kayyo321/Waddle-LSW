@@ -282,49 +282,23 @@ Hook slots. `start` installs three out-of-context hooks in this order: the objec
 [EVENT_SYSTEM_MINIMIZESTART 0x0016 .. EVENT_SYSTEM_MINIMIZEEND 0x0017] into `hook_system`, and the DWM range
 [EVENT_OBJECT_CLOAKED 0x8017 .. EVENT_OBJECT_UNCLOAKED 0x8018] into `hook_cloak`. The cloak range exists because a DWM
 cloak flips the Visible fact without a show or hide event. If any install fails, every hook installed before it is
-removed (reverse order) and the state becomes Failed. `stop` and `destroy` remove `hook_cloak`, `hook_system`, then
-`hook_object`, attempt all installed hooks even if a removal fails, and set the slot to 0 after each attempt. The hint
-filter (`note_hint`) accepts exactly these three ranges.
+removed in reverse order, retaining each token whose removal fails. A separate atomic
+`g_lifecycle_observer` reservation blocks a second start from installation until
+all owned hooks are removed and state is Stopped. `g_active_observer` is only the
+callback publication pointer: clearing it does not release the lifecycle reservation.
+The hint filter accepts exactly these three hook ranges.
 
-State machine (`window_observer_state_t`):
-
-```
- create -> Created --start ok--> Started --stop ok--> Stopped --start ok--> Started
-              |                    |  \                  |
-              |                    |   +--stop: remove_hook fails--> Failed
-              +--start: install_hook fails (hooks undone)--------+--> Failed
- Stopped --start: install_hook fails--> Failed
- Failed: only destroy is legal (start, stop, pump, refresh -> BadState)
- Created/Stopped --stop--> same state, Ok;  Started --start--> BadState;  Started --destroy--> stop, then free
- start while another observer holds the slot -> AlreadyActive, state unchanged
-```
-
-Process-wide slot and thread rule. `start` publishes `this` with `atomic_compare_exchange_strong(NULL -> this)`
-(acq_rel); `stop`, failed-start cleanup and `destroy` clear it with `compare_exchange(this -> NULL)`, always before
-freeing, so the slot is non-NULL if and only if that observer is Started. A process-wide `static _Atomic(uint32_t)
-g_hints_in_flight` counter protects the observer against a concurrent hint: `note_hint` increments it (seq_cst)
-BEFORE it loads the slot and decrements it (release) on every return path; the clearing code (`stop`, failed-start
-rollback, `destroy`) clears the slot first and then spins (yielding, no lock, bounded by the duration of one hint, which
-never blocks) until the counter reads zero before it returns or frees. A hint that loaded the slot before the clear is
-therefore finished before `destroy` frees the observer. `note_hint` loads the slot (acquire); NULL -> return;
-`api.current_thread_id` differing from `owner_thread` -> one atomic increment of `hints_wrong_thread` and return without
-reading any mutable field; otherwise run the filter and `dirty_add`. Real WinEvent OUT_OF_CONTEXT hooks are delivered
-only on the installing thread, so the wrong-thread path exists for doubles; with the in-flight counter an off-thread
-double can no longer touch freed memory after `destroy` returns. `note_hint` never reads or writes the `busy` flag.
-
-Busy flag. `busy` (0/1, owner thread only) is set by every entry point that mutates observer state or calls the api (create
-excepted, as no observer exists; `start`, `stop`, `destroy`, `set_preedit_window`, `pump`, `refresh`) and only tested by
-the read-only ones (`refresh_due`, `next_timeout_ms`, `status`). An entry point that finds it set returns
-`WindowObserverStatusReentrant` (0 / `WindowObserverWaitForever` for the two scalar queries) and touches nothing, so a
-message dispatched inside a Win32 call (enumeration, a query) that calls back into the observer cannot corrupt the dirty
-table, the popped key or the enumeration buffer, which only the outermost `pump` or `refresh` uses. A `destroy` that finds
-the flag set returns Reentrant and frees nothing.
-
-Logical clock. `next_stamp` starts at `config.first_stamp` (nonzero; the caller guarantees it exceeds the graph's
-`stamp_high_water`). `stamp_next` returns the current value and increments; the value `UINT64_MAX` is the exhaustion sentinel (`first_stamp` must be nonzero and below it): later requests fail, pump and refresh return StampExhausted, and a hint under exhaustion latches
-`overflow` and counts `hint_overflows`. Every accepted hint, every fresh requery stamp and every refresh requery
-stamp comes from this one counter, so stamps are strictly increasing in observer call order. `captured_ms` is
-`api.tick_ms` sampled right after the stamp and before `query_facts` (the 32-bit wire value; the graph unwraps it).
+State machine: Created/Stopped may start; success enters Started. A failed install
+returns HookFailed after rollback: complete rollback enters Stopped and releases
+the reservation; failed rollback enters Failed with tokens/reservation retained.
+Started or Failed may stop/destroy. Stop clears callback publication, waits for
+in-flight hints, attempts every retained hook in reverse order and clears only
+successful removals. Any failed removal returns UnhookFailed with state Failed,
+tokens and reservation retained. A later stop/destroy retries only those tokens.
+After every token is removed, state becomes Stopped and reservation is released.
+Destroy frees/NULLs its slot only after successful teardown; on failure it resets
+busy and leaves owner/slot intact. Created/Stopped stop is idempotent. Failed
+start/pump/refresh remain BadState; Failed stop/destroy are retry operations.
 
 ### 3.5 Algorithms (pseudocode; identifiers are the final Zig names)
 
@@ -476,15 +450,24 @@ Observer: `window_observer_create(config, out_observer)`.
 
 ### 4.2 Start and hook installation, with partial-failure rollback
 
-`window_observer_start(obs)`:
-1. `obs == NULL`: InvalidArgument. Caller thread differs from `owner_thread`: WrongThread. `state` is Started or Failed: BadState. Created and Stopped continue.
-2. Claim the process-wide slot: `atomic_compare_exchange_strong(&g_active_observer, expected=NULL, desired=obs)` with acq_rel on success. Failure returns AlreadyActive; `obs` is unchanged (still Created or Stopped).
-3. Clear the dirty table (`count=0`), `overflow=0`, `refresh_requested=0`, `have_refresh_attempt=0`, `latch_ms=0`. The state is still Created or Stopped, so any hint dispatched now is ignored by `note_hint` (state check); the latch in step 7 covers every event that could be missed.
-4. `api->install_hook(ctx, WindowObserverEventObjectCreate, WindowObserverEventObjectParentChange, &hook_object)` (0x8000..0x800F). Nonzero: release the slot (CAS `obs` -> NULL), wait for the in-flight counter to reach zero, `state = Failed`, return HookFailed. Nothing was installed, so nothing is removed.
-5. `api->install_hook(ctx, WindowObserverEventSystemMinimizeStart, WindowObserverEventSystemMinimizeEnd, &hook_system)` (0x0016..0x0017). Nonzero: `api->remove_hook(ctx, hook_object)` once, `hook_object = 0`, release the slot, wait for the in-flight counter, `state = Failed`, return HookFailed.
-6. `api->install_hook(ctx, WindowObserverEventObjectCloaked, WindowObserverEventObjectUncloaked, &hook_cloak)` (0x8017..0x8018). Nonzero: remove `hook_system` then `hook_object` (one `remove_hook` call each, in that order), zero both slots, release the slot, wait for the in-flight counter, `state = Failed`, return HookFailed. If any rollback removal also fails the token is forgotten, never retried, and that hook stays registered until process exit; its callbacks find the slot NULL and are ignored. HookFailed is the only status reported.
-7. All three installed: `state = Started`, `desktop_active = 0` (no desktop check has happened yet; the first pump or refresh sets it to 1 when the desktop is Default), `refresh_requested = 1`, `latch_ms = api->monotonic_ms(ctx)`, `have_refresh_attempt = 0` (the first refresh is due immediately because no attempt exists). Return Ok.
-Counters: none. A Failed observer accepts only `destroy`. The busy flag is held for the whole call.
+1. Validate nonnull observer, creating thread and busy/state gates. Only Created
+   or Stopped may start; Started/Failed reject without changing ownership.
+2. Atomically reserve g_lifecycle_observer from NULL to this owner. AlreadyActive
+   means another lifecycle is installing/started/stopping/retaining failed hooks.
+   Then publish g_active_observer; an inconsistent occupied callback slot causes
+   reservation rollback and AlreadyActive without touching the other owner.
+3. Clear bounded hint/refresh state. Install object, system and cloak hooks in
+   order, immediately storing every nonzero returned token in observer->hooks.
+   A hint during installation sees a non-Started owner and is ignored; the first
+   full refresh covers it. The caller holds busy throughout installation.
+4. On any failed install, clear callback publication and wait for in-flight hints.
+   Attempt all owned hook removals in reverse order. Clear only successful tokens.
+   If any token remains, enter Failed and retain lifecycle reservation; otherwise
+   enter Stopped and release it. Return HookFailed for the acquisition failure.
+   The caller may stop/destroy to retry cleanup; no token is forgotten.
+5. On complete installation enter Started, set the full-refresh latch and reset
+   attempt cadence. Return Ok. No second observer can start while this lifecycle
+   owns the reservation, even when callback publication is temporarily NULL.
 
 ### 4.3 Steady state: hint to pump
 
@@ -645,9 +628,16 @@ Worked numbers: 10 Active windows g1..g10, empty ring, 600 child DESTROY hints. 
 
 ### 4.12 Stop, restart, destroy; graph destroy
 
-Observer `stop(obs)`: NULL -> InvalidArgument; wrong thread -> WrongThread; busy flag set -> Reentrant (nothing touched); Failed -> BadState; Created or Stopped -> Ok with no effect. Started: (1) release the slot first (CAS `obs` -> NULL, release), so later or queued callbacks are ignored; (2) `state = Stopped`; (3) wait until `g_hints_in_flight` is zero, then `remove_hook(hook_cloak)`, `remove_hook(hook_system)`, `remove_hook(hook_object)` in that order, each attempted even if another fails, tokens zeroed regardless (no retry); (4) clear the dirty table, `overflow`, `refresh_requested`; (5) any failed removal: `state = Failed`, return UnhookFailed; else Ok. Counters and `next_stamp` survive. Restart from Stopped is `start` (4.2); stamps continue upward, so a restart never reissues a stamp. Stop never calls the graph: nothing is retired, freed or proven.
-Observer `destroy(slot)`: `slot == NULL` -> InvalidArgument; `*slot == NULL` -> Ok no-op; wrong thread -> WrongThread (nothing freed, slot unchanged); busy flag set -> Reentrant (nothing freed, slot unchanged); Started -> stop first; then defensive slot release plus a wait for `g_hints_in_flight == 0`, `free`, `*slot = NULL`; returns UnhookFailed if stop reported it (freed anyway), else Ok.
-Graph `destroy(slot)`: `slot == NULL` -> InvalidArgument; `*slot == NULL` -> Ok no-op; wrong thread -> WrongThread; `busy` -> Reentrant (neither frees). Otherwise `allocator.destroy(graph)` and `*slot = NULL`. Freed: the single `graph_t` allocation with all 64 entries, 64 deferred records, 256 ring events, titles and keys. NOT proven or released: capture, frame pins, heap runs, mappings. Quarantined pairs and undelivered RetireIntent events vanish with the graph, which is why the coordinator calls `list_retiring` and drains BEFORE destroy and hands the pairs to the slot runtime; destroying the graph is never evidence that host buffers are gone. The observer holds no graph pointer, so destroy order between the two is free.
+Observer stop validates pointer, owner thread and busy first. Created/Stopped
+return Ok unchanged. Started/Failed clear callback publication and wait for all
+previously published in-flight hints, while retaining lifecycle reservation.
+Every retained hook is removed in reverse order; successful tokens become0 and
+failed tokens remain owned. Clear only scalar hint/refresh work, never graph
+pins. Failure enters Failed and returns UnhookFailed. Success enters Stopped and
+releases reservation. Counters/stamps survive; restart performs a fresh refresh.
+Observer destroy performs the same retryable teardown for Started/Failed. Any
+failure leaves the owner/slot intact and resets busy for retry. Only success frees
+and NULLs the owner. Neither operation calls graph retirement or produces proof.
 
 ### 4.13 Capacity
 
@@ -745,8 +735,8 @@ Re-entry while the owner thread is inside a Win32 query: out-of-context hooks ca
 | NoMemory (6) | create | `*out_observer = NULL`; nothing leaked | retry or abort |
 | AlreadyActive (7) | start | Another observer owns the process-wide slot; this one unchanged | stop or destroy the other |
 | BadState (8) | start, stop, pump, refresh | Call illegal in the current lifecycle state; nothing changed | respect the lifecycle |
-| HookFailed (9) | start | Installed hooks removed, slot released, state Failed | destroy and recreate |
-| UnhookFailed (10) | stop, destroy | Every removal attempted; stop: state Failed, restart refused; destroy: freed anyway | process-exit leak of one hook; callbacks are ignored (slot NULL) |
+| HookFailed (9) | start | Rollback attempted; failed tokens/reservation retained in Failed, otherwise Stopped | stop/destroy retries cleanup; never discard owner |
+| UnhookFailed (10) | stop, destroy | Failed tokens/reservation and owner retained in Failed; successful tokens cleared | retry stop/destroy; callback publication stays NULL |
 | GraphError (11) | pump, refresh | Unexpected graph status other than QueueFull and Reentrant (`last_graph_status` has it); the key re-inserted at the head, processing stopped; refresh aborted | inspect `last_graph_status` (StaleEpoch, WrongThread, NoRefresh, ...) and fix wiring |
 | EnumFailed (12) | refresh, and pump when it runs the overflow recovery | Enumeration failed: no graph call, nothing begun, nothing retired. Enumeration truncated (above 2048 windows): the refresh ran its offers and unseen requery and was aborted, never committed; nothing retired by absence. In both cases the refresh latch is kept | none; retried on the cadence |
 | StampExhausted (13) | pump, refresh | Logical clock exhausted; key re-inserted / refresh aborted | replace the observer starting above `stamp_high_water` |
@@ -1205,7 +1195,7 @@ This section is the contract between the delivered engine and the future guest s
 2. Fill `interop_window_graph_config_t` with `session_epoch`, `uac_mode` from the session configuration (`InteropWindowUacWindow`, `InteropWindowUacAuto` or `InteropWindowUacNative`), `reserved0 = 0`, `app_key_lookup` and `app_key_context` (the application catalog callback: bounded, non-blocking, returns a valid protocol-v2 key or nonzero, never calls the graph), and `now_ms` plus `now_ms_context` (NULL for the default monotonic clock). Call `interop_window_graph_create(&config, &graph)`; anything but Ok is fatal for seamless mode.
 3. Call `interop_window_graph_stamp_high_water(graph, &high_water)`. Set `first_stamp = high_water + 1` (for a fresh graph this is 1; if `high_water == UINT64_MAX` roll the epoch).
 4. Fill `window_observer_config_t`: `api = NULL` (native table under `_WIN32`), `api_context = NULL`, `first_stamp`, `preedit_window` (HWND of the agent's IME preedit window or 0), `own_process_id = GetCurrentProcessId()`, `uac_mode` equal to the graph's (0..2; used for the owner classification that decides OwnerHidden). The loop thread must be the thread that creates the observer and it must already run with `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` (application manifest, or `SetThreadDpiAwarenessContext` before this call): rectangles and dpi are reported in physical pixels of a known scale and the observer never changes the awareness of a thread. Call `window_observer_create`. `Unsupported` (no `GetDpiForWindow`, or the wrong awareness) is fatal for seamless mode on that thread; fix the awareness and create again.
-5. Call `window_observer_start`, which installs three out-of-context hooks (object range up to parent change, minimize, DWM cloak/uncloak). HookFailed and UnhookFailed leave the observer Failed: destroy it and report seamless mode unavailable. AlreadyActive is a programming error. A successful start latches a full refresh, so the first loop iteration enumerates the desktop.
+5. Call `window_observer_start`, which installs three out-of-context hooks (object range up to parent change, minimize, DWM cloak/uncloak). HookFailed/UnhookFailed require cleanup inspection: retry stop/destroy until every retained token is removed; a failed destroy preserves the owner and reservation. Report mode unavailable while cleanup is pending. AlreadyActive is a programming error. A successful start latches a full refresh, so the first loop iteration enumerates the desktop.
 
 ### 8.3 Ordered calls: one loop iteration
 
@@ -1224,7 +1214,7 @@ The graph has no call that lists Active entries. The coordinator derives the Act
 
 ### 8.4 Ordered calls: shutdown, transport reset, new epoch
 
-1. `window_observer_stop(observer)`: the three hooks removed in reverse order (UnhookFailed is logged; the observer is then Failed and only destroyable), dirty table cleared. Nothing is retired and no proof exists.
+1. `window_observer_stop(observer)`: the retained hooks are attempted in reverse order; UnhookFailed retains tokens/owner/reservation for stop/destroy retry, and the dirty table is cleared. Nothing is retired and no proof exists.
 2. If the transport is still usable, drain remaining events (steps 6 to 7 above); otherwise leave them.
 3. Hand the quarantine to the slot runtime: `interop_window_graph_list_retiring(graph, entries, InteropMaxWindows, &count)`, union with the coordinator's own pending set and with every Active pair it announced. The slot runtime keeps the heap runs, mappings and pins for those pairs alive until it has its own proof. Connection loss is never proof; destroying the graph is never proof.
 4. `interop_window_graph_destroy(&graph)`; must run on the owner thread and returns WrongThread or Reentrant without freeing otherwise.
@@ -1355,3 +1345,25 @@ existing NULL-on-later-failure rule. Runtime C and Zig regressions verify both
 aligned callback-context overlap and misaligned overlap. Debug/ReleaseSafe150
 Zig tests and27 real C ABI tests pass in private /tmp outputs; native Windows
 execution and leak-enabled lead qualification remain separate pending gates.
+
+
+### 9.4 Codex review correction: retryable observer hooks (2026-10-24)
+
+The returned3714cf2 released its singleton callback pointer before hook removal,
+allowing a second start during teardown, and discarded failed unhook tokens.
+Codex requires the separate lifecycle reservation and retryable teardown described
+in sections3/4/6 above. Deterministic tests interleave a second start from the
+first owner's actual remove-hook callback, fail stop and destroy, and fail rollback
+after partial installation. The second start remains AlreadyActive through cleanup;
+failed destroy keeps its caller slot; retries remove only retained tokens and can
+then free/NULL the owner. This supersedes every historical leak-until-exit policy.
+Public numeric enums/ABI structs and wire/layout versions are unchanged. Strict
+portable tests65/65 and Windows object cross-build pass. Worker leak-disabled
+ASan runs are supplemental only; lead detect_leaks1 qualification remains required.
+
+Microsoft documents UnhookWinEvent as fallible and owner-thread-bound
+(https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-unhookwinevent).
+The retry policy follows that boundary and never treats failure as detachment.
+OUTOFCONTEXT callbacks require a message loop and run on the installing thread,
+with reentrancy possible (https://learn.microsoft.com/en-us/windows/desktop/api/winuser/nf-winuser-setwineventhook).
+Native behavior and installed-agent acceptance remain separate qualification.

@@ -25,12 +25,13 @@
  * out-of-context hooks are delivered). Every function except window_observer_note_hint must
  * run on that thread; a call from another thread returns WrongThread (or 0 / WaitForever for
  * the two scalar queries) without touching any state. Only one observer per process may be
- * Started at a time because hook procedures carry no context: a process-wide atomic slot names
- * the active observer, and start() on a second observer returns AlreadyActive. The code that
- * clears the slot (stop, destroy, failed-start rollback) waits until the process-wide in-flight
- * counter, which every window_observer_note_hint call increments before it loads the slot and
- * decrements when it finishes, is zero, so a hint on another thread can never touch an observer
- * that stop or destroy has returned from.
+ * Started or tearing down because hook procedures carry no context: a process-wide lifecycle
+ * reservation covers installation through removal, while a separate atomic slot names the active
+ * callback target. Starting another observer returns AlreadyActive until every old hook is removed.
+ * The code that clears the callback slot (stop, destroy, failed-start rollback) waits until the
+ * process-wide in-flight counter, which every window_observer_note_hint call increments before it
+ * loads the slot and decrements when it finishes, is zero, so a hint cannot touch an observer after
+ * teardown has passed that wait.
  *
  * Re-entrancy. A Win32 call made by an observer function (enumeration, queries) can dispatch a
  * message to the owner thread, and the handler may call back into this observer. The observer
@@ -187,7 +188,7 @@ typedef enum window_observer_state_t {
     WindowObserverStateCreated = 1, /**< Created, never started; no hooks exist. */
     WindowObserverStateStarted = 2, /**< Hooks installed; hints accepted; pump and refresh allowed. */
     WindowObserverStateStopped = 3, /**< Stopped; no hooks; may be started again or destroyed. */
-    WindowObserverStateFailed = 4 /**< Hook install or removal failed; terminal, only destroy is allowed. */
+    WindowObserverStateFailed = 4 /**< Hook install/removal failed; stop/destroy retry retained hook removals. */
 } window_observer_state_t;
 
 /** @brief Result codes of the observer functions. Only Ok and More are fully successful. */
@@ -199,10 +200,10 @@ typedef enum window_observer_status_t {
     WindowObserverStatusInvalidArgument = 4, /**< NULL pointer, zero budget/stamp/process id, uac_mode above 2, malformed api table or config; nothing changed. */
     WindowObserverStatusWrongThread = 5, /**< Not the owner thread; nothing touched (a destroy does not free). */
     WindowObserverStatusNoMemory = 6, /**< create could not allocate; no observer exists. */
-    WindowObserverStatusAlreadyActive = 7, /**< Another observer in this process is Started; this one stays unchanged. */
+    WindowObserverStatusAlreadyActive = 7, /**< Another observer owns or tears down this process's hook lifecycle; this one stays unchanged. */
     WindowObserverStatusBadState = 8, /**< The call is illegal in the current lifecycle state; nothing changed. */
-    WindowObserverStatusHookFailed = 9, /**< A hook could not be installed; installed hooks were removed, state Failed. */
-    WindowObserverStatusUnhookFailed = 10, /**< A hook could not be removed; state Failed, restart refused. */
+    WindowObserverStatusHookFailed = 9, /**< A hook could not be installed; acquired hooks were rolled back or retained for retry. */
+    WindowObserverStatusUnhookFailed = 10, /**< One or more hook tokens remain owned in Failed; stop/destroy can retry. */
     WindowObserverStatusGraphError = 11, /**< Graph returned an unexpected status (see last_graph_status); processing stopped. */
     WindowObserverStatusEnumFailed = 12, /**< Enumeration failed (no refresh begun, nothing retired) or was truncated (the refresh ran its offers and unseen requery but was aborted, never committed). refresh, and pump when it runs an overflow recovery; the refresh latch stays set. */
     WindowObserverStatusStampExhausted = 13, /**< The logical clock cannot issue another stamp; the observer must be replaced. */
@@ -480,53 +481,59 @@ window_observer_status_t window_observer_create(const window_observer_config_t *
                                                 window_observer_t **out_observer);
 
 /**
- * @brief Stop (if started), free the observer and set the caller's handle to NULL.
+ * @brief Stop if needed, then free the observer and set the caller's handle to NULL.
  *
- * Frees even when removing a hook fails; the process-wide slot is released first and the call then
- * waits until the process-wide in-flight hint counter is zero, so a hook that could not be removed
- * delivers only ignored hints afterwards and no hint can touch the freed observer. The observer never
- * touches the graph, so destroy order relative to the graph is free.
+ * A Started or Failed observer first unpublishes its callback target and waits for in-flight hints,
+ * then attempts every retained hook token. If any removal fails, the observer, caller slot, failed
+ * tokens, and process-wide lifecycle reservation remain owned so stop/destroy can retry; no observer
+ * memory is freed. On success every hook is gone, the lifecycle reservation is released, and the
+ * observer is freed. The observer never touches the graph, so destroy order relative to the graph is
+ * free.
  *
  * @param[in,out] observer_slot Non-NULL caller slot. If *observer_slot is NULL this is a successful
- *                              no-op. On Ok and UnhookFailed the observer is freed and *observer_slot
- *                              is NULL; on any other status nothing is freed and the slot is unchanged.
- * @return Ok; UnhookFailed (freed, but a hook leaked until process exit); InvalidArgument for a NULL
- *         slot; WrongThread; Reentrant (another entry point is active; nothing freed).
+ *                              no-op. On Ok the owner is freed and the slot is NULL. On UnhookFailed
+ *                              the owner and slot are unchanged and retained hooks may be retried.
+ * @return Ok; UnhookFailed (one or more hook tokens remain owned); InvalidArgument for a NULL slot;
+ *         WrongThread; Reentrant (another entry point is active; nothing freed).
  * @note Owner thread only. Not safe against concurrent use of the same observer. Holds the busy flag.
  */
 window_observer_status_t window_observer_destroy(window_observer_t **observer_slot);
 
 /**
- * @brief Claim the process-wide active slot, clear the dirty table, install the three hooks, and latch
- *        a full refresh as due.
+ * @brief Reserve the process-wide lifecycle, publish the callback target, install the three hooks,
+ *        and latch a full refresh as due.
  *
- * Allowed from Created and Stopped (restart; the logical clock keeps counting up). Installs, in order,
- * the object range [ObjectCreate, ObjectParentChange], the system range [SystemMinimizeStart,
- * SystemMinimizeEnd] and the cloak range [ObjectCloaked, ObjectUncloaked]. On HookFailed the hooks
- * already installed are removed in reverse order, the slot is released (waiting for in-flight hints),
- * and the state becomes Failed. Clears the cadence clock (no refresh attempt yet) and stamps latch_ms.
+ * Allowed from Created and Stopped (restart; the logical clock keeps counting up). The reservation
+ * remains held for the full Started lifetime and during stop/rollback. Installs, in order, the object
+ * range [ObjectCreate, ObjectParentChange], the system range [SystemMinimizeStart, SystemMinimizeEnd]
+ * and the cloak range [ObjectCloaked, ObjectUncloaked]. On HookFailed the callback slot is released
+ * (waiting for in-flight hints) and acquired hook tokens are removed in reverse order. If rollback
+ * removal fails, those tokens and the reservation remain owned in Failed state for stop/destroy retry;
+ * successful rollback enters Stopped and releases the reservation. Clears the cadence clock (no
+ * refresh attempt yet) and stamps latch_ms on success.
  *
  * @param[in,out] observer Non-NULL handle.
- * @return Ok; InvalidArgument; WrongThread; Reentrant; BadState (already Started, or Failed);
- *         AlreadyActive (another observer holds the slot; this one unchanged); HookFailed (state Failed,
- *         every hook that was installed has been removed).
+ * @return Ok; InvalidArgument; WrongThread; Reentrant; BadState (already Started or Failed);
+ *         AlreadyActive (another observer owns or tears down the lifecycle; this one unchanged);
+ *         HookFailed (acquired tokens were rolled back, or remain owned for retry if removal failed).
  * @note Owner thread only. Calls api->install_hook; may dispatch hint callbacks only after it returns.
  *       Holds the busy flag.
  */
 window_observer_status_t window_observer_start(window_observer_t *observer);
 
 /**
- * @brief Cease hint production: release the active slot, remove every hook (reverse order), clear
- *        the dirty table, the overflow latch and the refresh latch.
+ * @brief Cease hint production, remove retained hooks in reverse order, and release the lifecycle
+ *        reservation only after complete success.
  *
- * Releasing the slot waits until the process-wide in-flight hint counter is zero, so no hint is inside
- * the observer when the call returns. Never touches the graph: nothing is retired, freed or proven;
- * the coordinator decides what happens to the graph. Stopping a Created or Stopped observer succeeds
- * without effect.
+ * Releasing the callback slot waits until the process-wide in-flight hint counter is zero. The separate
+ * lifecycle reservation remains held until all hooks are removed and the state is Stopped, so a second
+ * observer cannot start in the teardown gap. A Failed observer retries retained hook tokens. Never
+ * touches the graph: nothing is retired, freed or proven; the coordinator decides what happens to the
+ * graph. Stopping a Created or Stopped observer succeeds without effect.
  *
  * @param[in,out] observer Non-NULL handle.
- * @return Ok; UnhookFailed (every hook was still attempted, state becomes Failed and restart is
- *         refused); InvalidArgument; WrongThread; Reentrant; BadState (observer is Failed).
+ * @return Ok; UnhookFailed (every retained hook was attempted and failures remain retryable in Failed);
+ *         InvalidArgument; WrongThread; Reentrant; BadState for other invalid lifecycle states.
  * @note Owner thread only. Calls api->remove_hook up to three times. Holds the busy flag.
  */
 window_observer_status_t window_observer_stop(window_observer_t *observer);

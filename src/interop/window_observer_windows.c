@@ -77,9 +77,10 @@
  *    change is not applied; the caller repeats it after the outer call returns.
  *  - Stamp exhaustion: UINT64_MAX is the sentinel for "no stamp left"; first_stamp must be
  *    nonzero and below it, and stats.next_stamp reads UINT64_MAX once the clock is exhausted.
- *  - Lifetime safety of the process-wide slot: note_hint registers itself in a process-wide
- *    in-flight counter before it loads the slot, and the code that clears the slot waits for that
- *    counter to reach zero, so an off-thread hint can never touch a freed observer.
+ *  - Lifetime safety of process-wide hook ownership: a separate lifecycle reservation blocks a
+ *    second start while the active callback slot is cleared and hooks are removed. note_hint
+ *    registers itself in a process-wide in-flight counter before loading that slot, and teardown
+ *    waits for the counter to reach zero before it may free the observer.
  */
 #include "window_observer_windows.h"
 
@@ -158,7 +159,7 @@ struct window_observer_t {
     void *api_context; /**< Passed to every api entry. */
     uint32_t owner_thread; /**< Thread id captured at create. */
     uint32_t state; /**< window_observer_state_t. */
-    uintptr_t hooks[ObserverHookCount]; /**< Hook tokens in installation order; 0 = not installed. */
+    uintptr_t hooks[ObserverHookCount]; /**< Owned hook tokens; 0 = removed or never installed. */
     uint32_t dirty_count; /**< Entries in dirty[0..dirty_count), first-seen order. */
     uint32_t own_process_id; /**< Agent process id. */
     uint32_t uac_mode; /**< interop_window_uac_mode_t used to classify owner windows. */
@@ -182,6 +183,8 @@ struct window_observer_t {
 
 /** Process-wide active observer; hook procedures carry no context. */
 static _Atomic(window_observer_t *) g_active_observer = NULL;
+/** Lifecycle reservation held across hook installation and complete hook teardown. */
+static _Atomic(window_observer_t *) g_lifecycle_observer = NULL;
 /** Number of note_hint calls currently between slot load and completion. */
 static _Atomic uint32_t g_hint_inflight = 0;
 
@@ -283,6 +286,33 @@ static void release_slot(window_observer_t *observer) {
             yield_thread();
         }
     }
+}
+
+/* Reserve the one process-wide observer lifecycle, including periods with no published callback target. */
+static int reserve_lifecycle(window_observer_t *observer) {
+    window_observer_t *expected = NULL;
+    return atomic_compare_exchange_strong(&g_lifecycle_observer, &expected, observer);
+}
+
+/* Release the lifecycle reservation only after the observer is stopped and owns no hook tokens. */
+static void release_lifecycle(window_observer_t *observer) {
+    window_observer_t *expected = observer;
+    (void)atomic_compare_exchange_strong(&g_lifecycle_observer, &expected, NULL);
+}
+
+/* Remove every retained hook in reverse install order; preserve each token whose removal failed. */
+static int remove_owned_hooks(window_observer_t *observer) {
+    int failed = 0;
+    for (uint32_t i = ObserverHookCount; i-- > 0u;) {
+        if (observer->hooks[i] != 0u) {
+            if (observer->api.remove_hook(observer->api_context, observer->hooks[i]) != 0) {
+                failed = 1;
+            } else {
+                observer->hooks[i] = 0u;
+            }
+        }
+    }
+    return failed;
 }
 
 /* Map one graph status to a handling class and account for it. */
@@ -493,20 +523,11 @@ window_observer_status_t window_observer_create(const window_observer_config_t *
 
 /* Body of stop; the caller holds the busy flag and has checked thread and argument. */
 static window_observer_status_t stop_locked(window_observer_t *observer) {
-    if (observer->state == WindowObserverStateFailed) {
-        return WindowObserverStatusBadState;
-    }
-    if (observer->state != WindowObserverStateStarted) {
+    if (observer->state != WindowObserverStateStarted && observer->state != WindowObserverStateFailed) {
         return WindowObserverStatusOk;
     }
     release_slot(observer);
-    int failed = 0;
-    for (uint32_t i = ObserverHookCount; i-- > 0u;) {
-        if (observer->hooks[i] != 0u) {
-            failed |= observer->api.remove_hook(observer->api_context, observer->hooks[i]) != 0;
-            observer->hooks[i] = 0u;
-        }
-    }
+    const int failed = remove_owned_hooks(observer);
     observer->dirty_count = 0u;
     observer->popped_in_flight = 0u;
     observer->overflow = 0u;
@@ -516,6 +537,7 @@ static window_observer_status_t stop_locked(window_observer_t *observer) {
         return WindowObserverStatusUnhookFailed;
     }
     observer->state = WindowObserverStateStopped;
+    release_lifecycle(observer);
     return WindowObserverStatusOk;
 }
 
@@ -547,23 +569,18 @@ window_observer_status_t window_observer_destroy(window_observer_t **observer_sl
     if (gate != WindowObserverStatusOk) {
         return gate;
     }
-    observer->busy = 1u; /* never cleared: the observer is freed below */
-    window_observer_status_t result = WindowObserverStatusOk;
-    if (observer->state == WindowObserverStateStarted) {
-        result = stop_locked(observer);
+    observer->busy = 1u;
+    if (observer->state == WindowObserverStateStarted || observer->state == WindowObserverStateFailed) {
+        const window_observer_status_t result = stop_locked(observer);
+        if (result != WindowObserverStatusOk) {
+            observer->busy = 0u;
+            return result;
+        }
     }
     release_slot(observer);
     free(observer);
     *observer_slot = NULL;
-    return result == WindowObserverStatusUnhookFailed ? WindowObserverStatusUnhookFailed
-                                                      : WindowObserverStatusOk;
-}
-
-/* Remove the first `installed` hooks (reverse order) after a failed start; failures are ignored. */
-static void start_unwind(window_observer_t *observer, const uintptr_t *tokens, uint32_t installed) {
-    for (uint32_t i = installed; i-- > 0u;) {
-        (void)observer->api.remove_hook(observer->api_context, tokens[i]);
-    }
+    return WindowObserverStatusOk;
 }
 
 /* Body of start; the caller holds the busy flag and has checked thread and argument. */
@@ -571,29 +588,36 @@ static window_observer_status_t start_locked(window_observer_t *observer) {
     if (observer->state != WindowObserverStateCreated && observer->state != WindowObserverStateStopped) {
         return WindowObserverStatusBadState;
     }
+    if (!reserve_lifecycle(observer)) {
+        return WindowObserverStatusAlreadyActive;
+    }
     window_observer_t *expected = NULL;
     if (!atomic_compare_exchange_strong(&g_active_observer, &expected, observer)) {
+        release_lifecycle(observer);
         return WindowObserverStatusAlreadyActive;
     }
     observer->dirty_count = 0u;
     observer->popped_in_flight = 0u;
     observer->overflow = 0u;
 
-    uintptr_t tokens[ObserverHookCount];
-    memset(tokens, 0, sizeof(tokens));
     for (uint32_t i = 0; i < ObserverHookCount; i++) {
         uintptr_t token = 0u;
         const int rc = observer->api.install_hook(observer->api_context, HookRanges[i].event_min,
                                                   HookRanges[i].event_max, &token);
+        if (token != 0u) {
+            observer->hooks[i] = token;
+        }
         if (rc != 0 || token == 0u) {
-            start_unwind(observer, tokens, i);
             release_slot(observer);
-            observer->state = WindowObserverStateFailed;
+            if (remove_owned_hooks(observer)) {
+                observer->state = WindowObserverStateFailed;
+            } else {
+                observer->state = WindowObserverStateStopped;
+                release_lifecycle(observer);
+            }
             return WindowObserverStatusHookFailed;
         }
-        tokens[i] = token;
     }
-    memcpy(observer->hooks, tokens, sizeof(tokens));
     observer->dirty_count = 0u; /* hints that raced the install were ignored; the latch below covers them */
     observer->overflow = 0u;
     observer->refresh_requested = 1u;

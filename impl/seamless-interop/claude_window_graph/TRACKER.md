@@ -57,9 +57,18 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
 - **Commit `5c02dcc`**: `docs(interop): record the window graph handoff return` - +40% to #5 (+4.0% overall).
 - **Commit `3714cf2`**: `docs(interop): finalize the window graph tracker` - +20% to #5 (+2.0% overall); this tracker.
 
-- **Commit `HEAD`**: `fix(interop): reject graph create aliases before clearing output`
+- **Commit `ac4c422`**: `fix(interop): reject graph create aliases before clearing output`
   - **Task Impact**: +0% to local #2/#4; +0% global TODO #10 (local92.25%).
   - **Summary**: Codex review fixes config mutation before alias rejection and
     clarifies the NULL-on-failure exception. Adds runtime aligned/misaligned
     overlap regressions; Debug/ReleaseSafe150 Zig and27 C tests pass. HEAD is this
     containing review-fix commit; Windows execution and native acceptance remain open.
+
+- **Commit `HEAD`**: `fix(interop): retain observer reservation and failed hook ownership`
+  - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local92.25%).
+  - **Summary**: Keeps a separate lifecycle reservation through hook cleanup,
+    immediately owns acquired tokens and retains failed unhooks for stop/destroy
+    retry. Failed destroy preserves owner/slot. Adds deterministic second-start
+    and partial-rollback retry regressions. Strict65 portable tests and Windows
+    cross-build pass; lead leak-enabled qualification remains pending. HEAD is
+    this containing observer review-fix commit.
