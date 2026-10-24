@@ -538,7 +538,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     remain open. This is CPU module qualification, not compositor acceptance.
     Source commitcb4379c contains this qualification.
 
-- **Commit `HEAD`**: `test(interop): preserve disposable device lifecycle evidence`
+- **Commit `dd0ca3d`**: `test(interop): preserve disposable device lifecycle evidence`
   - **Task Impact**: +0% to TODO #8/#9/#34 (+0% overall; total14.40%).
   - **Summary**: Adds the native private-profile/blank-disk smoke fixture and
     passing0/1/8-mount evidence, including QMP identity, four readonly backend
@@ -548,4 +548,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     fault-only cleanup tests join hardware-free CI. This proves startup/backend
     configuration only; guest drive binding/write denial and other native
     devices remain open. Existing Windows disk untouched. [Evidence receipt](device_smoke_qualification_2026_10_24.json).
-    HEAD identifies this containing fixture/evidence commit.
+    Source commitdd0ca3d contains this fixture/evidence.
+
+- **Commit `HEAD`**: `docs(interop): define quiescent guest metadata initialization`
+  - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total14.40%).
+  - **Summary**: Specifies exact mapping argument/proof validation, fixed
+    header/descriptors, atomic initialization and untouched audio/heap regions
+    for the guest pre-Hello primitive. Reserves separate Luna files while the
+    slot C adapter receives error-path tests; Claude paths stay exclusive.
+    Manifest storage remains unaccepted with an unresolved leaf race and
+    insufficient branch coverage. HEAD identifies this design/ownership commit.

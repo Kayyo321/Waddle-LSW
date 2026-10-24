@@ -111,74 +111,44 @@
   "checkpoint_status": "active",
   "active_workers": [
     {
-      "agent": "luna_qemu_build",
-      "model": "gpt-6-luna",
-      "effort": "high",
-      "owned_files": [
-        "src/interop/manifest_store.zig"
-      ],
-      "task": "Resume partial manifest revision after output-limit failure. Finish current identity/backup/reconciliation corrections, restore isolated Debug tests, add minimal direct regressions for root/parent/state replacement and backup split-write crash. Return concise receipt promptly; no broad new integration.",
-      "acceptance": [
-        "zig test src/interop/manifest_store.zig -lc -O Debug -femit-bin=/tmp/manifest_store_revision_tests",
-        "isolated regression tests for every review finding; testing allocator sweeps",
-        "lead independent diff, coverage, crash/syscall and integration review"
-      ],
-      "constraints": [
-        "No Git mutations, shared builds, native VM/GPU, README, Claude-owned files, recursive delegation",
-        "Only owned module writable; /tmp isolated tests allowed"
-      ],
-      "runner_ownership": "none; lead owns native/shared runners",
-      "allocation_source": "user_override",
-      "reason": "User requested Luna parallel implementation; same validated high effort phase",
-      "escalation_conditions": [
-        "Frozen-contract conflict",
-        "Cannot safely establish identity or recovery invariants"
-      ]
-    },
-    {
       "agent": "luna_layout",
-      "model": "gpt-6-luna",
-      "effort": "high",
       "owned_files": [
         "src/interop/interop_slot_runtime_abi.zig",
         "src/interop/interop_slot_runtime.h",
         "tests/interop/slot_runtime_abi.c"
       ],
-      "task": "Opaque C ABI for reviewed pure slot runtime, IMPL_DESC8.10; bounded scalar copies, all statuses and proof-gated destruction; no underlying runtime edits",
+      "task": "Complete public error-path regressions for >=90% unchanged line and branch gates; no production coverage hacks",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "allocation_source": "user_override",
       "acceptance": [
-        "isolated zig test src/interop/interop_slot_runtime_abi.zig -Isrc/interop -lc",
-        "isolated C fixture linking ReleaseSafe object",
-        "lead coverage >=90%, leak-enabled C sanitizers and actual Windows CI"
+        "isolated Debug/ReleaseSafe+C fixture",
+        "lead unchanged production coverage >=90%, leak-enabled C sanitizers and WindowsCI"
       ],
       "constraints": [
-        "No Git, shared build outputs, VM/GPU/CI, README, Claude-owned files or recursive delegation; no edits outside owned files"
+        "No Git/sharedbuild/VM/Claude/nestedagents; underlying runtime lead-owned"
       ],
-      "runner_ownership": "none; isolated /tmp CPU tests only",
-      "allocation_source": "user_override",
-      "reason": "User-selected Luna; exact opaque boundary and teardown warrants same validated high effort",
-      "escalation_conditions": [
-        "Underlying runtime needs changes",
-        "Cannot preserve ownership on failure"
-      ]
+      "runner_ownership": "isolated/tmp CPU only"
     },
     {
       "agent": "luna_mounts",
+      "owned_files": [
+        "src/interop/interop_mapping_init.c",
+        "src/interop/interop_mapping_init.h",
+        "tests/interop/mapping_init.c"
+      ],
+      "task": "Implement minute IMPL_DESC8.11 quiescent metadata initializer; no OS mapping or peer ownership claims",
       "model": "gpt-6-luna",
       "effort": "high",
-      "owned_files": [],
-      "task": "Read-only adversarial review tests/interop/device_smoke.py and its final receipt; exact process ownership, private device state, ACL restoration, cleanup failure paths and honest acceptance scope. No native rerun.",
+      "allocation_source": "user_override",
       "acceptance": [
-        "Exact actionable paths/lines or explicit no findings and limits"
+        "isolated strict-C metadata and guard fixture",
+        "lead C sanitizers, coverage and native WindowsCI"
       ],
       "constraints": [
-        "No writes, native tests, Git, Claude paths or recursive delegation"
+        "No Git/sharedbuild/VM/GPU/Claude/nestedagents; frozenheadersandnativeatomic untouched"
       ],
-      "runner_ownership": "none",
-      "allocation_source": "user_override",
-      "reason": "Independent cleanup review before lead preserves native evidence",
-      "escalation_conditions": [
-        "Cleanup could affect unrelated process/device"
-      ]
+      "runner_ownership": "isolated/tmp CPU only"
     }
   ],
   "completed_followups": [
@@ -233,5 +203,5 @@
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
   },
-  "lead_current_work": "Wire pure slot runtime CI/coverage, qualify accepted native smoke, review worker changes; keep working until concrete checkpoint without waiting on Claude"
+  "lead_current_work": "Qualify slot C ABI and native fixture; manifest remains unaccepted due leaf race and failed branch threshold; independent of Claude"
 }

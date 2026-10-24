@@ -2509,3 +2509,41 @@ handling, errors and serialization for every entry point. Tests cover output
 preservation, stale epochs, publication/release ordering, proof-gated destroy,
 growth/retirement and repeated create/drain/destroy under leak-enabled C
 sanitizers. This adapter alone adds no integrated capture/session credit.
+
+### 8.11 Quiescent guest mapping metadata initialization
+
+New interop_mapping_init.c/.h provides the missing native initialization step
+before a fresh guest Hello. Its single C function interop_mapping_initialize
+borrows mapping_base(uintptr_t), mapping_length(uint64_t), fresh epoch(uint64_t)
+and exclusive_owner_proof(uint32_t). The caller must own an actual2GiB,
+64-byte-aligned writable mapping, with all prior producers stopped and all old
+host buffers detached. This is a caller precondition; a boolean cannot prove
+external ownership. No OS driver/mapping operation or session authentication is
+performed here. The guest serializes the call before allowing any peer reads.
+
+Status enum interop_mapping_init_status_t has Ok0, InvalidArgument1,
+MissingProof2 and NotLockFree3. Reject NULL/misalignment, nonexact mapping size,
+uintptr_t range wrap, zero epoch and proof values other than0/1 before touching
+mapping storage. Proof0 returns MissingProof with all mapping bytes unchanged.
+Validate compile-time x86_64 C11 always-lock-free32/64-bit atomics and lock-free
+aligned local atomic probes before modifying bytes; unsupported targets fail
+compilation or return NotLockFree without mapping mutation. Caller guarantees
+epoch freshness; the function does not infer it from stale mapping contents.
+
+Write only the metadata interval [0,0x4000). Zero its4096-byte header and192
+64-byte descriptors, initialize each atomic explicitly with atomic_init, and
+set fixed SMW3 magic/layout3/epoch/2GiB length/192slots/8audio rings/heap offset
+0x200000/heap length0x7FC00000/page bytes0x200000. Heartbeats start0; descriptor
+states startFree, all other descriptor metadata and reserved storage start0.
+Descriptors receive their BGRA format only when a producer owns Writing. This
+routine neither scrubs heap pixels nor initializes audio rings; every byte at
+or beyond0x4000 stays unchanged. Audio capability must remain clear until its
+separate ring lifecycle initializes those regions. No memory barrier creates a
+handshake; send Hello only after this serialized initialization returns Ok.
+
+No allocation or retained pointer exists. Tests reserve sparse mapping address
+space, make the written metadata window accessible, poison the whole window,
+check every required byte/atomic and an untouched sentinel beyond0x4000, and
+assert invalid calls leave storage unchanged. Linux ASan/LSan/UBSan and Windows
+CPU execution qualify only this memory primitive; signed-driver access,
+exclusive ownership, agent startup and real mapping integration remain open.
