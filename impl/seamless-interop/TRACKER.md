@@ -647,7 +647,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     while the lead integrates queue/CI outside Claude's reserved window files.
     Source commit7840c82 contains this specification.
 
-- **Commit `HEAD`**: `feat(interop): own bounded queued frames across partial writes`
+- **Commit `ab676a8`**: `feat(interop): own bounded queued frames across partial writes`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Adds a codec-validated owning512-record FIFO, eight reserved
     control admission slots, exact partial-write accounting and deterministic
@@ -656,5 +656,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     pass with testing allocator and exhaustive allocation failure,100% production
     lines/90.24% branches. Gates and Windows cross-build are wired; queue5% per
     endpoint remains uncredited until native Windows execution.
-    [Qualification](stream_send_queue_qualification_2026_10_24.json). HEAD identifies
-    this containing implementation commit.
+    [Qualification](stream_send_queue_qualification_2026_10_24.json). Source commitab676a8 contains this implementation.
+
+- **Commit `HEAD`**: `docs(interop): specify shared semantic version parsing`
+  - **Task Impact**: +0% to TODO #4/#6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Records a discovered codec contract defect: digits-only parsing
+    rejects prerelease/build labels and permits leading zeroes. Specifies one
+    bounded allocation-free SemVer2 parser for codec and peer consumers, checked
+    uint32 major conversion and full grammar/Windows/coverage verification.
+    Saves the C/OS peer-boundary investigation as a proposal; unresolved policy
+    choices are not implementation acceptance. HEAD identifies this containing
+    specification commit.

@@ -2783,3 +2783,33 @@ under continuous other traffic, out-of-order/late/unknown Pongs, shared allocato
 handoff outputs, disconnect, stale callback tokens, uint64 end boundaries and
 long deterministic traffic without allocation. Shared-memory500ms heartbeats
 remain independent and are never interpreted as detach/drain evidence.
+
+### 8.16 Shared bounded agent-version parser
+
+The codec's initial digits-only version check contradicts the Semantic Versioning
+contract in §8.14: it rejects valid prerelease/build labels and accepts leading
+zeroes. Replace that private check with a shared allocation-free Zig parser in
+agent_version.zig, imported by the codec and future peer core. No wire tag,
+protocol version, field width or public C codec signature changes. Parse all
+5..32 input bytes using [SemVer2.0 grammar](https://semver.org/spec/v2.0.0.html),
+with no NUL/prefix/whitespace/trailing bytes. Core major/minor/patch are nonempty
+ASCII decimal components with no leading zero except the scalar zero. Only major
+is converted, with checked uint32 arithmetic; overflow is InvalidVersion. Minor
+and patch are grammar-checked strings bounded by the entire32-byte field, not an
+undocumented nine-digit restriction. Optional hyphen prerelease and plus build
+are nonempty dot-separated ASCII alphanumeric/hyphen identifiers; prerelease
+numeric-only identifiers reject leading zeroes, build identifiers allow them.
+A hyphen within an identifier is ordinary content. No version ordering is needed.
+
+Public parse_major takes a borrowed accessible byte slice and returns copied
+uint32 major or InvalidVersion. It owns no allocation, retains no pointer and is
+thread-safe for independent calls; a valid major0 is distinct from error. Codec
+value_valid returns false when this parser fails, preserving existing malformed
+writer/payload behavior. The handshake still defends its typed adapter boundary.
+Tests cover each grammar production, separator/character/boundary/overflow error,
+0/UINT32_MAX majors, metadata digits with leading zeroes, long valid minor/patch,
+exact32 bytes and repeated parsing without allocation. Codec tests exercise
+Hello/HelloAck through writer and receive validation, not only the helper. Both
+module and whole codec retain >=90% production line and branch gates; actual
+Windows CPU execution remains required. No extra #4 progress is awarded for
+correcting its existing semantic-version contract.

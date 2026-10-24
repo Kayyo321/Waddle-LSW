@@ -111,40 +111,23 @@
   "checkpoint_status": "active",
   "active_workers": [
     {
-      "agent": "luna_qemu_build",
+      "agent": "luna_mounts",
       "model": "gpt-6-luna",
       "effort": "high",
       "allocation_source": "user_override",
       "owned_files": [
-        "src/interop/session_liveness.zig"
+        "src/interop/agent_version.zig",
+        "src/interop/interop_codec.zig"
       ],
-      "task": "Prevent expired-ID release/reuse collision; add out-of-order and public guard liveness regressions against IMPL_DESC8.15",
+      "task": "Implement shared bounded semantic-version major parser and correct private codec version guard against IMPL_DESC8.16",
       "acceptance": [
-        "isolated Zig exact-time/traffic/ownership tests",
-        "lead unchanged90% production line/branch and nativeWindowsCI"
+        "isolated Zig tests and codec regression",
+        "lead unchanged90% per-module production line/branch coverage and native Windows CI"
       ],
       "constraints": [
-        "No Git/sharedbuild/VM/Claude/recursiveagents; no wire/header/counter invention"
+        "No shared build/Git/header/VM/Claude or recursive agents"
       ],
-      "runner_ownership": "isolated/tmp CPU only"
-    },
-    {
-      "agent": "luna_layout",
-      "model": "gpt-6-luna",
-      "effort": "high",
-      "allocation_source": "user_override",
-      "owned_files": [
-        "src/interop/session_handshake.zig"
-      ],
-      "task": "Fix terminal Closed callbacks and qualify every handshake callback guard against IMPL_DESC8.14",
-      "acceptance": [
-        "isolated Zig tests for both roles and exact guards/actions",
-        "lead unchanged90% production line/branch and nativeWindowsCI"
-      ],
-      "constraints": [
-        "No Git/sharedbuild/VM/Claude/recursiveagents; shared headers/codec and transport files untouched"
-      ],
-      "runner_ownership": "isolated/tmp CPU only"
+      "runner_ownership": "isolated /tmp CPU only"
     }
   ],
   "completed_followups": [
