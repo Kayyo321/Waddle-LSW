@@ -2256,3 +2256,36 @@ No QEMU builder owns, stops or unlinks a mount listener.
 Refine #9's40% all-mount allocation into QEMU many-mount API10% and owned
 supervisor lifecycle30%; the sum and current accepted10% root-fix credit do not
 change. Native drive binding and failure/restart qualification stay separate.
+
+### 8.6 Native atomic adapter boundary
+
+The C11 adapter in src/interop/interop_native_atomic.h is x86_64-only and
+borrows an accessible, initialized, 64-byte-aligned 2 GiB mapping. Compile-time
+width/lock-free assertions preserve layout v3; runtime checks require the exact
+header base and descriptor at 0x1000 + index*64, index0..191. Address arithmetic
+must not wrap. The caller validates immutable layout facts first; pointer checks
+cannot establish mapping accessibility, initialization or ownership.
+
+Only Free->Writing, Writing->Ready, Ready->Consuming, Consuming->Free and
+Writing->Free cancellation are legal. One strong compare-exchange uses acquire-
+release on success and relaxed on failure; mismatch changes no bytes. Ordinary
+metadata is accessible only to the current Writing or Consuming owner. Ready
+publishes prior writes; acquiring Consuming observes them; releasing Free and
+reacquiring Writing orders reuse. These helpers do not pin heap allocations,
+initialize atomics, manage reconnect, or authorize a forged ownership claim.
+
+Each heartbeat field has exactly one writer and any number of readers. Relaxed
+loads do not synchronize metadata. The writer supplies a nonzero strictly
+increasing value; UINT64_MAX requires reconnect rather than wrap. A load output
+must be aligned, accessible caller-owned storage disjoint from the entire
+mapping and remains unchanged on failure. No API allocates or retains storage.
+The caller owns mapping teardown after all participants have stopped.
+
+The CPU fixture reserves 2 GiB of virtual address space, commits only the fixed
+header/table pages, and releases the reservation on completion. It checks every
+state pair, malformed pointers, cancellation handoff and 100,000 concurrent
+producer/consumer publications with exact sequence and payload checks. Linux
+ASan/LSan/UBSan and separate production-only gcov line/branch gates are required;
+concurrent gcov counters use atomic profile updates. Native Windows execution
+is also required before this adapter receives tracker credit. Neither CPU proof
+nor a cross-linked executable establishes integrated IVSHMEM/guest acceptance.

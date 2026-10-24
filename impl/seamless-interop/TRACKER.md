@@ -359,7 +359,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Native AV workflows both succeeded (runs40020339744 and40020339384).
     Current native runner/provisioning is rechecked before any VM changes.
 
-- **Commit `HEAD`**: `feat(interop): expose validated layout snapshots through the C ABI`
+- **Commit `ef39989`**: `feat(interop): expose validated layout snapshots through the C ABI`
   - **Task Impact**: +0% to TODO #5 pending native Windows execution
     (+0% overall; total12.85%).
   - **Summary**: Implements all four frozen private-snapshot wrappers with
@@ -369,4 +369,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     tests, C ABI consumers and ASan/LSan/UBSan. Windows C consumer cross-links;
     workflow now runs it natively. The pure C ABI5% remains uncredited until
     the native Windows gate passes; no live atomic/pin/runtime claim is made.
-    `HEAD` identifies this containing C boundary commit.
+    Source commit ef39989 remains pending native execution.
+
+- **Commit `HEAD`**: `feat(interop): add native descriptor ownership and heartbeat atomics`
+  - **Task Impact**: +0% to TODO #5 pending native Windows execution
+    (+0% overall; total12.85%).
+  - **Summary**: Adds checked x86_64 C11 state transitions and single-writer
+    heartbeat operations without changing shared layouts. The Linux CPU fixture
+    passes 100,000 exact-sequence publications, cancellation handoff and pointer/
+    transition rejection; ASan/LSan/UBSan passes with leak detection enabled.
+    Production coverage is93.46% branch (100/107),96.81% line (91/94), using
+    atomic gcov counters. Windows cross-link passes; hosted execution remains
+    blocked by the separate wide-switch recorder defect. Native atomic5% earns
+    no credit yet; mapping initialization, pins/growth and runtime stay open.
+    HEAD identifies this containing atomic adapter commit.
