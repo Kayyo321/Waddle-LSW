@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 import re
 
-MaxEdges = 32
+MaxEdges = 255
 RecorderBytes = 512 * 1024
-SchemaVersion = 1
+SchemaVersion = 2
 
 
 def clear_instrumentation_summaries(ir):
@@ -70,15 +70,27 @@ def prepare_recorder(output, raw_ir, instrumented, records, diagnostics):
         fail('coverage site count must fit nonzero uint32')
     if any(type(record) is not dict or type(record.get('edges')) is not int or
            not 1 <= record['edges'] <= MaxEdges for record in records):
-        fail('coverage metadata arity must be an integer in 1..32')
-    # Four-byte masks followed by byte arities, rounded for four-byte alignment.
-    storage_bytes = (count * 5 + 3) // 4 * 4
+        fail(f'coverage metadata arity must be an integer in 1..{MaxEdges}')
+    wide_sites = []
+    extra_mask_words = 0
+    for site_index, record in enumerate(records):
+        arity = record['edges']
+        if arity > 32:
+            wide_sites.append({'site_index': site_index, 'extra_word_offset': extra_mask_words})
+            extra_mask_words += (arity + 31) // 32 - 1
+    if len(wide_sites) > 0xffffffff or extra_mask_words > 0xffffffff:
+        fail('wide coverage metadata exceeds uint32 offsets')
+    # Base masks plus byte arities, then only wide-site mask words and sparse
+    # entries. All members have at most four-byte alignment in the C fixture.
+    base_bytes = (count * 5 + 3) // 4 * 4
+    storage_bytes = (base_bytes + extra_mask_words * 4 + len(wide_sites) * 8 + 3) // 4 * 4
     records_bytes = json.dumps(records, indent=2).encode()
     records_hash = hashlib.sha256(records_bytes).hexdigest()
     ir_hash = hashlib.sha256(raw_ir.encode()).hexdigest()
     binding = hashlib.sha256(f'{SchemaVersion}:{ir_hash}:{records_hash}'.encode()).hexdigest()
     symbol = 'waddle_branch_hit_' + binding
     manifest.update(estimated_storage_bytes=storage_bytes,
+                    wide_sites=len(wide_sites), extra_mask_words=extra_mask_words,
                     records_sha256=records_hash, ir_sha256=ir_hash,
                     binding_sha256=binding, recorder_symbol=symbol)
     (output / 'recorder.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -107,11 +119,16 @@ def prepare_recorder(output, raw_ir, instrumented, records, diagnostics):
     arities = [str(record['edges']) for record in records]
     rows = ['    ' + ', '.join(arities[start:start + 32]) + ','
             for start in range(0, count, 32)]
+    wide_rows = [f'    {{ UINT32_C({entry["site_index"]}), UINT32_C({entry["extra_word_offset"]}) }},'
+                 for entry in wide_sites]
+    wide_initializer = ('#define WaddleCoverageWideSites { \\\n' + ' \\\n'.join(wide_rows) + ' \\\n}\n') if wide_rows else ''
     header = ('/* Generated private coverage metadata; immutable exact record order. */\n'
               f'#define WaddleCoverageSiteCount {count}u\n'
+              f'#define WaddleCoverageWideSiteCount {len(wide_sites)}u\n'
+              f'#define WaddleCoverageExtraMaskWordCount {extra_mask_words}u\n'
               f'#define WaddleCoverageHitSymbol {symbol}\n'
               '#define WaddleCoverageArities { \\\n' +
-              ' \\\n'.join(rows) + ' \\\n}\n')
+              ' \\\n'.join(rows) + ' \\\n}\n' + wide_initializer)
     header_path = output / 'recorder_metadata.h'
     header_path.write_text(header)
     manifest['validation'] = 'validated'

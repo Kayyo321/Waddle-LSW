@@ -2317,3 +2317,15 @@ record after reaping. Cleanup closes/clears only after successful stop and socke
 removal; it is idempotent on a fully released initialized record. Callers serialize
 one record/path and never discard a failed teardown record. These APIs do not
 prove guest mount binding or guest read-only write denial.
+
+Coverage recorder metadata schema2 keeps one32-bit atomic edge mask and one
+byte arity per site, plus sorted (site_index, extra_word_offset) pairs and packed
+extra32-bit atomic masks only for arity>32. Supported arities are1..255;
+unsupported shapes fail before execution. Total statically allocated storage is
+align4(5*site_count)+4*extra_words+8*wide_sites and must remain <=512KiB. Generated
+metadata binds schema, exact IR and exact ordered records by SHA256. Startup
+checks complete sparse order/offset/count correspondence before instrumentation
+runs. Invalid hits abort; edge recording is relaxed atomic OR, and dumping after
+worker joins preserves all recorded edges. No compiler sites are omitted or
+regrouped to meet capacity or coverage. Synthetic255-edge and76,512-site stress
+fixtures supplement each module's actual native compiler output.

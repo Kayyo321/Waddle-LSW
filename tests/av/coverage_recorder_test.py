@@ -160,7 +160,7 @@ int main(int argc, char **argv) {
             self.assertIn('Coverage recorder', result.stderr)
 
     def test_metadata_count_arity_calls_and_budget(self):
-        for records in ([], [{'edges': 0}], [{'edges': 33}], [{'edges': -1}], [{'edges': True}]):
+        for records in ([], [{'edges': 0}], [{'edges': 256}], [{'edges': -1}], [{'edges': True}]):
             with self.assertRaises(ValueError):
                 self.prepare(records)
         valid = ir_for(records_for(1))
@@ -182,6 +182,11 @@ int main(int argc, char **argv) {
                 self.prepare(records_for(1), instrumented=ir_for(records_for(1)) + malformed)
         with self.assertRaisesRegex(ValueError, 'unchanged budget'):
             self.prepare(records_for(104858))
+        too_many_wide = records_for(12801)
+        for record in too_many_wide:
+            record['edges'] = 255
+        with self.assertRaisesRegex(ValueError, 'unchanged budget'):
+            self.prepare(too_many_wide)
         class huge_records_t:
             def __len__(self):
                 return 0x100000000
@@ -212,14 +217,125 @@ int main(int argc, char **argv) {
         records[0]['edges'] = 2
         self.prepare(records)
         self.assertNotEqual(original, json.loads((self.output / 'recorder.json').read_text())['recorder_symbol'])
-        for invalid in ('0', '33'):
-            self.prepare(records_for(3))
-            header = self.output / 'recorder_metadata.h'
-            header.write_text(header.read_text().replace('1, 1, 1,', '1, ' + invalid + ', 1,'))
-            self.compile('int main(void) {return 0;}\n', argument)
-            result = self.run_probe()
+        self.prepare(records_for(3))
+        header = self.output / 'recorder_metadata.h'
+        header.write_text(header.read_text().replace('1, 1, 1,', '1, 0, 1,'))
+        self.compile('int main(void) {return 0;}\n', argument)
+        result = self.run_probe()
+        self.assertEqual(result.returncode, -signal.SIGABRT, result.stderr)
+        self.assertIn('metadata: site=1 arity=0', result.stderr)
+
+    def test_sparse_wide_edges_exact_concurrent_union_and_dump(self):
+        records = records_for(7)
+        for index, arity in enumerate((32, 33, 64, 65, 96, 255, 1)):
+            records[index]['edges'] = arity
+        instrumented, argument = self.prepare(records)
+        manifest = json.loads((self.output / 'recorder.json').read_text())
+        self.assertEqual(manifest['schema'], 2)
+        self.assertEqual(manifest['wide_sites'], 5)
+        self.assertEqual(manifest['extra_mask_words'], 13)
+        self.assertEqual(manifest['estimated_storage_bytes'], 128)
+        header_text = (self.output / 'recorder_metadata.h').read_text()
+        self.assertIn('WaddleCoverageWideSiteCount 5u', header_text)
+        self.assertIn('WaddleCoverageExtraMaskWordCount 13u', header_text)
+        self.assertIn('{ UINT32_C(1), UINT32_C(0) }', header_text)
+        self.assertIn('{ UINT32_C(5), UINT32_C(6) }', header_text)
+        symbol = manifest['recorder_symbol']
+        self.assertEqual(instrumented.count('call void @' + symbol), 7)
+        self.compile('''#include <pthread.h>
+#include <stdint.h>
+void ''' + symbol + '''(uint32_t, uint32_t);
+typedef struct hit_t { uint32_t site; uint32_t edge; } hit_t;
+static const hit_t hits[] = {
+    {0, 0}, {0, 31}, {1, 32}, {2, 63}, {3, 64},
+    {4, 95}, {5, 254}, {5, 32}, {5, 63}, {5, 64}
+};
+static pthread_barrier_t barrier;
+static void *record(void *value) {
+    uintptr_t index = (uintptr_t)value;
+    (void)pthread_barrier_wait(&barrier);
+    for (unsigned repeat = 0; repeat < 1000; repeat++)
+        ''' + symbol + '''(hits[index].site, hits[index].edge);
+    return NULL;
+}
+static void *record_full_width(void *value) {
+    uint32_t first_edge = (uint32_t)(uintptr_t)value;
+    (void)pthread_barrier_wait(&barrier);
+    for (uint32_t edge = first_edge; edge < 255; edge += 32)
+        ''' + symbol + '''(5, edge);
+    return NULL;
+}
+int main(void) {
+    pthread_t threads[sizeof(hits) / sizeof(hits[0])];
+    if (pthread_barrier_init(&barrier, NULL, sizeof(threads) / sizeof(threads[0]))) return 1;
+    for (uintptr_t index = 0; index < sizeof(threads) / sizeof(threads[0]); index++)
+        if (pthread_create(&threads[index], NULL, record, (void *)index)) return 2;
+    for (unsigned index = 0; index < sizeof(threads) / sizeof(threads[0]); index++)
+        if (pthread_join(threads[index], NULL)) return 3;
+    if (pthread_barrier_destroy(&barrier)) return 4;
+    pthread_t wide_threads[32];
+    if (pthread_barrier_init(&barrier, NULL, 32)) return 5;
+    for (uintptr_t index = 0; index < 32; index++)
+        if (pthread_create(&wide_threads[index], NULL, record_full_width, (void *)index)) return 6;
+    for (unsigned index = 0; index < 32; index++)
+        if (pthread_join(wide_threads[index], NULL)) return 7;
+    return pthread_barrier_destroy(&barrier);
+}
+''', argument)
+        result = self.run_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Coverage recorder storage: 128/524288 bytes; 7 sites', result.stderr)
+        hits_seen = {tuple(map(int, line.split())) for path in self.output.glob('*.edges')
+                     for line in path.read_text().splitlines()}
+        self.assertEqual(hits_seen, {(0, 0), (0, 31), (1, 32), (2, 63), (3, 64),
+                                     (4, 95)} | {(5, edge) for edge in range(255)})
+        self.compile('''#include <stdint.h>
+#include <string.h>
+void ''' + symbol + '''(uint32_t, uint32_t);
+int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "global")) ''' + symbol + '''(5, 255);
+    else ''' + symbol + '''(1, 33);
+    return 0;
+}
+''', argument)
+        for failure in ('global', 'arity'):
+            result = self.run_probe(failure)
             self.assertEqual(result.returncode, -signal.SIGABRT, result.stderr)
-            self.assertIn('metadata: site=1 arity=' + invalid, result.stderr)
+            self.assertIn('Coverage recorder', result.stderr)
+
+    def test_wide_metadata_corruption_aborts_before_recording(self):
+        records = records_for(4)
+        records[0]['edges'] = 64
+        records[2]['edges'] = 33
+        _, argument = self.prepare(records)
+        symbol = json.loads((self.output / 'recorder.json').read_text())['recorder_symbol']
+        source = '#include <stdint.h>\nvoid ' + symbol + '(uint32_t,uint32_t);\nint main(void) {' + symbol + '(0,0);return 0;}\n'
+        original_header = (self.output / 'recorder_metadata.h').read_text()
+        corruptions = (
+            (original_header.replace('UINT32_C(0), UINT32_C(0)', 'UINT32_C(1), UINT32_C(0)', 1), 'wide metadata'),
+            (original_header.replace('UINT32_C(0), UINT32_C(0)', 'UINT32_C(4), UINT32_C(0)', 1), 'wide metadata'),
+            (original_header.replace('UINT32_C(2), UINT32_C(1)', 'UINT32_C(1), UINT32_C(1)', 1), 'unexpected wide entry'),
+            (original_header.replace('UINT32_C(2), UINT32_C(1)', 'UINT32_C(2), UINT32_C(0)', 1), 'wide metadata'),
+            (original_header.replace('WaddleCoverageWideSiteCount 2u', 'WaddleCoverageWideSiteCount 3u'), 'unexpected wide entry'),
+            (original_header.replace('WaddleCoverageExtraMaskWordCount 2u', 'WaddleCoverageExtraMaskWordCount 1u'), 'wide metadata totals'),
+            (original_header.replace('WaddleCoverageExtraMaskWordCount 2u', 'WaddleCoverageExtraMaskWordCount 0u'), 'wide metadata totals'),
+        )
+        for corrupted, message in corruptions:
+            with self.subTest(message=message, corrupted=corrupted):
+                (self.output / 'recorder_metadata.h').write_text(corrupted)
+                self.compile(source, argument)
+                result = self.run_probe()
+                self.assertEqual(result.returncode, -signal.SIGABRT, result.stderr)
+                self.assertIn('Coverage recorder', result.stderr)
+                self.assertIn(message, result.stderr)
+        # A missing wide entry is represented by a smaller count and initializer.
+        missing = original_header.replace('WaddleCoverageWideSiteCount 2u', 'WaddleCoverageWideSiteCount 1u')
+        missing = missing.replace('    { UINT32_C(2), UINT32_C(1) }, \\\n', '')
+        (self.output / 'recorder_metadata.h').write_text(missing)
+        self.compile(source, argument)
+        result = self.run_probe()
+        self.assertEqual(result.returncode, -signal.SIGABRT, result.stderr)
+        self.assertIn('Coverage recorder', result.stderr)
 
     def test_zero_site_harness_writes_failure_manifest(self):
         source = self.output / 'src/av/av_audio.zig'

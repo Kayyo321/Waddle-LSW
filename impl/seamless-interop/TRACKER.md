@@ -405,7 +405,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     primitives support the still-open all-mount supervisor milestone; native
     guest binding and write-denial are not credited. Source commitffd08d4.
 
-- **Commit `HEAD`**: `feat(interop): build pinned QEMU with required host backends`
+- **Commit `56ceca5`**: `feat(interop): build pinned QEMU with required host backends`
   - **Task Impact**: +15% to TODO #8 (+0.45% overall; total13.40%).
   - **Summary**: Adds an out-of-tree pinned build with dependency/tool/config/
     binary provenance, exclusive locking and invalidation on failed attempts.
@@ -416,4 +416,16 @@ its uncompiled draft earns no credit until current acceptance passes.
     xHCI and user+socket-guestfwd configuration, with assertions disabled too.
     Hashed receipt: evidence/qemu_source_build_2026_10_24.json. No guest OS,
     audio stream/audibility, USB realization or network/printing traffic proof
-    is claimed. HEAD identifies this source-build commit.
+    is claimed. Source commit56ceca5 provides the accepted build subtask.
+
+- **Commit `HEAD`**: `test(interop): preserve wide compiler switches in coverage recording`
+  - **Task Impact**: +0% to TODO #34 (+0% overall; total13.40%).
+  - **Summary**: Fixes hosted run40055774547 failing before Windows execution
+    because compiler-generated switch arity exceeded32. Schema2 retains every
+    site and supports1..255 edges using sparse extra masks; the512KiB ceiling
+    and76,512-site fixture remain unchanged (382,560bytes). Ten recorder tests
+    pass with ASan/LSan/UBSan, including full-width concurrent union, corrupted
+    metadata rejection, budget errors and nonrecoverable sanitizer violation.
+    Luna's five production coverage modes pass; lead aggregate and hosted
+    Linux/Windows reruns remain pending. No native or overall acceptance credit.
+    HEAD identifies this containing recorder correction.
