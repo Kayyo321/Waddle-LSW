@@ -1,0 +1,4 @@
+mkdir -p build
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer -Isrc/interop src/interop/interop_mapping_init.c tests/interop/mapping_init.c -fsanitize=address,leak,undefined -o build/interop_mapping_init_test
+./build/interop_mapping_init_test
+mapping metadata initialization tests passed

@@ -1,0 +1,52 @@
+{
+  "recorded_utc": "2026-10-24T16:15:51.322114+00:00",
+  "source_sha256": {
+    "src/interop/interop_mapping_init.c": "eb6bf7247e461ef243508824b666110a55d7131819c12c25736d7c6b80b609e5",
+    "src/interop/interop_mapping_init.h": "33e71132d8a3622023800c32170de63d4e8af2cb8bcb1977f423e3d615b04757",
+    "tests/interop/mapping_init.c": "af6f671b3826268a5c6ba3b8056caf80e8d4ca814a92339a0bdc9638c4478fe1",
+    "tests/interop/mapping_init_coverage.py": "b10ddd872a89e3ee8d79605d355b24301399fa0ba08e15f70e0724cd7e391144"
+  },
+  "commands": [
+    {
+      "command": "make interop-mapping-init-test build/interop_mapping_init_test.exe",
+      "exit_code": 0
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/mapping_init_coverage.py",
+      "exit_code": 0,
+      "line": [
+        31,
+        32
+      ],
+      "branch": [
+        17,
+        18
+      ]
+    },
+    {
+      "command": "ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 make -B interop-mapping-init-test CFLAGS='-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer' LDFLAGS='-fsanitize=address,leak,undefined'",
+      "exit_code": 0,
+      "host_escalated": true
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/mapping_init_2026_10_24/seamless_mapping_init_build.log",
+      "sha256": "6b19146067aff1f51ca016280cf24beff3c3046316627bdb8f65b74785e392e9"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/mapping_init_2026_10_24/seamless_mapping_init_coverage.log",
+      "sha256": "6788ae987c96dc2c54339c7d95297b9da3432982e30134bf1862e887e1f07473"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/mapping_init_2026_10_24/seamless_mapping_init_sanitizers.log",
+      "sha256": "00c234db0f3516347603c1358e82d701b9aeeeeb5417b22c84a44b5feb6e4e3b"
+    }
+  ],
+  "limits": [
+    "Initializes header and192descriptors only in quiescent caller-owned mapping; no audio/heap initialization.",
+    "Caller guarantees actual mapping accessibility, fresh epoch, prior producer stop and host detach; proof flag cannot establish them.",
+    "Windows cross-build passes; actual execution pending CI. No signed-driver or live session acceptance."
+  ],
+  "progress_credit": 0
+}

@@ -1,0 +1,4 @@
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -Isrc/interop src/interop/interop_mapping_init.c tests/interop/mapping_init.c  -o build/interop_mapping_init_test
+./build/interop_mapping_init_test
+mapping metadata initialization tests passed
+zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/interop src/interop/interop_mapping_init.c tests/interop/mapping_init.c -o build/interop_mapping_init_test.exe

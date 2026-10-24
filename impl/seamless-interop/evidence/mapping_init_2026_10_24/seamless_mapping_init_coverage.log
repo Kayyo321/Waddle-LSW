@@ -1,0 +1,3 @@
+mapping metadata initialization tests passed
+mapping initializer production line: 96.88% (31/32); evidence /home/dev/Waddle-LSW/build/coverage/interop/mapping_init/run-20261024T161527-08ce4979
+mapping initializer production branch: 94.44% (17/18); evidence /home/dev/Waddle-LSW/build/coverage/interop/mapping_init/run-20261024T161527-08ce4979

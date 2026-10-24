@@ -559,7 +559,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Manifest storage remains unaccepted with an unresolved leaf race and
     insufficient branch coverage. Source commitf33de21 contains this design/ownership.
 
-- **Commit `HEAD`**: `feat(interop): expose proof-gated slot lifetime C API`
+- **Commit `279a3c4`**: `feat(interop): expose proof-gated slot lifetime C API`
   - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total14.40%).
   - **Summary**: Adds an opaque C-allocator-owned runtime, exhaustive stable
     statuses and scalar views. Every operation checks a captured epoch; outputs
@@ -569,4 +569,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     sanitizers and90.18% line/98.33% branch coverage pass. Windows C and Zig
     executables cross-build; actual execution is pending the next CI run.
     [Qualification](slot_runtime_abi_qualification_2026_10_24.json). No live
-    integration credit. HEAD identifies this containing implementation commit.
+    integration credit. Source commit279a3c4 contains this implementation.
+
+- **Commit `HEAD`**: `feat(interop): initialize quiescent guest mapping metadata`
+  - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total14.40%).
+  - **Summary**: Adds checked layout-v3 header/descriptor initialization before
+    Hello, with explicit ownership proof precondition and no writes beyond the
+    metadata prefix. Independent review finds no actionable defect. Sparse guard
+    fixture, leak-enabled sanitizers and96.88% line/94.44% branch coverage pass;
+    Windows fixture cross-builds and joins native CI. Signed-driver access and
+    session integration remain open. [Qualification](mapping_init_qualification_2026_10_24.json).
+    HEAD identifies this containing implementation commit.
