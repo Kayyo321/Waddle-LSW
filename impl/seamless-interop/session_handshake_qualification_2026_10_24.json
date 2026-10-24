@@ -1,0 +1,45 @@
+{
+  "source": "src/interop/session_handshake.zig",
+  "source_sha256": "5ef9b505d320295694dfdcf5fcc905be2fb92ec7a656d298f8073178b447ce62",
+  "recorded_utc": "2026-10-24T16:59:02.713665+00:00",
+  "commands": [
+    {
+      "command": "make interop-session-handshake-test build/interop_session_handshake_test.exe",
+      "exit_code": 0,
+      "tests_passed": 16
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py session_handshake",
+      "exit_code": 0,
+      "line": [
+        108,
+        108
+      ],
+      "branch": [
+        106,
+        117
+      ]
+    }
+  ],
+  "review": [
+    "Lead fixed delayed wire callbacks reopening Closed; terminal, token/time precedence and full-state preservation regressions pass.",
+    "Independent Luna semantic review against IMPL_DESC8.14 found no remaining actionable defect."
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/session_handshake_2026_10_24/seamless_handshake_build.log",
+      "sha256": "bf90c680cf03d0ec946ce51979b77370aa29f795730007fb29d65e0a3fe40816"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_handshake_2026_10_24/seamless_handshake_accepted_coverage.log",
+      "sha256": "af6d24a659bb5e7cdd8288af90b46f53d6fc2bc51c6fa95ceb3b4ef5bb1926da"
+    }
+  ],
+  "limits": [
+    "Typed allocation-free negotiation only; no SemVer string parsing, socket or mapping ownership.",
+    "OS owner supplies mapping validation/quiescence facts and confirms complete successful transport sends.",
+    "Ready requires full HelloAck send on host or matching received Ack on guest. Closed is not mapping-detachment proof.",
+    "Windows cross-build passes; actual Windows execution pending next CI."
+  ],
+  "progress_credit": 0
+}

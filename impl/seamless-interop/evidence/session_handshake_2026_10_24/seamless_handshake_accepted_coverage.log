@@ -1,0 +1,32 @@
+preserved session_handshake coverage: /home/dev/Waddle-LSW/build/coverage/interop/session_handshake/run-20261024T165556638224Z-314443
+session_handshake instrumentation: 366 exact metadata-bound sites; 3/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 1832/524288 bytes; 366 sites
+1/16 session_handshake.test.host validates Hello and mapping before Ack becomes Ready...OK
+2/16 session_handshake.test.guest waits for complete Hello and accepts capability subset...OK
+3/16 session_handshake.test.wire incompatibilities return frozen errors and clear readiness...OK
+4/16 session_handshake.test.Hello rejects zero identifiers epochs and unknown capabilities...OK
+5/16 session_handshake.test.guest rejects ack capability supersets and malformed version...OK
+6/16 session_handshake.test.guest ack protocol correlation and layout violations use their frozen errors...OK
+7/16 session_handshake.test.local failures preserve the complete value and reject stale tokens...OK
+8/16 session_handshake.test.deadline is overall and exact at uint64 boundary...OK
+9/16 session_handshake.test.drain transport loss and close are idempotent...OK
+10/16 session_handshake.test.Closed is terminal for wire receive and lifecycle callbacks...OK
+11/16 session_handshake.test.deadline guards precede each callback-specific validation...OK
+12/16 session_handshake.test.every asynchronous callback rejects stale tokens and backward time unchanged...OK
+13/16 session_handshake.test.wire handshake message in wrong role is fatal...OK
+14/16 session_handshake.test.initialization and host mapping proof guards...OK
+15/16 session_handshake.test.wrong Ack send ID and invalid local phases preserve state...OK
+16/16 session_handshake.test.role and phase guards distinguish local events from invalid wire phase...OK
+All 16 tests passed.
+session_handshake production branch coverage: 90.60% (106/117); 25 compiler panic/stack-canary guards excluded
+session_handshake production line coverage: 100.00% (108/108); 25 compiler panic/stack-canary guards excluded

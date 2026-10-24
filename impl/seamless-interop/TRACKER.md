@@ -667,7 +667,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Saves the C/OS peer-boundary investigation as a proposal; unresolved policy
     choices are not implementation acceptance. Source commit6593765 contains this specification.
 
-- **Commit `HEAD`**: `feat(interop): track bounded Ready-session liveness`
+- **Commit `31fbea9`**: `feat(interop): track bounded Ready-session liveness`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Implements exact2s Ping cadence and6s receive/per-request
     deadlines with four bounded records, caller-owned request IDs and copied
@@ -676,5 +676,16 @@ its uncompiled draft earns no credit until current acceptance passes.
     exact deadline/clock/token boundaries. Thirteen tests pass,97.09% production
     lines/90% branches; no socket or mapping-drain proof is claimed. Windows
     cross-build and CI gates added; liveness5% per endpoint awaits native CI.
-    [Qualification](session_liveness_qualification_2026_10_24.json). HEAD identifies
+    [Qualification](session_liveness_qualification_2026_10_24.json). Source commit31fbea9 contains this implementation.
+
+- **Commit `HEAD`**: `feat(interop): enforce staged peer handshake readiness`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Implements both typed handshake roles, overall5s deadline,
+    mapping validation, capability subset/intersection, exact Hello correlation
+    and full-send readiness. Review fixes delayed callbacks reopening Closed;
+    independent follow-up finds no remaining semantic defect. Sixteen tests
+    pass,100% production lines/90.60% branches, including each callback's stale
+    token/backward clock, exact deadline, role/phase/version and terminal guards.
+    Windows cross-build/CI added; handshake10% per endpoint awaits native CI.
+    [Qualification](session_handshake_qualification_2026_10_24.json). HEAD identifies
     this containing implementation commit.
