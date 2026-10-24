@@ -73,7 +73,7 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     cross-build pass; lead leak-enabled qualification remains pending. HEAD is
     this containing observer review-fix commit.
 
-- **Commit `HEAD`**: `refactor(interop): conform graph namespace aliases to type naming`
+- **Commit `1a179b0`**: `refactor(interop): conform graph namespace aliases to type naming`
   - **Task Impact**: +0% to local #1/#2/#4; +0% global TODO #10 (local92.25%).
   - **Summary**: Renames owned Zig namespace aliases to `_t` names without
     changing behavior. Token-stream proof preserves literals, comments, trivia,
@@ -81,3 +81,12 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     records exact before/after hashes. Debug graph136/ABI150 tests pass; full
     post-review qualification and native Windows execution remain pending.
     HEAD identifies this containing conformance commit.
+
+- **Commit `HEAD`**: `docs(interop): qualify reviewed graph source before incarnation correction`
+  - **Task Impact**: +0% to local #1/#2/#3/#4; +0% global TODO #10 (local92.25%).
+  - **Summary**: Lead reproduces full gates at exact1a179b0 with detect_leaks1:
+    graph136/ABI150 in Debug and ReleaseSafe, C27/observer65, exact21 exports,
+    production line/branch gates and Windows cross-builds all pass. Archives
+    hashes and log. O5 delivered-destroy loss and O25 stale deferred descendants
+    remain open; this is provisional evidence, not final integration acceptance.
+    HEAD identifies this containing evidence commit.

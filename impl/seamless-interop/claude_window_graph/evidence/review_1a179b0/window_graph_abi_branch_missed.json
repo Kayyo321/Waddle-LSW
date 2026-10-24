@@ -1,0 +1,14 @@
+[
+  {
+    "function": "graph_of",
+    "line": 157,
+    "column": 22,
+    "edge": 0
+  },
+  {
+    "function": "graph_of_const",
+    "line": 166,
+    "column": 22,
+    "edge": 0
+  }
+]

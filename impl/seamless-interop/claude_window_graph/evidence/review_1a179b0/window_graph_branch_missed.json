@@ -1,0 +1,56 @@
+[
+  {
+    "function": "drain",
+    "line": 7293,
+    "column": 110,
+    "edge": 0
+  },
+  {
+    "function": "classify",
+    "line": 782,
+    "column": 65,
+    "edge": 0
+  },
+  {
+    "function": "list_retiring",
+    "line": 1349,
+    "column": 16,
+    "edge": 1
+  },
+  {
+    "function": "retire_cascade",
+    "line": 1645,
+    "column": 34,
+    "edge": 0
+  },
+  {
+    "function": "refresh_commit",
+    "line": 2661,
+    "column": 32,
+    "edge": 0
+  },
+  {
+    "function": "refresh_commit",
+    "line": 2670,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "observe_eligible",
+    "line": 2195,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "apply_eligible",
+    "line": 2279,
+    "column": 13,
+    "edge": 0
+  },
+  {
+    "function": "apply_flush",
+    "line": 1963,
+    "column": 34,
+    "edge": 0
+  }
+]
