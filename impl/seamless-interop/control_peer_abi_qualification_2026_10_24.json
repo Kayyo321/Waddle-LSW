@@ -1,0 +1,71 @@
+{
+  "qualification_utc": "2026-10-24T19:57:23.402658+00:00",
+  "source_revision": "containing implementation commit; exact source identities below",
+  "core_commit": "7aa4ce7",
+  "sources_sha256": {
+    "src/interop/control_peer.zig": "f44c39e23dd638d0cec9a8d797b13ec7789e0db3f06b5243be34f6fcb61f2d83",
+    "src/interop/control_peer_abi.zig": "6c5f6c940d9c2a535eed18ca786ec250ea1c5d81193466fd8774b155e4a9b84a",
+    "tests/interop/control_peer.zig": "8518c32c8de13174d7ee31a6da73d48d903c1d526226624710766a473a9a379d",
+    "tests/interop/control_peer_abi.c": "4e79a50c403de037f4209894df3e670834a05662f099a28d6bf6207cf32ffbfe",
+    "include/waddle/interop_peer.h": "a302836aec7b624e506a7f2035e4af23b3311d48e5aacc904eede02ad7a3411f",
+    "scripts/interop.mk": "734297667a5606440dbfc2ac522fcadaa775ebf559fb62ee7e86dd8e6b88498e",
+    "tests/av/coverage.py": "f51e33d4879da102f6a7b9da69f3e9d1fcf1b554dec844255980b7d439027b1a",
+    ".github/workflows/interop.yml": "67d6e1c03aac519fc4ff37f5c9fd959df7a1702d48938a448aaf7b5d1c87528e"
+  },
+  "commands": [
+    {
+      "command": "make interop-test build/interop_control_peer_test.exe build/interop_control_peer_abi_c_test.exe build/interop_control_peer_abi_unit_test.exe",
+      "exit_code": 0,
+      "log": "evidence/control_peer_abi_2026_10_24/interop_test.log"
+    },
+    {
+      "command": "make interop-sanitizers",
+      "exit_code": 0,
+      "log": "evidence/control_peer_abi_2026_10_24/interop_sanitizers.log"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 make interop-coverage",
+      "exit_code": 0,
+      "log": "evidence/control_peer_abi_2026_10_24/interop_coverage.log"
+    }
+  ],
+  "tests": {
+    "core": 47,
+    "abi": 84,
+    "independent_C_fixture": "passed, real C ABI calls"
+  },
+  "coverage": {
+    "abi_lines": [
+      199,
+      201
+    ],
+    "abi_branches": [
+      140,
+      150
+    ],
+    "line_percent": 99.0,
+    "branch_percent": 93.33,
+    "threshold_percent": 90,
+    "standard_compiler_trap_exclusions": 18
+  },
+  "exports": {
+    "exact_header_match": true,
+    "count": 13,
+    "receipt": "evidence/control_peer_abi_2026_10_24/exports.json"
+  },
+  "memory": "C consumers passed -fsanitize=address,leak,undefined with detect_leaks=1; Zig ReleaseSafe and std.testing allocator passed without C sanitizer instrumentation.",
+  "windows": "Three executables cross-built. Actual execution for containing source awaits main feature CI.",
+  "boundaries": "No live socket owner, native mapping, capture, compositor, installed guest session or detach proof. Unexpected post-preflight internal errors require abort/quiescence; no replay of OS-accepted bytes.",
+  "progress_impact": 0,
+  "evidence_sha256": {
+    "evidence/control_peer_abi_2026_10_24/branch_missed.json": "2f39a0be2f1dbd47c03b51bab6c7370b4c0718003052df79cda66d64b8616b16",
+    "evidence/control_peer_abi_2026_10_24/branches.json": "77ab657bcf5e4425fe10185e87fa7e00666fd6ff2a620ce12f3c4ebe7e205c75",
+    "evidence/control_peer_abi_2026_10_24/exports.json": "399e9bab391cf875fcd790a1de850ac0c3dc537111fedb5c2fc5d3c6cbda648a",
+    "evidence/control_peer_abi_2026_10_24/interop_coverage.log": "751267fa1f4d7e99f239b4b4e87b315d5b794a7094670a37285ddcb633625389",
+    "evidence/control_peer_abi_2026_10_24/interop_sanitizers.log": "3a6c2f36aebcf92920cd63fe711074459a8a553423fa63961ac5f98b88295b4d",
+    "evidence/control_peer_abi_2026_10_24/interop_test.log": "40ec16f2787c6d7722dc91f0bb47be0300e8d082aad21c012c9b08e2e12ab4fb",
+    "evidence/control_peer_abi_2026_10_24/line_missed.json": "9d8d392e337ce1d2a3cc17001966ff3ec18f5bd26731021fd39101bbf21fd33f",
+    "evidence/control_peer_abi_2026_10_24/recorder.json": "74969aec949af96974c3081f99bb7572624c4fd2375905f0558d2bc815dfdd71",
+    "evidence/control_peer_abi_2026_10_24/review.md": "cdd840e46e5c4c9540a264283c6add9907e3233b76b1251a0302b183bd6c4948"
+  }
+}

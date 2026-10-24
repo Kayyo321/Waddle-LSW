@@ -1,0 +1,62 @@
+[
+  {
+    "function": "ranges_overlap",
+    "line": 53,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "map_create_error",
+    "line": 147,
+    "column": 20,
+    "edge": 0
+  },
+  {
+    "function": "map_create_error",
+    "line": 147,
+    "column": 20,
+    "edge": 1
+  },
+  {
+    "function": "interop_peer_next_event",
+    "line": 302,
+    "column": 25,
+    "edge": 1
+  },
+  {
+    "function": "interop_peer_mapping_result",
+    "line": 325,
+    "column": 29,
+    "edge": 0
+  },
+  {
+    "function": "interop_peer_mapping_result",
+    "line": 327,
+    "column": 29,
+    "edge": 0
+  },
+  {
+    "function": "interop_peer_mapping_result",
+    "line": 329,
+    "column": 13,
+    "edge": 1
+  },
+  {
+    "function": "interop_peer_tx_bytes",
+    "line": 352,
+    "column": 37,
+    "edge": 0
+  },
+  {
+    "function": "interop_peer_copy_tx",
+    "line": 376,
+    "column": 18,
+    "edge": 1
+  },
+  {
+    "function": "interop_peer_begin_drain",
+    "line": 436,
+    "column": 23,
+    "edge": 1
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "function": "map_create_error",
+    "line": 149,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "interop_peer_feed",
+    "line": 252,
+    "column": 0,
+    "edge": 0
+  }
+]

@@ -1,0 +1,449 @@
+zig test src/interop/interop_codec.zig -Iinclude -lc
+1/23 interop_codec.test.AUMID keys reserve suffix space and preserve outputs on every error...OK
+2/23 interop_codec.test.window minimum sizes are independent of current geometry and bounded per axis...OK
+3/23 interop_codec.test.menu trigger serials are protocol references and local stop frames never cross VSOCK...OK
+4/23 interop_codec.test.Hello and HelloAck accept SemVer metadata through writer and receive validation...OK
+5/23 interop_codec.test.hello round trip, header decode and typed field access...OK
+6/23 interop_codec.test.header rejects magic, version, length and short input...OK
+7/23 interop_codec.test.structural defects: order, duplicates, padding, criticality, unknown tags...OK
+8/23 interop_codec.test.field present but not allowed for the message type is malformed...OK
+9/23 interop_codec.test.writer rejects order, values, capacity and poisons itself...OK
+10/23 interop_codec.test.window announce with every field, parent pairing and string rules...OK
+11/23 interop_codec.test.every field value rule accepts its boundary and rejects one past it...OK
+12/23 interop_codec.test.launch requests require exactly one target kind...OK
+13/23 interop_codec.test.icon requests pair window and generation...OK
+14/23 interop_codec.test.display config repeats outputs 1..8 times and nowhere else...OK
+15/23 interop_codec.test.field count limit is enforced by writer and validator...OK
+16/23 interop_codec.test.transfers: contiguity, bounds, digest and cancellation...OK
+17/23 interop_codec.test.every message type has a buildable minimal frame and rejects the wrong direction...OK
+18/23 interop_codec.test.deterministic mutation fuzz never crashes and keeps outputs unchanged on error...OK
+19/23 interop_codec.test.every registered tag reaches a value rule without hitting the unreachable default...OK
+20/23 interop_codec.test.runtime inputs exercise defensive branches of every export...OK
+21/23 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+22/23 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+23/23 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+All 23 tests passed.
+./build/interop_codec_abi_test
+interop codec ABI: header, fields, writer and transfers agree across C and Zig
+zig test src/interop/interop_layout.zig -Iinclude -lc
+1/8 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+2/8 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+3/8 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+4/8 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+5/8 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+6/8 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+7/8 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+8/8 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 8 tests passed.
+zig test src/interop/interop_heap.zig -lc
+1/17 interop_heap.test.initialization and capacity errors preserve outputs...OK
+2/17 interop_heap.test.first fit skips a partially occupied candidate...OK
+3/17 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+4/17 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+5/17 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+6/17 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+7/17 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+8/17 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+9/17 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+10/17 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+11/17 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+12/17 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+13/17 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+14/17 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+15/17 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+16/17 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+17/17 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 17 tests passed.
+zig test src/interop/manifest.zig -lc
+1/12 manifest.test.schema one parses all host and guest record kinds with owned borrowed views...OK
+2/12 manifest.test.all frozen schema one kinds parse with their kind-specific fields...OK
+3/12 manifest.test.rejects malformed schema duplicate keys and duplicate record ids...OK
+4/12 manifest.test.rejects root type omissions and malformed JSON paths...OK
+5/12 manifest.test.rejects each required record field when missing or mistyped...OK
+6/12 manifest.test.validates prior variants and optional record values...OK
+7/12 manifest.test.rejects record kind field prior hash UTF8 and string bound violations...OK
+8/12 manifest.test.enforces input record string and nesting bounds...OK
+9/12 manifest.test.valid parse releases every arena allocation...OK
+10/12 manifest.test.document owns strings independently of input and deinit is idempotent...OK
+11/12 manifest.test.invalid parse frees partial allocations under allocation failure...OK
+12/12 manifest.test.allocation failures cover record and duplicate-index growth...OK
+All 12 tests passed.
+zig test src/interop/interop_layout_abi.zig -Isrc/interop -lc
+1/11 interop_layout_abi.test.header C ABI validates snapshot and preserves output for argument and layout errors...OK
+2/11 interop_layout_abi.test.descriptor C ABI validates a private snapshot and rejects forged header and alias...OK
+3/11 interop_layout_abi.test.frame and audio C ABI return exact values and preserve output on errors...OK
+4/11 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+5/11 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+6/11 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+7/11 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+8/11 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+9/11 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+10/11 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+11/11 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 11 tests passed.
+./build/interop_layout_abi_test
+./build/interop_native_atomic_test
+PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/qemu_build.py
+..................
+----------------------------------------------------------------------
+Ran 18 tests in 9.725s
+
+OK
+PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/vendor_copy.py
+..............
+----------------------------------------------------------------------
+Ran 14 tests in 0.186s
+
+OK
+./build/interop_canonical_paths
+zig test src/interop/interop_slot_runtime.zig -lc
+1/40 interop_slot_runtime.test.admission, descriptor indices, identity and unchanged errors...OK
+2/40 interop_slot_runtime.test.provisional writer has distinct cancellation and exact release pin...OK
+3/40 interop_slot_runtime.test.growth waits on every pin and switches only free descriptors...OK
+4/40 interop_slot_runtime.test.retirement quarantines claims and releases on exact final pin...OK
+5/40 interop_slot_runtime.test.drain requires producer and host proofs and releases all pinned runs...OK
+6/40 interop_slot_runtime.test.all descriptor indices are assigned and generation never reuses...OK
+7/40 interop_slot_runtime.test.transactional allocation errors preserve output and allocator...OK
+8/40 interop_slot_runtime.test.shrink updates future geometry without replacing pinned runs...OK
+9/40 interop_slot_runtime.test.invalid writer evidence fails closed and explicit proof still drains...OK
+10/40 interop_slot_runtime.test.sequence is strictly increasing and exhausted sequence cannot wrap...OK
+11/40 interop_slot_runtime.test.long-running slot cycle preserves exact ownership across reuse...OK
+12/40 interop_slot_runtime.test.capture dimensions use frozen independent clamps...OK
+13/40 interop_slot_runtime.test.retirement cancels a provisional claim before releasing descriptors...OK
+14/40 interop_slot_runtime.test.drain releases mixed active replacement and retired runs...OK
+15/40 interop_slot_runtime.test.slot capacity corruption is rejected without claiming a writer...OK
+16/40 interop_slot_runtime.test.growth release corruption fails closed and retains reservations...OK
+17/40 interop_slot_runtime.test.retirement release corruption remains recoverable only with drain proof...OK
+18/40 interop_slot_runtime.test.host drain allocation failure does not partially release runtime runs...OK
+19/40 interop_slot_runtime.test.caller-owned runtime allocation has a complete leak-free lifecycle...OK
+20/40 interop_slot_runtime.test.writer identity guards and active-writer drain guard...OK
+21/40 interop_slot_runtime.test.pending growth accepts a smaller desired geometry without dropping replacement...OK
+22/40 interop_slot_runtime.test.corrupt post-publication bookkeeping fails closed and preserves all runs...OK
+23/40 interop_slot_runtime.test.stale asynchronous writer work cannot mutate a replacement session...OK
+24/40 interop_heap.test.initialization and capacity errors preserve outputs...OK
+25/40 interop_heap.test.first fit skips a partially occupied candidate...OK
+26/40 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+27/40 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+28/40 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+29/40 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+30/40 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+31/40 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+32/40 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+33/40 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+34/40 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+35/40 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+36/40 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+37/40 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+38/40 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+39/40 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+40/40 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 40 tests passed.
+PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/device_smoke_cleanup.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK
+zig test src/interop/interop_slot_runtime_abi.zig -Isrc/interop -lc
+1/47 interop_slot_runtime_abi.test.runtime error status mapping is exhaustive and has frozen values...OK
+2/47 interop_slot_runtime_abi.test.C ABI address checks preserve outputs and session epochs gate every operation...OK
+3/47 interop_slot_runtime_abi.test.every exported operation rejects a null runtime before reading caller outputs...OK
+4/47 interop_slot_runtime_abi.test.exported writer and release errors preserve scalar output snapshots...OK
+5/47 interop_slot_runtime_abi.test.exported geometry growth capacity and lifecycle errors are observable...OK
+6/47 interop_slot_runtime_abi.test.exported heap exhaustion and window-table capacity leave outputs unchanged...OK
+7/47 interop_slot_runtime_abi.test.exported current-session corruption fails closed and remains drainable...OK
+8/47 interop_slot_runtime.test.admission, descriptor indices, identity and unchanged errors...OK
+9/47 interop_slot_runtime.test.provisional writer has distinct cancellation and exact release pin...OK
+10/47 interop_slot_runtime.test.growth waits on every pin and switches only free descriptors...OK
+11/47 interop_slot_runtime.test.retirement quarantines claims and releases on exact final pin...OK
+12/47 interop_slot_runtime.test.drain requires producer and host proofs and releases all pinned runs...OK
+13/47 interop_slot_runtime.test.all descriptor indices are assigned and generation never reuses...OK
+14/47 interop_slot_runtime.test.transactional allocation errors preserve output and allocator...OK
+15/47 interop_slot_runtime.test.shrink updates future geometry without replacing pinned runs...OK
+16/47 interop_slot_runtime.test.invalid writer evidence fails closed and explicit proof still drains...OK
+17/47 interop_slot_runtime.test.sequence is strictly increasing and exhausted sequence cannot wrap...OK
+18/47 interop_slot_runtime.test.long-running slot cycle preserves exact ownership across reuse...OK
+19/47 interop_slot_runtime.test.capture dimensions use frozen independent clamps...OK
+20/47 interop_slot_runtime.test.retirement cancels a provisional claim before releasing descriptors...OK
+21/47 interop_slot_runtime.test.drain releases mixed active replacement and retired runs...OK
+22/47 interop_slot_runtime.test.slot capacity corruption is rejected without claiming a writer...OK
+23/47 interop_slot_runtime.test.growth release corruption fails closed and retains reservations...OK
+24/47 interop_slot_runtime.test.retirement release corruption remains recoverable only with drain proof...OK
+25/47 interop_slot_runtime.test.host drain allocation failure does not partially release runtime runs...OK
+26/47 interop_slot_runtime.test.caller-owned runtime allocation has a complete leak-free lifecycle...OK
+27/47 interop_slot_runtime.test.writer identity guards and active-writer drain guard...OK
+28/47 interop_slot_runtime.test.pending growth accepts a smaller desired geometry without dropping replacement...OK
+29/47 interop_slot_runtime.test.corrupt post-publication bookkeeping fails closed and preserves all runs...OK
+30/47 interop_slot_runtime.test.stale asynchronous writer work cannot mutate a replacement session...OK
+31/47 interop_heap.test.initialization and capacity errors preserve outputs...OK
+32/47 interop_heap.test.first fit skips a partially occupied candidate...OK
+33/47 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+34/47 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+35/47 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+36/47 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+37/47 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+38/47 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+39/47 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+40/47 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+41/47 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+42/47 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+43/47 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+44/47 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+45/47 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+46/47 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+47/47 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 47 tests passed.
+./build/interop_slot_runtime_abi_test
+opaque slot runtime ABI tests passed
+./build/interop_mapping_init_test
+mapping metadata initialization tests passed
+zig test src/interop/stream_reader.zig -Iinclude build/interop_codec.o -lc
+1/12 stream_reader.test.real codec ping frame is framed at every split and bytewise...OK
+2/12 stream_reader.test.coalesced frames stop at one boundary and require explicit consume...OK
+3/12 stream_reader.test.maximum frame is bounded and payload validation remains visible...OK
+4/12 stream_reader.test.bad header fails closed and retains exact codec error...OK
+5/12 stream_reader.test.initialization rejects unsupported producer directions...OK
+6/12 stream_reader.test.oversize and unaligned payload headers are rejected by codec...OK
+7/12 stream_reader.test.input alias is rejected before any reader state changes...OK
+8/12 stream_reader.test.EOF distinguishes partial header body and pending complete frame...OK
+9/12 stream_reader.test.payload schema and producer direction errors are returned without hiding frame...OK
+10/12 stream_reader.test.deterministic header mutation corpus never exceeds fixed storage...OK
+11/12 stream_reader.test.payload-only fragments preserve the boundary and clean EOF rejects later access...OK
+12/12 stream_reader.test.failed header refuses every consumer and EOF operation...OK
+All 12 tests passed.
+zig test src/interop/stream_send_queue.zig -Iinclude build/interop_codec.o -lc
+1/10 stream_send_queue.test.enqueue owns copied frame and partial acknowledgements preserve exact FIFO bytes...OK
+2/10 stream_send_queue.test.data reservation control admission full capacity and ring wrap preserve FIFO...OK
+3/10 stream_send_queue.test.codec rejects malformed maximum-size and wrong-direction frames before allocation...OK
+4/10 stream_send_queue.test.maximum valid optional extension frame is copied and acknowledged without truncation...OK
+5/10 stream_send_queue.test.enqueue requires one exact frame and rejects invalid header lengths...OK
+6/10 stream_send_queue.test.allocation failure leaves existing frames offsets and counters unchanged...OK
+7/10 stream_send_queue.test.single frame allocation is covered by an allocator failure sweep...OK
+8/10 stream_send_queue.test.deinit frees partial frames idempotently and closes future operations...OK
+9/10 stream_send_queue.test.enqueue may borrow an already queued frame while copying another record...OK
+10/10 stream_send_queue.test.deterministic queue stress preserves acknowledgement byte totals...OK
+All 10 tests passed.
+zig test src/interop/session_liveness.zig -Iinclude -lc
+1/13 session_liveness.test.host cadence registration and matched pong handoff...OK
+2/13 session_liveness.test.guest echoes only nonzero Ping and never asks to ping...OK
+3/13 session_liveness.test.exact any-frame deadline closes before a boundary frame...OK
+4/13 session_liveness.test.ping records expire independently during continuous ordinary traffic...OK
+5/13 session_liveness.test.registration limits are transactional and reused IDs require release...OK
+6/13 session_liveness.test.expired ID remains unavailable until an event returns its release...OK
+7/13 session_liveness.test.multiple pongs match out of order and unknown IDs remain harmless...OK
+8/13 session_liveness.test.Ping APIs close at connection deadline and wrong-role Pong is transactional...OK
+9/13 session_liveness.test.local errors and stale tokens preserve complete state...OK
+10/13 session_liveness.test.disconnect releases all pending IDs exactly once...OK
+11/13 session_liveness.test.role errors at future times do not mutate or trigger timeout...OK
+12/13 session_liveness.test.elapsed comparisons remain correct near uint64 maximum...OK
+13/13 session_liveness.test.deterministic long Ready traffic stays bounded and allocation free...OK
+All 13 tests passed.
+zig test src/interop/session_handshake.zig -Iinclude -lc
+1/16 session_handshake.test.host validates Hello and mapping before Ack becomes Ready...OK
+2/16 session_handshake.test.guest waits for complete Hello and accepts capability subset...OK
+3/16 session_handshake.test.wire incompatibilities return frozen errors and clear readiness...OK
+4/16 session_handshake.test.Hello rejects zero identifiers epochs and unknown capabilities...OK
+5/16 session_handshake.test.guest rejects ack capability supersets and malformed version...OK
+6/16 session_handshake.test.guest ack protocol correlation and layout violations use their frozen errors...OK
+7/16 session_handshake.test.local failures preserve the complete value and reject stale tokens...OK
+8/16 session_handshake.test.deadline is overall and exact at uint64 boundary...OK
+9/16 session_handshake.test.drain transport loss and close are idempotent...OK
+10/16 session_handshake.test.Closed is terminal for wire receive and lifecycle callbacks...OK
+11/16 session_handshake.test.deadline guards precede each callback-specific validation...OK
+12/16 session_handshake.test.every asynchronous callback rejects stale tokens and backward time unchanged...OK
+13/16 session_handshake.test.wire handshake message in wrong role is fatal...OK
+14/16 session_handshake.test.initialization and host mapping proof guards...OK
+15/16 session_handshake.test.wrong Ack send ID and invalid local phases preserve state...OK
+16/16 session_handshake.test.role and phase guards distinguish local events from invalid wire phase...OK
+All 16 tests passed.
+zig test src/interop/agent_version.zig -lc
+1/3 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+2/3 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+3/3 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+All 3 tests passed.
+zig test src/interop/request_ids.zig -lc
+1/7 request_ids.test.reserve starts at one and release creates a hole without resetting order...OK
+2/7 request_ids.test.reservation skips occupied identifiers across uint32 wrap...OK
+3/7 request_ids.test.full capacity and invalid releases preserve complete state...OK
+4/7 request_ids.test.unknown and repeated release are unchanged...OK
+5/7 request_ids.test.runtime sentinel input is never an occupied or releasable request...OK
+6/7 request_ids.test.retire clears occupancy and preserves sequence cursor...OK
+7/7 request_ids.test.bounded deterministic reserve release stress preserves uniqueness...OK
+All 7 tests passed.
+zig test src/interop/host_buffer_registry.zig -lc
+1/16 host_buffer_registry.test.initialization rejects zero and stores one immutable epoch...OK
+2/16 host_buffer_registry.test.admission validates every key component and errors preserve all state...OK
+3/16 host_buffer_registry.test.exact frame lifecycle retains identity through notify and rejects stale callbacks...OK
+4/16 host_buffer_registry.test.never attached requires callback quiescence and exact slot-free before notify...OK
+5/16 host_buffer_registry.test.full capacity preserves state and reuses slots only after committed notification...OK
+6/16 host_buffer_registry.test.drain and quarantine stop admission but retain completions...OK
+7/16 host_buffer_registry.test.quarantine from open and ticket exhaustion never wraps or reuses...OK
+8/16 host_buffer_registry.test.completion lookup rejects wrong epoch unknown ticket and pending phase unchanged...OK
+9/16 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+10/16 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+11/16 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+12/16 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+13/16 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+14/16 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+15/16 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+16/16 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 16 tests passed.
+zig test --dep registry -Mroot=tests/interop/host_buffer_registry.zig -Mregistry=src/interop/host_buffer_registry.zig -lc
+1/8 host_buffer_registry.test.admission validates epoch key fields and preserves state on errors...OK
+2/8 host_buffer_registry.test.ticket transitions enforce proof ordering and preserve counts on failure...OK
+3/8 host_buffer_registry.test.never-attached completion requires quiesced callback and exact release sequence...OK
+4/8 host_buffer_registry.test.stale ticket cannot complete a reused slot...OK
+5/8 host_buffer_registry.test.drain and quarantine retain pending and attached records while allowing exact completion...OK
+6/8 host_buffer_registry.test.all 192 records are bounded and capacity failure is transactional...OK
+7/8 host_buffer_registry.test.ticket UINT64_MAX is usable once and exhaustion never wraps...OK
+8/8 host_buffer_registry.test.192-frame varied completion and slot-reuse churn stays bounded...OK
+All 8 tests passed.
+zig test build/interop_codec.o -lc -Iinclude --dep peer -Mroot=tests/interop/control_peer.zig -Iinclude -Mpeer=src/interop/control_peer.zig
+1/47 control_peer.test.two peers exchange fragmented Hello and Ack only after mapping and full sends...OK
+2/47 control_peer.test.local token time count and short-output errors preserve peer and caller state...OK
+3/47 control_peer.test.coalesced feature frames backpressure at one complete frame and preserve each frame...OK
+4/47 control_peer.test.Hello and Ack readiness require full frame bytes and explicit mapping callbacks...OK
+5/47 control_peer.test.mapping failures do not bypass the external gate or mutate guest on local rejection...OK
+6/47 control_peer.test.ping pong is internal, one matched reply refreshes liveness...OK
+7/47 control_peer.test.scoped Error never receives a recursive reply; malformed Error only drains...OK
+8/47 control_peer.test.exact deadlines and terminal callbacks never reopen the peer...OK
+9/47 control_peer.test.mandatory Hello queue OOM drains and deinit frees the owned version...OK
+10/47 control_peer.test.private peer composition probes cover allocator, codec, and alias edges...OK
+11/47 control_peer.test.Hello and Ack reject bad major IDs and capability offers...OK
+12/47 control_peer.test.token phase time closed and empty-queue errors preserve observable state...OK
+13/47 control_peer.test.initialization rejects invalid local version and unknown capability bits...OK
+14/47 control_peer.test.wire header errors latch draining and wrong-direction controls do not dispatch...OK
+15/47 control_peer.test.Goodbye output preflight is atomic and request IDs are validated...OK
+16/47 control_peer.test.local drain aborts incomplete Hello but still accounts confirmed OS bytes...OK
+17/47 control_peer.test.Goodbye and unknown payload limits drain without recursive protocol replies...OK
+18/47 control_peer.test.unknown Pong refreshes receive liveness but exact silence timeout drains...OK
+19/47 control_peer.test.copy-out rejects aliases into version, peer state, and queued frames...OK
+20/47 control_peer.test.Pong capacity failure is terminal and the full control queue drains on the next Pong...OK
+21/47 control_peer.test.mandatory Pong Ping and Error allocation failures stay terminal...OK
+22/47 control_peer.test.deadline zero-progress acknowledgement drains without discarding OS-accounting state...OK
+23/47 control_peer.test.partial HelloAck aborted by drain still consumes its confirmed final bytes...OK
+24/47 control_peer.test.connection token is checked before all peer callbacks and closed peers reject work...OK
+25/47 control_peer.test.mandatory HelloAck allocation failure drains the host...OK
+26/47 control_peer.test.all handshake deadline entry points close at the boundary and stay closed...OK
+27/47 control_peer.test.mapping callbacks reject wrong phase and role before any timeout mutation...OK
+28/47 control_peer.test.drain is idempotent, deadline bounded, and Goodbye allocation failure is recorded...OK
+29/47 control_peer.test.zero ACK is a no-op before deadline and while already draining...OK
+30/47 control_peer.test.reader input alias and pending frames are safe across draining and closure...OK
+31/47 control_peer.test.pre-Ready wire errors are never answered recursively and invalid frames drain...OK
+32/47 control_peer.test.premature Ack and replayed Hello or Ack cannot reopen or bypass handshake...OK
+33/47 control_peer.test.zero Ping and Pong identifiers are rejected on their receiving roles...OK
+34/47 control_peer.test.backwards timestamps are local unchanged errors for every timed callback...OK
+35/47 control_peer.test.already-draining callbacks remain terminal and deinit rejects every operation...OK
+36/47 control_peer.test.replayed control ID cases and malformed Goodbye status drain...OK
+37/47 control_peer.test.ready-session ACK of Ping bytes accounts sends before exact liveness expiry...OK
+38/47 control_peer.test.empty transport and terminal queue APIs preserve their public errors...OK
+39/47 control_peer.test.bad header latches wire drain and records a best-effort protocol error...OK
+40/47 control_peer.test.mapping callbacks reject failed epoch and layout results without readiness...OK
+41/47 control_peer.test.bad handshake envelopes and failed host validation latch draining...OK
+42/47 control_peer.test.malformed required Hello and Ack fields are rejected at each handshake boundary...OK
+43/47 control_peer.test.partial bodies stay hidden and queued-frame output aliases are rejected...OK
+44/47 control_peer.test.best effort Ready protocol errors report allocator exhaustion without leaking...OK
+45/47 control_peer.test.best effort Hello and Ack incompatibility replies report allocator exhaustion...OK
+46/47 control_peer.test.host mapping refusal preserves drain when its error reply cannot allocate...OK
+47/47 control_peer.test.valid HelloAck envelope with invalid SemVer drains as incompatible...OK
+All 47 tests passed.
+zig build-obj src/interop/control_peer_abi.zig -Iinclude -lc -O ReleaseSafe -fPIC -fcompiler-rt -femit-bin=build/interop_control_peer_abi.o
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG tests/interop/control_peer_abi.c build/interop_control_peer_abi.o build/interop_codec.o  -o build/interop_control_peer_abi_c_test
+cc -std=c11 -O2 -g -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Dmain=interop_peer_c_fixture_main -Iinclude -c tests/interop/control_peer_abi.c -o build/interop_control_peer_abi_fixture.o
+./build/interop_control_peer_abi_c_test
+control peer C ABI tests passed
+zig test src/interop/control_peer_abi.zig -Iinclude -lc build/interop_codec.o build/interop_control_peer_abi_fixture.o
+1/84 control_peer_abi.test.raw pointer guards reject null alignment wrap and output alias before dereference...OK
+2/84 control_peer_abi.test.ABI rejects overflowing input and misaligned event output after prior guards pass...OK
+3/84 control_peer_abi.test.ABI operations preserve outputs for wrong tokens after pointer validation...OK
+4/84 control_peer_abi.test.fixed ABI enum mappings and creation-only error classification...OK
+5/84 control_peer_abi.test.range and owner overlap helpers cover empty and nonempty owned storage...OK
+6/84 control_peer_abi.test.ABI localizes scalar internal faults without corrupting owned buffers...OK
+7/84 control_peer_abi.test.ABI handshake callback guards normalize impossible scalar phase faults...OK
+8/84 control_peer_abi.test.ABI Ready dispatch normalizes liveness callback faults...OK
+9/84 control_peer_abi.test.owner creation failure sweep releases every staged allocation...OK
+10/84 control_peer_abi.test.owned-range validation includes peer value version and full queued frame...OK
+11/84 control_peer_abi.test.destroy rejects an owner slot inside peer-owned version storage...OK
+12/84 control_peer_abi.test.ABI config and output range overlaps are rejected before access...OK
+13/84 control_peer_abi.test.ABI rejects input and output ranges inside full peer-owned buffers...OK
+14/84 control_peer_abi.test.ABI timer and dispatch contain liveness and retirement invariant faults...OK
+15/84 control_peer_abi.test.ABI drain callback contains stale helper token without output mutation...OK
+16/84 control_peer_abi.test.ABI acknowledges OS bytes before containing a late liveness callback fault...OK
+17/84 control_peer_abi.test.ABI transport loss reports a closed owner without touching output...OK
+18/84 control_peer_abi.test.ABI catches queue and helper lifecycle failures at method boundaries...OK
+19/84 control_peer_abi.test.ABI returns a valid scoped PeerError as copied event data...OK
+20/84 control_peer_abi.test.ABI Ready dispatch contains a closed liveness observer...OK
+21/84 control_peer_abi.test.independent C client crosses the opaque pointer ABI...OK
+22/84 control_peer_abi.test.runtime half open address intervals distinguish adjacency from intersection...OK
+23/84 control_peer.test.private peer-boundary test support...OK
+24/84 session_handshake.test.host validates Hello and mapping before Ack becomes Ready...OK
+25/84 session_handshake.test.guest waits for complete Hello and accepts capability subset...OK
+26/84 session_handshake.test.wire incompatibilities return frozen errors and clear readiness...OK
+27/84 session_handshake.test.Hello rejects zero identifiers epochs and unknown capabilities...OK
+28/84 session_handshake.test.guest rejects ack capability supersets and malformed version...OK
+29/84 session_handshake.test.guest ack protocol correlation and layout violations use their frozen errors...OK
+30/84 session_handshake.test.local failures preserve the complete value and reject stale tokens...OK
+31/84 session_handshake.test.deadline is overall and exact at uint64 boundary...OK
+32/84 session_handshake.test.drain transport loss and close are idempotent...OK
+33/84 session_handshake.test.Closed is terminal for wire receive and lifecycle callbacks...OK
+34/84 session_handshake.test.deadline guards precede each callback-specific validation...OK
+35/84 session_handshake.test.every asynchronous callback rejects stale tokens and backward time unchanged...OK
+36/84 session_handshake.test.wire handshake message in wrong role is fatal...OK
+37/84 session_handshake.test.initialization and host mapping proof guards...OK
+38/84 session_handshake.test.wrong Ack send ID and invalid local phases preserve state...OK
+39/84 session_handshake.test.role and phase guards distinguish local events from invalid wire phase...OK
+40/84 stream_reader.test.real codec ping frame is framed at every split and bytewise...OK
+41/84 stream_reader.test.coalesced frames stop at one boundary and require explicit consume...OK
+42/84 stream_reader.test.maximum frame is bounded and payload validation remains visible...OK
+43/84 stream_reader.test.bad header fails closed and retains exact codec error...OK
+44/84 stream_reader.test.initialization rejects unsupported producer directions...OK
+45/84 stream_reader.test.oversize and unaligned payload headers are rejected by codec...OK
+46/84 stream_reader.test.input alias is rejected before any reader state changes...OK
+47/84 stream_reader.test.EOF distinguishes partial header body and pending complete frame...OK
+48/84 stream_reader.test.payload schema and producer direction errors are returned without hiding frame...OK
+49/84 stream_reader.test.deterministic header mutation corpus never exceeds fixed storage...OK
+50/84 stream_reader.test.payload-only fragments preserve the boundary and clean EOF rejects later access...OK
+51/84 stream_reader.test.failed header refuses every consumer and EOF operation...OK
+52/84 stream_send_queue.test.enqueue owns copied frame and partial acknowledgements preserve exact FIFO bytes...OK
+53/84 stream_send_queue.test.data reservation control admission full capacity and ring wrap preserve FIFO...OK
+54/84 stream_send_queue.test.codec rejects malformed maximum-size and wrong-direction frames before allocation...OK
+55/84 stream_send_queue.test.maximum valid optional extension frame is copied and acknowledged without truncation...OK
+56/84 stream_send_queue.test.enqueue requires one exact frame and rejects invalid header lengths...OK
+57/84 stream_send_queue.test.allocation failure leaves existing frames offsets and counters unchanged...OK
+58/84 stream_send_queue.test.single frame allocation is covered by an allocator failure sweep...OK
+59/84 stream_send_queue.test.deinit frees partial frames idempotently and closes future operations...OK
+60/84 stream_send_queue.test.enqueue may borrow an already queued frame while copying another record...OK
+61/84 stream_send_queue.test.deterministic queue stress preserves acknowledgement byte totals...OK
+62/84 request_ids.test.reserve starts at one and release creates a hole without resetting order...OK
+63/84 request_ids.test.reservation skips occupied identifiers across uint32 wrap...OK
+64/84 request_ids.test.full capacity and invalid releases preserve complete state...OK
+65/84 request_ids.test.unknown and repeated release are unchanged...OK
+66/84 request_ids.test.runtime sentinel input is never an occupied or releasable request...OK
+67/84 request_ids.test.retire clears occupancy and preserves sequence cursor...OK
+68/84 request_ids.test.bounded deterministic reserve release stress preserves uniqueness...OK
+69/84 session_liveness.test.host cadence registration and matched pong handoff...OK
+70/84 session_liveness.test.guest echoes only nonzero Ping and never asks to ping...OK
+71/84 session_liveness.test.exact any-frame deadline closes before a boundary frame...OK
+72/84 session_liveness.test.ping records expire independently during continuous ordinary traffic...OK
+73/84 session_liveness.test.registration limits are transactional and reused IDs require release...OK
+74/84 session_liveness.test.expired ID remains unavailable until an event returns its release...OK
+75/84 session_liveness.test.multiple pongs match out of order and unknown IDs remain harmless...OK
+76/84 session_liveness.test.Ping APIs close at connection deadline and wrong-role Pong is transactional...OK
+77/84 session_liveness.test.local errors and stale tokens preserve complete state...OK
+78/84 session_liveness.test.disconnect releases all pending IDs exactly once...OK
+79/84 session_liveness.test.role errors at future times do not mutate or trigger timeout...OK
+80/84 session_liveness.test.elapsed comparisons remain correct near uint64 maximum...OK
+81/84 session_liveness.test.deterministic long Ready traffic stays bounded and allocation free...OK
+82/84 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+83/84 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+84/84 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+All 84 tests passed.
+control peer C ABI tests passed
+./build/interop_mapping_windows_test
+bash tests/interop/verify_m0.sh
+interop verify_m0: healthy, drop budget, absent node, window, usage and prerequisite scenarios passed
+make: 'build/interop_control_peer_test.exe' is up to date.
+zig build-lib src/interop/control_peer_abi.zig -Iinclude -lc -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=build/interop_control_peer_abi_windows.lib
+zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude tests/interop/control_peer_abi.c build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib -o build/interop_control_peer_abi_c_test.exe
+zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Dmain=interop_peer_c_fixture_main -Iinclude -c tests/interop/control_peer_abi.c -o build/interop_control_peer_abi_fixture_windows.o
+zig test src/interop/control_peer_abi.zig -Iinclude -lc -target x86_64-windows-gnu build/interop_control_peer_abi_fixture_windows.o build/interop_codec_windows.lib --test-no-exec -femit-bin=build/interop_control_peer_abi_unit_test.exe

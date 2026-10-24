@@ -3325,3 +3325,17 @@ control_peer_core_qualification_2026_10_24.json. Internal/helper errors can
 follow mutation (especially accounting confirmed OS bytes); only the documented
 caller preflight errors promise unchanged core state. An unexpected internal
 failure requires abort/quiescence, never replay of already sent bytes.
+
+
+#### 8.21.2 Contextual C peer qualification
+
+The13-export wrapper now implements8.21.1. Its independent C consumer and84
+Zig tests pass, with199/201 production lines and140/150 branches covered under
+the unchanged90% gates. The complete interop unit, leak-enabled C sanitizer
+and coverage suites pass. Exact source hashes, symbol equality, commands and
+logs are retained in control_peer_abi_qualification_2026_10_24.json. C clients
+use AddressSanitizer, LeakSanitizer and UndefinedBehaviorSanitizer with leak
+detection enabled; the Zig implementation uses ReleaseSafe and its testing
+allocator. Three Windows peer executables cross-build; actual Windows execution
+for the containing source remains pending CI. No OS socket/mapping ownership or
+native session acceptance follows from this portable boundary qualification.

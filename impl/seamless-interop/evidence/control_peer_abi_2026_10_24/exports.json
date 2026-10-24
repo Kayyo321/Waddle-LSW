@@ -1,0 +1,34 @@
+{
+  "expected": [
+    "interop_peer_ack_tx",
+    "interop_peer_begin_drain",
+    "interop_peer_copy_tx",
+    "interop_peer_create",
+    "interop_peer_destroy",
+    "interop_peer_feed",
+    "interop_peer_get_state",
+    "interop_peer_mapping_result",
+    "interop_peer_next_event",
+    "interop_peer_pending_bytes",
+    "interop_peer_tick",
+    "interop_peer_transport_lost",
+    "interop_peer_tx_bytes"
+  ],
+  "actual": [
+    "interop_peer_ack_tx",
+    "interop_peer_begin_drain",
+    "interop_peer_copy_tx",
+    "interop_peer_create",
+    "interop_peer_destroy",
+    "interop_peer_feed",
+    "interop_peer_get_state",
+    "interop_peer_mapping_result",
+    "interop_peer_next_event",
+    "interop_peer_pending_bytes",
+    "interop_peer_tick",
+    "interop_peer_transport_lost",
+    "interop_peer_tx_bytes"
+  ],
+  "count": 13,
+  "match": true
+}

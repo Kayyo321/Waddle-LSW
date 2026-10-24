@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-mapping-windows-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -20,8 +20,8 @@ interop-codec-test: build/interop_codec_abi_test
 	./build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
-interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test interop-control-peer-abi-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage: build/interop_codec.o
 	python3 tests/av/coverage.py interop_codec
@@ -36,6 +36,8 @@ interop-coverage: build/interop_codec.o
 	python3 tests/av/coverage.py agent_version
 	python3 tests/av/coverage.py request_ids
 	python3 tests/av/coverage.py host_buffer_registry
+	python3 tests/av/coverage.py control_peer
+	python3 tests/av/coverage.py control_peer_abi
 	python3 tests/av/coverage.py manifest
 	python3 tests/av/coverage.py interop_layout_abi
 	python3 tests/interop/native_atomic_coverage.py
@@ -210,3 +212,33 @@ build/interop_host_buffer_registry_test.exe: src/interop/host_buffer_registry.zi
 	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
 build/interop_host_buffer_registry_adversarial_test.exe: tests/interop/host_buffer_registry.zig src/interop/host_buffer_registry.zig src/interop/interop_layout.zig | build
 	$(ZIG) test -target x86_64-windows-gnu --dep registry -Mroot=tests/interop/host_buffer_registry.zig -Mregistry=src/interop/host_buffer_registry.zig -lc --test-no-exec -femit-bin=$@
+
+.PHONY: interop-control-peer-test
+InteropControlPeerDependencies = src/interop/control_peer.zig src/interop/stream_reader.zig src/interop/stream_send_queue.zig src/interop/session_handshake.zig src/interop/session_liveness.zig src/interop/request_ids.zig src/interop/agent_version.zig include/waddle/interop_protocol.h
+# Connected pure control composition, tested through independent named-module peers.
+interop-control-peer-test: build/interop_codec.o
+	$(ZIG) test build/interop_codec.o -lc -Iinclude --dep peer -Mroot=tests/interop/control_peer.zig -Iinclude -Mpeer=src/interop/control_peer.zig
+build/interop_control_peer_test.exe: tests/interop/control_peer.zig $(InteropControlPeerDependencies) build/interop_codec_windows.lib | build
+	$(ZIG) test build/interop_codec_windows.lib -lc -target x86_64-windows-gnu -Iinclude --dep peer -Mroot=tests/interop/control_peer.zig -Iinclude -Mpeer=src/interop/control_peer.zig --test-no-exec -femit-bin=$@
+
+.PHONY: interop-control-peer-abi-test
+# Pure opaque owner; C clients always receive copied TX/RX storage.
+build/interop_control_peer_abi.o: src/interop/control_peer_abi.zig include/waddle/interop_peer.h $(InteropControlPeerDependencies) | build
+	$(ZIG) build-obj $< -Iinclude -lc -O ReleaseSafe -fPIC -fcompiler-rt -femit-bin=$@
+# This non-sanitized test-driver object is linked into Zig's bounds-checked unit suite.
+# The independent C executable below is separately rebuilt under ASan/LSan/UBSan.
+build/interop_control_peer_abi_fixture.o: tests/interop/control_peer_abi.c include/waddle/interop_peer.h include/waddle/interop_protocol.h | build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Dmain=interop_peer_c_fixture_main -Iinclude -c $< -o $@
+build/interop_control_peer_abi_c_test: tests/interop/control_peer_abi.c build/interop_control_peer_abi.o build/interop_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG $< build/interop_control_peer_abi.o build/interop_codec.o $(LDFLAGS) -o $@
+interop-control-peer-abi-test: build/interop_control_peer_abi_c_test build/interop_control_peer_abi_fixture.o
+	./build/interop_control_peer_abi_c_test
+	$(ZIG) test src/interop/control_peer_abi.zig -Iinclude -lc build/interop_codec.o build/interop_control_peer_abi_fixture.o
+build/interop_control_peer_abi_windows.lib: src/interop/control_peer_abi.zig include/waddle/interop_peer.h $(InteropControlPeerDependencies) | build
+	$(ZIG) build-lib $< -Iinclude -lc -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
+build/interop_control_peer_abi_c_test.exe: tests/interop/control_peer_abi.c build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude $< build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib -o $@
+build/interop_control_peer_abi_fixture_windows.o: tests/interop/control_peer_abi.c include/waddle/interop_peer.h include/waddle/interop_protocol.h | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Dmain=interop_peer_c_fixture_main -Iinclude -c $< -o $@
+build/interop_control_peer_abi_unit_test.exe: src/interop/control_peer_abi.zig include/waddle/interop_peer.h $(InteropControlPeerDependencies) build/interop_control_peer_abi_fixture_windows.o build/interop_codec_windows.lib | build
+	$(ZIG) test $< -Iinclude -lc -target x86_64-windows-gnu build/interop_control_peer_abi_fixture_windows.o build/interop_codec_windows.lib --test-no-exec -femit-bin=$@

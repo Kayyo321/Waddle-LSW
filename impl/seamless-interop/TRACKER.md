@@ -889,7 +889,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     function names and numeric layouts remain unchanged; strict C fixture syntax
     check passes. HEAD identifies this naming-only interface commit.
 
-- **Commit `HEAD`**: `feat(interop): compose bounded connected control peer state`
+- **Commit `7aa4ce7`**: `feat(interop): compose bounded connected control peer state`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
   - **Summary**: Composes framing, owned queue, Hello/Ack mapping gates, common
     IDs and liveness with an authoritative terminal phase. Full-send readiness,
@@ -899,4 +899,16 @@ its uncompiled draft earns no credit until current acceptance passes.
     tests and Windows cross-build pass; production96.88% lines90.18% branches.
     Wrapper/native execution and OS loops remain open; no extra parent credit.
     [Qualification](control_peer_core_qualification_2026_10_24.json).
+    HEAD identifies this containing implementation commit.
+
+- **Commit `HEAD`**: `feat(interop): expose contextual copied control peer C boundary`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
+  - **Summary**: Implements13 opaque C exports with bounded copied buffers,
+    allocation alias preflights and caller-versus-internal recovery classification.
+    Independent C client,84 Zig tests, complete interop regression suite,
+    leak-enabled C sanitizer suite and all production coverage gates pass.
+    ABI199/201 lines and140/150 branches; exact header/symbol match. Three
+    Windows peer executables cross-build; actual execution awaits feature CI.
+    OS owners and native integration remain open; no extra parent credit.
+    [Qualification](control_peer_abi_qualification_2026_10_24.json).
     HEAD identifies this containing implementation commit.

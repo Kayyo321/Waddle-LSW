@@ -34,7 +34,7 @@ ModernModeOracles = {
     'venus_sampler_descriptor_wire': ('sampler_descriptor_wire', 'descriptor_wire', 'render_wire'),
 }
 
-InteropModes = ('interop_codec', 'interop_layout', 'interop_heap', 'manifest', 'interop_layout_abi', 'interop_slot_runtime', 'interop_slot_runtime_abi', 'stream_reader', 'stream_send_queue', 'session_handshake', 'session_liveness', 'agent_version', 'request_ids', 'host_buffer_registry')
+InteropModes = ('interop_codec', 'interop_layout', 'interop_heap', 'manifest', 'interop_layout_abi', 'interop_slot_runtime', 'interop_slot_runtime_abi', 'stream_reader', 'stream_send_queue', 'session_handshake', 'session_liveness', 'agent_version', 'request_ids', 'host_buffer_registry', 'control_peer', 'control_peer_abi')
 mode=sys.argv[1]
 assert mode in InteropModes + ('interop_codec','av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native','venus_modern_sync_wire','venus_extra_objects_wire','venus_requirements2_wire','venus_image_transfer_wire','venus_dynamic_rendering_wire','venus_graphics_general_wire','venus_graphics_dynamic_wire','venus_sampler_descriptor_wire','venus_transfer2_native','venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native')
 if mode == 'av_video':
@@ -62,7 +62,7 @@ root=Path.cwd(); output=root/'build/coverage'/('interop' if mode in InteropModes
 output = output / ('run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
 output.mkdir(parents=True, exist_ok=False)
 print('preserved ' + mode + ' coverage: ' + str(output), flush=True)
-oracle = {'stream_reader': 'build/interop_codec.o', 'stream_send_queue': 'build/interop_codec.o', 'venus_device_wire': 'build/venus_device_wire_oracle.o', 'venus_values': 'build/venus_values_oracle.o', 'venus_instance_wire': 'build/venus_instance_oracle.o', 'venus_query_wire': 'build/venus_query_oracle.o', 'venus_icd': 'build/venus_icd_oracle.o', 'venus_render_wire': 'build/venus_render_wire_oracle.o', 'venus_descriptor_wire': 'build/venus_descriptor_wire_oracle.o', 'venus_graphics_wire': 'build/venus_graphics_wire_oracle.o', 'venus_compute_wire': 'build/venus_compute_wire_oracle.o', 'venus_graphics_pipeline_wire': 'build/venus_graphics_pipeline_wire_oracle.o', 'venus_graphics_command_wire': 'build/venus_graphics_command_wire_oracle.o', 'venus_features_wire': 'build/venus_features_query_oracle.o', 'venus_features_native': 'build/venus_features_query_oracle.o', 'venus_tcp_wire': 'build/venus_tcp_wire_oracle.o'}.get(mode)
+oracle = {'control_peer_abi': 'build/interop_codec.o', 'control_peer': 'build/interop_codec.o', 'stream_reader': 'build/interop_codec.o', 'stream_send_queue': 'build/interop_codec.o', 'venus_device_wire': 'build/venus_device_wire_oracle.o', 'venus_values': 'build/venus_values_oracle.o', 'venus_instance_wire': 'build/venus_instance_oracle.o', 'venus_query_wire': 'build/venus_query_oracle.o', 'venus_icd': 'build/venus_icd_oracle.o', 'venus_render_wire': 'build/venus_render_wire_oracle.o', 'venus_descriptor_wire': 'build/venus_descriptor_wire_oracle.o', 'venus_graphics_wire': 'build/venus_graphics_wire_oracle.o', 'venus_compute_wire': 'build/venus_compute_wire_oracle.o', 'venus_graphics_pipeline_wire': 'build/venus_graphics_pipeline_wire_oracle.o', 'venus_graphics_command_wire': 'build/venus_graphics_command_wire_oracle.o', 'venus_features_wire': 'build/venus_features_query_oracle.o', 'venus_features_native': 'build/venus_features_query_oracle.o', 'venus_tcp_wire': 'build/venus_tcp_wire_oracle.o'}.get(mode)
 if mode == 'venus_device_native':
     for name in ('device', 'render'):
         subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
@@ -117,12 +117,27 @@ if mode in ModernModeOracles:
 # directory. Keep that object once instead of also linking its public equivalent.
 if str(output / 'properties_render_oracle.o') in link_objects:
     link_objects = [path for path in link_objects if path != 'build/venus_render_wire_oracle.o']
+if mode == 'control_peer_abi':
+    # Run the actual independent C ABI client from the instrumented Zig suite.
+    # Renaming its main keeps one test-runner entry point; all ABI calls remain C.
+    fixture_object = output/'control_peer_c_fixture.o'
+    subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
+        '-UNDEBUG', '-Dmain=interop_peer_c_fixture_main', '-Iinclude', '-c',
+        'tests/interop/control_peer_abi.c', '-o', str(fixture_object)], check=True)
+    link_objects.append(str(fixture_object))
 extra_args = ['-Isubmodules/venus_protocol/include', *link_objects] if oracle or mode in ModernModeOracles or mode in ('venus_transfer2_native', 'venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else []
 if mode in ('interop_layout_abi', 'interop_slot_runtime_abi'):
     extra_args += ['-Isrc/interop']
 test_source = 'src/vgpu/venus_graphics_general_wire.zig' if mode == 'venus_pipeline_wire_helpers' else source
 compile_command=['zig','test',test_source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
  '-femit-llvm-ir='+str(output/'test.ll'),'-femit-bin='+str(output/'test')]
+if mode == 'control_peer':
+    # Exercise the production module from its independent named-module suite.
+    # Settings precede each -M so both modules use ReleaseSafe and the C ABI.
+    compile_command = ['zig', 'test', *link_objects, '-lc', '-O', 'ReleaseSafe',
+        '-Iinclude', '--dep', 'peer', '-Mroot=tests/interop/control_peer.zig',
+        '-O', 'ReleaseSafe', '-Iinclude', '-Mpeer=' + source, '--test-no-exec',
+        '-femit-llvm-ir=' + str(output/'test.ll'), '-femit-bin=' + str(output/'test')]
 source_hash=hashlib.sha256(Path(source).read_bytes()).hexdigest()
 subprocess.run(compile_command,check=True)
 if hashlib.sha256(Path(source).read_bytes()).hexdigest()!=source_hash:
@@ -139,7 +154,14 @@ def scope_name(index):
         if name:
             file=re.search(r'file: !(\d+)',value)
             filename=metadata.get(int(file[1]),'') if file else ''
-            return re.sub(r'__anon_\d+$', '', name[1]) if 'filename: "'+Path(source).name+'"' in filename else ''
+            file_name = re.search(r'filename: "([^"]+)"', filename)
+            directory = re.search(r'directory: "([^"]*)"', filename)
+            if not file_name or not directory:
+                return ''
+            declared_path = Path(directory[1]) / file_name[1]
+            # Test and production roots can share a basename in named modules.
+            # Match the complete source path so fixture lines never count.
+            return re.sub(r'__anon_\d+$', '', name[1]) if declared_path.resolve() == Path(source).resolve() else ''
         parent=re.search(r'scope: !(\d+)',value)
         if not parent: return ''
         index=int(parent[1])
