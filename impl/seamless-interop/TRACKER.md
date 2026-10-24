@@ -795,11 +795,20 @@ its uncompiled draft earns no credit until current acceptance passes.
     retained quarantine. Assigns separate Luna implementation/tests/review lanes.
     No protocol-version or runtime behavior changes; source commit47c5eee contains this contract.
 
-- **Commit `HEAD`**: `docs(interop): freeze connected control peer composition`
+- **Commit `379a953`**: `docs(interop): freeze connected control peer composition`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
   - **Summary**: Defines the bounded protocolv2 composition before implementation:
     full-send readiness, scoped peer errors, deterministic terminal codec policy,
     one request namespace, transactional local errors and copy-out feature events.
     Keeps facility/native side effects and reconnect authorization outside this
     core. Preserves host-coordinated drain as unaccepted protocolv3 research and
-    the completed registry review. HEAD is this specification commit.
+    the completed registry review. Source commit379a953 contains this specification.
+
+- **Commit `HEAD`**: `docs(interop): reconcile peer deadlines with bytes already sent`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
+  - **Summary**: Independent review catches an expired send acknowledgment that
+    could expose already-sent bytes again. Requires exact queue/metadata progress
+    while suppressing Ready, preflights short output/local callbacks before time
+    effects and makes the peer terminal phase authoritative for untimed errors.
+    Distinguishes invalid local callbacks from failed host native proof. HEAD is
+    this reviewed clarification commit.

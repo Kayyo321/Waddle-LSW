@@ -3110,3 +3110,30 @@ no reply; malformed received Error no recursive reply; header/body/direction/ID
 violations; allocation failure for each mandatory response; FIFO512/controlcapacity;
 deinit/repeated terminal events; unknown/latePong; no epoch/native proof generated.
 Lead owns shared builds, coverage harness, Windows/C ABI integration and Git.
+
+The following wrapper preflight and terminal rules are normative corrections to
+this appendix (the existing helper APIs remain unchanged):
+
+- A valid ack_tx describes bytes already sent by the OS. After local token,
+  monotonic-time and count validation, it ALWAYS consumes those bytes and pops
+  matching completion metadata on a full frame, including at/after a deadline.
+  Expiration then enters Draining and suppresses hello_sent/ack_sent/Ready; it
+  must not expose already-sent bytes for resend. Invalid local ACK arguments
+  preserve state; the caller must repair and retry that same acknowledgment
+  before any further send.
+- next_event preflights required copy-out capacity before any clock, deadline,
+  liveness, reader or output mutation. Short output is a local error even if a
+  deadline has elapsed; a subsequent valid call/tick enforces that deadline.
+- The peer owns an authoritative terminal phase latch. Untimed feed header
+  failure can latch Draining; untimed transport_lost can latch Closed. After
+  either, negotiation/liveness helper state is never consulted for advancement.
+  Existing TX can be acknowledged/flushed while Draining; Closed permits no
+  further I/O work. Quiescent ID retirement and deinit never grant native proof.
+- Preflight mapping-callback local role/phase errors before forwarding to the
+  timed handshake helper, whose own phase-check ordering is intentionally
+  different. A wrong-role/phase callback remains unchanged even at a deadline;
+  a valid callback reaches the deadline and drains. Guest initialization false
+  returns unchanged MappingInitializationFailed; the native caller begins drain
+  on a real initialization failure. Guest zero epoch is an unchanged local
+  argument error. Host succeeded=false or mismatched validated epoch/layout is
+  valid failed native proof, so it reaches the helper's ErrorAndDrain path.
