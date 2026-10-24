@@ -116,15 +116,15 @@
       "effort": "high",
       "allocation_source": "user_override",
       "owned_files": [
-        "src/interop/stream_reader.zig"
+        "src/interop/stream_send_queue.zig"
       ],
-      "task": "Implement bounded allocation-free codec-backed ingress framing against IMPL_DESC8.12; builtin tests; no duplicated wireparser",
+      "task": "Implement codec-validated owned FIFO per IMPL_DESC8.13; bounded512frames,8reservedadmission, partialwrite and allocator failure invariants",
       "acceptance": [
-        "isolated codec object + Zig reader tests linked through frozen C ABI",
+        "isolated Zig tests linked with correctly built production codec object",
         "lead unchanged90% line/branch and WindowsCI"
       ],
       "constraints": [
-        "No Git/sharedbuild/VM/Claude/recursiveagents; frozen codec/headers unchanged"
+        "No Git/sharedbuild/VM/Claude/nestedagents; reader and frozen codec unchanged"
       ],
       "runner_ownership": "isolated/tmp CPU only"
     },
@@ -133,15 +133,18 @@
       "model": "gpt-6-luna",
       "effort": "high",
       "allocation_source": "user_override",
-      "owned_files": [],
-      "task": "Read-only precise protocol handshake/heartbeat state machine proposal for6/7 from frozenHello/HelloAck schemas; avoid Claude graph and current streamreader lane",
+      "owned_files": [
+        "src/interop/session_handshake.zig"
+      ],
+      "task": "Implement precise pure pre-Ready host/guest state machine against IMPL_DESC8.14; no liveness or OS scope",
       "acceptance": [
-        "Exact schemas, states, timeout/order/error boundaries in/tmp proposal; no source edits"
+        "isolated Zig tests for both roles and exact guards/actions",
+        "lead unchanged90% production line/branch and nativeWindowsCI"
       ],
       "constraints": [
-        "No source edits/build/Git/VM/Claude/recursiveagents"
+        "No Git/sharedbuild/VM/Claude/recursiveagents; shared headers/codec and transport files untouched"
       ],
-      "runner_ownership": "none"
+      "runner_ownership": "isolated/tmp CPU only"
     }
   ],
   "completed_followups": [

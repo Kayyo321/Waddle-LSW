@@ -2593,3 +2593,123 @@ mutation/stress corpus must keep all accesses bounded. Testing allocator checks
 apply to fixtures; the production reader allocates nothing. Linux coverage must
 retain the unchanged90% line/branch thresholds; actual Windows CPU execution
 qualifies parsing only, with host/guest transport integration separately open.
+
+### 8.13 Owned bounded outbound frame queue
+
+New stream_send_queue.zig supplies one serialized direction's FIFO before OS
+transport integration. queue_t.init borrows a std.mem.Allocator and validates
+producer direction1/2/3; the allocator must outlive deinit. The queue stores512
+optional frame records by value, with a ring head/count, front write offset,
+pending-byte count and live flag. Each accepted enqueue owns exactly one copied
+allocation containing a complete validated frame; no other production allocation
+exists. Its maximum resident frame storage is512*65536 bytes plus fixed records.
+
+Enqueue borrows accessible frame bytes and a local class Data or Control. Require
+exactly one complete frame, validated through the existing codec C ABI for header,
+length and direction/schema, before allocating. Malformed/unsupported input is
+rejected without allocation or queue mutation. Data admission requires total
+frame count<504; Control admission requires count<512. This reserves eight
+admission slots but does not reorder frames or promise control latency. The
+caller classifies required control events and must fail its session closed if a
+required event cannot enqueue; no required event is silently dropped. There is
+no transport, capability negotiation, request correlation or coalescing policy
+inside this queue. Queue-full and allocator failures preserve existing frames,
+front offset, counters and caller input. Copy input before publishing the record;
+input may borrow an existing queued frame because enqueue frees no prior frame.
+
+peek borrows only the remaining bytes of the front frame, or reports Empty.
+Every mutation invalidates borrowed views; input and output pointers are never
+retained by reference. consume_written(n) accepts only0..remaining front bytes;
+zero is a no-op for a nonempty queue. Over-consumption returns InvalidCount
+without mutation. A partial acknowledgement advances the offset and subtracts
+pending bytes; only full acknowledgement frees/NULLs the owned allocation and
+advances the head. pending_bytes means unsent bytes, not resident allocation
+size: a partially sent frame retains its whole allocation until completion.
+No frame is interleaved with the next. The OS writer must acknowledge only a
+confirmed successful write count and use peek again after every mutation.
+
+Deinit frees every live allocation, NULLs records, clears counters and marks the
+queue closed; it is idempotent. Closed queues reject further calls; replacing
+one with init requires prior deinit. No pointer/handle/OS object is owned other
+than frame allocations. All calls require the same event-loop serialization;
+there are no atomics or locks. Tests use std.testing.allocator and allocation-
+failure sweeps, exact FIFO byte/partial-write oracles,512-frame wrap/capacity and
+reserved-slot boundaries, max-size/schema/direction rejection, closed lifecycle,
+repeated deinit and deterministic stress. Qualify unchanged90% production line
+and branch coverage plus Linux/Windows CPU execution; actual socket backpressure
+and endpoint teardown remain separate integration gates.
+
+### 8.14 Pure connected-peer handshake core
+
+New session_handshake.zig implements only the pre-Ready negotiation and explicit
+local drain/close states. Stream framing, SemVer string parsing, Ping/Pong,
+request allocation, OS mapping, send queues and transport cleanup remain separate
+owners. This is an allocation-free, single-event-loop value machine. Init takes
+Host/Guest role, nonzero fresh connection_token, local version major, known local
+advertised capability bits and accepted_at_ms. Host begins AwaitHello; guest
+begins InitializingMapping. A new connection uses a new instance/token; never
+reuse the previous instance to bypass its mapping lifetime obligations.
+
+Every event takes connection_token and monotonic now_ms. Wrong token or backwards
+time is a local error with the complete state unchanged, checked before any
+connection mutation. Local wrong-phase/send-confirmation errors also preserve
+state. Use elapsed subtraction, never overflowing absolute deadline addition.
+Until Ready, every event first checks the overall5000ms deadline from accepted
+transport (including mapping initialization and partial sends). At exactly5000ms
+enter Draining with reason HelloTimeout and no invented wire timeout error.
+Ready has no handshake timer. Tick updates accepted time and returns no action
+unless it expires negotiation. Liveness is specified separately.
+
+Hello facts contain protocol_version, optional parsed version_major, layout_version,
+capabilities, session_epoch and request_id; HelloAck facts omit epoch. The adapter
+must parse the entire agent_version with SemVer2.0 grammar (prerelease/build are
+allowed), reject major beyond uint32 and pass null for malformed versions. A
+valid major0 is not an absent value. Frames must already pass the codec; these
+fact guards defend the adapter boundary too. Endpoints use nonzero Hello request
+IDs and echo exactly in HelloAck. This is explicit endpoint policy above the
+codec, which deliberately does not enforce header request-ID/session policy.
+
+Host receive_hello accepts only Host/AwaitHello. Header version other than2,
+zero request ID/epoch or unknown capabilities cause ProtocolViolation and
+ErrorAndDrain. Malformed/mismatched agent major or layout other than3 causes
+VersionMismatch and ErrorAndDrain. Save validated Hello facts, keep public
+negotiated capabilities/epoch zero, enter AwaitMapping, and emit no Ack yet.
+mapping_validated accepts only the exact staged epoch, explicit successful
+full-layout validation and Host/AwaitMapping. Failure emits ProtocolViolation
+and drains; success stages intersection=guest_offer & initialized_host_offer,
+enters AwaitHelloAckSent and returns SendHelloAck with echoed ID, local major,
+layout3 and intersection. Ack carries no epoch tag. Only matching complete
+ack_sent confirmation commits epoch/capabilities and enters Ready. Queuing or
+partially writing an Ack never means Ready.
+
+Guest mapping_initialized accepts only Guest/InitializingMapping with successful
+external layout initialization, a nonzero fresh epoch and caller-allocated
+nonzero Hello request ID. It stages local Hello facts, enters AwaitHelloSent and
+returns SendHello. The external owner must already prove prior producers stopped
+and old host buffers detached; this machine cannot prove it. Matching complete
+hello_sent confirmation enters AwaitHelloAck without extending the overall
+deadline. receive_ack accepts only Guest/AwaitHelloAck, checks protocol/layout/
+major and exact request ID, and requires only known capabilities that are a
+subset of the guest offer. The guest cannot recompute the exact intersection:
+HelloAck contains no separate host offer. A valid Ack commits staged epoch and
+returned subset and enters Ready; violations ErrorAndDrain as above.
+
+Wire Hello/Ack received in the wrong role/phase is fatal ProtocolViolation.
+Transport send confirmations with wrong local ID/phase are local errors with no
+mutation. ErrorAndDrain clears uncommitted staged negotiation, preserves no
+facility readiness, and asks the owner to send the given frozen Error code best
+effort before teardown. It never replies to a received Error (dispatch belongs
+to the owner). begin_drain and transport_lost block further negotiation; repeated
+drain is idempotent. teardown_complete accepts only Draining and enters terminal
+Closed. These events return lifecycle actions only, never a FrameRelease or
+host-drained proof. Even Closed does not authorize reinitializing shared memory.
+Goodbye/EOF/timeout are not mapping-detachment evidence.
+
+Actions are copied tagged values: None, SendHello, SendHelloAck, ErrorAndDrain,
+Drain and Closed; no borrowed string or heap ownership crosses the boundary.
+Local endpoint config supplies the full version string for serialization; typed
+outbound Hello and Ack must retain their distinct frozen field sets. Tests cover
+both complete roles, zero/subset/intersection negotiation, every wrong token/
+time/phase/ID/epoch/version/capability boundary, exact deadline and uint64 end
+boundaries, pending-send readiness, transport loss, repeated drain and explicit
+teardown. No reconnect/socket/signed-driver acceptance is implied.

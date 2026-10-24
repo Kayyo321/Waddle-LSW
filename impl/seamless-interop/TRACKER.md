@@ -33,8 +33,8 @@ acceptance remain pending.
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE native hardware runs pending** |
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 19 tests; 97.23% branch / 96.65% line; sanitizers clean; Windows ABI link; bounded app-key helper |
 | #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 60% | Snapshot, heap, C ABI, native CPU atomics and pure slot pins/growth/drain accepted; live mapping/session integration and qualification remain open |
-| #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
-| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
+| #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | In Progress | 4% | 0% | Portable session core being qualified; Win32 listener/mapping, signing/deploy and native acceptance remain open |
+| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 0% | Portable session core being qualified; host transport, singleton, module extraction and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
@@ -73,6 +73,8 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pure pin/growth/drain bookkeeping 10%; live runtime integration 15%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; pure pin/growth/drain10%; Linux/Windows coverage and tests pass |
+| #6 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; Win32 listener/mapping loop25%; signing/deploy/update/autostart30%; native qualification20% | None of the new endpoint core accepted yet; module foundations are separate from a working agent |
+| #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | None of the new endpoint core accepted yet; no working host session claimed |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
@@ -589,12 +591,20 @@ its uncompiled draft earns no credit until current acceptance passes.
     Luna parser lane and read-only handshake contract investigation. Frozen
     codec/wire and Claude graph ownership remain unchanged. Source commitef56078 contains this design/ownership.
 
-- **Commit `HEAD`**: `docs(interop): preserve rejected manifest store draft and review`
+- **Commit `0d870e7`**: `docs(interop): preserve rejected manifest store draft and review`
   - **Task Impact**: +0% to TODO #33/#34 (+0% overall; total14.40%).
   - **Summary**: Archives the33-test journal proposal outside production source
     with exact test evidence and unresolved leaf mutation/cleanup races, actual
     syscall-fault requirements and failed earlier branch coverage. Preserves
     partial review fixes and an unapproved atomic-retention redesign proposal;
     no build/command consumer or engine credit is claimed. Resume instructions
-    are in[the review](resume_proposals/manifest_store_review.md). HEAD identifies
-    this containing draft/evidence commit.
+    are in[the review](resume_proposals/manifest_store_review.md). Source commit0d870e7 contains this draft/evidence.
+
+- **Commit `HEAD`**: `docs(interop): define owned queue and handshake acceptance`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Specifies FIFO ownership,512-frame/eight-slot admission bounds,
+    partial writes and allocation-failure invariants; freezes bounded typed
+    handshake roles, validation, complete-send readiness, exact deadline and
+    external mapping obligations. Defines endpoint subtask allocations before
+    qualification; isolated common modules earn no native endpoint credit.
+    Reserves independent Luna files. HEAD identifies this design/ownership commit.
