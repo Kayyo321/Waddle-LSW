@@ -726,7 +726,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     branches; native Windows CI is wired after successful cross-build.
     [Qualification](request_ids_qualification_2026_10_24.json). Source commite5014ac contains this implementation.
 
-- **Commit `HEAD`**: `docs(interop): retain next adapter review boundaries`
+- **Commit `6f6b445`**: `docs(interop): retain next adapter review boundaries`
   - **Task Impact**: +0% to TODO #5/#6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Saves independent raw Win32 mapping/lifecycle and complete
     message/capability/request-correlation proposals for the next connected
@@ -734,4 +734,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     authorize unnegotiated facilities and transport closure is not mapping drain.
     Records released source ownership and running combined CI after all local
     regression, leak-enabled sanitizer and production coverage gates passed.
-    HEAD identifies this containing research/coordination commit.
+    Source commit6f6b445 contains this research/coordination.
+
+- **Commit `HEAD`**: `docs(interop): freeze retryable Windows mapping owner API`
+  - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total14.40%).
+  - **Summary**: Defines an opaque raw SDK lease owner with transactional outputs,
+    retained primary/cleanup diagnostics, explicit map-release and close retries,
+    publication/quiescence preconditions and guarded pinned driver ABI. Specifies
+    portable leak-enabled API doubles and native SDK fixtures; neither can stand
+    in for live driver or compositor proof. HEAD identifies this containing
+    interface/specification commit.

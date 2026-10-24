@@ -2854,3 +2854,58 @@ sequence reset and deterministic bounded reserve/release stress. Direct test
 seeding of next_candidate is only a wrap fixture; production init always starts1.
 Retain >=90% production line/branch and actual Windows CPU test gates. No extra
 progress is credited beyond the endpoint allocations already frozen in §8.14.
+
+### 8.18 Raw Windows IVSHMEM lease owner
+
+The authoritative public local API is src/interop/interop_mapping_windows.h.
+It supersedes the caller-visible struct/zero-on-error suggestion in the saved
+mapping_windows_contract proposal: the implementation owns an opaque C record;
+all error results preserve caller output values. This is a raw SDK lease owner,
+not a session agent, metadata initializer, signed-driver installer or proof of
+host detachment. Do not reuse the old AV/vGPU validator or ignore cleanup errors.
+
+One calloc-owned opaque record stores device set, device handle, raw map facts,
+explicit ownership flags, published-view latch and primary/cleanup Win32 errors.
+Create allocates no SDK resource. Open rejects a resource-owning record unchanged;
+otherwise resets diagnostics for the new attempt. Acquire and record the SetupAPI
+set, enumerate the exact index and probe detail length: the probe must return
+FALSE/ERROR_INSUFFICIENT_BUFFER and a byte count at least sizeof detail and at
+most65536. Allocate exactly that count, initialize cbSize and fetch detail. Require
+a bounded NUL in the returned DevicePath before CreateFileW. Free/NULL detail
+on every return. Use GENERIC_READ|GENERIC_WRITE, shared read/write, OPEN_EXISTING
+and FILE_ATTRIBUTE_NORMAL. Record the driver handle before any map call.
+
+Include the actual pinned looking_glass vendor IVSHMEM header through one guarded
+SDK wrapper, never copy vendor source. Assert x64, config sizeof1, mmap sizeof32
+and peerID/size/ptr/vectors offsets0/8/16/24, plus IOCTL0x222008/0x22200c. REQUEST
+uses exactly one cached-config byte and32 output bytes. Once the IOCTL succeeds,
+record mapping ownership even if returned byte count or fields are invalid.
+Accept only returned32, length0x80000000, nonnull64-aligned address with representable
+one-past end. Do not read the mapping. Publish view only after temporary device-set
+destruction succeeds; a malformed successful reply still needs RELEASE on rollback.
+
+Acquisition failures record the first operation error (ERROR_NOT_ENOUGH_MEMORY for
+allocation, ERROR_INVALID_DATA for malformed SDK data). If an SDK returns failure
+with zero last-error, normalize to ERROR_GEN_FAILURE. Rollback releases map before
+closing device, and independently destroys the enumeration set. A failed release
+retains map/handle and forbids CloseHandle; successful release clears map ownership
+even if CloseHandle then fails. Destroy-device-set failure retains that handle too.
+Keep the first cleanup failure of each attempt separately from the primary error.
+Return CleanupPending if anything remains; a later close retries only retained
+resources. Failed-open views were never published, so rollback/close may use proof0.
+Published leases require explicit proof1 on close; no EOF/Goodbye/handshake/timer
+provides it. The caller stops every local user and satisfies external detach
+obligations before a valid close attempt, after which the old borrowed view must
+never be used even if cleanup is pending. Destroy rejects any owned resource.
+
+No native call/allocator runs on invalid argument, Busy or MissingProof paths.
+All calls are serialized; no callbacks or mapping pointers outlive the owner.
+Test the same production C lifecycle against narrow handwritten Linux Win32 API
+doubles and actual Windows SDK declarations with substituted calls. Include the
+actual vendor header in both; a test-only initguid adapter is a double, not copied
+SDK source. Fault every acquisition, malformed detail/map field, allocation and
+cleanup stage; verify output preservation, diagnostic precedence, independent
+cleanup, retry, one-time release/close and zero owned resources/bytes at test end.
+C ASan/LSan/UBSan, >=90% production line/branch and actual Windows CPU fixture
+execution remain gates. These doubles do not qualify a live signed-driver lease
+or any part of full host/guest/compositor acceptance by themselves.

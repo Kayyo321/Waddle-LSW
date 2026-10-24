@@ -109,7 +109,30 @@
     "Worker tests use separate /tmp output/cache; no acceptance from mocked/native-unrun results"
   ],
   "checkpoint_status": "active",
-  "active_workers": [],
+  "active_workers": [
+    {
+      "agent": "luna_qemu_build",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "allocation_source": "user_override",
+      "owned_files": [
+        "src/interop/interop_mapping_windows.c",
+        "src/interop/interop_ivshmem_driver.h",
+        "tests/interop/mapping_windows.c",
+        "tests/interop/mapping_windows_api_double.h",
+        "tests/interop/win32_shim/initguid.h"
+      ],
+      "task": "Implement raw retryable Windows mapping SDK owner against authoritative header and IMPL_DESC8.18",
+      "acceptance": [
+        "isolated Linux API-double ASan/LSan/UBSan and Windows cross-build",
+        "lead >=90% production line/branch and actual Windows CPU fixture"
+      ],
+      "constraints": [
+        "No shared build/Git/header changes/VM/driver installs/Claude or recursive agents"
+      ],
+      "runner_ownership": "isolated /tmp CPU only"
+    }
+  ],
   "completed_followups": [
     {
       "agent": "luna_layout",
@@ -183,5 +206,5 @@
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
   },
-  "lead_current_work": "Combined local interop, leak-enabled sanitizer and coverage gates pass at e5014ac; push CI40114904773/40114904783 running. No dependency on Claude. Next OS adapter proposals remain unaccepted until lifetime/capability policy review."
+  "lead_current_work": "Interop e5014ac CI green including actual Windows; Native AV transport still running. Review next raw SDK mapping owner while preparing accurate session-core credit."
 }
