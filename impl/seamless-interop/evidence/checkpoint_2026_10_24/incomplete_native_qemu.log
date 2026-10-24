@@ -1,0 +1,1 @@
+qemu-system-x86_64: -device vhost-vsock-pci,id=vsock0,guest-cid=32100: vhost-vsock: failed to open vhost device: Permission denied

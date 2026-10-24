@@ -457,7 +457,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     no completed native qualification or guest drive/write-denial credit.
     Source commiteea6671 provides the accepted supervisor milestone.
 
-- **Commit `HEAD`**: `docs(interop): checkpoint reviewed foundations for the next session`
+- **Commit `3a9a40a`**: `docs(interop): checkpoint reviewed foundations for the next session`
   - **Task Impact**: +10% to TODO #5 (+0.30% overall; total14.00%).
   - **Summary**: Accepts the pending C ABI5% (ef39989) and atomic adapter5%
     (6f1ce16) after hosted run40057377210 passes both Linux and actual native
@@ -468,4 +468,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     temporary vhost-vsock ACL is restored. Packaging/supervisor later commits
     have focused host proof; hosted rerun on the checkpoint remains pending.
     No integrated native feature acceptance, completion timestamp or merge.
-    HEAD identifies this containing checkpoint/evidence commit.
+    Source commit3a9a40a contains the checkpoint and qualification receipt.
+
+- **Commit `HEAD`**: `docs(interop): preserve checkpoint logs excluded by ignore rules`
+  - **Task Impact**: +0% to TODO #5/#8/#9/#34 (+0% overall; total14.00%).
+  - **Summary**: Explicitly adds only the task-owned checkpoint evidence logs,
+    which the repository-wide log ignore rule omitted from3a9a40a. Verifies
+    every receipt-listed artifact is tracked and SHA256-matched. No code or
+    acceptance change. HEAD identifies this containing evidence-log commit.

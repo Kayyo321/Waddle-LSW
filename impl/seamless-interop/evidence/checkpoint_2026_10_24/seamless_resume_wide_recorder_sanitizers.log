@@ -1,0 +1,16 @@
+test_attribute_cleanup_preserves_metadata_parameters_and_strings (coverage_recorder_test.recorder_test_t.test_attribute_cleanup_preserves_metadata_parameters_and_strings) ... ok
+test_digest_binding_and_malformed_header (coverage_recorder_test.recorder_test_t.test_digest_binding_and_malformed_header) ... ok
+test_every_site_above_old_limit_and_concurrent_edge_union (coverage_recorder_test.recorder_test_t.test_every_site_above_old_limit_and_concurrent_edge_union) ... ok
+test_instrumented_llvm_runtime_round_trip (coverage_recorder_test.recorder_test_t.test_instrumented_llvm_runtime_round_trip) ... ok
+test_legacy_abi_preserves_last_edge (coverage_recorder_test.recorder_test_t.test_legacy_abi_preserves_last_edge) ... ok
+test_metadata_count_arity_calls_and_budget (coverage_recorder_test.recorder_test_t.test_metadata_count_arity_calls_and_budget) ... ok
+test_sanitizer_violation_is_nonrecoverable (coverage_recorder_test.recorder_test_t.test_sanitizer_violation_is_nonrecoverable) ... ok
+test_sparse_wide_edges_exact_concurrent_union_and_dump (coverage_recorder_test.recorder_test_t.test_sparse_wide_edges_exact_concurrent_union_and_dump) ... ok
+test_wide_metadata_corruption_aborts_before_recording (coverage_recorder_test.recorder_test_t.test_wide_metadata_corruption_aborts_before_recording) ... ok
+test_zero_site_harness_writes_failure_manifest (coverage_recorder_test.recorder_test_t.test_zero_site_harness_writes_failure_manifest) ... preserved av_audio coverage: /tmp/waddle-recorder-rqz5yb65/build/coverage/av/av_audio/run-20261024T031042732275Z-246823
+ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 3.263s
+
+OK

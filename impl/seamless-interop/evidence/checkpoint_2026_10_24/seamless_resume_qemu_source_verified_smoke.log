@@ -1,0 +1,2 @@
+{"audio": "none", "paused": true, "qmp": "passed", "network": "user+socket-guestfwd", "devices": ["HDA", "xHCI", "virtio-net"], "guest_os": false}
+{"audio": "pipewire", "paused": true, "qmp": "passed", "network": "user+socket-guestfwd", "devices": ["HDA", "xHCI", "virtio-net"], "guest_os": false}

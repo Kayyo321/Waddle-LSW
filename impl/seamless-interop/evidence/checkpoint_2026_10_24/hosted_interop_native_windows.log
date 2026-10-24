@@ -1,0 +1,61 @@
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:01.7316240Z interop_codec production branch coverage: 97.23% (281/289); 127 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:01.7320723Z interop_codec production line coverage: 96.65% (317/328); 127 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:16.4710830Z interop_layout production branch coverage: 98.44% (63/64); 0 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:16.4712127Z interop_layout production line coverage: 98.57% (69/70); 0 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:29.9882716Z interop_heap production branch coverage: 97.92% (47/48); 4 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:29.9884143Z interop_heap production line coverage: 100.00% (44/44); 4 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:44.9472351Z manifest production branch coverage: 92.75% (179/193); 24 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:44.9472805Z manifest production line coverage: 100.00% (124/124); 24 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:57.8298612Z interop_layout_abi production branch coverage: 100.00% (48/48); 0 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:57.8310759Z interop_layout_abi production line coverage: 97.37% (74/76); 0 compiler panic/stack-canary guards excluded
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:58.1773421Z native atomic production line: 96.81% (91/94); evidence /__w/Waddle-LSW/Waddle-LSW/build/coverage/interop/native_atomic/run-20261024T031657-48b72445
+linux	Gate each implemented interop module's line/branch coverage	2026-10-24T03:16:58.1774034Z native atomic production branch: 93.46% (100/107); evidence /__w/Waddle-LSW/Waddle-LSW/build/coverage/interop/native_atomic/run-20261024T031657-48b72445
+windows	Run ABI and foundation tests natively on Windows	﻿2026-10-24T03:17:51.6795182Z ##[group]Run $ErrorActionPreference = 'Stop'
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.6796378Z ^[[36;1m$ErrorActionPreference = 'Stop'^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.6800042Z ^[[36;1mforeach ($test_name in @('interop_codec_abi_test.exe', 'interop_layout_test.exe', 'interop_heap_test.exe', 'interop_manifest_test.exe', 'interop_layout_abi_test.exe', 'interop_native_atomic_test.exe')) {^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.6802506Z ^[[36;1m  & ".\build\$test_name"^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.6803449Z ^[[36;1m  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.6804436Z ^[[36;1m}^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.6968855Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.6970082Z ##[endgroup]
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.9504374Z interop codec ABI: header, fields, writer and transfers agree across C and Zig
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.9604090Z 1/8 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.9606224Z 2/8 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.9608611Z 3/8 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.9610720Z 4/8 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.9613001Z 5/8 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.9615148Z 6/8 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:51.9617040Z 7/8 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0388132Z 8/8 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0388799Z All 8 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0467667Z 1/17 interop_heap.test.initialization and capacity errors preserve outputs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0468263Z 2/17 interop_heap.test.first fit skips a partially occupied candidate...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0521751Z 3/17 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0522758Z 4/17 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0523484Z 5/17 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0526805Z 6/17 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0527576Z 7/17 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0528360Z 8/17 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0891179Z 9/17 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0892198Z 10/17 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0892927Z 11/17 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0893643Z 12/17 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0894318Z 13/17 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0895229Z 14/17 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0895943Z 15/17 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.0896644Z 16/17 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1597152Z 17/17 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1597948Z All 17 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1684717Z 1/12 manifest.test.schema one parses all host and guest record kinds with owned borrowed views...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1689949Z 2/12 manifest.test.all frozen schema one kinds parse with their kind-specific fields...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1694691Z 3/12 manifest.test.rejects malformed schema duplicate keys and duplicate record ids...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1704363Z 4/12 manifest.test.rejects root type omissions and malformed JSON paths...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1722798Z 5/12 manifest.test.rejects each required record field when missing or mistyped...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1732085Z 6/12 manifest.test.validates prior variants and optional record values...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1742543Z 7/12 manifest.test.rejects record kind field prior hash UTF8 and string bound violations...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1770520Z 8/12 manifest.test.enforces input record string and nesting bounds...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1773390Z 9/12 manifest.test.valid parse releases every arena allocation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1774582Z 10/12 manifest.test.document owns strings independently of input and deinit is idempotent...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1778770Z 11/12 manifest.test.invalid parse frees partial allocations under allocation failure...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1811137Z 12/12 manifest.test.allocation failures cover record and duplicate-index growth...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T03:17:52.1811726Z All 12 tests passed.
