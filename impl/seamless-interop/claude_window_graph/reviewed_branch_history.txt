@@ -1,0 +1,454 @@
+32218151f80dabd56398900bd5e95335d8301dc7 docs(interop): bootstrap isolated window graph handoff
+Seed only the coordinator-approved standalone work order, required return template and task-local specification/tracker on the isolated feature branch. The source baseline remains e86cf8e; no production source is copied from the active checkout.
+
+Affects TODO: #10 (+0 global; task-local implementation remains 0%).
+
+da898fcaa15edf7821d0b69cab2e1ada44337813 feat(interop): define the window graph C ABI header
+- Add include/waddle/interop_window_graph.h: opaque graph handle, fixed-layout
+  facts/event/observation/stats value structs with explicit padding and
+  _Static_assert size and offset checks, status/disposition/reason enums, and
+  the create/destroy/observe/note_destroyed/refresh/event/retire entry points.
+- Document the section 4.4 classification precedence, identity and logical
+  clock rules, owner-thread/reentrancy rules and per-status state guarantees.
+- Pure ABI declarations only: no wire struct is changed and no implementation
+  is added yet; the Zig engine and exports follow in later commits.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+fe1e5c4c55bd5d34207291dd6bdc6f1213200930 feat(interop): define the Win32 window observer header
+- Add src/interop/window_observer_windows.h: opaque window_observer_t, the
+  window_observer_api_t injection table (hooks, fact query, enumeration,
+  input desktop, thread id, clocks), config, stats and status enums.
+- Document hint-only WinEvent semantics, the dirty-table coalescing, the
+  graph status mapping used by pump/refresh, the desktop-inactive suspension
+  and the identity-continuity argument without SetProp markers.
+- No Win32 types appear in the header; the native table accessor is declared
+  only under _WIN32. Implementation follows in a later commit.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+df749f87c4a8d251f4d74024755b00bc52939101 feat(interop): add pure window graph validation and classification layer
+- Add src/interop/window_graph.zig production layer 1: header-asserted
+  constants and status/role/reason/disposition values, record_t, facts
+  validation (every rule of interop_window_facts_t), strict UTF-8/NUL and
+  protocol-v2 app-key checks, FNV-1a class hash, wrap-safe tick compare,
+  derived window state bits, identity comparison and the section 4.4
+  classifier (steps 0-8, NOACTIVATE binds only to the style clause of Menu,
+  shell-host-specific CoreWindow exclusion, preedit exception, all UAC modes).
+- Engine uses the cImport'ed C structs directly so there are no mirrors that
+  can drift from the committed header; comptime asserts pin sizes and values.
+- 18 tests below the coverage delimiter cover every classification row,
+  one negative per facts rule, UTF-8/app-key edges, tick wrap and saturation,
+  all through never_inline wrappers so the coverage tool sees runtime sites.
+- Stateful engine (entries, deferred records, ring, retirement) follows.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+ec5ffefab4622bd512d61de8864c9454181f2a46 docs(interop): specify the window graph and Win32 observer in detail
+- Replace the bootstrap stub with the task-local IMPL_DESC: scope and
+  non-goals, architecture and ownership, exact public layouts and private
+  engine/observer state, pseudocode for validation, classification, planning,
+  deferral flush, retirement cascade, destroy-hint rule and refresh.
+- Walk every sequence with exact event orders and generations, state the
+  single-owner-thread model and the WinEvent callback safety argument, and
+  tabulate the effect of every graph and observer status code.
+- Define the verification matrix, sanitizer/coverage/cross-compile commands,
+  the integration steps Codex must perform, the decision log and the open
+  findings (hidden owners, native UAC window exposure, quarantine pinning).
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+b583c90488ce1285fff0429dc8fd5e125f978e60 feat(interop): implement the Win32 window observer adapter
+- Add src/interop/window_observer_windows.c: portable core (create/destroy,
+  start/stop with partial hook rollback, bounded 512-key coalescing dirty
+  table, pump with pop-before-process, destroy-hint handling, refresh
+  begin/offer/commit, 250 ms cadence, desktop-inactive suspension, overflow
+  recovery through invalidate_all) driven entirely by window_observer_api_t.
+- WinEvent procedure only calls window_observer_note_hint; hints never carry
+  facts and never touch the graph, Win32 queries or allocations. An in-flight
+  counter keeps an off-thread hint from reaching a freed observer.
+- _WIN32 section: SetWinEventHook out-of-context hooks, requery of current
+  facts (no cross-process messages, no SetProp markers, DWM cloak and
+  extended frame bounds, restored size when iconic, UTF-8 titles with U+FFFD
+  for lone surrogates), EnumWindows, input-desktop check, GetDpiForWindow
+  resolved at create. Compiles with gcc, zig cc and mingw for x86_64-windows.
+- Not yet linked or run against the graph; tests follow.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+059d02c280db7356e2f18a7c7ab4c9a3760fae09 feat(interop): add window graph state, event ring and quarantine queries
+- Add graph_t (one heap allocation, owner-thread bound, reentrancy flag),
+  create/destroy with config validation, and the guard order of the header's
+  common call rules (wrong thread, reentrant, stale epoch).
+- Add the 256-event ring with in-place coalescing of Announce/Update events
+  that never crosses a RetireIntent, next_event and drain with sink-refusal
+  semantics that leave the refused event queued.
+- Add check_action, find_live, list_retiring, complete_retire (exact
+  (window, generation) match, Stale/NotRetiring/ProofIncomplete order),
+  get_stats, stamp high water and the once-per-minute capacity diagnostic
+  with an injectable monotonic clock.
+- 29 new tests include a failing-allocator sweep with zero leaked bytes,
+  wrong-thread and reentrancy checks and the full retirement-completion matrix.
+- Planning operations (observe, retire cascade, refresh) follow.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+30620cb0f886c50d3d05157bf376168a1cb9d529 docs(interop): log window graph commits and task progress in the tracker
+- Record the six implementation commits made so far with their task impact
+  and the resulting task-local completion of 28.0 percent.
+- Mark the feature In Progress; no global TODO #10 credit is claimed and the
+  global tracker is untouched.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+28312822967359557b572d95ba30152475c7b995 feat(interop): amend the window graph ABI after design review
+- Add the OwnerHidden fact flag (mask 0x1FFF) so a window whose owner root can
+  never be exported is treated as unowned instead of being deferred forever,
+  and export the pure interop_window_graph_classify so the observer applies
+  the same rules to the owner.
+- Mark every offered window seen during a refresh regardless of the offer's
+  status, and add refresh_keep/refresh_unseen so a failed or non-enumerated
+  window is never retired for being absent from one snapshot.
+- Unwrap 32-bit ticks against a monotonic 64-bit base so long-lived windows
+  keep working with destroy hints; drop a stale deferred record on identity
+  change; check identity before cycles; re-defer cascade children only for a
+  same-incarnation reclassification; parent the IME preedit window to its owner.
+- Document the destroy-rule churn bound honestly as a narrowed guarantee.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+467bbba1b64fbc1d49b06ce948685ff394045df8 feat(interop): amend the Win32 observer API after design review
+- Add a Reentrant status and busy flag, an Unsupported create status (missing
+  GetDpiForWindow or a thread that is not per-monitor-v2 DPI aware), and
+  remove the QueryFailed status: failed queries are now kept by the refresh.
+- Install three hooks (object create..parent change, minimize, cloak change)
+  so cloak and SetParent changes are noticed without waiting for a refresh.
+- Rewrite the refresh algorithm (keep failed windows, requery unseen windows
+  individually, commit), bound the latch so a failing refresh cannot spin the
+  owner thread, and reserve one dirty-table slot for put-backs.
+- Replace config.reserved0 with uac_mode for the owner-hidden sub-query, forbid
+  title reads on own-process windows, and document the Toolhelp image fallback.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+29fbfb7ccf675d574ea5baa4c0deda5c3a02b1e4 fix(interop): apply design-review findings to the Win32 observer
+- Refresh no longer treats absence from one snapshot as destruction: failed
+  queries are kept, unseen windows are requeried individually, and a window
+  that fails forever cannot starve admission of the windows behind it.
+- Add a busy flag and Reentrant mapping, a latch rule that lets a failing
+  refresh run at most once per latch event, a reserved dirty-table slot so
+  put-backs cannot force an overflow, and three hooks including cloak and
+  parent-change events.
+- Compute OwnerHidden through a second owner query and the shared graph
+  classifier, never read titles of own-process windows, clamp extents, require
+  per-monitor-v2 DPI awareness and add a Toolhelp image-name fallback.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+1aab2e249a22b018f9c029f19574d1258b702cae feat(interop): add the window graph planning engine
+- Add observe, note_destroyed and the pure classify export: staged
+  validate/stale/classify/identity/cycle/capacity/queue-room planning with one
+  external app-key lookup and an infallible apply, so a failed call publishes
+  nothing; forced retirement when a replacement cannot be admitted.
+- Admit parents before children, defer children whose parent is not yet
+  announced (oldest deferral evicted at 64), flush deferred descendants in age
+  order, retire descendants first by descending generation, and re-announce
+  descendants only after a same-incarnation reclassification.
+- Unwrap 32-bit ticks against a monotonic 64-bit base, apply the destroy-hint
+  rule to live entries and deferred records, drop a deferred record whose
+  identity changed, treat OwnerHidden windows as unowned and parent the IME
+  preedit window to its owner.
+- 62 new tests including seeded random traces with an invariant checker run
+  after every operation and a consumer model of event ordering.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+5d0c7ce9008868b105f2e212ffd9c54ed36c34cc docs(interop): align the window graph design with the reviewed headers
+- Reflect the Opus design review: OwnerHidden promotion, classify export,
+  refresh keep/unseen with the offered-means-seen rule, 64-bit tick unwrap,
+  forced retirement and cascade rules, three hooks, busy flag and Reentrant,
+  Unsupported create status and the Toolhelp image fallback.
+- Rewrite the refresh, destroy-rule and desktop-switch sequences, the status
+  tables, the test matrix and the integration contract, and state the
+  destroy-rule narrowing honestly as a decision needing Codex acceptance.
+- Move the hidden-owner item from open findings to decisions and add the
+  remaining spec questions for Codex.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+c496c2bd7ee1478bdf9e34116ea32404c7c98f1f feat(interop): add refresh, keep/unseen and invalidate_all to the window graph
+- Add refresh_begin/offer/keep/unseen/commit/abort: an offered window is seen
+  whatever the offer's status, unseen Active entries retire with RefreshUnseen
+  children first, unseen deferred records are dropped, and commit pre-checks
+  ring room so a QueueFull leaves state unchanged and the refresh open.
+- Add invalidate_all for hint-table overflow recovery (retire every Active
+  entry with reason Invalidated, clear the deferred set, abort an open refresh).
+- 18 new tests and refresh/invalidate operations in the seeded random traces,
+  including a 220-window long trace with the invariant checker after every step.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+6dd8aa3690cdf463bb1890a8186b3b5d3cda15f7 feat(interop): export the window graph C ABI from Zig
+- Add src/interop/window_graph_abi.zig: 21 export fn entry points matching
+  interop_window_graph.h, an opaque handle, and a single allocation seam
+  (c_allocator) used by create/destroy.
+- Validate every C pointer (null, alignment, address overflow, aliasing with
+  inputs and with the graph itself) before forming any Zig pointer; stage
+  outputs and copy them only on the documented statuses; run the engine
+  guards first so a bad pointer cannot mask WrongThread/Reentrant/StaleEpoch.
+- 14 tests cover pointer faults per export, an allocation-failure sweep with
+  zero leaked bytes, wrong-thread and re-entrant callbacks and a lifecycle
+  through the exports; comptime asserts pin sizes and offsets to the header.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+02ee43cbe818913e8b96639a8a40e9448bcc291f test(interop): add the window graph C ABI test
+- Add tests/interop/window_graph.c: 26 tests through the public header only
+  (create/destroy, lifecycle, coalescing, deferral and flush order, 64+1
+  capacity, deferral overflow, classification, error statuses leaving state
+  unchanged, queue-full recovery, sink refusal, retirement and completion
+  matrix, destroy hints, refresh keep/unseen, invalidate_all, capacity
+  diagnostic, wrong thread, reentrancy, epoch isolation).
+- Include a 24000-operation seeded random trace that checks ABI-visible
+  invariants (monotonic generations, parent Announce before child, no event
+  after RetireIntent, bounded ring).
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+65b2032f1ad142cba441b2cfc63794c0c0f75017 fix(interop): make a new refresh latch event due once even with a frozen clock
+- Track latch_unconsumed instead of comparing latch_ms with the last attempt
+  time: a latch event raised in the same millisecond as the previous attempt
+  was invisible to refresh_due.
+- An attempt start (or a refused call that stamps its own attempt) consumes
+  the event, so a persistently failing refresh still runs at most once per
+  latch event and cannot spin the owner thread.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+0ecc2e698b156bed5e2a929b488ca200a85148a7 test(interop): add the Win32 observer API double and lifecycle tests
+- Add a scriptable window_observer_api_t double (fake windows with
+  Exists/Gone/Failed modes, hook install/remove failure at the Nth call,
+  enumeration truncation, desktop and clock scripting, a real second thread,
+  and a hook-procedure emulator including re-entry inside a query).
+- Add 40 tests against the real graph through its C ABI: hook rollback, hint
+  filter ranges, dirty-table coalescing/overflow/reserved slot, pump and
+  refresh behaviour (failed window kept, hinted-not-enumerated window
+  survives, no spin on a frozen clock), owner-hidden promotion, preedit
+  parenting, busy/Reentrant mapping and teardown with queued hints.
+- API doubles are not desktop acceptance; no native Windows code ran.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+d267b49286140d482122b5cbbc1af458e01681f0 chore(build): add standalone window graph make targets
+- Add scripts/interop_window_graph.mk (not included by GNUmakefile): test,
+  sanitizers (ASan/LSan/UBSan with leak detection on), coverage (sed copy of
+  tests/av/coverage.py for the two Zig modes plus gcov for the observer),
+  Windows cross-compile checks and clean, all under build/window_graph/ with
+  Zig caches kept inside the worktree.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+f7eb737fdb9b84186a8d297df2121273b9d26b16 test(interop): raise Win32 observer branch coverage above the 90 percent gate
+- Add 13 observer tests (53 total): NULL/zero arguments and WrongThread on
+  every entry point, BadState in every lifecycle state, hint arrival during
+  hook install, put-back merges after QueueFull/error/retry, pump and refresh
+  call-level error paths, odd enumeration contents, cadence branches with a
+  backwards clock and a hint backlog.
+- Observer portable core now measures 600/620 lines and 337/362 branches under
+  gcov; the remaining branches need saturated counters, calloc failure or a
+  concurrent hint thread and are listed in the handoff return.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+8af4d5c5a0f2d55a3cec3e7412f5dd2cc137125e fix(interop): close a deferred cycle through leftovers and repair ticks after silence
+- Follow the new parent chain through deferred records to its terminal Active
+  entry and force the retire-only outcome when that entry is inside the
+  retiring cascade, so a reclassified window can no longer end up in a
+  deferred cycle through a capacity-cut child (review finding R3, proven by a
+  regression test that fails without the rule).
+- Estimate the current tick from the graph clock (tick_base plus the elapsed
+  now_ms since the base was set, never backwards) before unwrapping, so a
+  silence longer than 2^31 ms no longer leaves genuine destroy hints ignored
+  (finding R4, proven by a 30-day-silence regression test).
+- Raise the seeded random traces to 210000 steps with the invariant checker
+  after every step; engine coverage stays at 98.25 percent branch.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+9a9ff8aba0a5a60822f4c4021314d49bfc5d5087 docs(interop): describe the graph-clock tick estimate in the window graph header
+- The tick unwrap now estimates the current tick from tick_base plus the
+  elapsed graph clock, so document that observe, refresh_offer and
+  note_destroyed read now_ms once and that a long silence no longer breaks
+  destroy hints; no struct, enum or prototype changed.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+09bc75eef2ab1970a687dcfe91b3c8353066febe fix(interop): stop child-window hint floods from churning every exported window
+- Recover from a dirty-table overflow with a full refresh (unseen pass,
+  individual requery, identity-tuple check) instead of invalidate_all, so
+  closing a window with hundreds of child controls no longer retires and
+  re-announces every exported window; the residual identical-tuple recycled
+  HWND risk is documented as now also reachable after an overflow.
+- Make a truncated enumeration degrade safely (offer the first 2048 windows,
+  never commit), yield while waiting for in-flight hints in stop/destroy,
+  skip expensive reads for invisible windows, copy the create config before
+  writing the out slot, and let pump return refresh statuses explicitly.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+00a84e4d259658a178cf2a8464bfde6be6918c7d test(interop): add observer flood, fuzz, allocation-failure and in-flight tests
+- Add the 10-window/600-child-hint flood scenario, overflow recovery with
+  zero churn, truncated enumeration, a use-after-free guard test that parks a
+  thread inside note_hint while destroy runs, hidden-window query skipping,
+  and a calloc-failure test through a linker wrap seam (Linux only).
+- Port the reviewer's convergence fuzzers (40 plus 8 seeds of 3000 steps)
+  that drive the real observer and graph and check no fabricated application
+  key, parent-before-child order, monotonic generations and convergence.
+- Observer suite is now 63 tests; portable core measures 614/633 lines and
+  350/374 branches.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+221fb74fa2a6260fdd22bbd226b9cca040d65926 chore(build): add ReleaseSafe runs, symbol check and calloc wrap to window graph targets
+- Run both Zig modules under -O ReleaseSafe in window-graph-test.
+- Add window-graph-symbols: exactly the 21 interop_window_graph_* T symbols
+  must be exported and must equal the header declarations; included in
+  window-graph-all.
+- Add the Linux-only --wrap=calloc seam used by the observer NoMemory test.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+0c7127521deba72571eaf8707f1c779aa7ed7346 docs(interop): align the window graph design with the code review results
+- Rewrite the verification section to list only tests and gates that exist
+  with exact names and counts, and list absent evidence as not provided.
+- Record the overflow-recovery change, truncated-enumeration behaviour,
+  tick estimate from the graph clock, deferred-cycle rule through leftovers,
+  what the native query allocates, and the unconfirmed GetWindow last-error
+  assumption; add open findings O24 to O26.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+5c02dcc15bc3b134315a7361c569cdc2576e70b2 docs(interop): record the window graph handoff return
+- Add HANDOFF_RETURN.md from the supplied template: partial status for global
+  TODO #10, exact commits and files, API/ownership/concurrency contracts,
+  every verification command with exit code and log, coverage numbers and
+  exclusions, sanitizer and Windows (cross-compile only) limits, fixed and
+  open review findings, the Codex integration checklist and the explicit
+  release of file ownership.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+3714cf21f5c39385e5147187b20f3a38337042d1 docs(interop): finalize the window graph tracker
+- Log all 27 branch commits with their task-local impact, set the task table
+  to the evidence-backed 92.25 percent (observer native code and Windows
+  execution keep tasks 3 and 4 below 100), record the end time and move the
+  status to Review.
+- Point the return document at the branch tip. Documentation only; no code
+  changed and the global TODO #10 credit is still +0.
+
+Affects TODO: #10 (+0 global; awaiting Codex review)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+ac4c422f7f2c077139ffbf67a94648f8b60e8970 fix(interop): reject graph create aliases before clearing output
+Check raw config/output extents before any typed output access, including misaligned aliases. Preserve both caller regions when rejecting overlap while retaining NULL-on-later-failure behavior for valid disjoint slots.
+
+Add Zig and runtime C alias regressions; Debug and ReleaseSafe150 Zig tests plus27 C ABI tests pass. Native Windows and final lead sanitizer gates remain open.
+
+Affects local TODO: #2/#4 (+0% progress); global TODO #10 (+0%).
+
+28748bc7c77d99d88a0e78238fdadd4a5f0e2556 fix(interop): retain observer reservation and failed hook ownership
+Reserve the observer lifecycle independently of callback publication through complete hook teardown. Retain failed unhook tokens and failed-start cleanup ownership; stop/destroy retry remaining hooks, and failed destroy preserves the owner slot.
+
+Add deterministic second-start-during-remove and partial-install cleanup failure regressions. Strict portable65 tests and Windows cross-build pass; supplemental leak-disabled worker runs do not replace required lead LSan qualification.
+
+Affects local TODO: #3/#4 (+0% progress); global TODO #10 (+0%).
+
+1a179b086daa34defdc4063654abf1e7b62538eb refactor(interop): conform graph namespace aliases to type naming
+Rename owned namespace aliases without changing tokens outside the declared identifier substitutions. Preserve external properties and C pointer sentinel syntax. Archive source hashes and token-stream proof; graph136 and ABI150 Debug tests pass. Full post-review gates remain required. Affects local TODO #1/#2/#4 and global #10 (+0% progress).
+
+e7e7e6a93a2892c7d6a1e58b9e167cb2975784c8 docs(interop): qualify reviewed graph source before incarnation correction
+Archive exact1a179b0 source hashes and complete lead gates with detect_leaks1, unchanged90 percent production coverage thresholds, C API-double tests and Windows cross-builds. Keep delivered-hint loss and stale deferred descendants open. Affects local TODO #1-4 and global #10 (+0% progress).
+
+d626301bf51f05982823d56cfe856db9694b5316 docs(interop): require cached descendant invalidation on parent discontinuity
+Specify one bounded read-only mask over deferred descendants and all retiring cascade roots, applied only after event preflight. Preserve same-incarnation reclassification and stale-hint handling. Archive independent review; do not accept discarded destroy evidence as continuity proof. Affects local TODO #1/#3/#4 and global #10 (+0% progress).
+
+978278eb775e2948667318dd2f378401160acae5 test(interop): add real Windows observer adapter smoke fixture
+Exercise the native API table on one fixture-owned ownerless HWND with real hooks/message delivery and explicit unsupported/desktop failures. Check geometry, DPI, own-process title policy, hide/Gone and complete retryable teardown. Add Windows cross-build target; execution remains pending. Affects local TODO #3/#4 and global #10 (+0% progress).
+
+5aff0813e6c5dcd912799ff05bd42f080515563d ci(interop): execute isolated graph and native observer Windows gates
+Run unchanged90 percent standalone coverage and required leak-enabled tests on Linux, then execute C ABI, API-double and real native adapter fixtures on Windows2022. Keep isolated review CI independent of main control-peer work. Affects local TODO #3/#4 and global #10 (+0% progress; execution pending).
+
+a2e72d387e412f375f374697f12e3a08f1f52d21 fix(interop): close standalone native query snapshot scopes
+Wrap direct native-table queries in a deterministic scan owner while preserving the enclosing pump/refresh scope. Close fallback snapshots across Exists/Gone/Failed returns and document serialized owner-thread use. Strict native Windows fixture cross-link and65 portable observer tests pass; Windows execution remains pending. Affects local TODO #3/#4 and global #10 (+0% progress).
+
+ae6d592337b630a0af9d223036bc1cb362d18be7 docs(interop): reject deferred identity retention after replacement failure
+A changed Deferred parent is positive discontinuity evidence even when replacement lookup/capacity/generation fails. Specify staged pruning and Ok/Excluded without fabricated Active retirement; preserve QueueFull rollback. Revoke5 percent local graph credit pending correction (-1.75 percent local total); global TODO #10 remains0 and parent16.40 percent.
+
+98cfc6fa4b8289fa52b377d3d074afa1465aaab0 test(interop): correlate native hook delivery with fixture HWND
+Address independent false-positive review by observing the exact production dirty key and Create/Show bits using source inclusion. No synthetic callbacks or production test API. Bound each message batch and preserve the10s deadline. Strict Windows cross-link passes; runtime qualification pending. Affects local TODO #3/#4 and global #10 (+0% progress).
+
+ff51808f6b4dc51aab318511797c0064968ef612 docs(interop): record isolated Linux and real Windows review qualification
+Archive successful CI40123985933 at exact5aff081, including actual native Win32 smoke. State aggregate-hint test limitation and keep all newer source fixes unqualified until rerun. Affects local TODO #3/#4 and global #10 (+0% progress; local90.50 percent).
+
+2310f177aa696f40b0c9d0753946086f9e6fa180 fix(interop): invalidate cached descendants across parent discontinuity
+Stage a bounded deferred-subtree deletion mask for identity replacement, accepted destroy, exclusion and doomed refresh entries, including every Active cascade root. Preserve QueueFull atomicity and same-incarnation reclassification. Prevent failed Deferred-only replacements from later flushing old children by returning Excluded after pruning. Debug/ReleaseSafe145 tests each pass. Affects local TODO #1/#4 and global #10 (+0% pending full qualification).
+
+a32922b0ef2a161889258a1b76d28af9e3f8a1ca ci(interop): execute full graph Zig suites on Windows
+Cross-build and run both ReleaseSafe Zig unit suites on Windows2022, including the parent-discontinuity regressions. Retain C ABI, observer double, real native smoke, Linux coverage and leak-enabled gates. Affects local TODO #1/#2/#4 and global #10 (+0% pending exact-source CI).
+
+73bc8330af5423989d62aad3824a771e169e356f docs(interop): qualify corrected graph source and native test builds
+Archive exacta32922b source hashes and complete passing Linux tests, leak-enabled sanitizers, production coverage and five Windows executable cross-builds. Keep updated Windows execution, O5 observer loss and parent integration unaccepted. Affects local TODO #1-4 and global #10 (+0% progress).
+

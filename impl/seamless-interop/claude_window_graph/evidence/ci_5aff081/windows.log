@@ -1,0 +1,160 @@
+windows	Set up job	﻿2026-10-24T19:17:20.1095313Z Current runner version: '2.338.0'
+windows	Set up job	2026-10-24T19:17:20.1346321Z ##[group]Runner Image Provisioner
+windows	Set up job	2026-10-24T19:17:20.1347322Z Hosted Compute Agent
+windows	Set up job	2026-10-24T19:17:20.1347914Z Version: 20261021.618
+windows	Set up job	2026-10-24T19:17:20.1348522Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+windows	Set up job	2026-10-24T19:17:20.1349259Z Build Date: 2026-10-21T00:45:21Z
+windows	Set up job	2026-10-24T19:17:20.1349929Z Worker ID: {a805063f-b8ba-410d-b981-cfc2bb53c437}
+windows	Set up job	2026-10-24T19:17:20.1350635Z Region: westus
+windows	Set up job	2026-10-24T19:17:20.1351163Z Cloud: Azure
+windows	Set up job	2026-10-24T19:17:20.1351665Z ##[endgroup]
+windows	Set up job	2026-10-24T19:17:20.1353122Z ##[group]Operating System
+windows	Set up job	2026-10-24T19:17:20.1353790Z Microsoft Windows Server 2022
+windows	Set up job	2026-10-24T19:17:20.1354390Z 10.0.20348
+windows	Set up job	2026-10-24T19:17:20.1354891Z Datacenter
+windows	Set up job	2026-10-24T19:17:20.1355358Z ##[endgroup]
+windows	Set up job	2026-10-24T19:17:20.1355864Z ##[group]Runner Image
+windows	Set up job	2026-10-24T19:17:20.1356404Z Image: windows-2022
+windows	Set up job	2026-10-24T19:17:20.1356908Z Version: 20261022.344.1
+windows	Set up job	2026-10-24T19:17:20.1357937Z Included Software: https://github.com/actions/runner-images/blob/win22/20261022.344/images/windows/Windows2022-Readme.md
+windows	Set up job	2026-10-24T19:17:20.1359830Z Image Release: https://github.com/actions/runner-images/releases/tag/win22%2F20261022.344
+windows	Set up job	2026-10-24T19:17:20.1360738Z ##[endgroup]
+windows	Set up job	2026-10-24T19:17:20.1361767Z ##[group]GITHUB_TOKEN Permissions
+windows	Set up job	2026-10-24T19:17:20.1363663Z Contents: read
+windows	Set up job	2026-10-24T19:17:20.1364252Z Metadata: read
+windows	Set up job	2026-10-24T19:17:20.1364801Z ##[endgroup]
+windows	Set up job	2026-10-24T19:17:20.1366954Z Secret source: Actions
+windows	Set up job	2026-10-24T19:17:20.1367828Z Cache mode: write
+windows	Set up job	2026-10-24T19:17:20.1368495Z Prepare workflow directory
+windows	Set up job	2026-10-24T19:17:20.2682471Z Prepare all required actions
+windows	Set up job	2026-10-24T19:17:20.2733681Z Getting action download info
+windows	Set up job	2026-10-24T19:17:20.6692789Z Download action repository 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+windows	Set up job	2026-10-24T19:17:21.3536449Z Complete job name: windows
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	﻿2026-10-24T19:17:21.8369582Z ##[group]Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:21.8371760Z with:
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:21.8372282Z   name: interop-window-graph-windows
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:21.8372891Z   path: build
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:21.8373365Z   merge-multiple: false
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:21.8373903Z   repository: Kayyo321/Waddle-LSW
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:21.8374476Z   run-id: 40123985933
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:21.8375173Z ##[endgroup]
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:22.0823491Z Downloading single artifact
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:22.1018266Z (node:3932) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:22.1021955Z (Use `node --trace-deprecation ...` to show where the warning was created)
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:22.3851186Z Preparing to download the following artifacts:
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:22.3853803Z - interop-window-graph-windows (ID: 12572063852, Size: 697415, Expected Digest: sha256:ab3b88d5959713c85b649a4b43e442f95edab3429085c28623bfea3d9832cb73)
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:22.6403383Z Redirecting to blob download url: https://productionresultssa0.blob.core.windows.net/actions-results/ed4f8ac8-0957-88c6-90a0-8d922e75bca3/workflow-job-run-03f7fcad-caac-52d9-a42d-5ef825532b77/artifacts/d51d5d7d03d43a262aaf70b8d76bd76fe7f8818dc9b8cfd229a95eaa5f164731.zip
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:22.6408331Z Starting download of artifact to: D:\a\Waddle-LSW\Waddle-LSW\build
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:22.9499920Z (node:3932) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:23.2891036Z SHA256 digest of downloaded artifact is ab3b88d5959713c85b649a4b43e442f95edab3429085c28623bfea3d9832cb73
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:23.2894684Z Artifact download completed successfully.
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:23.2896532Z Total of 1 artifact(s) downloaded
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T19:17:23.2898406Z Download artifact has finished successfully
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	﻿2026-10-24T19:17:23.5101306Z ##[group]Run $ErrorActionPreference = 'Stop'
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.5103029Z ^[[36;1m$ErrorActionPreference = 'Stop'^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.5163595Z ^[[36;1mforeach ($test_name in @('window_graph_c_test.exe', 'window_observer_test.exe', 'window_observer_native_test.exe')) {^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.5166455Z ^[[36;1m  & ".\build\$test_name"^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.5168094Z ^[[36;1m  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.5169781Z ^[[36;1m}^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.5477780Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.5479719Z ##[endgroup]
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9816854Z window_graph: ok runtime_sizes
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9820024Z window_graph: ok create_destroy
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9821703Z window_graph: ok create_alias_preserves_inputs
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9823079Z window_graph: ok invalid_arguments
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9824231Z window_graph: ok lifecycle
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9825438Z window_graph: ok update_coalescing
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9826699Z window_graph: ok child_before_parent
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9828070Z window_graph: ok capacity
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9829160Z window_graph: ok deferral_overflow
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9830309Z window_graph: ok classification
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9831378Z window_graph: ok observe_errors
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9832448Z window_graph: ok queue_full
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9833454Z window_graph: ok drain_sink
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9834481Z window_graph: ok retirement
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9835609Z window_graph: ok complete_retire_matrix
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9836843Z window_graph: ok note_destroyed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9837898Z window_graph: ok tick_wrap
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9838964Z window_graph: ok identity_and_reclassify
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9840157Z window_graph: ok refresh
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9841171Z window_graph: ok invalidate_all
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9842262Z window_graph: ok capacity_diagnostic
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9843391Z window_graph: ok stats_and_find
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9844442Z window_graph: ok wrong_thread
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9845511Z window_graph: ok reentrancy
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9846564Z window_graph: ok epoch_isolation
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9847694Z window_graph: ok generation_monotonic
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9848864Z window_graph: ok random_trace
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:23.9849922Z window_graph: 27 tests passed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5641016Z ok test_create_validation
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5641714Z ok test_create_config_overlaps_slot
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5642405Z skip test_create_no_memory: built without -DWgObsWrapCalloc=1 and --wrap=calloc
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5643081Z ok test_create_no_memory
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5643468Z ok test_lifecycle_start_stop_restart
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5643914Z ok test_lifecycle_second_observer
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5644479Z ok test_lifecycle_reservation_covers_hook_removal
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5645135Z ok test_lifecycle_hook_failure_rollback
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5645755Z ok test_lifecycle_unhook_failure
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5646205Z ok test_lifecycle_start_rollback_unhook_retry
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5646711Z ok test_lifecycle_destroy_started
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5647129Z ok test_lifecycle_wrong_thread
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5647512Z ok test_hint_filter_table
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5647866Z ok test_hint_wrong_thread
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5648273Z ok test_release_slot_waits_for_inflight_hint
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5648801Z ok test_dirty_coalesce_order_budget
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5649216Z ok test_dirty_overflow_recovery
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5649605Z ok test_flood_child_hints_no_churn
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5650014Z ok test_overflow_recovery_gone_and_recycled
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5650380Z ok test_overflow_pump_statuses
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5650735Z ok test_dirty_reserved_slot
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5651167Z ok test_pump_admit_update_hide
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5651481Z ok test_pump_cloak
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5651747Z ok test_pump_destroy_and_reuse
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5652053Z ok test_pump_gone_vs_failed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5652343Z ok test_pump_queue_full
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5652650Z ok test_pump_queue_full_destroy_information
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5713230Z ok test_pump_desktop_inactive
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5740231Z ok test_pump_busy_reentrant
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5740827Z ok test_pump_graph_reentrant
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5741697Z ok test_pump_stamp_exhausted
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5742120Z ok test_refresh_admits_in_order
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5742589Z ok test_refresh_defers_child_before_parent
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5743120Z ok test_refresh_failed_window_kept
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5743647Z ok test_refresh_unenumerated_survives
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5744113Z ok test_refresh_vanished_retired
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5744559Z ok test_refresh_enum_failure
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5744998Z ok test_refresh_truncated_degrades
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5745474Z ok test_refresh_cadence_latch
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5745905Z ok test_refresh_queue_full_abort
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5746337Z ok test_refresh_commit_queue_full
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5746801Z ok test_refresh_replacement_observer
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5747269Z ok test_owner_hidden_promotion
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5747733Z ok test_owner_hidden_gone_and_failed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5748245Z ok test_hidden_window_skips_owner_query
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5748719Z ok test_owner_hidden_uac
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5749110Z ok test_preedit_parenting
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5749512Z ok test_preedit_from_config
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5749938Z ok test_own_process_excluded
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5750358Z ok test_teardown_with_hints
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5750761Z ok test_stats_accounting
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5751171Z ok test_entry_arguments_and_threads
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5751605Z ok test_start_zero_token
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5751986Z ok test_hint_during_install
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5752386Z ok test_hint_destroy_coalesces
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5752810Z ok test_facts_overlay_corners
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5753249Z ok test_putback_merge_queue_full
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5753682Z ok test_putback_merge_fatal
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5754087Z ok test_putback_merge_retry
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5754505Z ok test_pump_destroy_status_paths
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5754975Z ok test_refresh_enumeration_oddities
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5755452Z ok test_refresh_graph_refresh_lost
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5755928Z ok test_refresh_unseen_stamp_exhausted
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5756412Z ok test_cadence_corners
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5757032Z   fuzz: 40 seeds x 3000 steps = 120000 steps, 5454 generations, 405 overflow recoveries
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5757776Z ok test_fuzz_convergence
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5758436Z   fuzz: 8 seeds x 3000 steps = 24000 steps, 1144 generations, 188 overflow recoveries
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5759204Z ok test_fuzz_convergence_stressed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.5759725Z window_observer_windows: 65 tests passed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T19:17:25.6298331Z native observer: real ownerless query, visibility, Gone, hook delivery and teardown passed; hints=10
+windows	Complete job	﻿2026-10-24T19:17:31.0111925Z Cleaning up orphan processes
+windows	Complete job	2026-10-24T19:17:31.0158602Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

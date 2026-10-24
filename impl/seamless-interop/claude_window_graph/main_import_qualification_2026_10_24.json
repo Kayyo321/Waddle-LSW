@@ -1,0 +1,50 @@
+{
+  "qualification_utc": "2026-10-24T20:02:17.390744+00:00",
+  "import_source": "73bc8330af5423989d62aad3824a771e169e356f",
+  "source_identities": "ci_qualification_73bc833.json source_sha256 (all11 unchanged after import)",
+  "command": "make -j1 -f scripts/interop_window_graph.mk window-graph-all WgBuild=/tmp/seamless_main_graph_20261024",
+  "exit_code": 0,
+  "log": "evidence/main_import_2026_10_24/all.log",
+  "log_sha256": "2eb9e185c68c0a77a97e77e139469edf782fca55eafffdc9d67400d59149e89f",
+  "coverage": {
+    "graph_lines": [
+      826,
+      827
+    ],
+    "graph_branches": [
+      574,
+      586
+    ],
+    "abi_lines": [
+      145,
+      146
+    ],
+    "abi_branches": [
+      60,
+      62
+    ],
+    "portable_observer_lines": [
+      624,
+      645
+    ],
+    "portable_observer_branches": [
+      358,
+      382
+    ]
+  },
+  "memory": "ASan+LSan+UBSan C clients detect_leaks=1 passed; Zig Debug/ReleaseSafe and testing allocator passed",
+  "symbols": "21 exports exactly equal header",
+  "windows": "Five binaries cross-build in parent; exact same source executed in isolated CI40126247004, success",
+  "parent_credit": {
+    "todo": 10,
+    "pure_graph": 25,
+    "C_ABI": 10,
+    "observer": 0,
+    "native_adapter": 0,
+    "coordinator": 0,
+    "installed_session": 0,
+    "overall_delta": 1.4,
+    "overall_total": 17.8
+  },
+  "open": "O5 delivered-destroy overflow and startup/restart ordering; native hybrid identity/indeterminate monitor facts review findings. Native/observer and session acceptance withheld."
+}

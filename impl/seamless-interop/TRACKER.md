@@ -37,7 +37,7 @@ acceptance remain pending.
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 25% | Shared framing/owned queue/handshake/liveness qualified on Linux and Windows; host transport, singleton, module extraction and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
-| #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 0% | Claude3714cf2 reviewed; isolated alias/hook-lifecycle fixes through1a179b0; final gates/import pending, no global credit; incarnation and session/native integration open |
+| #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 35% | Pure graph25% + C ABI10% accepted after reviewed73bc833 import, full main gates and actual Windows CI40126247004; O5/native fact findings block observer credit; coordinator and installed session remain open |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
 | #13 | Minimize/maximize/fullscreen/restore/close state machine | Pending | 3% | 0% | Waits on #11 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `16.40%`
+**Total Feature Completion**: `17.80%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -77,7 +77,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | Shared framing5%; owned queue5%; handshake10%; liveness5%; native CPU units accepted; integrated host client remains open |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
-| #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | None accepted yet; local graph evidence and isolated Windows CI under review; O5/O25 block observer acceptance |
+| #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; O25 pruning corrected and Linux/Windows qualified. O5 delivered-destroy loss and native fact consistency remain open; no observer/native/session credit |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
 Execution resumed at the user's request from checkpoint4079560. Current
@@ -901,7 +901,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     [Qualification](control_peer_core_qualification_2026_10_24.json).
     HEAD identifies this containing implementation commit.
 
-- **Commit `HEAD`**: `feat(interop): expose contextual copied control peer C boundary`
+- **Commit `a408163`**: `feat(interop): expose contextual copied control peer C boundary`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
   - **Summary**: Implements13 opaque C exports with bounded copied buffers,
     allocation alias preflights and caller-versus-internal recovery classification.
@@ -912,3 +912,16 @@ its uncompiled draft earns no credit until current acceptance passes.
     OS owners and native integration remain open; no extra parent credit.
     [Qualification](control_peer_abi_qualification_2026_10_24.json).
     HEAD identifies this containing implementation commit.
+
+- **Commit `HEAD`**: `feat(interop): integrate reviewed window graph and observer boundary`
+  - **Task Impact**: +35% to TODO #10 (+1.40% overall; total17.80%).
+  - **Summary**: Imports owned source/tests/docs at reviewed isolated73bc833,
+    preserving original3714cf2 return and full isolated provenance. Main graph
+    gates pass:145 graph/159 ABI in both modes, C27/doubles65, leak-enabled
+    sanitizers, exact21 exports, graph97.95% branch99.88% line and ABI96.77%
+    branch99.32% line. Same source passes actual Windows CI40126247004 including
+    target-correlated native smoke. Awards only frozen pure graph25% and C ABI10%.
+    O5 loss/startup ordering, native fact consistency, coordinator/capture/wire
+    and installed-session acceptance remain open; observer/native credit stays0.
+    [Qualification](claude_window_graph/main_import_qualification_2026_10_24.json).
+    HEAD identifies this containing import commit.

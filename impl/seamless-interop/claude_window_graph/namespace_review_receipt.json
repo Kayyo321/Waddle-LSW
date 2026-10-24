@@ -1,0 +1,50 @@
+{
+  "files": {
+    "src/interop/window_graph.zig": {
+      "before_sha256": "49ecd43296e7444ba2248a14dd88ca423e5676a2d2d2708e9dc611c1848a2b71",
+      "after_sha256": "d2b433543b9e5e8763c50ecb28fb09cc184902ad60102f055a33d514b5014242",
+      "changed_identifier_tokens": 1898,
+      "replacement_counts": {
+        "c->c_t": 132,
+        "std->std_t": 175,
+        "testing->testing_t": 1591
+      },
+      "comments_strings_chars_unchanged": true,
+      "identifier_stream_matches_exact_declared_transform": true
+    },
+    "src/interop/window_graph_abi.zig": {
+      "before_sha256": "1b2e3233d3170323dbce8f729375089bc6d2029be4ea93190c0ed18533274502",
+      "after_sha256": "56144b0d03cf8b1713c99a297dd5598d45c23a34098649dea91479775c4f11e7",
+      "changed_identifier_tokens": 229,
+      "replacement_counts": {
+        "c->c_t": 11,
+        "graph->graph_t": 69,
+        "std->std_t": 30,
+        "testing->testing_t": 119
+      },
+      "comments_strings_chars_unchanged": true,
+      "identifier_stream_matches_exact_declared_transform": true
+    }
+  },
+  "transform": "identifier-token-only; comments, strings, characters, whitespace, punctuation preserved",
+  "cwd": "/home/dev/.codex/worktrees/seamless-window-graph/Waddle-LSW",
+  "token_stream_proof": {
+    "comments_strings_chars_whitespace_and_punctuation_unchanged": true,
+    "all_identifier_token_changes_match_declared_alias_transform": true,
+    "zig_syntax_c_sentinel_preserved": "[*c] remains unchanged; only C namespace declaration and c.member selectors became c_t",
+    "std_testing_property_preserved": "std.testing remains std.testing; test alias and its selectors became testing_t"
+  },
+  "tests": [
+    {
+      "command": "zig test src/interop/window_graph.zig -Iinclude -lc --cache-dir /tmp/seamless_claude_namespace/cache-graph3 --global-cache-dir /tmp/seamless_claude_namespace/cache-global-graph3",
+      "exit_code": 0,
+      "result": "136/136 passed"
+    },
+    {
+      "command": "zig test src/interop/window_graph_abi.zig -Iinclude -lc --cache-dir /tmp/seamless_claude_namespace/cache-abi --global-cache-dir /tmp/seamless_claude_namespace/cache-global-abi",
+      "exit_code": 0,
+      "result": "150/150 passed"
+    }
+  ],
+  "nonsemantic_scope": "Only src/interop/window_graph.zig and src/interop/window_graph_abi.zig were transformed; no tests, headers, docs, build files, or Git metadata were changed in this task."
+}

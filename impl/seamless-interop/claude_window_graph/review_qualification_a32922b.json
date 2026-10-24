@@ -1,0 +1,71 @@
+{
+  "source_commit": "a32922b0ef2a161889258a1b76d28af9e3f8a1ca",
+  "original_return_tip": "3714cf2",
+  "qualification_utc": "2026-10-24T19:38:47.064006+00:00",
+  "command": "make -j1 -f scripts/interop_window_graph.mk window-graph-all WgBuild=/tmp/seamless_graph_final_20261024",
+  "exit_code": 0,
+  "source_sha256": {
+    "src/interop/window_graph.zig": "64a68b712df8e8c28cbedf2d95fa585595b9c6d23ce120991973edd45d771596",
+    "src/interop/window_graph_abi.zig": "56144b0d03cf8b1713c99a297dd5598d45c23a34098649dea91479775c4f11e7",
+    "include/waddle/interop_window_graph.h": "4469bd78b75ea573aaa99eb76885b3c91758cc7bbc824d8137403341444892c9",
+    "src/interop/window_observer_windows.c": "ede0624e6a0f9ee7fc64eb3d1d7f39948c6bf100d810d145c8b0f3265ad23e84",
+    "src/interop/window_observer_windows.h": "4a6a6cee279fd077885c36a3daf30b8c436f0543ced67540d498a63255fb28ac",
+    "tests/interop/window_graph.c": "d679226705258e72d552e8ac303dd46f1dce52d6ab78866b54ac038e2b12a56a",
+    "tests/interop/window_observer_windows.c": "e81626984e3bc85cf1623198f059247b166853146d8dbfff597ef18ad448769f",
+    "tests/interop/window_observer_api_double.h": "fdcc8bb8f23a95ab39af63cda7f23495df6393b3b943d595fc64f5288eae9a7a",
+    "tests/interop/window_observer_native_windows.c": "2bcaa575b49b522a8b1a138897a6924213fc9a6e7b1ed18a527e7bf174735f64",
+    "scripts/interop_window_graph.mk": "1d5e13105d078d71e5fa931c6f76449e76ffc55b6a86867a8336ed10b614987b",
+    ".github/workflows/interop_window_graph.yml": "49af13a4323a804adcb649b5549f7738449a620652c89be415b17704214392f9"
+  },
+  "log": "evidence/review_a32922b/all.log",
+  "log_sha256": "df898d1b938a9f46b200e64001ed01ed69c41e6119476376ed3481b0e7cf2626",
+  "test_counts": {
+    "graph_debug": 145,
+    "graph_release_safe": 145,
+    "abi_debug": 159,
+    "abi_release_safe": 159,
+    "c_abi": 27,
+    "portable_observer": 65
+  },
+  "coverage": {
+    "graph": {
+      "lines": [
+        826,
+        827
+      ],
+      "branches": [
+        574,
+        586
+      ]
+    },
+    "graph_abi": {
+      "lines": [
+        145,
+        146
+      ],
+      "branches": [
+        60,
+        62
+      ]
+    },
+    "portable_observer": {
+      "lines": [
+        624,
+        645
+      ],
+      "branches": [
+        358,
+        382
+      ]
+    }
+  },
+  "sanitizers": {
+    "c_flags": "-fsanitize=address,leak,undefined",
+    "detect_leaks": 1,
+    "exit_code": 0,
+    "zig": "ReleaseSafe and testing allocator, not C-sanitizer instrumentation"
+  },
+  "symbols": "21 exports match header",
+  "windows": "Cross-built five executables including both full Zig suites and target-correlated real native smoke; not executed locally",
+  "acceptance": "Portable source qualification after O25 correction. Exact updated native CI and parent integration pending; O5 observer loss and installed-session qualification remain open."
+}

@@ -3339,3 +3339,25 @@ detection enabled; the Zig implementation uses ReleaseSafe and its testing
 allocator. Three Windows peer executables cross-build; actual Windows execution
 for the containing source remains pending CI. No OS socket/mapping ownership or
 native session acceptance follows from this portable boundary qualification.
+
+
+#### 8.22.1 Reviewed graph import qualification
+
+This supersedes the provisional source status in8.22. The explicit owned-file
+snapshot at isolated73bc833 is now integrated in the parent; every qualified
+source hash matches ci_qualification_73bc833.json. The main standalone gates
+pass with145 graph and159 ABI tests in Debug and ReleaseSafe, C27, doubles65,
+leak-enabled C sanitizers, exact21 exports and the unchanged90% production
+line/branch thresholds. Exact coverage is graph826/827 lines574/586 branches
+and ABI145/146 lines60/62 branches. Linux/actual Windows CI40126247004 passes
+for those same sources, including the target-correlated own-window native
+smoke. Main import evidence is
+claude_window_graph/main_import_qualification_2026_10_24.json.
+
+The accepted parent #10 allocation is pure graph25% plus opaque C ABI10%.
+O25 cached-descendant pruning is resolved by2310f17 and its regressions. O5
+delivered-destroy loss/startup ordering remains unresolved. Independent native
+review additionally requires rechecking PID/TID across a fact snapshot and
+preserving prior state when monitor information is indeterminate. These block
+observer/native credit; CPU graph acceptance grants no installed-session,
+UIAccess/UAC, secure-desktop, capture, slot/wire or host-drain proof.

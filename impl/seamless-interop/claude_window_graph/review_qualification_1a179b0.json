@@ -1,0 +1,73 @@
+{
+  "source_commit": "1a179b086daa34defdc4063654abf1e7b62538eb",
+  "original_return_tip": "3714cf2",
+  "qualification_utc": "2026-10-24T19:03:13.700743+00:00",
+  "command": "make -j1 -f scripts/interop_window_graph.mk window-graph-all WgBuild=/tmp/seamless_claude_review_1a179b0_20261024",
+  "exit_code": 0,
+  "source_sha256": {
+    "src/interop/window_graph.zig": "d2b433543b9e5e8763c50ecb28fb09cc184902ad60102f055a33d514b5014242",
+    "src/interop/window_graph_abi.zig": "56144b0d03cf8b1713c99a297dd5598d45c23a34098649dea91479775c4f11e7",
+    "include/waddle/interop_window_graph.h": "07fd3a44b4c6146f629bb06d2c963170aa2c8d674a6804939ef9d452997e7a4f",
+    "src/interop/window_observer_windows.c": "466ef38fc0ef6efac57fbb9e052e414c00ba2dd7fdbb1f45996754cb4d16b59b",
+    "src/interop/window_observer_windows.h": "f6dba0c4f59376a66cadf0c3eac3671c48c3254d81a013a25aeb9a83cb3b35a8",
+    "tests/interop/window_graph.c": "d679226705258e72d552e8ac303dd46f1dce52d6ab78866b54ac038e2b12a56a",
+    "tests/interop/window_observer_windows.c": "e81626984e3bc85cf1623198f059247b166853146d8dbfff597ef18ad448769f",
+    "tests/interop/window_observer_api_double.h": "fdcc8bb8f23a95ab39af63cda7f23495df6393b3b943d595fc64f5288eae9a7a",
+    "scripts/interop_window_graph.mk": "5838ef016e49d6f096689ef0b938808198e03ef745163d5318ecfe51bd390a0a"
+  },
+  "log": "evidence/review_1a179b0/all.log",
+  "log_sha256": "0fa204872ee85ddeaece57c10e3c728e80721866adbff26b6c978a380b77cefc",
+  "test_counts": {
+    "graph_debug": 136,
+    "graph_release_safe": 136,
+    "abi_debug": 150,
+    "abi_release_safe": 150,
+    "c_abi": 27,
+    "portable_observer": 65
+  },
+  "coverage": {
+    "graph": {
+      "lines": [
+        764,
+        765
+      ],
+      "branches": [
+        505,
+        514
+      ]
+    },
+    "graph_abi": {
+      "lines": [
+        145,
+        146
+      ],
+      "branches": [
+        60,
+        62
+      ]
+    },
+    "portable_observer": {
+      "lines": [
+        624,
+        645
+      ],
+      "branches": [
+        358,
+        382
+      ]
+    }
+  },
+  "sanitizers": {
+    "c_flags": "-fsanitize=address,leak,undefined",
+    "detect_leaks": 1,
+    "exit_code": 0,
+    "zig_object": "ReleaseSafe, not C-sanitizer instrumented; Zig tests use testing allocator"
+  },
+  "symbols": "21 exports match header",
+  "windows": "Cross-build/link only, two C executables and two native SDK objects; no Windows execution",
+  "acceptance": "Provisional reviewed source qualification only; O5/O25 and coordinator/native integration remain open. Global TODO #10 progress unchanged.",
+  "coverage_attempts": {
+    "window_graph": "/home/dev/.codex/worktrees/seamless-window-graph/Waddle-LSW/build/coverage/interop/window_graph/run-20261024T190142385647Z-395650",
+    "window_graph_abi": "/home/dev/.codex/worktrees/seamless-window-graph/Waddle-LSW/build/coverage/interop/window_graph_abi/run-20261024T190206985113Z-395835"
+  }
+}

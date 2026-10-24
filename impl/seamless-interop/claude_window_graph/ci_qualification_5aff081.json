@@ -1,0 +1,14 @@
+{
+  "source_commit": "5aff0813e6c5dcd912799ff05bd42f080515563d",
+  "ci_run": 40123985933,
+  "ci_url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40123985933",
+  "linux": "success: full standalone tests, leak-enabled C sanitizer gates, production line/branch coverage and Windows cross-builds",
+  "windows": "success: executed graph C ABI27, portable observer API-double65, actual native Win32 smoke",
+  "native_scope": "ownerless HWND query, visibility/Gone, real hook traffic and teardown. Original aggregate-hint assertion; strengthened exact-HWND white-box test at98cfc6f not qualified by this run. No Toolhelp fallback, foreign-process, UIAccess/UAC, secure desktop, driver, capture or installed-session proof.",
+  "newer_code": "a2e72d3 snapshot cleanup,98cfc6f target correlation, and uncommitted graph discontinuity fixes all need fresh qualification",
+  "artifacts": {
+    "run.json": "cf95e123ab22512e6b7dbbadf7e82117d2cf419bb18531da74efec9d1b09d878",
+    "windows.log": "14e65f33888a6579c4fad63fe7f4bf2e2ed6675c0928929971a67c9d939094e5"
+  },
+  "global_progress_impact": 0
+}
