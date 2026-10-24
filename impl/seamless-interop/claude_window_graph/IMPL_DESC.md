@@ -1422,6 +1422,21 @@ review is archived in incarnation_review.md. O5 delivered-destroy loss remains
 open separately; no full-refresh continuity proof is accepted for identical
 identity tuples after discarded destroy evidence.
 
+#### Deferred-only identity replacement failure
+
+Positive identity mismatch of a Deferred parent is discontinuity evidence even
+without an Active entry. Capacity, generation exhaustion or app-key lookup
+failure must not leave that old Deferred parent/subtree available for a later
+ancestor flush. After the existing event-ring preflight, delete the old parent
+and its selected descendants even if the replacement cannot be published. Return
+Ok with Excluded, reason IncarnationChanged, generation0/retired_generation0 and
+exact deferred_dropped count; no event or Active retirement is fabricated.
+Diagnostic shortfall/lookup counters keep their ordinary meaning. Normal errors
+without a detected identity mismatch retain their existing no-change behavior.
+QueueFull always preserves the full old graph for a safe retry; already accepted
+cycle rejection keeps its documented deferred deletion exception. Freshly
+queried replacement/children can be re-offered after resources recover.
+
 ### 9.7 Native Windows adapter smoke fixture
 
 Add a standalone Windows-only C fixture with the real native API table, no API

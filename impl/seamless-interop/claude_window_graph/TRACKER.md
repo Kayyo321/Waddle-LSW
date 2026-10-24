@@ -16,13 +16,13 @@ tracker was not edited in this worktree. File ownership is released to Codex
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1 | Bounded graph/classification/generation engine | Done | 35% | 100% | 136 Zig tests, 210000 random-trace steps; coverage 99.87% line / 98.25% branch |
+| #1 | Bounded graph/classification/generation engine | Review | 35% | 95% | 136 Zig tests, 210000 random-trace steps; coverage 99.87% line / 98.25% branch |
 | #2 | Opaque C ABI and lifecycle | Done | 10% | 100% | 21 exports checked against the header; 14 ABI tests; 99.30% / 96.55% |
 | #3 | Session-wide Win32 observation adapter | Review | 25% | 85% | Portable core tested (63 tests, 97.0% / 93.6%); native `_WIN32` section cross-compiled only, never executed |
 | #4 | Portable, ABI, failure, stress, coverage and sanitizer qualification | Review | 20% | 80% | Gates green on Linux; no Windows execution; a few evidence items not provided (see IMPL_DESC 7.5) |
 | #5 | Return document and integration/ownership handback | Done | 10% | 100% | HANDOFF_RETURN.md written, ownership released |
 
-**Total Feature Completion**: `92.25%`
+**Total Feature Completion**: `90.50%`
 
 ## Commit History & Progress Log
 
@@ -114,7 +114,7 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     or standard merge is opened; native results remain pending until CI finishes.
     HEAD identifies this workflow commit.
 
-- **Commit `HEAD`**: `fix(interop): close standalone native query snapshot scopes`
+- **Commit `a2e72d3`**: `fix(interop): close standalone native query snapshot scopes`
   - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local92.25%).
   - **Summary**: Direct calls through the native query table now own one scan
     scope across all return paths; pump/refresh keep their existing shared scope.
@@ -122,3 +122,13 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     to close. Documents owner-thread serialization. Strict Windows fixture link
     and portable65-case lifecycle regression pass; native execution pending.
     HEAD identifies this containing ownership correction.
+
+- **Commit `HEAD`**: `docs(interop): reject deferred identity retention after replacement failure`
+  - **Task Impact**: -5% to local #1 (-1.75% local total, now90.50%);
+    +0% global TODO #10 (parent16.40%).
+  - **Summary**: Critical review requires pruning a changed Deferred parent and
+    its cached children even if replacement lookup/capacity/generation fails.
+    Defines Ok/Excluded without fabricated Active retirement; ordinary errors
+    and QueueFull remain unchanged. Revokes local graph completion while this
+    correction is under review. Original handback92.25% remains historical.
+    HEAD identifies this contract correction.
