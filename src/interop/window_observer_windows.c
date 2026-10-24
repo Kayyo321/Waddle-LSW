@@ -33,6 +33,9 @@
  *    full-refresh latch is set. refresh_due is true iff Started and (no attempt yet, or 250 ms
  *    elapsed, or a latch event not yet consumed by an attempt, tracked by latch_unconsumed), so a frozen clock with a persistently
  *    failing refresh runs at most one refresh per latch event.
+ *  - Overflow. A full dirty table latches overflow; pump recovers with one full refresh (never
+ *    invalidate_all): the table is discarded and refresh steps 2 to 6 run in place. A Truncated
+ *    enumeration is applied but aborted instead of committed.
  *  - Native table. create returns Unsupported when GetDpiForWindow is missing or the calling
  *    thread is not DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. The native query clamps width and
  *    height to InteropWindowGraphMaxExtent, never reads the title of a window of the current
@@ -83,6 +86,10 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef _WIN32
+#include <sched.h>
+#endif
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -254,12 +261,26 @@ static void snapshot_stats(const window_observer_t *observer, window_observer_st
     }
 }
 
-/* Release the process-wide slot if this observer holds it, then wait out in-flight hints. */
+/* Give up the rest of the time slice of the calling thread (SwitchToThread / sched_yield). */
+static void yield_thread(void) {
+#ifdef _WIN32
+    (void)SwitchToThread();
+#else
+    (void)sched_yield();
+#endif
+}
+
+/*
+ * Release the process-wide slot if this observer holds it, then wait out in-flight hints. The wait
+ * yields the processor on every iteration, so a preempted foreign-thread hint on a single-CPU guest
+ * is scheduled instead of burning the waiter's quantum. note_hint never blocks, so the wait ends as
+ * soon as every hint that loaded the slot before the clear has returned.
+ */
 static void release_slot(window_observer_t *observer) {
     window_observer_t *expected = observer;
     if (atomic_compare_exchange_strong(&g_active_observer, &expected, NULL)) {
         while (atomic_load(&g_hint_inflight) != 0u) {
-            /* An off-thread note_hint is finishing; it never blocks, so this ends promptly. */
+            yield_thread();
         }
     }
 }
@@ -422,12 +443,21 @@ window_observer_status_t window_observer_create(const window_observer_config_t *
     if (out_observer == NULL) {
         return WindowObserverStatusInvalidArgument;
     }
+    /*
+     * The config is copied BEFORE the out slot is written: a caller whose config storage overlaps the
+     * slot would otherwise have the config clobbered by the NULL store below.
+     */
+    window_observer_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    if (config != NULL) {
+        cfg = *config;
+    }
     *out_observer = NULL;
-    if (config == NULL || config->uac_mode > (uint32_t)InteropWindowUacNative || config->first_stamp == 0u ||
-        config->first_stamp == UINT64_MAX || config->own_process_id == 0u) {
+    if (config == NULL || cfg.uac_mode > (uint32_t)InteropWindowUacNative || cfg.first_stamp == 0u ||
+        cfg.first_stamp == UINT64_MAX || cfg.own_process_id == 0u) {
         return WindowObserverStatusInvalidArgument;
     }
-    const window_observer_api_t *api = config->api;
+    const window_observer_api_t *api = cfg.api;
     if (api == NULL) {
 #ifdef _WIN32
         api = window_observer_native_api();
@@ -450,13 +480,13 @@ window_observer_status_t window_observer_create(const window_observer_config_t *
         return WindowObserverStatusNoMemory;
     }
     observer->api = *api;
-    observer->api_context = config->api_context;
-    observer->owner_thread = api->current_thread_id(config->api_context);
+    observer->api_context = cfg.api_context;
+    observer->owner_thread = api->current_thread_id(cfg.api_context);
     observer->state = WindowObserverStateCreated;
-    observer->next_stamp = config->first_stamp;
-    observer->preedit_window = config->preedit_window;
-    observer->own_process_id = config->own_process_id;
-    observer->uac_mode = config->uac_mode;
+    observer->next_stamp = cfg.first_stamp;
+    observer->preedit_window = cfg.preedit_window;
+    observer->own_process_id = cfg.own_process_id;
+    observer->uac_mode = cfg.uac_mode;
     *out_observer = observer;
     return WindowObserverStatusOk;
 }
@@ -769,6 +799,10 @@ static window_observer_query_result_t resolve_owner(window_observer_t *observer,
     if (facts->owner_root == 0u || facts->owner_root == facts->window) {
         return WindowObserverQueryExists;
     }
+    if ((facts->flags & (uint32_t)InteropWindowFactVisible) == 0u) {
+        /* Classification stops at NotVisible before OwnerHidden is consulted: no owner sub-query. */
+        return WindowObserverQueryExists;
+    }
     interop_window_facts_t owner;
     const window_observer_query_result_t result = query_raw(observer, facts->owner_root, &owner);
     if (result == WindowObserverQueryGone) {
@@ -931,12 +965,14 @@ static window_observer_status_t pump_locked(window_observer_t *observer, interop
         return WindowObserverStatusDesktopInactive;
     }
     if (observer->overflow != 0u) {
-        uint32_t retired = 0;
-        const fold_t fold = fold_status(observer, interop_window_graph_invalidate_all(graph, epoch, &retired));
-        if (fold != FoldContinue) {
-            return stop_status(fold);
-        }
-        bump(&observer->stats.invalidations);
+        /*
+         * Overflow recovery is a full refresh, never invalidate_all: the refresh offers every enumerated
+         * window (unchanged windows produce no event), requeries the unseen ones and retires only what
+         * is gone, so a flood of hints for unrelated (child) windows costs one refresh and no churn.
+         * The queued hints, destroy information included, are discarded; the refresh latch stays set
+         * until a refresh commits, so a failed recovery is retried at the cadence.
+         */
+        bump(&observer->stats.invalidations); /* counts overflow recoveries; no invalidate_all is issued */
         observer->dirty_count = 0u;
         observer->overflow = 0u;
         /* One clock read stamps both the latch and the attempt, so this refresh consumes its own latch event. */
@@ -946,7 +982,11 @@ static window_observer_status_t pump_locked(window_observer_t *observer, interop
         observer->latch_unconsumed = 0u;
         observer->last_attempt_ms = now_ms;
         observer->have_attempt = 1u;
-        return refresh_body(observer, graph, epoch);
+        const window_observer_status_t recovered = refresh_body(observer, graph, epoch);
+        if (recovered == WindowObserverStatusOk && (observer->dirty_count != 0u || observer->overflow != 0u)) {
+            return WindowObserverStatusMore; /* hints arrived while the refresh ran: pump again */
+        }
+        return recovered;
     }
     const uint32_t available = observer->dirty_count;
     const uint32_t limit = budget < available ? budget : available;
@@ -1063,16 +1103,24 @@ static window_observer_status_t refresh_visit(window_observer_t *observer, inter
 /*
  * Steps 2 to 6 of the refresh: enumerate, begin, query and offer every window, requery the unseen
  * Active windows, commit. The attempt is already stamped and the desktop already checked Default by
- * the caller; the busy flag is held. Failed queries never fail the refresh.
+ * the caller; the busy flag is held. Failed queries never fail the refresh. A Truncated enumeration
+ * runs every step except the commit (the refresh is aborted and EnumFailed is returned).
  */
 static window_observer_status_t refresh_body(window_observer_t *observer, interop_window_graph_t *graph,
                                              uint64_t epoch) {
     uint32_t count = 0;
     const window_observer_enum_result_t enumerated = observer->api.enum_top_level_windows(
         observer->api_context, observer->enum_buffer, WindowObserverMaxEnumerated, &count);
-    if (enumerated != WindowObserverEnumOk || count > WindowObserverMaxEnumerated) {
-        return WindowObserverStatusEnumFailed;
+    if ((enumerated != WindowObserverEnumOk && enumerated != WindowObserverEnumTruncated) ||
+        count > WindowObserverMaxEnumerated) {
+        return WindowObserverStatusEnumFailed; /* nothing was begun */
     }
+    /*
+     * A truncated list is still processed: the listed windows are offered and the unseen Active windows
+     * are requeried one by one below, so admissions, updates and Gone notes keep flowing; only the
+     * commit is withheld (absence from a partial list proves nothing).
+     */
+    const int truncated = enumerated == WindowObserverEnumTruncated;
     window_observer_status_t status = refresh_open(observer, graph, epoch);
     if (status != WindowObserverStatusOk) {
         return status;
@@ -1109,6 +1157,10 @@ static window_observer_status_t refresh_body(window_observer_t *observer, intero
         }
     }
 
+    if (truncated) {
+        refresh_abort_quiet(observer, graph, epoch);
+        return WindowObserverStatusEnumFailed; /* partial list: never committed, the latch stays set */
+    }
     uint32_t retired = 0;
     const fold_t fold = fold_status(observer, interop_window_graph_refresh_commit(graph, epoch, &retired));
     if (fold == FoldContinue) {
@@ -1237,8 +1289,10 @@ static _Atomic(get_dpi_for_window_fn_t) g_get_dpi_for_window = NULL;
 #define NativeTitleWchars 1025
 /** WCHAR capacity of the class-name buffer including the terminator. */
 #define NativeClassWchars 258
-/** WCHAR capacity of the full process image path buffer. */
+/** WCHAR capacity of the full process image path buffer (heap fallback for long paths). */
 #define NativeImagePathWchars 32768
+/** WCHAR capacity of the stack buffer tried first (MAX_PATH); the heap buffer is used only when it is too small. */
+#define NativeImagePathSmallWchars 260
 /** Capacity of the desktop-name buffer in WCHARs. */
 #define NativeDesktopNameWchars 64
 
@@ -1578,37 +1632,70 @@ static uint32_t native_scan_image_name(DWORD process_id, uint8_t *dest) {
     return native_scan_walk(process_id, dest, &found);
 }
 
+/* Basename (after the last separator) of a UTF-16 path to UTF-8 image bytes; 0 when empty or not convertible. */
+static uint32_t native_image_basename(const WCHAR *path, DWORD path_length, interop_window_facts_t *facts) {
+    DWORD base = 0;
+    for (DWORD i = 0; i < path_length; i++) {
+        if (path[i] == L'\\' || path[i] == L'/') {
+            base = i + 1u;
+        }
+    }
+    int cut = 0;
+    return utf8_from_wide(path + base, (int)(path_length - base), WC_ERR_INVALID_CHARS, 0, facts->image_name,
+                          InteropWindowGraphMaxImageBytes, &cut);
+}
+
+/*
+ * QueryFullProcessImageName into the facts. The 260-WCHAR stack buffer is tried first; only when the OS
+ * answers ERROR_INSUFFICIENT_BUFFER does a 32768-WCHAR (64 KiB) heap buffer get allocated, used once and
+ * freed on every path before this function returns. Returns 0 only when that heap buffer cannot be
+ * allocated (the caller reports Failed); *image_bytes is 0 when the OS gave no usable basename.
+ */
+static int native_query_image(HANDLE process, interop_window_facts_t *facts, uint32_t *image_bytes) {
+    WCHAR small[NativeImagePathSmallWchars];
+    DWORD path_length = NativeImagePathSmallWchars;
+    *image_bytes = 0u;
+    if (QueryFullProcessImageNameW(process, 0, small, &path_length)) {
+        if (path_length > 0u) {
+            *image_bytes = native_image_basename(small, path_length, facts);
+        }
+        return 1;
+    }
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+        return 1;
+    }
+    WCHAR *path = malloc((size_t)NativeImagePathWchars * sizeof(WCHAR));
+    if (path == NULL) {
+        return 0;
+    }
+    path_length = NativeImagePathWchars;
+    if (QueryFullProcessImageNameW(process, 0, path, &path_length) && path_length > 0u) {
+        *image_bytes = native_image_basename(path, path_length, facts);
+    }
+    free(path);
+    path = NULL;
+    return 1;
+}
+
 /*
  * Fill image basename and process start time. Step 1: OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)
  * with QueryFullProcessImageName gives the basename and GetProcessTimes the real start time. Step 2,
  * when OpenProcess fails (or yields no basename): the basename comes from the per-call Toolhelp32
  * snapshot and the start time stays what step 1 produced (0 when OpenProcess failed). ImageUnknown is
- * set, with image_length 0, only when both steps fail. Returns 0 only when the bounded path buffer
- * cannot be allocated (the caller reports Failed: a missing image would silently disable UAC rules).
+ * set, with image_length 0, only when both steps fail. With want_image 0 (the window is not visible,
+ * so its classification is NotVisible whatever its image) only the start time is read: no path query,
+ * no allocation and no snapshot; image_length is 0 and ImageUnknown is set. Returns 0 only when the
+ * heap fallback buffer of a long image path cannot be allocated (the caller reports Failed: a missing
+ * image would silently disable UAC rules).
  */
-static int native_fill_process(DWORD process_id, interop_window_facts_t *facts) {
+static int native_fill_process(DWORD process_id, interop_window_facts_t *facts, int want_image) {
     uint32_t image_bytes = 0u;
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
     if (process != NULL) {
-        WCHAR *path = malloc((size_t)NativeImagePathWchars * sizeof(WCHAR));
-        if (path == NULL) {
+        if (want_image && !native_query_image(process, facts, &image_bytes)) {
             CloseHandle(process);
             return 0;
         }
-        DWORD path_length = NativeImagePathWchars;
-        if (QueryFullProcessImageNameW(process, 0, path, &path_length) && path_length > 0u) {
-            DWORD base = 0;
-            for (DWORD i = 0; i < path_length; i++) {
-                if (path[i] == L'\\' || path[i] == L'/') {
-                    base = i + 1u;
-                }
-            }
-            int cut = 0;
-            image_bytes = utf8_from_wide(path + base, (int)(path_length - base), WC_ERR_INVALID_CHARS, 0,
-                                         facts->image_name, InteropWindowGraphMaxImageBytes, &cut);
-        }
-        free(path);
-        path = NULL;
         FILETIME created;
         FILETIME exited;
         FILETIME kernel;
@@ -1618,7 +1705,7 @@ static int native_fill_process(DWORD process_id, interop_window_facts_t *facts) 
         }
         CloseHandle(process);
     }
-    if (image_bytes == 0u) {
+    if (image_bytes == 0u && want_image) {
         image_bytes = native_scan_image_name(process_id, facts->image_name);
     }
     facts->image_length = image_bytes;
@@ -1750,8 +1837,18 @@ static window_observer_query_result_t native_query_facts(void *context, uint64_t
         return native_read_failed(handle);
     }
     const int iconic = IsIconic(handle) ? 1 : 0;
+    /*
+     * Visible: IsWindowVisible and not DWM-cloaked. A window without it is classified NotVisible
+     * whatever else its facts say, so the reads that exist only for the later classification steps
+     * (rect and fullscreen test, layered alpha, title, image path, Toolhelp fallback) are skipped:
+     * the 250 ms refresh queries every enumerated top-level window, hidden ones included. What stays is
+     * what the identity tuple (process, thread, start time, class hash) and validation need: relations,
+     * styles, class, dpi, process id, thread id and process start time. Gone and Failed are decided
+     * exactly as for a visible window.
+     */
+    const int visible = IsWindowVisible(handle) && cloaked == 0u;
     uint32_t flags = 0u;
-    if (IsWindowVisible(handle) && cloaked == 0u) {
+    if (visible) {
         flags |= (uint32_t)InteropWindowFactVisible;
     }
     if (IsWindowEnabled(handle)) {
@@ -1767,19 +1864,22 @@ static window_observer_query_result_t native_query_facts(void *context, uint64_t
         flags |= (uint32_t)InteropWindowFactLayered;
         BYTE alpha = 0;
         DWORD layered_flags = 0;
-        if (GetLayeredWindowAttributes(handle, NULL, &alpha, &layered_flags) && (layered_flags & LWA_ALPHA) != 0u) {
+        if (visible && GetLayeredWindowAttributes(handle, NULL, &alpha, &layered_flags) &&
+            (layered_flags & LWA_ALPHA) != 0u) {
             flags |= (uint32_t)InteropWindowFactLayeredAlphaKnown;
             facts->alpha = (uint8_t)alpha;
         }
     }
     facts->flags = flags;
 
-    RECT rect;
-    if (!native_fill_rect(handle, iconic, facts, &rect)) {
-        return native_read_failed(handle);
-    }
-    if (native_is_fullscreen(handle, iconic, facts->style, &rect)) {
-        facts->flags |= (uint32_t)InteropWindowFactFullscreen;
+    if (visible) {
+        RECT rect;
+        if (!native_fill_rect(handle, iconic, facts, &rect)) {
+            return native_read_failed(handle);
+        }
+        if (native_is_fullscreen(handle, iconic, facts->style, &rect)) {
+            facts->flags |= (uint32_t)InteropWindowFactFullscreen;
+        }
     }
     const UINT dpi = get_dpi(handle);
     if (dpi == 0u) {
@@ -1789,11 +1889,11 @@ static window_observer_query_result_t native_query_facts(void *context, uint64_t
     /*
      * GetWindowTextW on a window of the current process sends WM_GETTEXT, which can deadlock or
      * re-enter the owner thread. Own-process windows (exactly the AgentOwned set) therefore get no
-     * title (title_length stays 0) and receive no message at all.
+     * title (title_length stays 0) and receive no message at all. Invisible windows get no title either.
      */
     const int own_process = process_id == GetCurrentProcessId();
-    if (!native_fill_class(handle, facts) || (!own_process && !native_fill_title(handle, facts)) ||
-        !native_fill_process(process_id, facts)) {
+    if (!native_fill_class(handle, facts) || (visible && !own_process && !native_fill_title(handle, facts)) ||
+        !native_fill_process(process_id, facts, visible)) {
         return native_read_failed(handle);
     }
     if (!IsWindow(handle)) {

@@ -58,8 +58,10 @@
  * UIPI for elevated windows). Continuity is proven by the graph from the identity tuple
  * (process id, thread id, process start time, class hash) plus the destroy-hint rule of
  * interop_window_graph_note_destroyed(). Residual risk: a window destroyed and recreated with
- * the identical tuple and the same HWND, with the destroy hint lost by the OS and no
- * hint-table overflow, is indistinguishable from the old incarnation.
+ * the identical tuple and the same HWND, with the destroy hint lost (by the OS, or discarded by a
+ * hint-table overflow recovery, see pump), is indistinguishable from the old incarnation.
+ * interop_window_graph_invalidate_all stays in the graph ABI for the coordinator; the observer never
+ * calls it.
  *
  * Access denied. The image basename is resolved in two steps. First OpenProcess
  * (PROCESS_QUERY_LIMITED_INFORMATION) with QueryFullProcessImageName, which also yields the process
@@ -85,17 +87,20 @@
  * api->monotonic_ms. last_refresh_attempt_ms is stamped at the start of every refresh attempt
  * (window_observer_refresh, or the refresh that pump runs after an overflow), BEFORE the desktop is
  * checked, so a refresh that fails or is refused still counts as an attempt; it is also stamped when
- * pump finds the desktop inactive. It is unset (no attempt) from start() until the first attempt.
+ * pump finds the desktop inactive. It is unset (no attempt) from start() until the first attempt. The desktop_active gauge is 0 from start() until the first desktop check returns Default.
  * latch_ms is stamped whenever a full-refresh latch is set: start, set_preedit_window that changes
  * the window while Started, overflow recovery in pump, and a refusal because the desktop is
  * inactive; a refusal reuses the clock read of its own attempt stamp, so both values are equal. The
- * latch itself (stats.refresh_requested) is cleared only by a committed refresh.
+ * latch itself (stats.refresh_requested) is cleared only by a committed refresh. An internal flag
+ * (latch_unconsumed) is set by every latch event and cleared by the next refresh attempt; it, not a
+ * comparison of the two timestamps, decides the latch term below, so a frozen clock cannot hide or
+ * repeat a latch event.
  * window_observer_refresh_due(now) is true iff the observer is Started and (no refresh attempt has
  * been made since start, or now - last_refresh_attempt_ms >= InteropWindowGraphRefreshIntervalMs
- * with a backwards clock counted as zero elapsed, or the latch is set and last_refresh_attempt_ms <
- * latch_ms). A refresh attempt therefore consumes every latch event that preceded it even when it
- * fails, and a frozen clock with a persistently failing refresh runs at most one refresh per latch
- * event.
+ * with a backwards clock counted as zero elapsed, or the latch is set and a latch event has not yet
+ * been consumed by an attempt). A refresh attempt therefore consumes every latch event that preceded
+ * it even when it fails, and a frozen clock with a persistently failing refresh runs at most one
+ * refresh per latch event.
  *
  * Facts assembly (portable core). For each window it queries, the core zero-fills a facts struct,
  * calls api->query_facts and, on Exists, overlays stamp, captured_ms, AgentOwned (process_id equals
@@ -109,6 +114,8 @@
  *    classify status other than Ok (unusable owner facts) makes the window's query Failed.
  *  - Gone: set OwnerHidden.
  *  - Failed: the window's query is Failed.
+ * The owner sub-query is skipped for a window whose own Visible flag is clear: classification stops at
+ * NotVisible before OwnerHidden is consulted, so the flag stays clear and the owner is not queried.
  * There is no recursion: the owner is classified with OwnerHidden clear and its own owner is never
  * queried. The query counters count one result per window query, with the owner sub-query folded in.
  *
@@ -138,7 +145,12 @@
 
 /** @brief Capacity of the dirty-handle table (distinct HWNDs awaiting a requery); while pump holds a popped key one slot is reserved for its put-back, so a new HWND is accepted only while dirty_pending plus the popped key count stays below this value. */
 #define WindowObserverDirtyCapacity 512u
-/** @brief Capacity of the enumeration buffer; more top-level windows make a refresh fail closed. */
+/**
+ * @brief Capacity of the enumeration buffer. HARD LIMIT: a desktop with more top-level windows yields a
+ *        Truncated enumeration, and a refresh then runs without ever committing (see window_observer_refresh):
+ *        windows beyond the first WindowObserverMaxEnumerated in z-order are never offered by the enumeration
+ *        (only by hints and the unseen requery of Active windows), and nothing is retired by absence.
+ */
 #define WindowObserverMaxEnumerated 2048u
 /** @brief Extra requery attempts after a Failed query before the key is dropped (until the next refresh). */
 #define WindowObserverQueryRetries 1u
@@ -180,8 +192,8 @@ typedef enum window_observer_state_t {
 
 /** @brief Result codes of the observer functions. Only Ok and More are fully successful. */
 typedef enum window_observer_status_t {
-    WindowObserverStatusOk = 0, /**< Completed; for pump, no hint remains queued. */
-    WindowObserverStatusMore = 1, /**< pump only: budget exhausted with hints still queued; call again. */
+    WindowObserverStatusOk = 0, /**< Completed; for pump, no hint remains queued and no overflow is latched. */
+    WindowObserverStatusMore = 1, /**< pump only: budget exhausted, or hints remain or arrived while an overflow recovery ran; call again. */
     WindowObserverStatusDesktopInactive = 2, /**< Input desktop is not Default or unknown; nothing processed, graph untouched, hints kept, full refresh latched. */
     WindowObserverStatusGraphQueueFull = 3, /**< Graph reported QueueFull; the coordinator must drain graph events and call again. */
     WindowObserverStatusInvalidArgument = 4, /**< NULL pointer, zero budget/stamp/process id, uac_mode above 2, malformed api table or config; nothing changed. */
@@ -192,7 +204,7 @@ typedef enum window_observer_status_t {
     WindowObserverStatusHookFailed = 9, /**< A hook could not be installed; installed hooks were removed, state Failed. */
     WindowObserverStatusUnhookFailed = 10, /**< A hook could not be removed; state Failed, restart refused. */
     WindowObserverStatusGraphError = 11, /**< Graph returned an unexpected status (see last_graph_status); processing stopped. */
-    WindowObserverStatusEnumFailed = 12, /**< Enumeration failed or was truncated; no refresh was begun, nothing retired. */
+    WindowObserverStatusEnumFailed = 12, /**< Enumeration failed (no refresh begun, nothing retired) or was truncated (the refresh ran its offers and unseen requery but was aborted, never committed). refresh, and pump when it runs an overflow recovery; the refresh latch stays set. */
     WindowObserverStatusStampExhausted = 13, /**< The logical clock cannot issue another stamp; the observer must be replaced. */
     WindowObserverStatusReentrant = 14, /**< Any function with an observer handle except note_hint: another entry point of this observer is active (busy flag); nothing touched (a destroy does not free). pump and refresh: also returned when the graph reports Reentrant (key put back, processing stopped, last_graph_status Reentrant). */
     WindowObserverStatusUnsupported = 15 /**< create only: the native table cannot run here (GetDpiForWindow missing, or the calling thread is not DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); no observer exists. */
@@ -272,7 +284,11 @@ typedef struct window_observer_api_t {
      * LayeredAlphaKnown and alpha, Fullscreen, ClassTruncated, ImageUnknown, rect (DWM extended
      * frame bounds with GetWindowRect fallback; restored geometry when iconic), dpi, process id,
      * thread id, process start time (0 if unreadable), class_name, image_name (basename only) and
-     * title. Visible must be set only if the window is visible and not DWM-cloaked. Titles and
+     * title. Visible must be set only if the window is visible and not DWM-cloaked. For a window with
+     * Visible clear the callee MAY leave title, image, rect and layered alpha empty (zero extents,
+     * title_length 0, image_length 0 with ImageUnknown); it must still supply window, root, owner,
+     * styles, class, dpi, process id, thread id and process start time (the identity tuple), because the
+     * classification is NotVisible whatever the rest says. The native table does exactly that. Titles and
      * class names are converted to UTF-8, cut at a code-point boundary, and unpaired surrogates
      * become U+FFFD. min_width and min_height stay 0.
      *
@@ -291,18 +307,22 @@ typedef struct window_observer_api_t {
      * @param[out] facts Non-NULL pre-zeroed struct; contents are meaningful only for Exists.
      * @return Exists, Gone (only when the OS reports an invalid handle) or Failed. A facts->window
      *         different from the requested window is treated by the observer as Failed.
-     * @note Owner thread only. The native implementation makes one bounded transient heap allocation
-     *       per call (the image-path buffer), freed on every path before it returns.
+     * @note Owner thread only. The native implementation reads the image path into a 260-WCHAR stack
+     *       buffer and allocates at most one 64 KiB heap buffer per call, only when that is too small
+     *       (a long image path of a visible window); the buffer is freed on every path before the call
+     *       returns. A Toolhelp snapshot handle (not heap memory of this module) is scoped per pump or
+     *       refresh call.
      */
     window_observer_query_result_t (*query_facts)(void *context, uint64_t window,
                                                   interop_window_facts_t *facts);
     /**
      * @brief Snapshot the top-level windows in z-order, front to back.
      * @param[in,out] context The config's api_context; may be NULL.
-     * @param[out] windows Non-NULL array of capacity elements (always WindowObserverMaxEnumerated).
+     * @param[out] windows Non-NULL array of capacity elements (always WindowObserverMaxEnumerated, a hard limit).
      * @param[in] capacity Elements available.
      * @param[out] count Non-NULL; number of valid entries written (at most capacity) for Ok and Truncated.
-     * @return Ok, Truncated (partial list) or Failed. Entries are nonzero; duplicates are tolerated.
+     * @return Ok, Truncated (partial list; the observer still offers it but never commits it) or Failed.
+     *         Entries are nonzero; duplicates are tolerated.
      */
     window_observer_enum_result_t (*enum_top_level_windows)(void *context, uint64_t *windows,
                                                             uint32_t capacity, uint32_t *count);
@@ -358,7 +378,7 @@ typedef struct window_observer_stats_t {
     uint64_t hints_filtered; /**< Hints ignored: wrong object/child id, handle 0, or event outside the hooked ranges. */
     uint64_t hints_wrong_thread; /**< Hints ignored because they arrived off the owner thread (the one counter updated atomically from other threads). */
     uint64_t hints_coalesced; /**< Hints merged into an existing table entry. */
-    uint64_t hint_overflows; /**< Hints for a new HWND that found the table full (counting the slot reserved for a popped key) and latched overflow. */
+    uint64_t hint_overflows; /**< Hints for a new HWND that found the table full (counting the slot reserved for a popped key) and latched overflow. Every WinEvent of a child window is accepted (see window_observer_note_hint), so a burst of child events can overflow the table. */
     uint64_t keys_processed; /**< Table entries popped by pump. */
     uint64_t queries_exists; /**< Window queries that returned Exists (one count per window query, the owner sub-query folded in). */
     uint64_t queries_gone; /**< Window queries that returned Gone (a Gone owner sub-query sets OwnerHidden and is not counted here). */
@@ -370,7 +390,7 @@ typedef struct window_observer_stats_t {
     uint64_t refreshes_started; /**< refresh_begin calls issued. */
     uint64_t refreshes_committed; /**< Refreshes committed. */
     uint64_t refreshes_aborted; /**< Refreshes aborted by the observer (before the commit, on QueueFull, a call-level graph status, Reentrant or a defensive Suspended). */
-    uint64_t invalidations; /**< invalidate_all calls issued after an overflow. */
+    uint64_t invalidations; /**< Overflow recoveries started by pump (name kept for ABI stability). No invalidate_all is issued: each recovery discards the table and runs one full refresh. */
     uint64_t uac_native_hidden; /**< Offers whose result reason was UacNativeHidden (a consent window exists but is hidden from export). */
 } window_observer_stats_t;
 
@@ -443,7 +463,9 @@ _Static_assert(offsetof(window_observer_stats_t, uac_native_hidden) == 168, "sta
  *                   and InvalidArgument elsewhere; a non-NULL api must have every entry non-NULL.
  *                   first_stamp and own_process_id nonzero, uac_mode 0..2 (InvalidArgument otherwise).
  * @param[out] out_observer Non-NULL caller slot. On Ok it receives the handle (owned by the caller
- *                          until destroy). On every failure it is set to NULL once the slot itself was valid.
+ *                          until destroy). On every failure it is set to NULL once the slot itself was valid
+ *                          (the config is copied before the slot is written, so a config that overlaps
+ *                          the slot is read intact).
  * @return Ok; InvalidArgument; Unsupported (native table selected and it cannot run: GetDpiForWindow
  *         is missing, or the calling thread's DPI awareness context is not
  *         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 per GetThreadDpiAwarenessContext and
@@ -528,9 +550,14 @@ window_observer_status_t window_observer_set_preedit_window(window_observer_t *o
  *
  * Order: take the busy flag (Reentrant if taken); if the input desktop is not Default, process nothing,
  * latch a refresh, stamp the cadence clock and return DesktopInactive. If the overflow latch is set,
- * call invalidate_all (QueueFull returns GraphQueueFull with the latch kept), clear the table and
+ * recover WITHOUT invalidate_all: discard the table (destroy information included) and the overflow
  * latch, latch a refresh and run a full refresh (steps 2 to 6 of window_observer_refresh; pump has just
- * checked the desktop and stamped the attempt) in this call, whose status is returned. Otherwise
+ * checked the desktop and stamped the attempt) in this call. The refresh offers every enumerated window
+ * (an unchanged window causes no event), requeries the unseen Active ones individually and retires only
+ * what is gone, so a flood of hints for unrelated windows costs one refresh and no export churn. Residual
+ * risk, shared with a hint the OS loses: a window destroyed and recreated with the identical HWND and
+ * identity tuple whose destroy hint was discarded here is not detected. If the recovery refresh fails the
+ * hints are already gone; the refresh latch stays set and the cadence retries it. Otherwise
  * pop at most min(budget, entries present at call start) keys in first-seen order; each key is removed
  * from the table before its facts are queried, so a hint arriving during the query re-adds it. While a
  * key is popped one dirty slot stays reserved for it: note_hint treats the table as full when
@@ -552,13 +579,16 @@ window_observer_status_t window_observer_set_preedit_window(window_observer_t *o
  * @param[in] budget At least 1; maximum keys popped in this call.
  * @param[out] stats Nullable; receives a snapshot of the cumulative counters after the call
  *                   (also on non-Ok statuses other than InvalidArgument, WrongThread and Reentrant).
- * @return Ok (the table is empty on return); More (hints remain: budget exhausted, or a key was put
- *         back after a failed query); DesktopInactive;
- *         GraphQueueFull; GraphError; StampExhausted; Reentrant (busy flag, or the graph reported
- *         Reentrant); BadState (not Started); InvalidArgument; WrongThread.
+ * @return Ok (the table is empty and no overflow is latched on return); More (hints remain: budget
+ *         exhausted, a key was put back after a failed query, or hints arrived while an overflow recovery
+ *         refresh ran); DesktopInactive; GraphQueueFull; GraphError; StampExhausted; Reentrant (busy flag,
+ *         or the graph reported Reentrant); BadState (not Started); InvalidArgument; WrongThread. When
+ *         the overflow recovery refresh fails, pump also returns that refresh's failure status:
+ *         EnumFailed (failed or truncated enumeration), GraphQueueFull, GraphError, StampExhausted,
+ *         DesktopInactive; the table is already empty and the refresh latch is set.
  * @note Owner thread only; calls api query entries and the graph; the portable core does not allocate
- *       (two facts structs live on the stack; the native query_facts makes one bounded transient
- *       allocation per query, freed on every path). Graph callbacks (app-key lookup) run inside observe.
+ *       (two facts structs live on the stack; the native query_facts allocates only for a long image
+ *       path, see its note). Graph callbacks (app-key lookup) run inside observe.
  *       Holds the busy flag.
  */
 window_observer_status_t window_observer_pump(window_observer_t *observer, interop_window_graph_t *graph,
@@ -573,7 +603,10 @@ window_observer_status_t window_observer_pump(window_observer_t *observer, inter
  *  1. Stamp last_refresh_attempt_ms from api->monotonic_ms (before anything can fail), then check the
  *     desktop: it must be Default, else DesktopInactive with the graph untouched and the latch kept
  *     (latch_ms equals the attempt stamp).
- *  2. Enumerate; Truncated or Failed returns EnumFailed before any graph call.
+ *  2. Enumerate. Failed (or a count above WindowObserverMaxEnumerated) returns EnumFailed before any graph
+ *     call. Truncated continues with steps 3 to 5 on the partial list and then ABORTS instead of
+ *     committing (step 6 is skipped) and returns EnumFailed: admissions, updates and Gone notes still
+ *     flow, nothing is retired by absence, and the refresh latch is not cleared.
  *  3. refresh_begin (if the graph reports a refresh left open, abort it and begin again).
  *  4. For each enumerated window in order draw a stamp and a tick, then query (with the owner
  *     sub-query of Facts assembly). Exists: offer with refresh_offer. Gone: skip the window (it stays
@@ -608,11 +641,12 @@ window_observer_status_t window_observer_pump(window_observer_t *observer, inter
  * @param[in,out] graph Non-NULL graph (same thread rule as pump).
  * @param[in] session_epoch Captured epoch of the graph.
  * @param[out] stats Nullable; snapshot of the cumulative counters after the call.
- * @return Ok (committed, possibly with failed queries); DesktopInactive; EnumFailed; GraphQueueFull;
+ * @return Ok (committed, possibly with failed queries); DesktopInactive; EnumFailed (failed enumeration:
+ *         nothing begun; truncated enumeration: begun, applied, aborted); GraphQueueFull;
  *         GraphError; StampExhausted; Reentrant; BadState; InvalidArgument; WrongThread.
  * @note Owner thread only; calls api entries and the graph; uses the observer's enumeration buffer
  *       (outermost call only). Total queries per call are bounded by WindowObserverMaxEnumerated plus
- *       InteropMaxWindows (each with at most one owner sub-query).
+ *       InteropMaxWindows (each with at most one owner sub-query; none for a window that is not visible).
  */
 window_observer_status_t window_observer_refresh(window_observer_t *observer, interop_window_graph_t *graph,
                                                  uint64_t session_epoch, window_observer_stats_t *stats);
@@ -625,7 +659,7 @@ window_observer_status_t window_observer_refresh(window_observer_t *observer, in
  * @return 1 when the observer is Started and any of: no refresh attempt has been made since start();
  *         at least InteropWindowGraphRefreshIntervalMs have elapsed since last_refresh_attempt_ms (a
  *         clock that went backwards counts as zero elapsed); the refresh latch is set and
- *         last_refresh_attempt_ms is earlier than latch_ms (see Refresh cadence and latch). Otherwise 0,
+ *         a latch event has not yet been consumed by an attempt (see Refresh cadence and latch). Otherwise 0,
  *         including off the owner thread and while another entry point is active.
  * @note Owner thread only; no side effects.
  */
@@ -673,10 +707,17 @@ window_observer_status_t window_observer_status(const window_observer_t *observe
  * has reached WindowObserverDirtyCapacity; the reservation guarantees that a put-back after a failed
  * query or a stop always fits.
  *
+ * Child windows. Windows raises the same OBJID_WINDOW/CHILDID_SELF events for child windows, and the
+ * portable core cannot tell a child from a top-level window without a Win32 call, so every such hint is
+ * accepted. A burst of more than WindowObserverDirtyCapacity distinct child handles (closing or resizing
+ * a window with hundreds of controls) overflows the table; the recovery is one full refresh (see pump),
+ * not a retirement of the exported windows. Below the capacity each child key costs one pump query.
+ *
  * Process-wide in-flight counter. Every call increments an atomic counter before it loads the
  * active-observer slot and decrements it when it has finished with the observer; start's rollback,
- * stop and destroy wait for the counter to reach zero after clearing the slot, so the call can never
- * touch a freed observer. This is the only synchronization note_hint performs and it never blocks.
+ * stop and destroy wait (yielding the processor each iteration) for the counter to reach zero after
+ * clearing the slot, so the call can never touch a freed observer. This is the only synchronization
+ * note_hint performs and it never blocks.
  *
  * It MAY: read the active slot, call api->current_thread_id, update the dirty table and counters on
  * the owner thread. It MUST NOT: touch the graph, call any other api entry (no queries, no
