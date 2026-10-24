@@ -6,7 +6,7 @@
 - Base: e86cf8e344c6bafea5e562f04129a408e19629ff
 - Worktree: /home/dev/.codex/worktrees/seamless-window-graph/Waddle-LSW
 - Branch: feat/seamless-window-graph
-- Returned HEAD: see "Commits and exact files" (the final HEAD is the commit whose message starts `docs(interop): record the window graph handoff return and final tracker`; `git rev-parse feat/seamless-window-graph` on the worktree gives its full SHA; the last verified code HEAD before the return/tracker commits is `0c7127521deba72571eaf8707f1c779aa7ed7346`)
+- Returned HEAD: the tip of `feat/seamless-window-graph` (`git rev-parse feat/seamless-window-graph` in the worktree gives the full SHA). Last verified code commit: `0c7127521deba72571eaf8707f1c779aa7ed7346`; this document: `5c02dcc`; the one commit after it only finalizes `TRACKER.md` (message `docs(interop): finalize the window graph tracker`) and touches no code.
 - Working tree: clean at the time of writing (`git status --short` empty). Generated output lives only in the gitignored `build/` directory.
 - File ownership: **explicitly released to Codex.** No sub-agent or process of this session is running or will edit anything after this commit.
 
@@ -56,7 +56,8 @@ All 12 owned paths were created in this session; no other file changed (`git dif
 | 00a84e4 | tests/interop/window_observer_windows.c, window_observer_api_double.h | Flood, fuzz (convergence), calloc-failure, in-flight tests; 63 tests |
 | 221fb74 | scripts/interop_window_graph.mk | ReleaseSafe runs, symbol check, calloc wrap |
 | 0c71275 | .../IMPL_DESC.md | Design aligned with review results; open findings O24-O26 |
-| (final) | .../HANDOFF_RETURN.md, .../TRACKER.md | This return and the final tracker |
+| 5c02dcc | .../HANDOFF_RETURN.md | This return |
+| (tip) | .../TRACKER.md | Final tracker (docs only) |
 
 Untracked/generated files: none outside `build/` (gitignored). To recover everything: `git log e86cf8e..feat/seamless-window-graph`; every commit is self-contained and builds with the standalone makefile.
 
