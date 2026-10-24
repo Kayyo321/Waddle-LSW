@@ -62,21 +62,24 @@
  *
  * Tick clock: facts.captured_ms (observe, refresh_offer) and event_time_ms (note_destroyed) stay
  * 32-bit wire values in the Win32 tick domain, which wraps every 2^32 ms (about 49.7 days). The
- * graph never compares two 32-bit ticks directly. It keeps an internal 64-bit base, tick_base,
- * and unwraps every tick t32 to
- *     t64 = tick_base + (int64_t)(int32_t)(t32 - (uint32_t)tick_base)
+ * graph never compares two 32-bit ticks directly. It keeps an internal 64-bit base, tick_base, and
+ * the graph-clock value tick_clock_at_base at which that base was set. Before unwrapping, each
+ * tick-carrying call reads the configured now_ms clock once and estimates the current tick as
+ *     est = tick_base + (now_ms - tick_clock_at_base)
+ * (elapsed counts as 0 when the clock is absent, stuck or goes backwards), then unwraps every tick t32 to
+ *     t64 = est + (int64_t)(int32_t)(t32 - (uint32_t)est)
  * where the subtraction wraps modulo 2^32. Every call that returns Ok and carries a tick then
  * sets tick_base to the larger of the old base and the t64 it computed (the base never moves
- * backwards; a delayed older tick unwraps below the base without changing it); a call
- * that does not return Ok never changes tick_base. The base starts at 2^32 so that no unwrapped
- * value is negative; only differences between unwrapped values are observable. Records store the
- * unwrapped 64-bit values (admission tick, last offered tick) and the destroy rule compares them
- * with a plain 64-bit "<". Unwrapping is exact while an Ok call that carries a tick happens at
- * least once per 2^31 ms (about 24.8 days); the observer's refresh cadence of
- * InteropWindowGraphRefreshIntervalMs satisfies this by orders of magnitude. After a longer
- * silence a tick can alias by a multiple of 2^32 ms, so a destroy hint may be ignored or applied
- * wrongly; the next refresh corrects both (RefreshUnseen retires a vanished window, a requery
- * re-admits a live one).
+ * backwards; a delayed older tick unwraps below the base without changing it) and re-anchors
+ * tick_clock_at_base; a call that does not return Ok never changes either field. The base starts
+ * at 2^32 so that no unwrapped value is negative; only differences between unwrapped values are
+ * observable. Records store the unwrapped 64-bit values (admission tick, last offered tick) and
+ * the destroy rule compares them with a plain 64-bit "<". Unwrapping is exact while the graph
+ * clock keeps running and does not drift from the tick domain by more than 2^31 ms (about 24.8
+ * days) between two tick-carrying Ok calls, so a silence longer than that (for example a long
+ * DesktopInactive stretch) no longer breaks destroy hints. Only a clock that does not advance
+ * during such a silence can alias a tick by a multiple of 2^32 ms; the next refresh then corrects
+ * the outcome (RefreshUnseen retires a vanished window, a requery re-admits a live one).
  *
  * Classification (pure function of facts and uac_mode; first matching step wins; exported as
  * interop_window_graph_classify() so the observer can classify an owner window without a graph):
@@ -562,7 +565,7 @@ typedef struct interop_window_graph_config_t {
     uint32_t reserved0; /**< Must be zero. */
     interop_window_app_key_lookup_t app_key_lookup; /**< Required, non-NULL. */
     void *app_key_context; /**< Passed to app_key_lookup; must outlive the graph. */
-    interop_window_now_ms_t now_ms; /**< NULL selects the default monotonic clock. */
+    interop_window_now_ms_t now_ms; /**< NULL selects the default monotonic clock. Also read once per observe, refresh_offer and note_destroyed call to estimate the current tick for the unwrap (see Tick clock). */
     void *now_ms_context; /**< Passed to now_ms; must outlive the graph. */
 } interop_window_graph_config_t;
 
@@ -919,7 +922,7 @@ interop_window_graph_status_t interop_window_graph_observe(interop_window_graph_
  *                         to Retiring, otherwise Unchanged (deferred_dropped may be 1).
  * @return Ok; common-rule statuses; InvalidArgument for window 0, hint_stamp 0 or NULL output;
  *         QueueFull when the ring lacks room for the RetireIntent events (nothing changed).
- * @note Owner thread only; no callback; no allocation. stamp_high_water and tick_base advance on Ok.
+ * @note Owner thread only; calls the now_ms clock once for the tick estimate; no other callback; no allocation. stamp_high_water and tick_base advance on Ok.
  */
 interop_window_graph_status_t interop_window_graph_note_destroyed(interop_window_graph_t *graph,
                                                                   uint64_t session_epoch,
