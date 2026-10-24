@@ -161,9 +161,18 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     comments describe exceptions; no ABI size/export change. Full leak/coverage/
     Windows qualification remains pending. HEAD is this correctness commit.
 
-- **Commit `HEAD`**: `ci(interop): execute full graph Zig suites on Windows`
+- **Commit `a32922b`**: `ci(interop): execute full graph Zig suites on Windows`
   - **Task Impact**: +0% to local #1/#2/#4; +0% global TODO #10 (local90.50%).
   - **Summary**: Adds both ReleaseSafe Zig unit executables to the Windows
     cross-build/artifact/native execution gates so all new descendant regressions
     run there alongside C clients and real adapter smoke. No success inferred
     before the exact-source run. HEAD identifies this CI expansion.
+
+- **Commit `HEAD`**: `docs(interop): qualify corrected graph source and native test builds`
+  - **Task Impact**: +0% to local #1/#2/#3/#4; +0% global TODO #10 (local90.50%).
+  - **Summary**: Full lead gates at exacta32922b pass: graph145/ABI159 in both
+    modes, C27/observer65, leak-enabled sanitizers, exact21 symbols, graph97.95%
+    branches99.88% lines, ABI96.77%/99.32%, observer358/382 branches624/645 lines.
+    Five Windows executables and both native SDK objects cross-build. Archives
+    hashes/log; exact new native execution and parent integration still pending.
+    O5 remains open. HEAD identifies this qualification receipt commit.
