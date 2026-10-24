@@ -41,12 +41,26 @@
     {
       "path": "impl/seamless-interop/evidence/slot_runtime_abi_2026_10_24/seamless_slot_abi_sanitizers.log",
       "sha256": "e48bce112ebbf87fa4287a4ac5f99a03ae1eef321d34bece5a1ca9e1623b6ad7"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_foundations_2026_10_24/ci_40110811887.json",
+      "sha256": "dbb92ca240d8afea03f4eaeacd7fb5623d8e414ca48746c630a02d4c113000d1"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_foundations_2026_10_24/ci_40110811855.json",
+      "sha256": "129ac5f0ba5adc1c86831ae87d69e7ad0e572feb77fcc2869ca38bd52fcf6fad"
     }
   ],
   "limits": [
     "Opaque CPU bookkeeping C boundary only; external transition and teardown assertions remain caller obligations.",
-    "Windows executables cross-build; actual Windows execution pending next CI.",
     "No live mapping/session/capture credit."
   ],
-  "progress_credit": 0
+  "progress_credit": 0,
+  "ci": {
+    "head_sha": "acd2011ddc0da6087876346416fbd0c8da00020f",
+    "interop_run": 40110811887,
+    "native_av_run": 40110811855,
+    "conclusion": "success",
+    "actual_windows_execution": true
+  }
 }

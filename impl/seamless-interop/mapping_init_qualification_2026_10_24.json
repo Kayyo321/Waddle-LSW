@@ -41,12 +41,26 @@
     {
       "path": "impl/seamless-interop/evidence/mapping_init_2026_10_24/seamless_mapping_init_sanitizers.log",
       "sha256": "00c234db0f3516347603c1358e82d701b9aeeeeb5417b22c84a44b5feb6e4e3b"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_foundations_2026_10_24/ci_40110811887.json",
+      "sha256": "dbb92ca240d8afea03f4eaeacd7fb5623d8e414ca48746c630a02d4c113000d1"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_foundations_2026_10_24/ci_40110811855.json",
+      "sha256": "129ac5f0ba5adc1c86831ae87d69e7ad0e572feb77fcc2869ca38bd52fcf6fad"
     }
   ],
   "limits": [
     "Initializes header and192descriptors only in quiescent caller-owned mapping; no audio/heap initialization.",
-    "Caller guarantees actual mapping accessibility, fresh epoch, prior producer stop and host detach; proof flag cannot establish them.",
-    "Windows cross-build passes; actual execution pending CI. No signed-driver or live session acceptance."
+    "Caller guarantees actual mapping accessibility, fresh epoch, prior producer stop and host detach; proof flag cannot establish them."
   ],
-  "progress_credit": 0
+  "progress_credit": 0,
+  "ci": {
+    "head_sha": "acd2011ddc0da6087876346416fbd0c8da00020f",
+    "interop_run": 40110811887,
+    "native_av_run": 40110811855,
+    "conclusion": "success",
+    "actual_windows_execution": true
+  }
 }

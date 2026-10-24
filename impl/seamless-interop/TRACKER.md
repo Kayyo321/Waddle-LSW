@@ -609,11 +609,20 @@ its uncompiled draft earns no credit until current acceptance passes.
     qualification; isolated common modules earn no native endpoint credit.
     Reserves independent Luna files. Source commit0f341a5 contains this design/ownership.
 
-- **Commit `HEAD`**: `docs(interop): specify bounded control liveness and adapter maps`
+- **Commit `11fb4c1`**: `docs(interop): specify bounded control liveness and adapter maps`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Defines Ready-only receive deadlines, Ping cadence and bounded
     per-request expiry under continuous other traffic, plus caller-owned request
     IDs and lifecycle-only disconnect actions. Saves read-only host/guest API
     maps for actual OS adapters; legacy driver validation and daemon Running
     are not new-session readiness. No live endpoint or qualification credit.
-    HEAD identifies this containing specification/evidence commit.
+    Source commit11fb4c1 contains this specification/evidence.
+
+- **Commit `HEAD`**: `docs(interop): record native Windows session foundation qualification`
+  - **Task Impact**: +0% to TODO #5/#6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Records exact-head interop40110811887 Linux/Windows and Native
+    AV40110811855 success atacd2011. Windows executes both C/Zig opaque-runtime
+    suites and the metadata initializer. Qualification receipts retain hashed
+    run/job evidence and remove pending-CPU-execution limitations. Live endpoint,
+    signed-driver and compositor acceptance remain open; no extra task credit.
+    HEAD identifies this containing qualification commit.
