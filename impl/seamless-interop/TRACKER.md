@@ -1025,7 +1025,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     still requires90% branches and full qualification before credit.
     HEAD identifies this local interface correction commit.
 
-- **Commit `HEAD`**: `docs(interop): qualify snapshot and native guards on Linux and Windows`
+- **Commit `f8a52a8`**: `docs(interop): qualify snapshot and native guards on Linux and Windows`
   - **Task Impact**: +0% to TODO #6/#7/#10/#34 (+0% overall; total17.80%).
   - **Summary**: Exact3e564ad passes graph CI40129670493, interop40129670503
     and Native AV40129670494, including every Linux/Windows job. Actual Windows
@@ -1034,3 +1034,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     remain green. Archives exact jobs/logs and hashes. O5, installed guest
     session and the unaccepted Linux socket draft remain open.
     [Qualification](ci_qualification_3e564ad.json). HEAD is this evidence commit.
+
+- **Commit `HEAD`**: `docs(interop): preserve observer destroy contract review blockers`
+  - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
+  - **Summary**: Reconciles the advisory O5 proposal with the accepted const/
+    uint32 graph snapshot API, identifies mandatory callback reserve points,
+    Deferred-destroy promotion, bounded publication staging and quiesced local
+    cleanup requirements. Keeps all proposals explicitly unaccepted until a
+    consolidated normative observer contract and implementation pass review.
+    HEAD identifies this advisory review preservation commit.

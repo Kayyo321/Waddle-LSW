@@ -19,3 +19,10 @@ storage and free only observer-local memory, with no restore or epoch authority.
 Its final output/alias/lifecycle rules and tests remain to be frozen. Native
 bundle/backing ownership remains external. Original /tmp paths in the research
 are historical; these copies are durable.
+
+The later `lead_blockers_review.md` rechecks these proposals against the accepted
+snapshot ABI and current observer source. It identifies required callback safe
+points, dirty-to-protected promotion, bounded publication staging, hook cleanup
+and local evidence-handoff decisions. It remains advisory; no O5 code or credit
+is accepted from this review. The frozen uint32/const snapshot API supersedes
+older illustrative mutable/size_t signatures in `api.md`.
