@@ -122,6 +122,10 @@ struct api_double_t {
     uint64_t query_hook_window; /**< Fire only for this hwnd; 0 = any. */
     uint32_t query_hook_once; /**< 1 = clear query_hook before the first firing. */
 
+    void (*install_hook_fn)(api_double_t *dbl, void *arg); /**< Callback fired at the start of every install_hook call; NULL = none. */
+    void *install_hook_arg; /**< Passed to install_hook_fn. */
+    uint32_t enum_report_count; /**< Nonzero: enum_top_level_windows reports this count (with result Ok) regardless of the list. */
+
     _Atomic int helper_active; /**< 1 while a helper thread registered its identity. */
     uint32_t helper_tid; /**< Fake thread id reported to the helper thread. */
 #ifdef _WIN32
@@ -338,6 +342,9 @@ static window_observer_desktop_t api_double_query_input_desktop(void *context) {
 /** @brief api table entry: install_hook. Fails at install_fail_at; records ranges and tokens. */
 static int api_double_install_hook(void *context, uint32_t event_min, uint32_t event_max, uintptr_t *hook) {
     api_double_t *dbl = (api_double_t *)context;
+    if (dbl->install_hook_fn != NULL) {
+        dbl->install_hook_fn(dbl, dbl->install_hook_arg);
+    }
     const uint32_t index = dbl->install_calls;
     dbl->install_calls++;
     if (index < ApiDoubleMaxHooks) {
@@ -380,7 +387,7 @@ static window_observer_enum_result_t api_double_enum(void *context, uint64_t *wi
     for (uint32_t i = 0; i < written; i++) {
         windows[i] = dbl->enum_list[i];
     }
-    *count = written;
+    *count = dbl->enum_report_count != 0u ? dbl->enum_report_count : written;
     return dbl->enum_result;
 }
 
