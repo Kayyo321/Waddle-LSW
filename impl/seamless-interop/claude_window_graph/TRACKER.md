@@ -91,9 +91,17 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     remain open; this is provisional evidence, not final integration acceptance.
     HEAD identifies this containing evidence commit.
 
-- **Commit `HEAD`**: `docs(interop): require cached descendant invalidation on parent discontinuity`
+- **Commit `d626301`**: `docs(interop): require cached descendant invalidation on parent discontinuity`
   - **Task Impact**: +0% to local #1/#3/#4; +0% global TODO #10 (local92.25%).
   - **Summary**: Freezes the staged bounded deletion-mask correction across
     identity replacement, accepted destroy, exclusion and refresh. Roots include
     all Active cascade members; QueueFull remains transactional and same-object
     Reclassified keeps its flush. O5 remains unresolved. HEAD is this contract.
+
+- **Commit `HEAD`**: `test(interop): add real Windows observer adapter smoke fixture`
+  - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local92.25%).
+  - **Summary**: Adds a Windows-only fixture using the actual native table,
+    ownerless HWND query, real hook/message delivery, visibility/Gone and
+    teardown. Bounded cleanup preserves failed owners for retries; unavailable
+    desktop is a failure. Strict Windows cross-build passes. No Windows execution
+    or foreign-process/UAC/capture result is claimed. HEAD is this fixture commit.

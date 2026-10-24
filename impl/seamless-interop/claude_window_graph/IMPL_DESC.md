@@ -1421,3 +1421,24 @@ Same-incarnation Reclassified regressions must continue to pass. The independent
 review is archived in incarnation_review.md. O5 delivered-destroy loss remains
 open separately; no full-refresh continuity proof is accepted for identical
 identity tuples after discarded destroy evidence.
+
+### 9.7 Native Windows adapter smoke fixture
+
+Add a standalone Windows-only C fixture with the real native API table, no API
+double and no manual note_hint calls. It establishes per-monitor V2 thread DPI
+awareness, creates an observer on the calling thread, starts actual WinEvent
+hooks, and owns one temporary visible ownerless Win32 window. It verifies raw
+native facts for that HWND (root/owner, process/thread, geometry, DPI and the
+intentional empty title for own-process windows), hide visibility, then Gone
+after destruction. The ownerless query exercises the O26 GetWindow/last-error
+case on an actual Windows runner. A bounded message pump waits at most10s for
+native hook delivery to increase observer hint counters. The count proves real
+hook delivery, not that every hint belongs to this fixture's window.
+
+All failures return nonzero after cleanup attempts. No unavailable desktop or
+Unsupported result is a successful skip. Destroy only the fixture-owned HWND;
+stop/unhook and destroy the observer on its creating thread, preserving retry
+semantics on failure. Restore the original thread DPI context. No graph, capture,
+transport, driver, UAC, secure desktop or foreign-process behavior is qualified
+by this fixture. No disk/VM/desktop configuration is changed. Root will wire the
+cross-built executable into Windows CI after portable review integration.
