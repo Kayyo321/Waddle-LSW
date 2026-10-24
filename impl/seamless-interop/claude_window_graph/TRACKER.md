@@ -98,10 +98,18 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     all Active cascade members; QueueFull remains transactional and same-object
     Reclassified keeps its flush. O5 remains unresolved. HEAD is this contract.
 
-- **Commit `HEAD`**: `test(interop): add real Windows observer adapter smoke fixture`
+- **Commit `978278e`**: `test(interop): add real Windows observer adapter smoke fixture`
   - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local92.25%).
   - **Summary**: Adds a Windows-only fixture using the actual native table,
     ownerless HWND query, real hook/message delivery, visibility/Gone and
     teardown. Bounded cleanup preserves failed owners for retries; unavailable
     desktop is a failure. Strict Windows cross-build passes. No Windows execution
     or foreign-process/UAC/capture result is claimed. HEAD is this fixture commit.
+
+- **Commit `HEAD`**: `ci(interop): execute isolated graph and native observer Windows gates`
+  - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local92.25%).
+  - **Summary**: Runs standalone Linux test/leak/coverage and Windows cross-build
+    gates, then executes graph C ABI, observer doubles and real Win32 smoke on
+    Windows2022. Branch triggers cover isolated review and parent feature. No PR
+    or standard merge is opened; native results remain pending until CI finishes.
+    HEAD identifies this workflow commit.
