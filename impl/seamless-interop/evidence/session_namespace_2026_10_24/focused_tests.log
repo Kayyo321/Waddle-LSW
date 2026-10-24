@@ -1,0 +1,59 @@
+zig test src/interop/stream_reader.zig -Iinclude build/interop_codec.o -lc
+1/12 stream_reader.test.real codec ping frame is framed at every split and bytewise...OK
+2/12 stream_reader.test.coalesced frames stop at one boundary and require explicit consume...OK
+3/12 stream_reader.test.maximum frame is bounded and payload validation remains visible...OK
+4/12 stream_reader.test.bad header fails closed and retains exact codec error...OK
+5/12 stream_reader.test.initialization rejects unsupported producer directions...OK
+6/12 stream_reader.test.oversize and unaligned payload headers are rejected by codec...OK
+7/12 stream_reader.test.input alias is rejected before any reader state changes...OK
+8/12 stream_reader.test.EOF distinguishes partial header body and pending complete frame...OK
+9/12 stream_reader.test.payload schema and producer direction errors are returned without hiding frame...OK
+10/12 stream_reader.test.deterministic header mutation corpus never exceeds fixed storage...OK
+11/12 stream_reader.test.payload-only fragments preserve the boundary and clean EOF rejects later access...OK
+12/12 stream_reader.test.failed header refuses every consumer and EOF operation...OK
+All 12 tests passed.
+zig test src/interop/stream_send_queue.zig -Iinclude build/interop_codec.o -lc
+1/10 stream_send_queue.test.enqueue owns copied frame and partial acknowledgements preserve exact FIFO bytes...OK
+2/10 stream_send_queue.test.data reservation control admission full capacity and ring wrap preserve FIFO...OK
+3/10 stream_send_queue.test.codec rejects malformed maximum-size and wrong-direction frames before allocation...OK
+4/10 stream_send_queue.test.maximum valid optional extension frame is copied and acknowledged without truncation...OK
+5/10 stream_send_queue.test.enqueue requires one exact frame and rejects invalid header lengths...OK
+6/10 stream_send_queue.test.allocation failure leaves existing frames offsets and counters unchanged...OK
+7/10 stream_send_queue.test.single frame allocation is covered by an allocator failure sweep...OK
+8/10 stream_send_queue.test.deinit frees partial frames idempotently and closes future operations...OK
+9/10 stream_send_queue.test.enqueue may borrow an already queued frame while copying another record...OK
+10/10 stream_send_queue.test.deterministic queue stress preserves acknowledgement byte totals...OK
+All 10 tests passed.
+zig test src/interop/session_handshake.zig -Iinclude -lc
+1/16 session_handshake.test.host validates Hello and mapping before Ack becomes Ready...OK
+2/16 session_handshake.test.guest waits for complete Hello and accepts capability subset...OK
+3/16 session_handshake.test.wire incompatibilities return frozen errors and clear readiness...OK
+4/16 session_handshake.test.Hello rejects zero identifiers epochs and unknown capabilities...OK
+5/16 session_handshake.test.guest rejects ack capability supersets and malformed version...OK
+6/16 session_handshake.test.guest ack protocol correlation and layout violations use their frozen errors...OK
+7/16 session_handshake.test.local failures preserve the complete value and reject stale tokens...OK
+8/16 session_handshake.test.deadline is overall and exact at uint64 boundary...OK
+9/16 session_handshake.test.drain transport loss and close are idempotent...OK
+10/16 session_handshake.test.Closed is terminal for wire receive and lifecycle callbacks...OK
+11/16 session_handshake.test.deadline guards precede each callback-specific validation...OK
+12/16 session_handshake.test.every asynchronous callback rejects stale tokens and backward time unchanged...OK
+13/16 session_handshake.test.wire handshake message in wrong role is fatal...OK
+14/16 session_handshake.test.initialization and host mapping proof guards...OK
+15/16 session_handshake.test.wrong Ack send ID and invalid local phases preserve state...OK
+16/16 session_handshake.test.role and phase guards distinguish local events from invalid wire phase...OK
+All 16 tests passed.
+zig test src/interop/session_liveness.zig -Iinclude -lc
+1/13 session_liveness.test.host cadence registration and matched pong handoff...OK
+2/13 session_liveness.test.guest echoes only nonzero Ping and never asks to ping...OK
+3/13 session_liveness.test.exact any-frame deadline closes before a boundary frame...OK
+4/13 session_liveness.test.ping records expire independently during continuous ordinary traffic...OK
+5/13 session_liveness.test.registration limits are transactional and reused IDs require release...OK
+6/13 session_liveness.test.expired ID remains unavailable until an event returns its release...OK
+7/13 session_liveness.test.multiple pongs match out of order and unknown IDs remain harmless...OK
+8/13 session_liveness.test.Ping APIs close at connection deadline and wrong-role Pong is transactional...OK
+9/13 session_liveness.test.local errors and stale tokens preserve complete state...OK
+10/13 session_liveness.test.disconnect releases all pending IDs exactly once...OK
+11/13 session_liveness.test.role errors at future times do not mutate or trigger timeout...OK
+12/13 session_liveness.test.elapsed comparisons remain correct near uint64 maximum...OK
+13/13 session_liveness.test.deterministic long Ready traffic stays bounded and allocation free...OK
+All 13 tests passed.

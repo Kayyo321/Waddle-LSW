@@ -1,12 +1,12 @@
-const std = @import("std");
-const c = @cImport({
+const std_t = @import("std");
+const c_t = @cImport({
     @cInclude("waddle/interop_protocol.h");
 });
 
 /// Host control Ping cadence in monotonic milliseconds.
-pub const PingIntervalMs = c.InteropPingIntervalMs;
+pub const PingIntervalMs = c_t.InteropPingIntervalMs;
 /// Inbound-frame and individual-Ping timeout in monotonic milliseconds.
-pub const LivenessTimeoutMs = c.InteropPingTimeoutMs;
+pub const LivenessTimeoutMs = c_t.InteropPingTimeoutMs;
 /// Maximum outstanding host Ping records owned by one connection.
 pub const MaxOutstandingPings = 4;
 
@@ -317,39 +317,39 @@ fn append_released(action: *action_t, request_id: u32) void {
 // Test-only fixtures.
 test "host cadence registration and matched pong handoff" {
     var host = try session_liveness_t.init(.Host, 1, 10);
-    try std.testing.expect(!(try host.tick(1, 2009)).ping_due);
-    try std.testing.expect((try host.tick(1, 2010)).ping_due);
+    try std_t.testing.expect(!(try host.tick(1, 2009)).ping_due);
+    try std_t.testing.expect((try host.tick(1, 2010)).ping_due);
     const registered = try host.register_ping(1, 2010, 77);
-    try std.testing.expectEqual(@as(u8, 0), registered.released_count);
-    try std.testing.expectError(error.PingNotDue, host.register_ping(1, 2011, 78));
+    try std_t.testing.expectEqual(@as(u8, 0), registered.released_count);
+    try std_t.testing.expectError(error.PingNotDue, host.register_ping(1, 2011, 78));
     const pong = try host.receive_pong(1, 2500, 77);
-    try std.testing.expectEqual(@as(?u32, 77), pong.matched_pong);
-    try std.testing.expectEqual(@as(u8, 1), pong.released_count);
-    try std.testing.expectEqual(@as(u32, 77), pong.released_ids[0]);
-    try std.testing.expectEqual(@as(?u32, null), (try host.receive_pong(1, 2501, 77)).matched_pong);
+    try std_t.testing.expectEqual(@as(?u32, 77), pong.matched_pong);
+    try std_t.testing.expectEqual(@as(u8, 1), pong.released_count);
+    try std_t.testing.expectEqual(@as(u32, 77), pong.released_ids[0]);
+    try std_t.testing.expectEqual(@as(?u32, null), (try host.receive_pong(1, 2501, 77)).matched_pong);
 }
 
 test "guest echoes only nonzero Ping and never asks to ping" {
     var guest = try session_liveness_t.init(.Guest, 2, 100);
-    try std.testing.expect(!(try guest.tick(2, 100)).ping_due);
+    try std_t.testing.expect(!(try guest.tick(2, 100)).ping_due);
     const before = guest;
-    try std.testing.expectError(error.InvalidRequestId, guest.receive_ping(2, 101, 0));
-    try std.testing.expectEqualDeep(before, guest);
+    try std_t.testing.expectError(error.InvalidRequestId, guest.receive_ping(2, 101, 0));
+    try std_t.testing.expectEqualDeep(before, guest);
     const action = try guest.receive_ping(2, 102, 0xfeed);
-    try std.testing.expectEqual(@as(?u32, 0xfeed), action.send_pong);
-    try std.testing.expectEqual(@as(u64, 102), guest.last_valid_rx_ms);
+    try std_t.testing.expectEqual(@as(?u32, 0xfeed), action.send_pong);
+    try std_t.testing.expectEqual(@as(u64, 102), guest.last_valid_rx_ms);
 }
 
 test "exact any-frame deadline closes before a boundary frame" {
     var guest = try session_liveness_t.init(.Guest, 3, 100);
     _ = try guest.observe_valid_frame(3, 6099);
     const before = guest;
-    try std.testing.expectError(error.TimeWentBackwards, guest.observe_valid_frame(3, 6098));
-    try std.testing.expectEqualDeep(before, guest);
+    try std_t.testing.expectError(error.TimeWentBackwards, guest.observe_valid_frame(3, 6098));
+    try std_t.testing.expectEqualDeep(before, guest);
     const action = try guest.observe_valid_frame(3, 12099);
-    try std.testing.expect(action.disconnect);
-    try std.testing.expect(guest.closed);
-    try std.testing.expectError(error.SessionClosed, guest.tick(3, 12100));
+    try std_t.testing.expect(action.disconnect);
+    try std_t.testing.expect(guest.closed);
+    try std_t.testing.expectError(error.SessionClosed, guest.tick(3, 12100));
 }
 
 test "ping records expire independently during continuous ordinary traffic" {
@@ -360,13 +360,13 @@ test "ping records expire independently during continuous ordinary traffic" {
     _ = try host.observe_valid_frame(4, 5000);
     _ = try host.observe_valid_frame(4, 7000);
     const expired = try host.observe_valid_frame(4, 8000);
-    try std.testing.expectEqual(@as(u8, 1), expired.released_count);
-    try std.testing.expectEqual(@as(u32, 11), expired.released_ids[0]);
-    try std.testing.expectEqual(@as(u64, 8000), host.last_valid_rx_ms);
+    try std_t.testing.expectEqual(@as(u8, 1), expired.released_count);
+    try std_t.testing.expectEqual(@as(u32, 11), expired.released_ids[0]);
+    try std_t.testing.expectEqual(@as(u64, 8000), host.last_valid_rx_ms);
     const later = try host.tick(4, 10000);
-    try std.testing.expectEqual(@as(u8, 1), later.released_count);
-    try std.testing.expectEqual(@as(u32, 12), later.released_ids[0]);
-    try std.testing.expect(!later.disconnect);
+    try std_t.testing.expectEqual(@as(u8, 1), later.released_count);
+    try std_t.testing.expectEqual(@as(u32, 12), later.released_ids[0]);
+    try std_t.testing.expect(!later.disconnect);
 }
 
 test "registration limits are transactional and reused IDs require release" {
@@ -374,8 +374,8 @@ test "registration limits are transactional and reused IDs require release" {
     _ = try host.register_ping(5, 2000, 1);
     _ = try host.observe_valid_frame(5, 2500);
     const before = host;
-    try std.testing.expectError(error.DuplicateRequestId, host.register_ping(5, 4000, 1));
-    try std.testing.expectEqualDeep(before, host);
+    try std_t.testing.expectError(error.DuplicateRequestId, host.register_ping(5, 4000, 1));
+    try std_t.testing.expectEqualDeep(before, host);
     _ = try host.register_ping(5, 4000, 2);
     _ = try host.observe_valid_frame(5, 4500);
     _ = try host.register_ping(5, 6000, 3);
@@ -391,11 +391,11 @@ test "registration limits are transactional and reused IDs require release" {
         ping_record_t{ .request_id = 24, .issued_at_ms = 5000 },
     };
     const before_full = full_host;
-    try std.testing.expectError(error.PingCapacityFull, full_host.register_ping(15, 7000, 25));
-    try std.testing.expectEqualDeep(before_full, full_host);
+    try std_t.testing.expectError(error.PingCapacityFull, full_host.register_ping(15, 7000, 25));
+    try std_t.testing.expectEqualDeep(before_full, full_host);
     const after_expiry = try host.register_ping(5, 10000, 5);
-    try std.testing.expect(after_expiry.released_count >= 1);
-    try std.testing.expectEqual(@as(u32, 2), after_expiry.released_ids[0]);
+    try std_t.testing.expect(after_expiry.released_count >= 1);
+    try std_t.testing.expectEqual(@as(u32, 2), after_expiry.released_ids[0]);
 }
 
 test "expired ID remains unavailable until an event returns its release" {
@@ -403,15 +403,15 @@ test "expired ID remains unavailable until an event returns its release" {
     _ = try host.register_ping(16, 2000, 41);
     _ = try host.observe_valid_frame(16, 3000);
     const pending_before = host;
-    try std.testing.expectError(error.DuplicateRequestId, host.register_ping(16, 8000, 41));
-    try std.testing.expectEqualDeep(pending_before, host);
+    try std_t.testing.expectError(error.DuplicateRequestId, host.register_ping(16, 8000, 41));
+    try std_t.testing.expectEqualDeep(pending_before, host);
     const released = try host.observe_valid_frame(16, 8000);
-    try std.testing.expectEqual(@as(u8, 1), released.released_count);
-    try std.testing.expectEqual(@as(u32, 41), released.released_ids[0]);
+    try std_t.testing.expectEqual(@as(u8, 1), released.released_count);
+    try std_t.testing.expectEqual(@as(u32, 41), released.released_ids[0]);
     const reused = try host.register_ping(16, 10000, 41);
-    try std.testing.expectEqual(@as(u8, 0), reused.released_count);
-    try std.testing.expectEqual(@as(?u32, null), reused.matched_pong);
-    try std.testing.expectEqual(@as(u32, 41), host.pings[0].?.request_id);
+    try std_t.testing.expectEqual(@as(u8, 0), reused.released_count);
+    try std_t.testing.expectEqual(@as(?u32, null), reused.matched_pong);
+    try std_t.testing.expectEqual(@as(u32, 41), host.pings[0].?.request_id);
 }
 
 test "multiple pongs match out of order and unknown IDs remain harmless" {
@@ -420,51 +420,51 @@ test "multiple pongs match out of order and unknown IDs remain harmless" {
     _ = try host.register_ping(17, 4000, 52);
     _ = try host.observe_valid_frame(17, 4100);
     const unknown = try host.receive_pong(17, 4200, 99);
-    try std.testing.expectEqual(@as(?u32, null), unknown.matched_pong);
-    try std.testing.expectEqual(@as(u8, 0), unknown.released_count);
+    try std_t.testing.expectEqual(@as(?u32, null), unknown.matched_pong);
+    try std_t.testing.expectEqual(@as(u8, 0), unknown.released_count);
     const second = try host.receive_pong(17, 4300, 52);
-    try std.testing.expectEqual(@as(?u32, 52), second.matched_pong);
+    try std_t.testing.expectEqual(@as(?u32, 52), second.matched_pong);
     const first = try host.receive_pong(17, 4400, 51);
-    try std.testing.expectEqual(@as(?u32, 51), first.matched_pong);
-    try std.testing.expectEqual(@as(u32, 51), first.released_ids[0]);
+    try std_t.testing.expectEqual(@as(?u32, 51), first.matched_pong);
+    try std_t.testing.expectEqual(@as(u32, 51), first.released_ids[0]);
     const late = try host.receive_pong(17, 4500, 52);
-    try std.testing.expectEqual(@as(?u32, null), late.matched_pong);
-    try std.testing.expectEqual(@as(u8, 0), late.released_count);
+    try std_t.testing.expectEqual(@as(?u32, null), late.matched_pong);
+    try std_t.testing.expectEqual(@as(u8, 0), late.released_count);
 }
 
 test "Ping APIs close at connection deadline and wrong-role Pong is transactional" {
     var registration_timeout = try session_liveness_t.init(.Host, 18, 0);
     _ = try registration_timeout.register_ping(18, 2000, 61);
     const registration_disconnect = try registration_timeout.register_ping(18, 6000, 62);
-    try std.testing.expect(registration_disconnect.disconnect);
-    try std.testing.expectEqual(@as(u8, 1), registration_disconnect.released_count);
-    try std.testing.expectEqual(@as(u32, 61), registration_disconnect.released_ids[0]);
+    try std_t.testing.expect(registration_disconnect.disconnect);
+    try std_t.testing.expectEqual(@as(u8, 1), registration_disconnect.released_count);
+    try std_t.testing.expectEqual(@as(u32, 61), registration_disconnect.released_ids[0]);
 
     var pong_timeout = try session_liveness_t.init(.Host, 19, 0);
     _ = try pong_timeout.register_ping(19, 2000, 63);
     const pong_disconnect = try pong_timeout.receive_pong(19, 6000, 63);
-    try std.testing.expect(pong_disconnect.disconnect);
-    try std.testing.expectEqual(@as(u8, 1), pong_disconnect.released_count);
-    try std.testing.expectEqual(@as(?u32, null), pong_disconnect.matched_pong);
+    try std_t.testing.expect(pong_disconnect.disconnect);
+    try std_t.testing.expectEqual(@as(u8, 1), pong_disconnect.released_count);
+    try std_t.testing.expectEqual(@as(?u32, null), pong_disconnect.matched_pong);
 
     var ping_timeout = try session_liveness_t.init(.Guest, 20, 0);
     const ping_disconnect = try ping_timeout.receive_ping(20, 6000, 64);
-    try std.testing.expect(ping_disconnect.disconnect);
+    try std_t.testing.expect(ping_disconnect.disconnect);
     var wrong_role_guest = try session_liveness_t.init(.Guest, 21, 6000);
     const wrong_role_before = wrong_role_guest;
-    try std.testing.expectError(error.WrongRole, wrong_role_guest.receive_pong(21, 6001, 64));
-    try std.testing.expectEqualDeep(wrong_role_before, wrong_role_guest);
+    try std_t.testing.expectError(error.WrongRole, wrong_role_guest.receive_pong(21, 6001, 64));
+    try std_t.testing.expectEqualDeep(wrong_role_before, wrong_role_guest);
 }
 
 test "local errors and stale tokens preserve complete state" {
     var host = try session_liveness_t.init(.Host, 6, 20);
     const before = host;
-    try std.testing.expectError(error.WrongRole, host.receive_ping(6, 21, 8));
-    try std.testing.expectError(error.InvalidRequestId, host.receive_pong(6, 21, 0));
-    try std.testing.expectError(error.WrongConnectionToken, host.tick(7, 21));
-    try std.testing.expectError(error.InvalidConnectionToken, host.tick(0, 21));
-    try std.testing.expectEqualDeep(before, host);
-    try std.testing.expectError(error.InvalidConnectionToken, session_liveness_t.init(.Guest, 0, 0));
+    try std_t.testing.expectError(error.WrongRole, host.receive_ping(6, 21, 8));
+    try std_t.testing.expectError(error.InvalidRequestId, host.receive_pong(6, 21, 0));
+    try std_t.testing.expectError(error.WrongConnectionToken, host.tick(7, 21));
+    try std_t.testing.expectError(error.InvalidConnectionToken, host.tick(0, 21));
+    try std_t.testing.expectEqualDeep(before, host);
+    try std_t.testing.expectError(error.InvalidConnectionToken, session_liveness_t.init(.Guest, 0, 0));
 }
 
 test "disconnect releases all pending IDs exactly once" {
@@ -472,36 +472,36 @@ test "disconnect releases all pending IDs exactly once" {
     _ = try host.register_ping(7, 2000, 101);
     _ = try host.register_ping(7, 4000, 102);
     const lost = try host.transport_lost(7, 4001);
-    try std.testing.expect(lost.disconnect);
-    try std.testing.expectEqual(@as(u8, 2), lost.released_count);
-    try std.testing.expectEqual(@as(u32, 101), lost.released_ids[0]);
-    try std.testing.expectEqual(@as(u32, 102), lost.released_ids[1]);
-    try std.testing.expectError(error.SessionClosed, host.transport_lost(7, 4002));
+    try std_t.testing.expect(lost.disconnect);
+    try std_t.testing.expectEqual(@as(u8, 2), lost.released_count);
+    try std_t.testing.expectEqual(@as(u32, 101), lost.released_ids[0]);
+    try std_t.testing.expectEqual(@as(u32, 102), lost.released_ids[1]);
+    try std_t.testing.expectError(error.SessionClosed, host.transport_lost(7, 4002));
 }
 
 test "role errors at future times do not mutate or trigger timeout" {
     var guest = try session_liveness_t.init(.Guest, 8, 0);
     const before = guest;
-    try std.testing.expectError(error.WrongRole, guest.register_ping(8, 9000, 1));
-    try std.testing.expectEqualDeep(before, guest);
+    try std_t.testing.expectError(error.WrongRole, guest.register_ping(8, 9000, 1));
+    try std_t.testing.expectEqualDeep(before, guest);
     var host = try session_liveness_t.init(.Host, 9, 0);
     const host_before = host;
-    try std.testing.expectError(error.WrongRole, host.receive_ping(9, 9000, 1));
-    try std.testing.expectEqualDeep(host_before, host);
+    try std_t.testing.expectError(error.WrongRole, host.receive_ping(9, 9000, 1));
+    try std_t.testing.expectEqualDeep(host_before, host);
 }
 
 test "elapsed comparisons remain correct near uint64 maximum" {
-    const start = std.math.maxInt(u64) - 10_000;
+    const start = std_t.math.maxInt(u64) - 10_000;
     var host = try session_liveness_t.init(.Host, 10, start);
-    try std.testing.expect((try host.tick(10, start + 1999)).ping_due == false);
-    try std.testing.expect((try host.tick(10, start + 2000)).ping_due);
+    try std_t.testing.expect((try host.tick(10, start + 1999)).ping_due == false);
+    try std_t.testing.expect((try host.tick(10, start + 2000)).ping_due);
     _ = try host.register_ping(10, start + 2000, 301);
     _ = try host.observe_valid_frame(10, start + 3000);
     const expiring = try host.observe_valid_frame(10, start + 7999);
-    try std.testing.expectEqual(@as(u8, 0), expiring.released_count);
+    try std_t.testing.expectEqual(@as(u8, 0), expiring.released_count);
     const expired = try host.observe_valid_frame(10, start + 8000);
-    try std.testing.expectEqual(@as(u8, 1), expired.released_count);
-    try std.testing.expectEqual(@as(u32, 301), expired.released_ids[0]);
+    try std_t.testing.expectEqual(@as(u8, 1), expired.released_count);
+    try std_t.testing.expectEqual(@as(u32, 301), expired.released_ids[0]);
 }
 
 test "deterministic long Ready traffic stays bounded and allocation free" {
@@ -518,11 +518,11 @@ test "deterministic long Ready traffic stays bounded and allocation free" {
             if (next_id == 0) next_id = 1;
         }
         _ = try host.observe_valid_frame(11, now);
-        try std.testing.expect(!host.closed);
+        try std_t.testing.expect(!host.closed);
         var count: usize = 0;
         for (host.pings) |record| if (record != null) {
             count += 1;
         };
-        try std.testing.expect(count <= MaxOutstandingPings);
+        try std_t.testing.expect(count <= MaxOutstandingPings);
     }
 }

@@ -1,5 +1,5 @@
-const std = @import("std");
-const c = @cImport({
+const std_t = @import("std");
+const c_t = @cImport({
     @cInclude("waddle/interop_protocol.h");
 });
 
@@ -430,9 +430,9 @@ pub const drain_reason_t = enum(u8) {
 /// @ownership Scalar enum copied into ErrorAndDrain actions.
 pub const wire_error_t = enum(u32) {
     /// Frozen protocol error for invalid Hello facts or failed mapping validation.
-    ProtocolViolation = c.InteropErrorProtocolViolation,
+    ProtocolViolation = c_t.InteropErrorProtocolViolation,
     /// Frozen version error for incompatible agent major or layout version.
-    VersionMismatch = c.InteropErrorVersionMismatch,
+    VersionMismatch = c_t.InteropErrorVersionMismatch,
 };
 
 /// Scalar facts parsed from a complete codec-validated guest Hello.
@@ -540,13 +540,13 @@ pub const handshake_error_t = error{
 };
 
 /// Frozen protocol-v2 wire version.
-pub const ProtocolVersion: u16 = @intCast(c.InteropVersion);
+pub const ProtocolVersion: u16 = @intCast(c_t.InteropVersion);
 /// Frozen shared-memory layout version.
-pub const LayoutVersion: u32 = @intCast(c.InteropLayoutVersion);
+pub const LayoutVersion: u32 = @intCast(c_t.InteropLayoutVersion);
 /// Overall connected-peer pre-Ready deadline in milliseconds.
-pub const HelloTimeoutMs: u64 = @intCast(c.InteropHelloTimeoutMs);
+pub const HelloTimeoutMs: u64 = @intCast(c_t.InteropHelloTimeoutMs);
 /// Known protocol capability bits.
-pub const CapabilityMask: u64 = c.InteropCapabilityMask;
+pub const CapabilityMask: u64 = c_t.InteropCapabilityMask;
 
 fn known_capabilities(capabilities: u64) bool {
     return (capabilities & CapabilityMask) == capabilities;
@@ -561,16 +561,16 @@ fn expect_callback_errors_preserve(
     extra: anytype,
 ) !void {
     const before = machine.*;
-    try std.testing.expectError(
+    try std_t.testing.expectError(
         error.WrongConnectionToken,
         @call(.auto, callback, .{ machine, token + 1, now_ms } ++ extra),
     );
-    try std.testing.expectEqualDeep(before, machine.*);
-    try std.testing.expectError(
+    try std_t.testing.expectEqualDeep(before, machine.*);
+    try std_t.testing.expectError(
         error.TimeWentBackwards,
         @call(.auto, callback, .{ machine, token, now_ms - 1 } ++ extra),
     );
-    try std.testing.expectEqualDeep(before, machine.*);
+    try std_t.testing.expectEqualDeep(before, machine.*);
 }
 
 test "host validates Hello and mapping before Ack becomes Ready" {
@@ -583,41 +583,41 @@ test "host validates Hello and mapping before Ack becomes Ready" {
         .session_epoch = 900,
         .request_id = 7,
     };
-    try std.testing.expectEqual(action_t.None, try machine.receive_hello(41, 101, hello));
-    try std.testing.expectEqual(phase_t.AwaitMapping, machine.phase);
-    try std.testing.expectEqual(@as(u64, 0), machine.session_epoch);
+    try std_t.testing.expectEqual(action_t.None, try machine.receive_hello(41, 101, hello));
+    try std_t.testing.expectEqual(phase_t.AwaitMapping, machine.phase);
+    try std_t.testing.expectEqual(@as(u64, 0), machine.session_epoch);
     const action = try machine.mapping_validated(41, 102, 900, LayoutVersion, true);
-    try std.testing.expectEqual(phase_t.AwaitHelloAckSent, machine.phase);
-    try std.testing.expectEqual(@as(u64, 0), machine.negotiated_capabilities);
+    try std_t.testing.expectEqual(phase_t.AwaitHelloAckSent, machine.phase);
+    try std_t.testing.expectEqual(@as(u64, 0), machine.negotiated_capabilities);
     switch (action) {
         .SendHelloAck => |ack| {
-            try std.testing.expectEqual(@as(u32, 7), ack.request_id);
-            try std.testing.expectEqual(@as(u64, 0b1001), ack.capabilities);
-            try std.testing.expectEqual(@as(u32, 2), ack.version_major);
+            try std_t.testing.expectEqual(@as(u32, 7), ack.request_id);
+            try std_t.testing.expectEqual(@as(u64, 0b1001), ack.capabilities);
+            try std_t.testing.expectEqual(@as(u32, 2), ack.version_major);
         },
         else => return error.TestUnexpectedResult,
     }
-    try std.testing.expectEqual(action_t.None, try machine.ack_sent(41, 103, 7));
-    try std.testing.expectEqual(phase_t.Ready, machine.phase);
-    try std.testing.expectEqual(@as(u64, 900), machine.session_epoch);
-    try std.testing.expectEqual(@as(u64, 0b1001), machine.negotiated_capabilities);
+    try std_t.testing.expectEqual(action_t.None, try machine.ack_sent(41, 103, 7));
+    try std_t.testing.expectEqual(phase_t.Ready, machine.phase);
+    try std_t.testing.expectEqual(@as(u64, 900), machine.session_epoch);
+    try std_t.testing.expectEqual(@as(u64, 0b1001), machine.negotiated_capabilities);
 }
 
 test "guest waits for complete Hello and accepts capability subset" {
     var machine = try session_handshake_t.init(.Guest, 42, 3, 0b111, 200);
     const action = try machine.mapping_initialized(42, 201, true, 901, 11);
-    try std.testing.expectEqual(phase_t.AwaitHelloSent, machine.phase);
+    try std_t.testing.expectEqual(phase_t.AwaitHelloSent, machine.phase);
     switch (action) {
         .SendHello => |hello| {
-            try std.testing.expectEqual(@as(u64, 901), hello.session_epoch);
-            try std.testing.expectEqual(@as(u32, 11), hello.request_id);
-            try std.testing.expectEqual(@as(u64, 0b111), hello.capabilities);
+            try std_t.testing.expectEqual(@as(u64, 901), hello.session_epoch);
+            try std_t.testing.expectEqual(@as(u32, 11), hello.request_id);
+            try std_t.testing.expectEqual(@as(u64, 0b111), hello.capabilities);
         },
         else => return error.TestUnexpectedResult,
     }
-    try std.testing.expectError(error.WrongRequestId, machine.hello_sent(42, 202, 12));
-    try std.testing.expectEqual(phase_t.AwaitHelloSent, machine.phase);
-    try std.testing.expectEqual(action_t.None, try machine.hello_sent(42, 202, 11));
+    try std_t.testing.expectError(error.WrongRequestId, machine.hello_sent(42, 202, 12));
+    try std_t.testing.expectEqual(phase_t.AwaitHelloSent, machine.phase);
+    try std_t.testing.expectEqual(action_t.None, try machine.hello_sent(42, 202, 11));
     const ack = hello_ack_facts_t{
         .protocol_version = ProtocolVersion,
         .version_major = 3,
@@ -625,10 +625,10 @@ test "guest waits for complete Hello and accepts capability subset" {
         .capabilities = 0b001,
         .request_id = 11,
     };
-    try std.testing.expectEqual(action_t.None, try machine.receive_ack(42, 203, ack));
-    try std.testing.expectEqual(phase_t.Ready, machine.phase);
-    try std.testing.expectEqual(@as(u64, 901), machine.session_epoch);
-    try std.testing.expectEqual(@as(u64, 1), machine.negotiated_capabilities);
+    try std_t.testing.expectEqual(action_t.None, try machine.receive_ack(42, 203, ack));
+    try std_t.testing.expectEqual(phase_t.Ready, machine.phase);
+    try std_t.testing.expectEqual(@as(u64, 901), machine.session_epoch);
+    try std_t.testing.expectEqual(@as(u64, 1), machine.negotiated_capabilities);
 }
 
 test "wire incompatibilities return frozen errors and clear readiness" {
@@ -642,19 +642,19 @@ test "wire incompatibilities return frozen errors and clear readiness" {
         .request_id = 1,
     };
     hello.protocol_version = 99;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try host.receive_hello(51, 1, hello));
-    try std.testing.expectEqual(phase_t.Draining, host.phase);
-    try std.testing.expectEqual(@as(u64, 0), host.staged_epoch);
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try host.receive_hello(51, 1, hello));
+    try std_t.testing.expectEqual(phase_t.Draining, host.phase);
+    try std_t.testing.expectEqual(@as(u64, 0), host.staged_epoch);
 
     var version_host = try session_handshake_t.init(.Host, 52, 2, 0, 0);
     hello.protocol_version = ProtocolVersion;
     hello.layout_version = 1;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try version_host.receive_hello(52, 1, hello));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try version_host.receive_hello(52, 1, hello));
 
     var map_host = try session_handshake_t.init(.Host, 53, 2, 0, 0);
     hello.layout_version = LayoutVersion;
     _ = try map_host.receive_hello(53, 1, hello);
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try map_host.mapping_validated(53, 2, 1, LayoutVersion, false));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try map_host.mapping_validated(53, 2, 1, LayoutVersion, false));
 }
 
 test "Hello rejects zero identifiers epochs and unknown capabilities" {
@@ -668,26 +668,26 @@ test "Hello rejects zero identifiers epochs and unknown capabilities" {
     };
     var no_id = try session_handshake_t.init(.Host, 54, 2, 0, 0);
     hello.request_id = 0;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try no_id.receive_hello(54, 1, hello));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try no_id.receive_hello(54, 1, hello));
 
     var no_epoch = try session_handshake_t.init(.Host, 55, 2, 0, 0);
     hello.request_id = 1;
     hello.session_epoch = 0;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try no_epoch.receive_hello(55, 1, hello));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try no_epoch.receive_hello(55, 1, hello));
 
     var unknown_caps = try session_handshake_t.init(.Host, 56, 2, 0, 0);
     hello.session_epoch = 1;
     hello.capabilities = CapabilityMask | (1 << 20);
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try unknown_caps.receive_hello(56, 1, hello));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try unknown_caps.receive_hello(56, 1, hello));
 
     var wrong_major = try session_handshake_t.init(.Host, 57, 2, 0, 0);
     hello.capabilities = 0;
     hello.version_major = 3;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try wrong_major.receive_hello(57, 1, hello));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try wrong_major.receive_hello(57, 1, hello));
 
     var malformed_major = try session_handshake_t.init(.Host, 58, 2, 0, 0);
     hello.version_major = null;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try malformed_major.receive_hello(58, 1, hello));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try malformed_major.receive_hello(58, 1, hello));
 }
 
 test "guest rejects ack capability supersets and malformed version" {
@@ -701,23 +701,23 @@ test "guest rejects ack capability supersets and malformed version" {
         .capabilities = 0b0100,
         .request_id = 9,
     };
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try guest.receive_ack(61, 3, ack));
-    try std.testing.expectEqual(phase_t.Draining, guest.phase);
-    try std.testing.expectEqual(@as(u64, 0), guest.session_epoch);
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try guest.receive_ack(61, 3, ack));
+    try std_t.testing.expectEqual(phase_t.Draining, guest.phase);
+    try std_t.testing.expectEqual(@as(u64, 0), guest.session_epoch);
 
     var wrong_major = try session_handshake_t.init(.Guest, 62, 2, 3, 0);
     _ = try wrong_major.mapping_initialized(62, 1, true, 8, 9);
     _ = try wrong_major.hello_sent(62, 2, 9);
     ack.capabilities = 1;
     ack.version_major = null;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try wrong_major.receive_ack(62, 3, ack));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try wrong_major.receive_ack(62, 3, ack));
 
     var unknown_caps = try session_handshake_t.init(.Guest, 66, 2, CapabilityMask, 0);
     _ = try unknown_caps.mapping_initialized(66, 1, true, 8, 9);
     _ = try unknown_caps.hello_sent(66, 2, 9);
     ack.version_major = 2;
     ack.capabilities = CapabilityMask | (1 << 20);
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try unknown_caps.receive_ack(66, 3, ack));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try unknown_caps.receive_ack(66, 3, ack));
 }
 
 test "guest ack protocol correlation and layout violations use their frozen errors" {
@@ -731,76 +731,76 @@ test "guest ack protocol correlation and layout violations use their frozen erro
         .capabilities = 0,
         .request_id = 9,
     };
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try guest.receive_ack(63, 3, ack));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try guest.receive_ack(63, 3, ack));
 
     var wrong_id = try session_handshake_t.init(.Guest, 64, 2, 3, 0);
     _ = try wrong_id.mapping_initialized(64, 1, true, 8, 9);
     _ = try wrong_id.hello_sent(64, 2, 9);
     ack.protocol_version = ProtocolVersion;
     ack.request_id = 10;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try wrong_id.receive_ack(64, 3, ack));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try wrong_id.receive_ack(64, 3, ack));
 
     var wrong_layout = try session_handshake_t.init(.Guest, 65, 2, 3, 0);
     _ = try wrong_layout.mapping_initialized(65, 1, true, 8, 9);
     _ = try wrong_layout.hello_sent(65, 2, 9);
     ack.request_id = 9;
     ack.layout_version = 1;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try wrong_layout.receive_ack(65, 3, ack));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try wrong_layout.receive_ack(65, 3, ack));
 
     var wrong_major = try session_handshake_t.init(.Guest, 67, 2, 3, 0);
     _ = try wrong_major.mapping_initialized(67, 1, true, 8, 9);
     _ = try wrong_major.hello_sent(67, 2, 9);
     ack.layout_version = LayoutVersion;
     ack.version_major = 3;
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try wrong_major.receive_ack(67, 3, ack));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .VersionMismatch }, try wrong_major.receive_ack(67, 3, ack));
 }
 
 test "local failures preserve the complete value and reject stale tokens" {
     var machine = try session_handshake_t.init(.Guest, 71, 1, 0, 10);
     const before = machine;
-    try std.testing.expectError(error.WrongConnectionToken, machine.mapping_initialized(72, 11, true, 2, 3));
-    try std.testing.expectEqualDeep(before, machine);
-    try std.testing.expectError(error.TimeWentBackwards, machine.mapping_initialized(71, 9, true, 2, 3));
-    try std.testing.expectEqualDeep(before, machine);
-    try std.testing.expectError(error.MappingInitializationFailed, machine.mapping_initialized(71, 11, false, 2, 3));
-    try std.testing.expectEqualDeep(before, machine);
-    try std.testing.expectError(error.InvalidSessionEpoch, machine.mapping_initialized(71, 11, true, 0, 3));
-    try std.testing.expectEqualDeep(before, machine);
-    try std.testing.expectError(error.InvalidRequestId, machine.mapping_initialized(71, 11, true, 2, 0));
-    try std.testing.expectEqualDeep(before, machine);
-    try std.testing.expectError(error.WrongPhase, machine.hello_sent(71, 11, 1));
-    try std.testing.expectEqualDeep(before, machine);
+    try std_t.testing.expectError(error.WrongConnectionToken, machine.mapping_initialized(72, 11, true, 2, 3));
+    try std_t.testing.expectEqualDeep(before, machine);
+    try std_t.testing.expectError(error.TimeWentBackwards, machine.mapping_initialized(71, 9, true, 2, 3));
+    try std_t.testing.expectEqualDeep(before, machine);
+    try std_t.testing.expectError(error.MappingInitializationFailed, machine.mapping_initialized(71, 11, false, 2, 3));
+    try std_t.testing.expectEqualDeep(before, machine);
+    try std_t.testing.expectError(error.InvalidSessionEpoch, machine.mapping_initialized(71, 11, true, 0, 3));
+    try std_t.testing.expectEqualDeep(before, machine);
+    try std_t.testing.expectError(error.InvalidRequestId, machine.mapping_initialized(71, 11, true, 2, 0));
+    try std_t.testing.expectEqualDeep(before, machine);
+    try std_t.testing.expectError(error.WrongPhase, machine.hello_sent(71, 11, 1));
+    try std_t.testing.expectEqualDeep(before, machine);
 }
 
 test "deadline is overall and exact at uint64 boundary" {
     var machine = try session_handshake_t.init(.Guest, 81, 1, 0, 100);
-    try std.testing.expectError(error.WrongConnectionToken, machine.tick(80, 5100));
-    try std.testing.expectEqual(phase_t.InitializingMapping, machine.phase);
-    try std.testing.expectEqual(action_t.None, try machine.tick(81, 5099));
-    try std.testing.expectEqual(action_t.Drain, try machine.tick(81, 5100));
-    try std.testing.expectEqual(phase_t.Draining, machine.phase);
-    try std.testing.expectEqual(drain_reason_t.HelloTimeout, machine.drain_reason.?);
-    try std.testing.expectEqual(action_t.Drain, try machine.tick(81, 5101));
+    try std_t.testing.expectError(error.WrongConnectionToken, machine.tick(80, 5100));
+    try std_t.testing.expectEqual(phase_t.InitializingMapping, machine.phase);
+    try std_t.testing.expectEqual(action_t.None, try machine.tick(81, 5099));
+    try std_t.testing.expectEqual(action_t.Drain, try machine.tick(81, 5100));
+    try std_t.testing.expectEqual(phase_t.Draining, machine.phase);
+    try std_t.testing.expectEqual(drain_reason_t.HelloTimeout, machine.drain_reason.?);
+    try std_t.testing.expectEqual(action_t.Drain, try machine.tick(81, 5101));
 
-    var near_max = try session_handshake_t.init(.Host, 82, 1, 0, std.math.maxInt(u64) - 5000);
-    try std.testing.expectEqual(action_t.None, try near_max.tick(82, std.math.maxInt(u64) - 1));
-    try std.testing.expectEqual(action_t.Drain, try near_max.tick(82, std.math.maxInt(u64)));
+    var near_max = try session_handshake_t.init(.Host, 82, 1, 0, std_t.math.maxInt(u64) - 5000);
+    try std_t.testing.expectEqual(action_t.None, try near_max.tick(82, std_t.math.maxInt(u64) - 1));
+    try std_t.testing.expectEqual(action_t.Drain, try near_max.tick(82, std_t.math.maxInt(u64)));
 }
 
 test "drain transport loss and close are idempotent" {
     var machine = try session_handshake_t.init(.Host, 91, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try machine.begin_drain(91, 1));
-    try std.testing.expectEqual(phase_t.Draining, machine.phase);
-    try std.testing.expectEqual(drain_reason_t.LocalRequest, machine.drain_reason.?);
-    try std.testing.expectEqual(action_t.Drain, try machine.begin_drain(91, 2));
-    try std.testing.expectEqual(action_t.Closed, try machine.teardown_complete(91, 3));
-    try std.testing.expectEqual(phase_t.Closed, machine.phase);
-    try std.testing.expectEqual(action_t.Closed, try machine.transport_lost(91, 4));
-    try std.testing.expectError(error.WrongPhase, machine.teardown_complete(91, 4));
+    try std_t.testing.expectEqual(action_t.Drain, try machine.begin_drain(91, 1));
+    try std_t.testing.expectEqual(phase_t.Draining, machine.phase);
+    try std_t.testing.expectEqual(drain_reason_t.LocalRequest, machine.drain_reason.?);
+    try std_t.testing.expectEqual(action_t.Drain, try machine.begin_drain(91, 2));
+    try std_t.testing.expectEqual(action_t.Closed, try machine.teardown_complete(91, 3));
+    try std_t.testing.expectEqual(phase_t.Closed, machine.phase);
+    try std_t.testing.expectEqual(action_t.Closed, try machine.transport_lost(91, 4));
+    try std_t.testing.expectError(error.WrongPhase, machine.teardown_complete(91, 4));
 
     var lost = try session_handshake_t.init(.Guest, 92, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try lost.transport_lost(92, 1));
-    try std.testing.expectEqual(action_t.Closed, try lost.teardown_complete(92, 2));
+    try std_t.testing.expectEqual(action_t.Drain, try lost.transport_lost(92, 1));
+    try std_t.testing.expectEqual(action_t.Closed, try lost.teardown_complete(92, 2));
 }
 
 test "Closed is terminal for wire receive and lifecycle callbacks" {
@@ -816,18 +816,18 @@ test "Closed is terminal for wire receive and lifecycle callbacks" {
         .session_epoch = 1,
         .request_id = 1,
     };
-    try std.testing.expectError(error.WrongPhase, host.receive_hello(93, 13, hello));
-    try std.testing.expectEqualDeep(closed_host, host);
-    try std.testing.expectError(error.WrongConnectionToken, host.receive_hello(94, 13, hello));
-    try std.testing.expectEqualDeep(closed_host, host);
-    try std.testing.expectError(error.TimeWentBackwards, host.receive_hello(93, 11, hello));
-    try std.testing.expectEqualDeep(closed_host, host);
-    try std.testing.expectEqual(action_t.Closed, try host.tick(93, 13));
-    try std.testing.expectEqualDeep(closed_host, host);
-    try std.testing.expectEqual(action_t.Closed, try host.begin_drain(93, 13));
-    try std.testing.expectEqualDeep(closed_host, host);
-    try std.testing.expectEqual(action_t.Closed, try host.transport_lost(93, 13));
-    try std.testing.expectEqualDeep(closed_host, host);
+    try std_t.testing.expectError(error.WrongPhase, host.receive_hello(93, 13, hello));
+    try std_t.testing.expectEqualDeep(closed_host, host);
+    try std_t.testing.expectError(error.WrongConnectionToken, host.receive_hello(94, 13, hello));
+    try std_t.testing.expectEqualDeep(closed_host, host);
+    try std_t.testing.expectError(error.TimeWentBackwards, host.receive_hello(93, 11, hello));
+    try std_t.testing.expectEqualDeep(closed_host, host);
+    try std_t.testing.expectEqual(action_t.Closed, try host.tick(93, 13));
+    try std_t.testing.expectEqualDeep(closed_host, host);
+    try std_t.testing.expectEqual(action_t.Closed, try host.begin_drain(93, 13));
+    try std_t.testing.expectEqualDeep(closed_host, host);
+    try std_t.testing.expectEqual(action_t.Closed, try host.transport_lost(93, 13));
+    try std_t.testing.expectEqualDeep(closed_host, host);
 
     var guest = try session_handshake_t.init(.Guest, 95, 1, 0, 20);
     _ = try guest.transport_lost(95, 21);
@@ -840,16 +840,16 @@ test "Closed is terminal for wire receive and lifecycle callbacks" {
         .capabilities = 0,
         .request_id = 1,
     };
-    try std.testing.expectError(error.WrongPhase, guest.receive_ack(95, 23, ack));
-    try std.testing.expectEqualDeep(closed_guest, guest);
-    try std.testing.expectError(error.TimeWentBackwards, guest.receive_ack(95, 21, ack));
-    try std.testing.expectEqualDeep(closed_guest, guest);
-    try std.testing.expectEqual(action_t.Closed, try guest.tick(95, 23));
-    try std.testing.expectEqualDeep(closed_guest, guest);
-    try std.testing.expectEqual(action_t.Closed, try guest.begin_drain(95, 23));
-    try std.testing.expectEqualDeep(closed_guest, guest);
-    try std.testing.expectEqual(action_t.Closed, try guest.transport_lost(95, 23));
-    try std.testing.expectEqualDeep(closed_guest, guest);
+    try std_t.testing.expectError(error.WrongPhase, guest.receive_ack(95, 23, ack));
+    try std_t.testing.expectEqualDeep(closed_guest, guest);
+    try std_t.testing.expectError(error.TimeWentBackwards, guest.receive_ack(95, 21, ack));
+    try std_t.testing.expectEqualDeep(closed_guest, guest);
+    try std_t.testing.expectEqual(action_t.Closed, try guest.tick(95, 23));
+    try std_t.testing.expectEqualDeep(closed_guest, guest);
+    try std_t.testing.expectEqual(action_t.Closed, try guest.begin_drain(95, 23));
+    try std_t.testing.expectEqualDeep(closed_guest, guest);
+    try std_t.testing.expectEqual(action_t.Closed, try guest.transport_lost(95, 23));
+    try std_t.testing.expectEqualDeep(closed_guest, guest);
 }
 
 test "deadline guards precede each callback-specific validation" {
@@ -870,34 +870,34 @@ test "deadline guards precede each callback-specific validation" {
     };
 
     var receive_hello_machine = try session_handshake_t.init(.Host, 131, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try receive_hello_machine.receive_hello(131, HelloTimeoutMs, hello));
+    try std_t.testing.expectEqual(action_t.Drain, try receive_hello_machine.receive_hello(131, HelloTimeoutMs, hello));
 
     var mapping_validated_machine = try session_handshake_t.init(.Host, 132, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try mapping_validated_machine.mapping_validated(132, HelloTimeoutMs, 1, LayoutVersion, true));
+    try std_t.testing.expectEqual(action_t.Drain, try mapping_validated_machine.mapping_validated(132, HelloTimeoutMs, 1, LayoutVersion, true));
 
     var mapping_initialized_machine = try session_handshake_t.init(.Guest, 133, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try mapping_initialized_machine.mapping_initialized(133, HelloTimeoutMs, true, 1, 1));
+    try std_t.testing.expectEqual(action_t.Drain, try mapping_initialized_machine.mapping_initialized(133, HelloTimeoutMs, true, 1, 1));
 
     var hello_sent_machine = try session_handshake_t.init(.Guest, 134, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try hello_sent_machine.hello_sent(134, HelloTimeoutMs, 1));
+    try std_t.testing.expectEqual(action_t.Drain, try hello_sent_machine.hello_sent(134, HelloTimeoutMs, 1));
 
     var receive_ack_machine = try session_handshake_t.init(.Guest, 135, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try receive_ack_machine.receive_ack(135, HelloTimeoutMs, ack));
+    try std_t.testing.expectEqual(action_t.Drain, try receive_ack_machine.receive_ack(135, HelloTimeoutMs, ack));
 
     var ack_sent_machine = try session_handshake_t.init(.Host, 136, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try ack_sent_machine.ack_sent(136, HelloTimeoutMs, 1));
+    try std_t.testing.expectEqual(action_t.Drain, try ack_sent_machine.ack_sent(136, HelloTimeoutMs, 1));
 
     var tick_machine = try session_handshake_t.init(.Host, 137, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try tick_machine.tick(137, HelloTimeoutMs));
+    try std_t.testing.expectEqual(action_t.Drain, try tick_machine.tick(137, HelloTimeoutMs));
 
     var begin_drain_machine = try session_handshake_t.init(.Host, 138, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try begin_drain_machine.begin_drain(138, HelloTimeoutMs));
+    try std_t.testing.expectEqual(action_t.Drain, try begin_drain_machine.begin_drain(138, HelloTimeoutMs));
 
     var transport_lost_machine = try session_handshake_t.init(.Guest, 139, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try transport_lost_machine.transport_lost(139, HelloTimeoutMs));
+    try std_t.testing.expectEqual(action_t.Drain, try transport_lost_machine.transport_lost(139, HelloTimeoutMs));
 
     var teardown_machine = try session_handshake_t.init(.Host, 140, 1, 0, 0);
-    try std.testing.expectEqual(action_t.Drain, try teardown_machine.teardown_complete(140, HelloTimeoutMs));
+    try std_t.testing.expectEqual(action_t.Drain, try teardown_machine.teardown_complete(140, HelloTimeoutMs));
 }
 
 test "every asynchronous callback rejects stale tokens and backward time unchanged" {
@@ -940,7 +940,7 @@ test "wire handshake message in wrong role is fatal" {
         .session_epoch = 3,
         .request_id = 2,
     };
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try guest.receive_hello(101, 1, hello));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try guest.receive_hello(101, 1, hello));
     var host = try session_handshake_t.init(.Host, 102, 1, 0, 0);
     const ack = hello_ack_facts_t{
         .protocol_version = ProtocolVersion,
@@ -949,12 +949,12 @@ test "wire handshake message in wrong role is fatal" {
         .capabilities = 0,
         .request_id = 1,
     };
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try host.receive_ack(102, 1, ack));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try host.receive_ack(102, 1, ack));
 }
 
 test "initialization and host mapping proof guards" {
-    try std.testing.expectError(error.InvalidConnectionToken, session_handshake_t.init(.Host, 0, 1, 0, 0));
-    try std.testing.expectError(error.UnknownCapabilities, session_handshake_t.init(.Host, 1, 1, CapabilityMask | (1 << 20), 0));
+    try std_t.testing.expectError(error.InvalidConnectionToken, session_handshake_t.init(.Host, 0, 1, 0, 0));
+    try std_t.testing.expectError(error.UnknownCapabilities, session_handshake_t.init(.Host, 1, 1, CapabilityMask | (1 << 20), 0));
     var host = try session_handshake_t.init(.Host, 111, 1, 0, 0);
     const hello = hello_facts_t{
         .protocol_version = ProtocolVersion,
@@ -964,10 +964,10 @@ test "initialization and host mapping proof guards" {
         .session_epoch = 7,
         .request_id = 1,
     };
-    try std.testing.expectError(error.WrongPhase, host.mapping_validated(111, 1, 7, LayoutVersion, true));
-    try std.testing.expectEqual(phase_t.AwaitHello, host.phase);
+    try std_t.testing.expectError(error.WrongPhase, host.mapping_validated(111, 1, 7, LayoutVersion, true));
+    try std_t.testing.expectEqual(phase_t.AwaitHello, host.phase);
     _ = try host.receive_hello(111, 1, hello);
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try host.mapping_validated(111, 2, 8, LayoutVersion, true));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try host.mapping_validated(111, 2, 8, LayoutVersion, true));
 }
 
 test "wrong Ack send ID and invalid local phases preserve state" {
@@ -983,10 +983,10 @@ test "wrong Ack send ID and invalid local phases preserve state" {
     _ = try host.receive_hello(121, 1, hello);
     _ = try host.mapping_validated(121, 2, 7, LayoutVersion, true);
     const before = host;
-    try std.testing.expectError(error.WrongRequestId, host.ack_sent(121, 3, 6));
-    try std.testing.expectEqualDeep(before, host);
-    try std.testing.expectError(error.WrongPhase, host.hello_sent(121, 3, 5));
-    try std.testing.expectEqualDeep(before, host);
+    try std_t.testing.expectError(error.WrongRequestId, host.ack_sent(121, 3, 6));
+    try std_t.testing.expectEqualDeep(before, host);
+    try std_t.testing.expectError(error.WrongPhase, host.hello_sent(121, 3, 5));
+    try std_t.testing.expectEqualDeep(before, host);
 
     var ready = try session_handshake_t.init(.Host, 122, 1, 0, 0);
     const valid_hello = hello_facts_t{
@@ -1000,32 +1000,32 @@ test "wrong Ack send ID and invalid local phases preserve state" {
     _ = try ready.receive_hello(122, 1, valid_hello);
     _ = try ready.mapping_validated(122, 2, 1, LayoutVersion, true);
     _ = try ready.ack_sent(122, 3, 1);
-    try std.testing.expectEqual(action_t.None, try ready.tick(122, 4));
-    try std.testing.expectError(error.WrongPhase, ready.teardown_complete(122, 5));
-    try std.testing.expectEqual(phase_t.Ready, ready.phase);
+    try std_t.testing.expectEqual(action_t.None, try ready.tick(122, 4));
+    try std_t.testing.expectError(error.WrongPhase, ready.teardown_complete(122, 5));
+    try std_t.testing.expectEqual(phase_t.Ready, ready.phase);
 }
 
 test "role and phase guards distinguish local events from invalid wire phase" {
     var guest_for_mapping_validation = try session_handshake_t.init(.Guest, 161, 1, 0, 0);
     const guest_before = guest_for_mapping_validation;
-    try std.testing.expectError(
+    try std_t.testing.expectError(
         error.WrongPhase,
         guest_for_mapping_validation.mapping_validated(161, 1, 1, LayoutVersion, true),
     );
-    try std.testing.expectEqualDeep(guest_before, guest_for_mapping_validation);
+    try std_t.testing.expectEqualDeep(guest_before, guest_for_mapping_validation);
 
     var host_for_mapping_initialization = try session_handshake_t.init(.Host, 162, 1, 0, 0);
     const host_before = host_for_mapping_initialization;
-    try std.testing.expectError(
+    try std_t.testing.expectError(
         error.WrongPhase,
         host_for_mapping_initialization.mapping_initialized(162, 1, true, 1, 1),
     );
-    try std.testing.expectEqualDeep(host_before, host_for_mapping_initialization);
+    try std_t.testing.expectEqualDeep(host_before, host_for_mapping_initialization);
 
     var guest_for_ack_send = try session_handshake_t.init(.Guest, 163, 1, 0, 0);
     const guest_ack_before = guest_for_ack_send;
-    try std.testing.expectError(error.WrongPhase, guest_for_ack_send.ack_sent(163, 1, 1));
-    try std.testing.expectEqualDeep(guest_ack_before, guest_for_ack_send);
+    try std_t.testing.expectError(error.WrongPhase, guest_for_ack_send.ack_sent(163, 1, 1));
+    try std_t.testing.expectEqualDeep(guest_ack_before, guest_for_ack_send);
 
     var host_for_duplicate_hello = try session_handshake_t.init(.Host, 164, 1, 0, 0);
     const hello = hello_facts_t{
@@ -1036,7 +1036,7 @@ test "role and phase guards distinguish local events from invalid wire phase" {
         .session_epoch = 1,
         .request_id = 1,
     };
-    try std.testing.expectEqual(action_t.None, try host_for_duplicate_hello.receive_hello(164, 1, hello));
-    try std.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try host_for_duplicate_hello.receive_hello(164, 2, hello));
-    try std.testing.expectEqual(phase_t.Draining, host_for_duplicate_hello.phase);
+    try std_t.testing.expectEqual(action_t.None, try host_for_duplicate_hello.receive_hello(164, 1, hello));
+    try std_t.testing.expectEqual(action_t{ .ErrorAndDrain = .ProtocolViolation }, try host_for_duplicate_hello.receive_hello(164, 2, hello));
+    try std_t.testing.expectEqual(phase_t.Draining, host_for_duplicate_hello.phase);
 }

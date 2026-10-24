@@ -1,0 +1,38 @@
+{
+  "recorded_utc": "2026-10-24T17:05:53.994399+00:00",
+  "change": "Imported Zig namespace aliases use type/module _t naming; byte-for-byte mechanical transformation checked against preceding commit.",
+  "sources": [
+    {
+      "path": "src/interop/stream_reader.zig",
+      "sha256": "99f1079e6958800deef860d2a03699cae23fae5fb579b556b7b7c52a3428c77a"
+    },
+    {
+      "path": "src/interop/stream_send_queue.zig",
+      "sha256": "c7871040d2082e7e2b28c7d449de8d6619b3d1dc14f49b9c9eb142af85d6910a"
+    },
+    {
+      "path": "src/interop/session_handshake.zig",
+      "sha256": "44e01d6238d277edfcf5f1eb20767f982a6d17f008d35c2b42dc6e88d248db3e"
+    },
+    {
+      "path": "src/interop/session_liveness.zig",
+      "sha256": "23c3687fe099165b17f1ba43f46f3f1c9fe509dd77be41c8e338c4f3586576b1"
+    }
+  ],
+  "command": "make interop-stream-reader-test interop-stream-send-queue-test interop-session-handshake-test interop-session-liveness-test",
+  "exit_code": 0,
+  "tests_passed": [
+    12,
+    10,
+    16,
+    13
+  ],
+  "log": {
+    "path": "impl/seamless-interop/evidence/session_namespace_2026_10_24/focused_tests.log",
+    "sha256": "73af6bbe27a618c7870b5ef40ee22713cd64173772dd09506fc3e8a7c158f461"
+  },
+  "limits": [
+    "Prior module coverage receipts identify their original source snapshots. Combined CI requalifies the normalized source before credit."
+  ],
+  "progress_credit": 0
+}

@@ -696,7 +696,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     failures. Separates IDs from feature resource ownership and prevents a second
     private Ping sequence when composing endpoint cores. Source commit18292b0 contains this specification.
 
-- **Commit `HEAD`**: `fix(interop): validate complete bounded semantic agent versions`
+- **Commit `0035379`**: `fix(interop): validate complete bounded semantic agent versions`
   - **Task Impact**: +0% to TODO #4/#6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Replaces digits-only codec validation with shared bounded
     SemVer2 grammar and checked uint32 major extraction. Accepts valid metadata
@@ -705,5 +705,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     pass; parser100% lines/94.12% branches, whole codec96.56% lines/97.13% branches.
     Windows cross-build and native CI added; existing #4 completion earns no
     extra credit for this correction.
-    [Qualification](agent_version_qualification_2026_10_24.json). HEAD identifies
-    this containing implementation commit.
+    [Qualification](agent_version_qualification_2026_10_24.json). Source commit0035379 contains this implementation.
+
+- **Commit `HEAD`**: `refactor(interop): conform session namespace aliases to type naming`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Applies only mechanical std/c namespace alias normalization
+    to the four new session modules to honor the type/module naming invariant.
+    Transformation equality against prior source is checked; all51 focused
+    tests pass. Earlier coverage receipts retain their exact original hashes;
+    combined native CI requalifies the normalized sources before task credit.
+    [Qualification](session_namespace_qualification_2026_10_24.json). HEAD identifies
+    this containing conformance commit.

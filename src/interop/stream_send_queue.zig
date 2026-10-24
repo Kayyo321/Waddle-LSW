@@ -1,19 +1,19 @@
 //! Fixed-capacity, owning FIFO for validated protocol frames.
-const std = @import("std");
-const c = @cImport({
+const std_t = @import("std");
+const c_t = @cImport({
     @cInclude("waddle/interop_protocol.h");
 });
 
 /// Maximum number of queued frames in one direction.
-pub const QueueCapacity: usize = c.InteropPeerQueueFrames;
+pub const QueueCapacity: usize = c_t.InteropPeerQueueFrames;
 /// Slots reserved for admission of required control traffic.
 pub const ReservedControlSlots: usize = 8;
 /// Maximum queued data-class frames.
 pub const DataCapacity: usize = QueueCapacity - ReservedControlSlots;
 /// Maximum bytes in one owned protocol frame.
-pub const MaxFrameBytes: usize = c.InteropMaxFrameBytes;
+pub const MaxFrameBytes: usize = c_t.InteropMaxFrameBytes;
 /// Fixed protocol header length.
-pub const HeaderBytes: usize = c.InteropHeaderBytes;
+pub const HeaderBytes: usize = c_t.InteropHeaderBytes;
 
 /// Admission class chosen by the session caller.
 /// @ownership Enum value is copied by value.
@@ -30,9 +30,9 @@ const frame_record_t = struct {
 /// @thread_safety All calls require the same serialized event-loop thread.
 pub const queue_t = struct {
     /// Allocator borrowed until deinit; it must outlive every queued frame.
-    allocator: std.mem.Allocator,
+    allocator: std_t.mem.Allocator,
     /// Producer direction used for codec payload validation.
-    direction: c.interop_direction_t,
+    direction: c_t.interop_direction_t,
     /// Fixed ring of optional owned frame records.
     frames: [QueueCapacity]?frame_record_t = [_]?frame_record_t{null} ** QueueCapacity,
     /// Index of oldest outstanding frame.
@@ -53,8 +53,8 @@ pub const queue_t = struct {
     /// @errors InvalidDirection for a value outside the frozen direction set.
     /// @ownership Returned queue is caller-owned by value.
     /// @thread_safety Use and deinit from one serialized event-loop thread.
-    pub fn init(allocator: std.mem.Allocator, direction: c.interop_direction_t) error{InvalidDirection}!queue_t {
-        if (direction != c.InteropFromGuest and direction != c.InteropFromHost and direction != c.InteropFromLocal) return error.InvalidDirection;
+    pub fn init(allocator: std_t.mem.Allocator, direction: c_t.interop_direction_t) error{InvalidDirection}!queue_t {
+        if (direction != c_t.InteropFromGuest and direction != c_t.InteropFromHost and direction != c_t.InteropFromLocal) return error.InvalidDirection;
         return .{ .allocator = allocator, .direction = direction };
     }
 
@@ -78,16 +78,16 @@ pub const queue_t = struct {
     }!void {
         if (!self.live) return error.QueueClosed;
         if (frame.len < HeaderBytes or frame.len > MaxFrameBytes) return error.InvalidFrame;
-        var header: c.interop_header_t = undefined;
-        const header_result = c.interop_header_decode(frame.ptr, HeaderBytes, &header);
-        if (header_result != c.InteropErrorNone) return error.InvalidFrame;
+        var header: c_t.interop_header_t = undefined;
+        const header_result = c_t.interop_header_decode(frame.ptr, HeaderBytes, &header);
+        if (header_result != c_t.InteropErrorNone) return error.InvalidFrame;
         const complete_length = HeaderBytes + @as(usize, @intCast(header.length));
         if (complete_length != frame.len) return error.InvalidFrame;
         const payload = frame[HeaderBytes..];
         const payload_ptr: [*c]const u8 = if (payload.len == 0) null else payload.ptr;
-        const payload_result = c.interop_payload_validate(header.type, self.direction, payload_ptr, payload.len);
-        if (payload_result == c.InteropErrorUnsupportedType or payload_result == c.InteropErrorUnsupportedField) return error.UnsupportedFrame;
-        if (payload_result != c.InteropErrorNone) return error.InvalidPayload;
+        const payload_result = c_t.interop_payload_validate(header.type, self.direction, payload_ptr, payload.len);
+        if (payload_result == c_t.InteropErrorUnsupportedType or payload_result == c_t.InteropErrorUnsupportedField) return error.UnsupportedFrame;
+        if (payload_result != c_t.InteropErrorNone) return error.InvalidPayload;
 
         if (self.count == QueueCapacity) return error.QueueFull;
         if (class == .Data and self.count >= DataCapacity) return error.DataCapacityReserved;
@@ -158,30 +158,30 @@ pub const queue_t = struct {
 
 // Test-only fixtures.
 fn make_ping_frame(frame: []u8, request_id: u32) !usize {
-    var writer: c.interop_writer_t = undefined;
-    c.interop_writer_init(&writer, frame.ptr, frame.len);
+    var writer: c_t.interop_writer_t = undefined;
+    c_t.interop_writer_init(&writer, frame.ptr, frame.len);
     var frame_length: usize = 0;
-    const result = c.interop_writer_finish(&writer, c.InteropMsgPing, request_id, c.InteropFromHost, &frame_length);
-    if (result != c.InteropErrorNone) return error.CodecFixtureFailure;
+    const result = c_t.interop_writer_finish(&writer, c_t.InteropMsgPing, request_id, c_t.InteropFromHost, &frame_length);
+    if (result != c_t.InteropErrorNone) return error.CodecFixtureFailure;
     return frame_length;
 }
 
 fn malformed_frame(frame: []u8, payload_length: u32) void {
-    std.mem.writeInt(u32, frame[0..4], c.InteropMagic, .little);
-    std.mem.writeInt(u16, frame[4..6], c.InteropVersion, .little);
-    std.mem.writeInt(u16, frame[6..8], c.InteropMsgPing, .little);
-    std.mem.writeInt(u32, frame[8..12], payload_length, .little);
-    std.mem.writeInt(u32, frame[12..16], 1, .little);
+    std_t.mem.writeInt(u32, frame[0..4], c_t.InteropMagic, .little);
+    std_t.mem.writeInt(u16, frame[4..6], c_t.InteropVersion, .little);
+    std_t.mem.writeInt(u16, frame[6..8], c_t.InteropMsgPing, .little);
+    std_t.mem.writeInt(u32, frame[8..12], payload_length, .little);
+    std_t.mem.writeInt(u32, frame[12..16], 1, .little);
 }
 
-fn allocation_sweep_probe(allocator: std.mem.Allocator, frame: []const u8) !void {
-    var queue = try queue_t.init(allocator, c.InteropFromHost);
+fn allocation_sweep_probe(allocator: std_t.mem.Allocator, frame: []const u8) !void {
+    var queue = try queue_t.init(allocator, c_t.InteropFromHost);
     defer queue.deinit();
     try queue.enqueue(frame, .Data);
 }
 
 test "enqueue owns copied frame and partial acknowledgements preserve exact FIFO bytes" {
-    var queue = try queue_t.init(std.testing.allocator, c.InteropFromHost);
+    var queue = try queue_t.init(std_t.testing.allocator, c_t.InteropFromHost);
     defer queue.deinit();
     var first_frame: [64]u8 = undefined;
     const first_length = try make_ping_frame(&first_frame, 11);
@@ -191,27 +191,27 @@ test "enqueue owns copied frame and partial acknowledgements preserve exact FIFO
     try queue.enqueue(second_frame[0..second_length], .Control);
     @memset(first_frame[0..first_length], 0xaa);
     const original = try make_ping_frame(&first_frame, 11);
-    try std.testing.expectEqual(first_length, original);
-    try std.testing.expectEqual(@as(usize, first_length + second_length), queue.pending_bytes);
+    try std_t.testing.expectEqual(first_length, original);
+    try std_t.testing.expectEqual(@as(usize, first_length + second_length), queue.pending_bytes);
     const first = try queue.peek();
-    try std.testing.expectEqualSlices(u8, first_frame[0..first_length], first);
+    try std_t.testing.expectEqualSlices(u8, first_frame[0..first_length], first);
     try queue.consume_written(0);
-    try std.testing.expectEqualSlices(u8, first_frame[0..first_length], try queue.peek());
+    try std_t.testing.expectEqualSlices(u8, first_frame[0..first_length], try queue.peek());
     try queue.consume_written(5);
-    try std.testing.expectEqual(@as(usize, first_length + second_length - 5), queue.pending_bytes);
-    try std.testing.expectEqualSlices(u8, first_frame[5..first_length], try queue.peek());
+    try std_t.testing.expectEqual(@as(usize, first_length + second_length - 5), queue.pending_bytes);
+    try std_t.testing.expectEqualSlices(u8, first_frame[5..first_length], try queue.peek());
     const remaining_before = try queue.peek();
-    try std.testing.expectError(error.InvalidCount, queue.consume_written(remaining_before.len + 1));
-    try std.testing.expectEqualSlices(u8, first_frame[5..first_length], try queue.peek());
+    try std_t.testing.expectError(error.InvalidCount, queue.consume_written(remaining_before.len + 1));
+    try std_t.testing.expectEqualSlices(u8, first_frame[5..first_length], try queue.peek());
     try queue.consume_written(remaining_before.len);
-    try std.testing.expectEqualSlices(u8, second_frame[0..second_length], try queue.peek());
+    try std_t.testing.expectEqualSlices(u8, second_frame[0..second_length], try queue.peek());
     try queue.consume_written(second_length);
-    try std.testing.expectEqual(@as(usize, 0), queue.pending_bytes);
-    try std.testing.expectError(error.Empty, queue.peek());
+    try std_t.testing.expectEqual(@as(usize, 0), queue.pending_bytes);
+    try std_t.testing.expectError(error.Empty, queue.peek());
 }
 
 test "data reservation control admission full capacity and ring wrap preserve FIFO" {
-    var queue = try queue_t.init(std.testing.allocator, c.InteropFromHost);
+    var queue = try queue_t.init(std_t.testing.allocator, c_t.InteropFromHost);
     defer queue.deinit();
     var frame: [64]u8 = undefined;
     for (0..DataCapacity) |index| {
@@ -220,22 +220,22 @@ test "data reservation control admission full capacity and ring wrap preserve FI
     }
     const before_reserved = queue.pending_bytes;
     const length = try make_ping_frame(&frame, 9000);
-    try std.testing.expectError(error.DataCapacityReserved, queue.enqueue(frame[0..length], .Data));
-    try std.testing.expectEqual(DataCapacity, queue.count);
-    try std.testing.expectEqual(before_reserved, queue.pending_bytes);
+    try std_t.testing.expectError(error.DataCapacityReserved, queue.enqueue(frame[0..length], .Data));
+    try std_t.testing.expectEqual(DataCapacity, queue.count);
+    try std_t.testing.expectEqual(before_reserved, queue.pending_bytes);
     for (DataCapacity..QueueCapacity) |index| {
         const control_length = try make_ping_frame(&frame, @intCast(index));
         try queue.enqueue(frame[0..control_length], .Control);
     }
-    try std.testing.expectEqual(QueueCapacity, queue.count);
+    try std_t.testing.expectEqual(QueueCapacity, queue.count);
     const before_full = queue.pending_bytes;
-    try std.testing.expectError(error.QueueFull, queue.enqueue(frame[0..length], .Control));
-    try std.testing.expectEqual(QueueCapacity, queue.count);
-    try std.testing.expectEqual(before_full, queue.pending_bytes);
+    try std_t.testing.expectError(error.QueueFull, queue.enqueue(frame[0..length], .Control));
+    try std_t.testing.expectEqual(QueueCapacity, queue.count);
+    try std_t.testing.expectEqual(before_full, queue.pending_bytes);
     for (0..300) |index| {
         const current = try queue.peek();
-        const decoded_id = std.mem.readInt(u32, current[12..16], .little);
-        try std.testing.expectEqual(@as(u32, @intCast(index)), decoded_id);
+        const decoded_id = std_t.mem.readInt(u32, current[12..16], .little);
+        try std_t.testing.expectEqual(@as(u32, @intCast(index)), decoded_id);
         try queue.consume_written(current.len);
     }
     for (QueueCapacity..QueueCapacity + 300) |index| {
@@ -244,74 +244,74 @@ test "data reservation control admission full capacity and ring wrap preserve FI
     }
     for (300..QueueCapacity + 300) |index| {
         const current = try queue.peek();
-        const decoded_id = std.mem.readInt(u32, current[12..16], .little);
-        try std.testing.expectEqual(@as(u32, @intCast(index)), decoded_id);
+        const decoded_id = std_t.mem.readInt(u32, current[12..16], .little);
+        try std_t.testing.expectEqual(@as(u32, @intCast(index)), decoded_id);
         try queue.consume_written(current.len);
     }
-    try std.testing.expectEqual(@as(usize, 0), queue.count);
+    try std_t.testing.expectEqual(@as(usize, 0), queue.count);
 }
 
 test "codec rejects malformed maximum-size and wrong-direction frames before allocation" {
     var invalid: [MaxFrameBytes]u8 = [_]u8{0} ** MaxFrameBytes;
-    malformed_frame(&invalid, c.InteropMaxPayloadBytes);
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    var queue = try queue_t.init(failing.allocator(), c.InteropFromHost);
+    malformed_frame(&invalid, c_t.InteropMaxPayloadBytes);
+    var failing = std_t.testing.FailingAllocator.init(std_t.testing.allocator, .{ .fail_index = 0 });
+    var queue = try queue_t.init(failing.allocator(), c_t.InteropFromHost);
     defer queue.deinit();
-    try std.testing.expectError(error.InvalidPayload, queue.enqueue(&invalid, .Data));
-    try std.testing.expectEqual(@as(usize, 0), queue.count);
-    try std.testing.expectEqual(@as(usize, 0), queue.pending_bytes);
-    try std.testing.expect(!failing.has_induced_failure);
+    try std_t.testing.expectError(error.InvalidPayload, queue.enqueue(&invalid, .Data));
+    try std_t.testing.expectEqual(@as(usize, 0), queue.count);
+    try std_t.testing.expectEqual(@as(usize, 0), queue.pending_bytes);
+    try std_t.testing.expect(!failing.has_induced_failure);
 
     var ping: [64]u8 = undefined;
     const ping_length = try make_ping_frame(&ping, 1);
-    var guest_queue = try queue_t.init(failing.allocator(), c.InteropFromGuest);
+    var guest_queue = try queue_t.init(failing.allocator(), c_t.InteropFromGuest);
     defer guest_queue.deinit();
-    try std.testing.expectError(error.UnsupportedFrame, guest_queue.enqueue(ping[0..ping_length], .Data));
-    try std.testing.expect(!failing.has_induced_failure);
+    try std_t.testing.expectError(error.UnsupportedFrame, guest_queue.enqueue(ping[0..ping_length], .Data));
+    try std_t.testing.expect(!failing.has_induced_failure);
 }
 
 test "maximum valid optional extension frame is copied and acknowledged without truncation" {
-    var queue = try queue_t.init(std.testing.allocator, c.InteropFromHost);
+    var queue = try queue_t.init(std_t.testing.allocator, c_t.InteropFromHost);
     defer queue.deinit();
     var frame: [MaxFrameBytes]u8 = [_]u8{0x5a} ** MaxFrameBytes;
     const extension_length = MaxFrameBytes - HeaderBytes - 4;
     // The writer deliberately only emits known tags. Construct a hypothetical
     // newer peer's unknown optional extension and validate it through enqueue.
-    malformed_frame(&frame, c.InteropMaxPayloadBytes);
-    std.mem.writeInt(u16, frame[HeaderBytes..][0..2], 0x7ffe, .little);
-    std.mem.writeInt(u16, frame[HeaderBytes + 2 ..][0..2], extension_length, .little);
+    malformed_frame(&frame, c_t.InteropMaxPayloadBytes);
+    std_t.mem.writeInt(u16, frame[HeaderBytes..][0..2], 0x7ffe, .little);
+    std_t.mem.writeInt(u16, frame[HeaderBytes + 2 ..][0..2], extension_length, .little);
     @memset(frame[HeaderBytes + 4 ..], 0xa7);
     try queue.enqueue(&frame, .Control);
-    try std.testing.expectEqual(MaxFrameBytes, queue.pending_bytes);
-    try std.testing.expectEqualSlices(u8, &frame, try queue.peek());
+    try std_t.testing.expectEqual(MaxFrameBytes, queue.pending_bytes);
+    try std_t.testing.expectEqualSlices(u8, &frame, try queue.peek());
     // Mutating the caller buffer must not change either queued boundary byte.
     @memset(&frame, 0);
     const copied = try queue.peek();
-    try std.testing.expectEqual(@as(u8, 0xa7), copied[HeaderBytes + 4]);
-    try std.testing.expectEqual(@as(u8, 0xa7), copied[MaxFrameBytes - 1]);
+    try std_t.testing.expectEqual(@as(u8, 0xa7), copied[HeaderBytes + 4]);
+    try std_t.testing.expectEqual(@as(u8, 0xa7), copied[MaxFrameBytes - 1]);
     try queue.consume_written(MaxFrameBytes - 1);
-    try std.testing.expectEqual(@as(usize, 1), queue.pending_bytes);
-    try std.testing.expectEqualSlices(u8, &[_]u8{0xa7}, try queue.peek());
+    try std_t.testing.expectEqual(@as(usize, 1), queue.pending_bytes);
+    try std_t.testing.expectEqualSlices(u8, &[_]u8{0xa7}, try queue.peek());
     try queue.consume_written(1);
-    try std.testing.expectEqual(@as(usize, 0), queue.count);
-    try std.testing.expectEqual(@as(usize, 0), queue.pending_bytes);
+    try std_t.testing.expectEqual(@as(usize, 0), queue.count);
+    try std_t.testing.expectEqual(@as(usize, 0), queue.pending_bytes);
 }
 
 test "enqueue requires one exact frame and rejects invalid header lengths" {
-    var queue = try queue_t.init(std.testing.allocator, c.InteropFromHost);
+    var queue = try queue_t.init(std_t.testing.allocator, c_t.InteropFromHost);
     defer queue.deinit();
     var frame: [64]u8 = undefined;
     const length = try make_ping_frame(&frame, 7);
-    try std.testing.expectError(error.InvalidFrame, queue.enqueue(frame[0 .. length - 1], .Data));
-    try std.testing.expectError(error.InvalidFrame, queue.enqueue(frame[0 .. length + 1], .Data));
+    try std_t.testing.expectError(error.InvalidFrame, queue.enqueue(frame[0 .. length - 1], .Data));
+    try std_t.testing.expectError(error.InvalidFrame, queue.enqueue(frame[0 .. length + 1], .Data));
     malformed_frame(&frame, 4);
-    try std.testing.expectError(error.InvalidFrame, queue.enqueue(frame[0..HeaderBytes], .Data));
-    try std.testing.expectEqual(@as(usize, 0), queue.count);
+    try std_t.testing.expectError(error.InvalidFrame, queue.enqueue(frame[0..HeaderBytes], .Data));
+    try std_t.testing.expectEqual(@as(usize, 0), queue.count);
 }
 
 test "allocation failure leaves existing frames offsets and counters unchanged" {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
-    var queue = try queue_t.init(failing.allocator(), c.InteropFromHost);
+    var failing = std_t.testing.FailingAllocator.init(std_t.testing.allocator, .{ .fail_index = 1 });
+    var queue = try queue_t.init(failing.allocator(), c_t.InteropFromHost);
     defer queue.deinit();
     var first_frame: [64]u8 = undefined;
     const first_length = try make_ping_frame(&first_frame, 11);
@@ -321,36 +321,36 @@ test "allocation failure leaves existing frames offsets and counters unchanged" 
     try queue.consume_written(4);
     const pending_before = queue.pending_bytes;
     const offset_before = queue.front_write_offset;
-    try std.testing.expectError(error.OutOfMemory, queue.enqueue(second_frame[0..second_length], .Data));
-    try std.testing.expectEqual(@as(usize, 1), queue.count);
-    try std.testing.expectEqual(pending_before, queue.pending_bytes);
-    try std.testing.expectEqual(offset_before, queue.front_write_offset);
-    try std.testing.expectEqualSlices(u8, first_frame[4..first_length], try queue.peek());
+    try std_t.testing.expectError(error.OutOfMemory, queue.enqueue(second_frame[0..second_length], .Data));
+    try std_t.testing.expectEqual(@as(usize, 1), queue.count);
+    try std_t.testing.expectEqual(pending_before, queue.pending_bytes);
+    try std_t.testing.expectEqual(offset_before, queue.front_write_offset);
+    try std_t.testing.expectEqualSlices(u8, first_frame[4..first_length], try queue.peek());
 }
 
 test "single frame allocation is covered by an allocator failure sweep" {
     var frame: [64]u8 = undefined;
     const length = try make_ping_frame(&frame, 88);
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, allocation_sweep_probe, .{frame[0..length]});
+    try std_t.testing.checkAllAllocationFailures(std_t.testing.allocator, allocation_sweep_probe, .{frame[0..length]});
 }
 
 test "deinit frees partial frames idempotently and closes future operations" {
-    var queue = try queue_t.init(std.testing.allocator, c.InteropFromHost);
+    var queue = try queue_t.init(std_t.testing.allocator, c_t.InteropFromHost);
     var frame: [64]u8 = undefined;
     const length = try make_ping_frame(&frame, 3);
     try queue.enqueue(frame[0..length], .Data);
     try queue.consume_written(3);
     queue.deinit();
     queue.deinit();
-    try std.testing.expectEqual(@as(usize, 0), queue.count);
-    try std.testing.expectEqual(@as(usize, 0), queue.pending_bytes);
-    try std.testing.expectError(error.QueueClosed, queue.enqueue(frame[0..length], .Control));
-    try std.testing.expectError(error.QueueClosed, queue.peek());
-    try std.testing.expectError(error.QueueClosed, queue.consume_written(0));
+    try std_t.testing.expectEqual(@as(usize, 0), queue.count);
+    try std_t.testing.expectEqual(@as(usize, 0), queue.pending_bytes);
+    try std_t.testing.expectError(error.QueueClosed, queue.enqueue(frame[0..length], .Control));
+    try std_t.testing.expectError(error.QueueClosed, queue.peek());
+    try std_t.testing.expectError(error.QueueClosed, queue.consume_written(0));
 }
 
 test "enqueue may borrow an already queued frame while copying another record" {
-    var queue = try queue_t.init(std.testing.allocator, c.InteropFromHost);
+    var queue = try queue_t.init(std_t.testing.allocator, c_t.InteropFromHost);
     defer queue.deinit();
     var frame: [64]u8 = undefined;
     const length = try make_ping_frame(&frame, 41);
@@ -359,14 +359,14 @@ test "enqueue may borrow an already queued frame while copying another record" {
     var expected: [64]u8 = undefined;
     const expected_length = try make_ping_frame(&expected, 41);
     try queue.enqueue(borrowed, .Control);
-    try std.testing.expectEqual(@as(usize, 2), queue.count);
-    try std.testing.expectEqualSlices(u8, expected[0..expected_length], try queue.peek());
+    try std_t.testing.expectEqual(@as(usize, 2), queue.count);
+    try std_t.testing.expectEqualSlices(u8, expected[0..expected_length], try queue.peek());
     try queue.consume_written(length);
-    try std.testing.expectEqualSlices(u8, expected[0..expected_length], try queue.peek());
+    try std_t.testing.expectEqualSlices(u8, expected[0..expected_length], try queue.peek());
 }
 
 test "deterministic queue stress preserves acknowledgement byte totals" {
-    var queue = try queue_t.init(std.testing.allocator, c.InteropFromHost);
+    var queue = try queue_t.init(std_t.testing.allocator, c_t.InteropFromHost);
     defer queue.deinit();
     var frame: [64]u8 = undefined;
     var expected_pending: usize = 0;
@@ -383,7 +383,7 @@ test "deterministic queue stress preserves acknowledgement byte totals" {
             try queue.consume_written(count);
             expected_pending -= count;
         }
-        try std.testing.expectEqual(expected_pending, queue.pending_bytes);
-        try std.testing.expect(queue.count <= QueueCapacity);
+        try std_t.testing.expectEqual(expected_pending, queue.pending_bytes);
+        try std_t.testing.expect(queue.count <= QueueCapacity);
     }
 }
