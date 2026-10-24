@@ -913,7 +913,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     [Qualification](control_peer_abi_qualification_2026_10_24.json).
     HEAD identifies this containing implementation commit.
 
-- **Commit `HEAD`**: `feat(interop): integrate reviewed window graph and observer boundary`
+- **Commit `57847b1`**: `feat(interop): integrate reviewed window graph and observer boundary`
   - **Task Impact**: +35% to TODO #10 (+1.40% overall; total17.80%).
   - **Summary**: Imports owned source/tests/docs at reviewed isolated73bc833,
     preserving original3714cf2 return and full isolated provenance. Main graph
@@ -925,3 +925,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     and installed-session acceptance remain open; observer/native credit stays0.
     [Qualification](claude_window_graph/main_import_qualification_2026_10_24.json).
     HEAD identifies this containing import commit.
+
+- **Commit `HEAD`**: `docs(interop): specify native window fact consistency guards`
+  - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
+  - **Summary**: Freezes pre/post PID/TID checks before property reads and a
+    three-result fullscreen helper so indeterminate monitor queries preserve
+    prior graph facts. Requires separate deterministic native fault tests and
+    unchanged real native smoke; no atomic snapshot or same-tuple reuse claim.
+    Implementation/native CI and O5 acceptance remain open.
+    HEAD identifies this contract commit.

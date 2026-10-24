@@ -3361,3 +3361,38 @@ review additionally requires rechecking PID/TID across a fact snapshot and
 preserving prior state when monitor information is indeterminate. These block
 observer/native credit; CPU graph acceptance grants no installed-session,
 UIAccess/UAC, secure-desktop, capture, slot/wire or host-drain proof.
+
+
+#### 8.22.2 Native fact consistency correction contract
+
+Before reading HWND relations, styles or other properties, the native query
+captures nonzero process/thread IDs with GetWindowThreadProcessId. After all
+property/process reads and final liveness probing, it reads those IDs again.
+Any zero/error or changed pair discards the partial snapshot; a still-existing
+window returns QueryFailed, never Exists or an invented Gone. A demonstrably
+gone window may retain the existing Gone probe semantics. This detects
+cross-process/thread replacement across the read; it does not promise an atomic
+Win32 snapshot or detect identical-tuple reuse/ABA. No old facts are offered
+after a failed query. Every native scan still closes at the existing scope.
+
+The fullscreen helper has three private results: known false0, known true1,
+indeterminate-1. Iconic/captioned windows are known false. MonitorFromWindow
+with MONITOR_DEFAULTTONULL returning NULL means no intersecting monitor and
+therefore known false. A non-NULL monitor followed by failed GetMonitorInfoW
+is indeterminate, so the outer query returns QueryFailed while the HWND still
+exists. Successful monitor geometry uses the existing coverage comparison.
+No failure may silently clear a prior fullscreen state.
+
+A separate Windows-only white-box fault fixture intercepts only PID/TID and
+monitor-info API returns while using real temporary HWNDs and normal adapter
+cleanup. It tests changed PID, changed TID, final zero/failure, monitor failure,
+known fullscreen/nonfullscreen helpers and unmodified successful queries. Its
+synthetic failures are distinct from the existing real native smoke, which
+continues without API doubles. Both compile with Zig/MinGW and execute in
+Windows CI. Linux portable gates/coverage remain required and do not claim
+coverage of preprocessed-out native branches. Source authority: Microsoft
+[GetWindowThreadProcessId](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowthreadprocessid),
+[GetMonitorInfoW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getmonitorinfow),
+[MonitorFromWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-monitorfromwindow),
+verified2026-10-24. Observer/native acceptance still waits on O5 and its own
+full qualification; this correction alone earns no progress.
