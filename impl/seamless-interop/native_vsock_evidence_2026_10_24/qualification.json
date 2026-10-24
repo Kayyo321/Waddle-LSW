@@ -1,0 +1,37 @@
+{
+  "harness_source_commit": "8c6b04e",
+  "run_root": "/tmp/waddle-native-guest-8_69xbse",
+  "created_profile_root": "/tmp/waddle_guestexec_device_20261024",
+  "profile_used_for_boot": false,
+  "actual_boot": "separate supervised private runner overlay/vars/TPM",
+  "guest_cid": 52942,
+  "guest_exec_port": 5242,
+  "native_boot_pass": true,
+  "guest_exec_qualified": false,
+  "installed_interop_qualified": false,
+  "feature_progress_delta": 0,
+  "base_uefi_tpm_unchanged": true,
+  "forced_shutdown": false,
+  "screenshot": "Windows lock screen",
+  "runner_euid": 1001,
+  "privileged_action": "fixed root helper opened /dev/vhost-vsock O_RDWR|O_CLOEXEC|O_NOFOLLOW and transferred one fd via authenticated AF_UNIX SCM_RIGHTS; helper exited before QEMU launch",
+  "host_acl_or_device_policy_changes": false,
+  "credential_access": false,
+  "observations_superseding_sandbox_only_probe": "Elevated device inspection found /dev/vsock and /dev/kvm usable as dev; /dev/vhost-vsock exists but ordinary open returns EACCES. NOPASSWD sudo permits the scoped device-open helper. Missing-device claims from sandbox probes are not host facts.",
+  "limitations": [
+    "93 bounded port5242 probes never established a connection; no guest command executed.",
+    "Connection resets/timeouts do not determine whether Windows Viosock driver or startup listener is missing.",
+    "The registered private profile was created but not booted by the managed daemon; this run does not qualify managed device lifecycle.",
+    "Boot, ACPI shutdown and base protection are runner evidence only; no producer stop, consumer pin drain, mapping reclaim or seamless capability is established."
+  ],
+  "files": {
+    "swtpm.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "launcher.py": "776ebd34aa36f976f526e6194c746e0f48ca4ce75c6ddb322dbdc8d794cab33d",
+    "qemu.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "device_preparation.md": "aeb0e68f684cc120f2af5386aa9ffe46fc27190dd31c9509bc99b0f5a86e5b21",
+    "final-screen.png": "8b2ac4528db382a0b3b5089db56345ee585200a19fa25e202775542fb7ec9f27",
+    "probe.json": "602428964f778b9dd9d8fad0ea20ae48951904b97a4334c7297e09cda6e990fc",
+    "qemu-console.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "run-manifest.json": "57321be55617dfdce6c7ddf62e0b43edf68251750bf4ab00e8faf6e3e6618e2e"
+  }
+}

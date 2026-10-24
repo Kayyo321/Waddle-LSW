@@ -1,0 +1,18 @@
+{
+  "cid": 52942,
+  "port": 5242,
+  "attempts": 93,
+  "errors": {
+    "19": 1,
+    "None": 5,
+    "104": 87
+  },
+  "reachable": false,
+  "execution": null,
+  "uid": 1001,
+  "no_host_acl_changes": true,
+  "run_root": "/tmp/waddle-native-guest-8_69xbse",
+  "protected_inputs_unchanged": true,
+  "forced_shutdown": false,
+  "probe_joined": true
+}

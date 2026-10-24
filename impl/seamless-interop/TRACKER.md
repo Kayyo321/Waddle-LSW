@@ -1161,7 +1161,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     path; earlier sandbox-only missing-node observations do not establish a host
     limitation. Private native VSOCK boot/listener qualification remains pending.
 
-- **Commit `HEAD`**: `docs(interop): record green daemon and session component CI`
+- **Commit `bd91b0c`**: `docs(interop): record green daemon and session component CI`
   - **Task Impact**: +0% to TODO #7/#10/#34 (+0% overall; total18.00%).
   - **Summary**: Exact source4c5e74a passes interop40141181545,
     graph40141181509 and Native AV40141181515, with all Linux/Windows jobs green.
@@ -1170,3 +1170,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     GuestReady runtime/fault/sanitizer/coverage and Linux lease/connector gates.
     These runs do not qualify the later O5 working tree, inherited-FD runner,
     installed session or the full feature; tracker remains18.00%.
+
+- **Commit `HEAD`**: `docs(interop): record isolated native VSOCK boot and listener probe`
+  - **Task Impact**: +0% to TODO #6/#7/#10/#34 (+0% overall; total18.00%).
+  - **Summary**: Creates an isolated private device profile; separately boots a
+    supervised private Windows overlay with CID52942 and inherited VSOCK backend.
+    Scoped root helper transfers a single device FD; runner/QEMU execute as dev,
+    with no ACL changes or credential access. Windows reaches lock screen;
+    ACPI shutdown is not forced and base/UEFI/TPM remain unchanged. All93 bounded
+    port5242 probes fail to connect, so no guest command or installed feature test
+    ran. [Evidence](native_vsock_evidence_2026_10_24/qualification.json) corrects
+    earlier sandbox-only missing-device observations. Native acceptance stays open.
