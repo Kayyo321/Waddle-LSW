@@ -150,7 +150,7 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     correlation and pending graph fixes from this result. No installed-session
     credit or standard merge. HEAD identifies this evidence commit.
 
-- **Commit `HEAD`**: `fix(interop): invalidate cached descendants across parent discontinuity`
+- **Commit `2310f17`**: `fix(interop): invalidate cached descendants across parent discontinuity`
   - **Task Impact**: +0% to local #1/#4; +0% global TODO #10 (local90.50%).
   - **Summary**: Implements the bounded staged deletion mask for every Active
     cascade root, changed Deferred parent, accepted destroy, exclusion and doomed
@@ -160,3 +160,10 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     Nine new builtins bring Debug and ReleaseSafe to145 passing each. Public
     comments describe exceptions; no ABI size/export change. Full leak/coverage/
     Windows qualification remains pending. HEAD is this correctness commit.
+
+- **Commit `HEAD`**: `ci(interop): execute full graph Zig suites on Windows`
+  - **Task Impact**: +0% to local #1/#2/#4; +0% global TODO #10 (local90.50%).
+  - **Summary**: Adds both ReleaseSafe Zig unit executables to the Windows
+    cross-build/artifact/native execution gates so all new descendant regressions
+    run there alongside C clients and real adapter smoke. No success inferred
+    before the exact-source run. HEAD identifies this CI expansion.

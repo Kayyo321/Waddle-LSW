@@ -37,6 +37,8 @@ jobs:
             build/window_graph/window_graph_c_test.exe
             build/window_graph/window_observer_test.exe
             build/window_graph/window_observer_native_test.exe
+            build/window_graph/window_graph_unit_test.exe
+            build/window_graph/window_graph_abi_unit_test.exe
           if-no-files-found: error
   windows:
     needs: linux
@@ -50,7 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($test_name in @('window_graph_c_test.exe', 'window_observer_test.exe', 'window_observer_native_test.exe')) {
+          foreach ($test_name in @('window_graph_c_test.exe', 'window_observer_test.exe', 'window_observer_native_test.exe', 'window_graph_unit_test.exe', 'window_graph_abi_unit_test.exe')) {
             & ".\build\$test_name"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

@@ -160,8 +160,15 @@ window-graph-coverage: $(WgBuild)/window_graph_abi.o | $(WgBuild) $(WgCovDir)
 	python3 -c "import gzip,json,sys; r=json.loads(gzip.decompress(open(sys.argv[1],'rb').read())); fs=[x for x in r['files'] if x['file'].endswith('src/interop/window_observer_windows.c')]; assert len(fs)==1, 'expected exactly one gcov record for src/interop/window_observer_windows.c'; L=fs[0]['lines']; B=[b for l in L for b in l.get('branches',[])]; lc=sum(1 for l in L if l['count']>0); bc=sum(1 for b in B if b['count']>0); lt=len(L); bt=len(B); m=int(sys.argv[2]); print('line %d/%d branch %d/%d' % (lc,lt,bc,bt)); sys.exit(0 if lt>0 and bt>0 and 100*lc>=m*lt and 100*bc>=m*bt else 1)" $(WgCovObs)/window_observer_windows.gcov.json.gz $(WgCovMinPercent)
 
 # Cross-compile and link checks only. Nothing here is executed (no Windows runtime is available).
-window-graph-windows: $(WgBuild)/window_graph_c_test.exe $(WgBuild)/window_observer_test.exe $(WgBuild)/window_observer_native_test.exe $(WgBuild)/observer_native_zig.o $(WgBuild)/observer_native_mingw.o
+window-graph-windows: $(WgBuild)/window_graph_c_test.exe $(WgBuild)/window_observer_test.exe $(WgBuild)/window_observer_native_test.exe $(WgBuild)/window_graph_unit_test.exe $(WgBuild)/window_graph_abi_unit_test.exe $(WgBuild)/observer_native_zig.o $(WgBuild)/observer_native_mingw.o
 	@echo "window-graph-windows: cross-compiled and linked only; the Windows binaries were NOT executed."
+
+# Execute the exact ReleaseSafe Zig suites in Windows CI, including all graph regressions.
+$(WgBuild)/window_graph_unit_test.exe: $(wildcard $(WgZigCore) $(WgHdrApi)) | $(WgBuild)
+	$(ZIG) test $(WgZigCore) -Iinclude -lc -O ReleaseSafe -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
+
+$(WgBuild)/window_graph_abi_unit_test.exe: $(wildcard $(WgZigCore) $(WgZigAbi) $(WgHdrApi)) | $(WgBuild)
+	$(ZIG) test $(WgZigAbi) -Iinclude -lc -O ReleaseSafe -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
 
 # Static Zig library of the ABI for Windows (x86_64-windows-gnu, no compiler-rt, libc linked).
 $(WgBuild)/window_graph_abi_windows.lib: $(wildcard $(WgZigCore) $(WgZigAbi) $(WgHdrApi)) | $(WgBuild)
