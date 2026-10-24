@@ -1204,7 +1204,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     attempts. Updated Windows runtime CI, coordinator/capture staging and installed
     native acceptance remain pending; no new feature credit before those gates.
 
-- **Commit `HEAD`**: `test(interop): save recoverable fresh guest preparation prototype`
+- **Commit `0965410`**: `test(interop): save recoverable fresh guest preparation prototype`
   - **Task Impact**: +0% to TODO #6/#34 (+0% overall; total18.00%).
   - **Summary**: Saves the isolated prepare-only generator,15 passing unit tests,
     pinned media/verified WIM edition, private GPT disk/account/driver/startup
@@ -1212,3 +1212,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     preparation retains a KeyError because the actual QEMU provenance result has
     no path field; no VM/TPM process started. Secret-bearing assets stay outside
     Git in the private ignored build directory. Prototype is not native acceptance.
+
+- **Commit `HEAD`**: `docs(interop): save night checkpoint and release parallel work ownership`
+  - **Task Impact**: +0% to TODO #1-#34 (+0% overall; total18.00%).
+  - **Summary**: Stops at the user's request with all implementation committed,
+    no active agents/native children, and [exact resume instructions](checkpoint_2026_10_24_night.md).
+    Records all-green e4d42de CI separately from O5's pending updated Windows CI,
+    retained native assets, the preparation KeyError, unapproved coordinator
+    proposals, and secret/base-image safeguards. HEAD identifies this checkpoint.

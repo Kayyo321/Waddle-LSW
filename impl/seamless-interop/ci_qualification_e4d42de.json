@@ -1,0 +1,565 @@
+{
+  "source_commit": "e4d42ded7b601b59ef97f2fac2c7ab6cb590eafb",
+  "runs": [
+    {
+      "conclusion": "success",
+      "databaseId": 40143405298,
+      "headSha": "e4d42ded7b601b59ef97f2fac2c7ab6cb590eafb",
+      "jobs": [
+        {
+          "completedAt": "2026-10-24T23:47:00Z",
+          "conclusion": "success",
+          "databaseId": 121019645015,
+          "name": "linux",
+          "startedAt": "2026-10-24T23:36:10Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T23:36:12Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T23:36:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:14Z",
+              "conclusion": "success",
+              "name": "Initialize containers",
+              "number": 2,
+              "startedAt": "2026-10-24T23:36:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:29Z",
+              "conclusion": "success",
+              "name": "Install base build and platform development packages",
+              "number": 3,
+              "startedAt": "2026-10-24T23:36:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:31Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "number": 4,
+              "startedAt": "2026-10-24T23:36:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:32Z",
+              "conclusion": "success",
+              "name": "Check out pinned driver ABI dependency",
+              "number": 5,
+              "startedAt": "2026-10-24T23:36:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:37Z",
+              "conclusion": "success",
+              "name": "Install verified Zig",
+              "number": 6,
+              "startedAt": "2026-10-24T23:36:32Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:39:26Z",
+              "conclusion": "success",
+              "name": "Run hardware-free interop gates",
+              "number": 7,
+              "startedAt": "2026-10-24T23:36:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:40:45Z",
+              "conclusion": "success",
+              "name": "Run daemon GuestReady runtime, faults and coverage",
+              "number": 8,
+              "startedAt": "2026-10-24T23:39:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:42:03Z",
+              "conclusion": "success",
+              "name": "Run interop C consumers under ASan/LSan/UBSan",
+              "number": 9,
+              "startedAt": "2026-10-24T23:40:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:45:50Z",
+              "conclusion": "success",
+              "name": "Gate each implemented interop module's line/branch coverage",
+              "number": 10,
+              "startedAt": "2026-10-24T23:42:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:46:54Z",
+              "conclusion": "success",
+              "name": "Cross-build Windows ABI and foundation tests",
+              "number": 11,
+              "startedAt": "2026-10-24T23:45:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:46:56Z",
+              "conclusion": "success",
+              "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+              "number": 12,
+              "startedAt": "2026-10-24T23:46:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:46:56Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "number": 23,
+              "startedAt": "2026-10-24T23:46:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:46:58Z",
+              "conclusion": "success",
+              "name": "Stop containers",
+              "number": 24,
+              "startedAt": "2026-10-24T23:46:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:46:58Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 25,
+              "startedAt": "2026-10-24T23:46:58Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40143405298/job/121019645015"
+        },
+        {
+          "completedAt": "2026-10-24T23:47:11Z",
+          "conclusion": "success",
+          "databaseId": 121021755904,
+          "name": "windows",
+          "startedAt": "2026-10-24T23:47:02Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T23:47:04Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T23:47:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:47:06Z",
+              "conclusion": "success",
+              "name": "Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+              "number": 2,
+              "startedAt": "2026-10-24T23:47:04Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:47:09Z",
+              "conclusion": "success",
+              "name": "Run ABI and foundation tests natively on Windows",
+              "number": 3,
+              "startedAt": "2026-10-24T23:47:06Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:47:09Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 4,
+              "startedAt": "2026-10-24T23:47:09Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40143405298/job/121021755904"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40143405298"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 40143405306,
+      "headSha": "e4d42ded7b601b59ef97f2fac2c7ab6cb590eafb",
+      "jobs": [
+        {
+          "completedAt": "2026-10-24T23:41:35Z",
+          "conclusion": "success",
+          "databaseId": 121019644913,
+          "name": "linux",
+          "startedAt": "2026-10-24T23:36:10Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T23:36:12Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T23:36:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:16Z",
+              "conclusion": "success",
+              "name": "Initialize containers",
+              "number": 2,
+              "startedAt": "2026-10-24T23:36:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:31Z",
+              "conclusion": "success",
+              "name": "Install graph test toolchains",
+              "number": 3,
+              "startedAt": "2026-10-24T23:36:16Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:32Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "number": 4,
+              "startedAt": "2026-10-24T23:36:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:38Z",
+              "conclusion": "success",
+              "name": "Install verified Zig",
+              "number": 5,
+              "startedAt": "2026-10-24T23:36:32Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:41:29Z",
+              "conclusion": "success",
+              "name": "Test graph and observer portable core, leak-enabled C clients, coverage and Windows ABI builds",
+              "number": 6,
+              "startedAt": "2026-10-24T23:36:38Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:41:31Z",
+              "conclusion": "success",
+              "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+              "number": 7,
+              "startedAt": "2026-10-24T23:41:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:41:31Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "number": 13,
+              "startedAt": "2026-10-24T23:41:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:41:33Z",
+              "conclusion": "success",
+              "name": "Stop containers",
+              "number": 14,
+              "startedAt": "2026-10-24T23:41:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:41:33Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 15,
+              "startedAt": "2026-10-24T23:41:33Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40143405306/job/121019644913"
+        },
+        {
+          "completedAt": "2026-10-24T23:42:01Z",
+          "conclusion": "success",
+          "databaseId": 121020714457,
+          "name": "windows",
+          "startedAt": "2026-10-24T23:41:37Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T23:41:39Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T23:41:38Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:41:40Z",
+              "conclusion": "success",
+              "name": "Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+              "number": 2,
+              "startedAt": "2026-10-24T23:41:39Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:41:59Z",
+              "conclusion": "success",
+              "name": "Execute graph C ABI, observer doubles and real Win32 adapter smoke and synthetic failure guards",
+              "number": 3,
+              "startedAt": "2026-10-24T23:41:40Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:41:59Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 4,
+              "startedAt": "2026-10-24T23:41:59Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40143405306/job/121020714457"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40143405306"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 40143405357,
+      "headSha": "e4d42ded7b601b59ef97f2fac2c7ab6cb590eafb",
+      "jobs": [
+        {
+          "completedAt": "2026-10-24T23:39:46Z",
+          "conclusion": "success",
+          "databaseId": 121019645085,
+          "name": "windows",
+          "startedAt": "2026-10-24T23:36:11Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T23:36:13Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T23:36:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:21Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "number": 2,
+              "startedAt": "2026-10-24T23:36:13Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:24Z",
+              "conclusion": "success",
+              "name": "Check out pinned driver ABI dependency",
+              "number": 3,
+              "startedAt": "2026-10-24T23:36:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:36:52Z",
+              "conclusion": "success",
+              "name": "Install verified Zig",
+              "number": 4,
+              "startedAt": "2026-10-24T23:36:24Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:37:31Z",
+              "conclusion": "success",
+              "name": "Build WinRT compatibility DLL with system SDK",
+              "number": 5,
+              "startedAt": "2026-10-24T23:36:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:38:42Z",
+              "conclusion": "success",
+              "name": "Build native C guest and lifecycle fixture",
+              "number": 6,
+              "startedAt": "2026-10-24T23:37:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:39:40Z",
+              "conclusion": "success",
+              "name": "Run native window lifecycle and allocator tests",
+              "number": 7,
+              "startedAt": "2026-10-24T23:38:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:39:42Z",
+              "conclusion": "success",
+              "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+              "number": 8,
+              "startedAt": "2026-10-24T23:39:40Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:39:43Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "number": 16,
+              "startedAt": "2026-10-24T23:39:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:39:43Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 17,
+              "startedAt": "2026-10-24T23:39:43Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40143405357/job/121019645085"
+        },
+        {
+          "completedAt": "2026-10-24T23:45:48Z",
+          "conclusion": "success",
+          "databaseId": 121020355976,
+          "name": "transport",
+          "startedAt": "2026-10-24T23:39:48Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T23:39:50Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T23:39:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:39:53Z",
+              "conclusion": "success",
+              "name": "Initialize containers",
+              "number": 2,
+              "startedAt": "2026-10-24T23:39:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:40:15Z",
+              "conclusion": "success",
+              "name": "Install base build and platform development packages",
+              "number": 3,
+              "startedAt": "2026-10-24T23:39:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:40:17Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "number": 4,
+              "startedAt": "2026-10-24T23:40:15Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:40:19Z",
+              "conclusion": "success",
+              "name": "Check out pinned driver ABI dependency",
+              "number": 5,
+              "startedAt": "2026-10-24T23:40:17Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:40:26Z",
+              "conclusion": "success",
+              "name": "Install verified Zig",
+              "number": 6,
+              "startedAt": "2026-10-24T23:40:19Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:42:01Z",
+              "conclusion": "success",
+              "name": "Test allocation-free transport and setup under sanitizers",
+              "number": 7,
+              "startedAt": "2026-10-24T23:40:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:43:10Z",
+              "conclusion": "success",
+              "name": "Gate AV protocol and memory line/branch coverage",
+              "number": 8,
+              "startedAt": "2026-10-24T23:42:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:44:09Z",
+              "conclusion": "success",
+              "name": "Build and link Linux platform clients and Windows guest",
+              "number": 9,
+              "startedAt": "2026-10-24T23:43:10Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:44:11Z",
+              "conclusion": "success",
+              "name": "Receive the matching native SDK-built guest bundle",
+              "number": 10,
+              "startedAt": "2026-10-24T23:44:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:45:41Z",
+              "conclusion": "success",
+              "name": "Assemble and verify the complete distributable bundle",
+              "number": 11,
+              "startedAt": "2026-10-24T23:44:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:45:44Z",
+              "conclusion": "success",
+              "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+              "number": 12,
+              "startedAt": "2026-10-24T23:45:41Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:45:44Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "number": 23,
+              "startedAt": "2026-10-24T23:45:44Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:45:46Z",
+              "conclusion": "success",
+              "name": "Stop containers",
+              "number": 24,
+              "startedAt": "2026-10-24T23:45:44Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T23:45:46Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 25,
+              "startedAt": "2026-10-24T23:45:46Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40143405357/job/121020355976"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40143405357"
+    }
+  ],
+  "o5_89ff058_qualified_by_these_runs": false,
+  "native_installed_session_qualified": false,
+  "feature_percent": 18.0
+}
