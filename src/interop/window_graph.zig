@@ -2410,7 +2410,249 @@ pub fn note_destroyed(graph: *graph_t, epoch: u64, window: u64, hint_stamp: u64,
     return .Ok;
 }
 
-// Refresh engine: appended by the next stage.
+// ---------------------------------------------------------------------------------------------
+// Refresh engine (TODO #10, layer 2b2): refresh_begin/offer/keep/unseen/commit/abort, invalidate_all.
+//
+// A refresh is a graph-wide mark-and-sweep. `refresh_begin` clears every seen mark; offers, keeps and
+// successful observes set marks; `refresh_commit` retires the Active entries and drops the deferred
+// records that are still unmarked. The same shape as the planning engine applies: guards, read-only
+// plan, ring-room pre-check (QueueFull changes nothing), then an infallible apply phase.
+// ---------------------------------------------------------------------------------------------
+
+/// List the Active entry slots in ascending generation order (parents before their children).
+///
+/// An insertion sort over at most 64 slots; generations are unique (invariant I-3), so the order is total.
+///
+/// @param[in] graph Non-null graph; never written.
+/// @param[out] order Non-null; the first return-value elements are slot indices of Active entries,
+///             ascending by generation; the remaining elements are unchanged.
+/// @return Number of Active entries, 0..64.
+/// @note Owner thread only; pure read; no allocation.
+pub fn active_by_generation(graph: *const graph_t, order: *[MaxEntries]u8) u32 {
+    var total: u32 = 0;
+    for (&graph.entries, 0..) |*entry, index| {
+        if (entry.state != .Active) continue;
+        const generation = entry.record.generation;
+        var position = total;
+        while (position > 0 and graph.entries[order[position - 1]].record.generation > generation) : (position -= 1) {
+            order[position] = order[position - 1];
+        }
+        order[position] = @intCast(index);
+        total += 1;
+    }
+    return total;
+}
+
+/// Open a refresh: clear every seen mark and start collecting marks.
+///
+/// All 64 entry slots and all 64 deferred slots get `seen = false`, then `refresh_open` is set. When a
+/// refresh is already open nothing changes: its marks and its open state are kept and it continues.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] epoch Captured session epoch.
+/// @return Ok; RefreshActive when a refresh is already open; WrongThread, Reentrant or StaleEpoch per `enter`.
+/// @note Owner thread only; no callback; no allocation; queues no event.
+pub fn refresh_begin(graph: *graph_t, epoch: u64) status_t {
+    if (enter(graph, epoch)) |status| return status;
+    defer leave(graph);
+    if (graph.refresh_open) return .RefreshActive;
+    for (&graph.entries) |*entry| entry.seen = false;
+    for (&graph.deferred) |*slot| slot.seen = false;
+    graph.refresh_open = true;
+    return .Ok;
+}
+
+/// Offer one snapshot inside the open refresh: `observe` plus a seen mark for every outcome.
+///
+/// After the guards and the NoRefresh check the facts are copied to a stack local, the window of the
+/// copy (when nonzero) is marked seen on its Active entry and its deferred record, and `observe_locked`
+/// runs on the copy. The mark is written BEFORE the plan and survives every failure status (InvalidFacts,
+/// StaleFacts, Cycle, AtCapacity, QueueFull, LookupFailed, ...): an offered window is alive for this
+/// refresh, it is merely not updated. Entries and records the call creates for the window are born seen.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] epoch Captured session epoch.
+/// @param[in] facts Non-null borrowed snapshot; copied at entry, never retained or modified.
+/// @param[out] out Non-null; fully written on Ok, unchanged otherwise.
+/// @return As `observe`, plus NoRefresh when no refresh is open (checked before the facts are validated).
+/// @note Owner thread only; the only callback is `app_key_lookup`, which receives the stack copy; no allocation.
+pub fn refresh_offer(graph: *graph_t, epoch: u64, facts: *const facts_t, out: *observation_t) status_t {
+    if (enter(graph, epoch)) |status| return status;
+    defer leave(graph);
+    if (!graph.refresh_open) return .NoRefresh;
+    const local = facts.*;
+    if (local.window != 0) mark_seen(graph, local.window);
+    return observe_locked(graph, &local, out);
+}
+
+/// Mark a window seen without offering facts (a window whose native query failed).
+///
+/// Marks the Active entry and the deferred record of `window`, whichever exist. Retiring entries carry
+/// no mark. Queues no event and changes no entry, record, stamp or tick.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] epoch Captured session epoch.
+/// @param[in] window Nonzero HWND.
+/// @return Ok when an Active entry or a deferred record exists (and is now marked); None when neither
+///         exists (nothing marked); InvalidArgument for window 0; NoRefresh when no refresh is open;
+///         WrongThread, Reentrant or StaleEpoch per `enter`. The argument check precedes NoRefresh.
+/// @note Owner thread only; no callback; no allocation; only a seen mark changes.
+pub fn refresh_keep(graph: *graph_t, epoch: u64, window: u64) status_t {
+    if (enter(graph, epoch)) |status| return status;
+    defer leave(graph);
+    if (window == 0) return .InvalidArgument;
+    if (!graph.refresh_open) return .NoRefresh;
+    const live = find_active(graph, window);
+    const deferred = find_deferred(graph, window);
+    if (live == null and deferred == null) return .None;
+    mark_seen(graph, window);
+    return .Ok;
+}
+
+/// List the Active windows that are still unseen in the open refresh.
+///
+/// Exactly the entries `refresh_commit` would retire with reason RefreshUnseen if it ran now: every
+/// Active entry whose mark is clear, in ascending generation order. Seen descendants of those entries
+/// retire with them as ParentRetired and are not listed; Retiring entries and deferred records never
+/// are. A value copy; no mark changes.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] epoch Captured session epoch.
+/// @param[out] windows Caller array of `capacity` HWNDs; may be null only when `capacity` is 0. Up to
+///             `capacity` elements are written on Ok; the rest is untouched.
+/// @param[in] capacity Elements available in `windows`.
+/// @param[out] out_count Non-null; on Ok receives the total number of unseen Active windows even when it
+///             exceeds `capacity`. Unchanged on every other status.
+/// @return Ok; InvalidArgument for null `windows` with `capacity` above 0; NoRefresh when no refresh is
+///         open; WrongThread, Reentrant or StaleEpoch per `enter`. The argument check precedes NoRefresh.
+/// @note Owner thread only; no callback; no allocation; no state change.
+pub fn refresh_unseen(graph: *graph_t, epoch: u64, windows: ?[*]u64, capacity: u32, out_count: *u32) status_t {
+    if (enter(graph, epoch)) |status| return status;
+    defer leave(graph);
+    if (windows == null and capacity > 0) return .InvalidArgument;
+    if (!graph.refresh_open) return .NoRefresh;
+    var order = [_]u8{0} ** MaxEntries;
+    const active = active_by_generation(graph, &order);
+    var total: u32 = 0;
+    for (order[0..active]) |slot| {
+        if (graph.entries[slot].seen) continue;
+        if (total < capacity) windows.?[total] = graph.entries[slot].record.window;
+        total += 1;
+    }
+    out_count.* = total;
+    return .Ok;
+}
+
+/// Close the refresh: retire every unseen Active entry, drop every unseen deferred record.
+///
+/// Plan (read-only): the victims are every Active entry whose mark is clear plus all descendants of
+/// those (a seen child cannot outlive its retiring parent). The ring must hold one RetireIntent per
+/// victim, otherwise QueueFull is returned with nothing changed and the refresh stays open. Apply: the
+/// unseen entries are visited in descending generation; each one still Active retires through
+/// `retire_cascade` with reason RefreshUnseen, taking its still-Active descendants along with reason
+/// ParentRetired (those descendants are seen ones, since every unseen descendant has a higher
+/// generation and was visited first). The event order is therefore children first. Nothing is
+/// re-deferred. Then every unseen deferred record is dropped (`deferred_dropped`), `refresh_open` is
+/// cleared and `refresh_commits` is bumped.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] epoch Captured session epoch.
+/// @param[out] retired_out Nullable; on Ok receives the number of entries moved to Retiring.
+/// @return Ok; NoRefresh when none is open; QueueFull (nothing changed, refresh still open);
+///         WrongThread, Reentrant or StaleEpoch per `enter`.
+/// @note Owner thread only; no callback; no allocation.
+pub fn refresh_commit(graph: *graph_t, epoch: u64, retired_out: ?*u32) status_t {
+    if (enter(graph, epoch)) |status| return status;
+    defer leave(graph);
+    if (!graph.refresh_open) return .NoRefresh;
+    var order = [_]u8{0} ** MaxEntries;
+    const active = active_by_generation(graph, &order);
+    var doomed = [_]bool{false} ** MaxEntries;
+    var cascade = cascade_t{};
+    for (order[0..active]) |slot| {
+        if (graph.entries[slot].seen) continue;
+        collect_cascade(graph, slot, &cascade);
+        for (cascade.slots[0..cascade.count]) |member| doomed[member] = true;
+    }
+    var needed: u32 = 0;
+    for (doomed) |flag| {
+        if (flag) needed += 1;
+    }
+    if (needed > ring_room(graph)) return reject_queue_full(graph);
+    var tally = tally_t{};
+    var position = active;
+    while (position > 0) {
+        position -= 1;
+        const slot = order[position];
+        if (graph.entries[slot].state != .Active or graph.entries[slot].seen) continue;
+        collect_cascade(graph, slot, &cascade);
+        retire_cascade(graph, &cascade, ReasonRefreshUnseen, &tally);
+    }
+    for (&graph.deferred, 0..) |*record, index| {
+        if (record.used and !record.seen) drop_deferred(graph, index, &tally);
+    }
+    graph.refresh_open = false;
+    bump(&graph.stats.refresh_commits);
+    if (retired_out) |out| out.* = tally.retired;
+    return .Ok;
+}
+
+/// Close the refresh without retiring anything; the seen marks are meaningless afterwards.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] epoch Captured session epoch.
+/// @return Ok (`refresh_open` cleared, `refresh_aborts` bumped); NoRefresh when none is open;
+///         WrongThread, Reentrant or StaleEpoch per `enter`.
+/// @note Owner thread only; no callback; no allocation; queues no event.
+pub fn refresh_abort(graph: *graph_t, epoch: u64) status_t {
+    if (enter(graph, epoch)) |status| return status;
+    defer leave(graph);
+    if (!graph.refresh_open) return .NoRefresh;
+    graph.refresh_open = false;
+    bump(&graph.stats.refresh_aborts);
+    return .Ok;
+}
+
+/// Retire every Active entry and clear all deferred records (recovery after lost hints).
+///
+/// Plan: one RetireIntent per Active entry must fit in the ring, otherwise QueueFull with nothing
+/// changed (an open refresh stays open). Apply: entries retire in descending generation (children
+/// first), each with reason Invalidated (not ParentRetired: every entry is a victim of the same
+/// cause); nothing is re-deferred; every deferred record is dropped (`deferred_dropped`); an open
+/// refresh is aborted (`refresh_aborts`). Retiring entries already in quarantine are unchanged.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] epoch Captured session epoch.
+/// @param[out] retired_out Nullable; on Ok receives the number of entries moved to Retiring.
+/// @return Ok; QueueFull (nothing changed); WrongThread, Reentrant or StaleEpoch per `enter`.
+/// @note Owner thread only; no callback; no allocation.
+pub fn invalidate_all(graph: *graph_t, epoch: u64, retired_out: ?*u32) status_t {
+    if (enter(graph, epoch)) |status| return status;
+    defer leave(graph);
+    var order = [_]u8{0} ** MaxEntries;
+    const active = active_by_generation(graph, &order);
+    if (active > ring_room(graph)) return reject_queue_full(graph);
+    var tally = tally_t{};
+    var cascade = cascade_t{};
+    var position = active;
+    while (position > 0) {
+        position -= 1;
+        cascade.slots[0] = order[position];
+        cascade.count = 1;
+        retire_cascade(graph, &cascade, ReasonInvalidated, &tally);
+    }
+    for (&graph.deferred, 0..) |*record, index| {
+        if (record.used) drop_deferred(graph, index, &tally);
+    }
+    if (graph.refresh_open) {
+        graph.refresh_open = false;
+        bump(&graph.stats.refresh_aborts);
+    }
+    if (retired_out) |out| out.* = tally.retired;
+    return .Ok;
+}
+
+// Exported surface: see window_graph_abi.zig.
 // Test-only fixtures.
 
 const testing = std.testing;
@@ -6734,6 +6976,15 @@ const trace_totals_t = struct {
     lookup_failures: u64 = 0,
     stale_facts: u64 = 0,
     flushed_children: u64 = 0,
+    offers: u64 = 0,
+    commits: u64 = 0,
+    commit_retired: u64 = 0,
+    commit_queue_full: u64 = 0,
+    aborts: u64 = 0,
+    invalidations: u64 = 0,
+    invalidate_queue_full: u64 = 0,
+    keeps: u64 = 0,
+    unseen_listed: u64 = 0,
 };
 
 fn random_trace_facts(random: std.Random, variants: []u32, base: u64, stamp: u64, tick: u32) facts_t {
@@ -6770,7 +7021,127 @@ fn random_trace_facts(random: std.Random, variants: []u32, base: u64, stamp: u64
     return facts;
 }
 
-fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above: u32, drain_max: u32, totals: *trace_totals_t) !void {
+/// One random refresh-engine operation of the trace; `op` is 0..13. Checks the operation's contract
+/// against a before/after view of the graph and then the structural invariants.
+fn trace_refresh_op(graph: *graph_t, random: std.Random, op: u32, base: u64, count: usize, totals: *trace_totals_t) !void {
+    const was_open = graph.refresh_open;
+    const before = state_digest(graph);
+    const before_unmarked = state_digest_unmarked(graph);
+    switch (op) {
+        0, 1, 2 => {
+            const status = call_refresh_begin(graph, TestEpoch);
+            try testing.expect(graph.refresh_open);
+            if (was_open) {
+                try testing.expectEqual(status_t.RefreshActive, status);
+                try testing.expectEqual(before, state_digest(graph));
+            } else {
+                try testing.expectEqual(status_t.Ok, status);
+                for (&graph.entries) |*entry| try testing.expect(!entry.seen);
+                for (&graph.deferred) |*slot| try testing.expect(!slot.seen);
+            }
+        },
+        3, 4, 5, 6 => {
+            const window = base + random.uintLessThan(u64, count);
+            const status = call_refresh_keep(graph, TestEpoch, window);
+            totals.keeps += 1;
+            const active = call_find_active(graph, window);
+            const deferred = call_find_deferred(graph, window);
+            if (!was_open) {
+                try testing.expectEqual(status_t.NoRefresh, status);
+                try testing.expectEqual(before, state_digest(graph));
+            } else if (active == null and deferred == null) {
+                try testing.expectEqual(status_t.None, status);
+                try testing.expectEqual(before, state_digest(graph));
+            } else {
+                try testing.expectEqual(status_t.Ok, status);
+                try testing.expectEqual(before_unmarked, state_digest_unmarked(graph));
+                if (active) |slot| try testing.expect(graph.entries[slot].seen);
+                if (deferred) |slot| try testing.expect(graph.deferred[slot].seen);
+            }
+        },
+        7, 8, 9 => {
+            var retired: u32 = 0xDEAD_BEEF;
+            const status = call_refresh_commit(graph, TestEpoch, &retired);
+            if (!was_open) {
+                try testing.expectEqual(status_t.NoRefresh, status);
+                try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+                try testing.expectEqual(before, state_digest(graph));
+            } else if (status == .QueueFull) {
+                totals.commit_queue_full += 1;
+                try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+                try testing.expect(graph.refresh_open);
+                try testing.expectEqual(before, state_digest(graph));
+            } else {
+                try testing.expectEqual(status_t.Ok, status);
+                totals.commits += 1;
+                totals.commit_retired += retired;
+                try testing.expect(!graph.refresh_open);
+                // Everything that survived was seen; every other entry and record is gone.
+                for (&graph.entries) |*entry| {
+                    if (entry.state == .Active) try testing.expect(entry.seen);
+                }
+                for (&graph.deferred) |*slot| {
+                    if (slot.used) try testing.expect(slot.seen);
+                }
+            }
+        },
+        10 => {
+            const status = call_refresh_abort(graph, TestEpoch);
+            if (was_open) {
+                totals.aborts += 1;
+                try testing.expectEqual(status_t.Ok, status);
+            } else {
+                try testing.expectEqual(status_t.NoRefresh, status);
+            }
+            try testing.expect(!graph.refresh_open);
+            try testing.expectEqual(before_unmarked, state_digest_unmarked(graph));
+        },
+        11 => {
+            var retired: u32 = 0xDEAD_BEEF;
+            const status = call_invalidate_all(graph, TestEpoch, if (random.boolean()) &retired else null);
+            if (status == .QueueFull) {
+                totals.invalidate_queue_full += 1;
+                try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+                try testing.expectEqual(before, state_digest(graph));
+                try testing.expectEqual(was_open, graph.refresh_open);
+            } else {
+                try testing.expectEqual(status_t.Ok, status);
+                totals.invalidations += 1;
+                try testing.expect(!graph.refresh_open);
+                try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
+                try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+            }
+        },
+        else => {
+            var windows: [MaxEntries]u64 = undefined;
+            var total: u32 = 0xDEAD_BEEF;
+            const status = call_refresh_unseen(graph, TestEpoch, &windows, MaxEntries, &total);
+            try testing.expectEqual(before, state_digest(graph));
+            if (!was_open) {
+                try testing.expectEqual(status_t.NoRefresh, status);
+                try testing.expectEqual(@as(u32, 0xDEAD_BEEF), total);
+            } else {
+                try testing.expectEqual(status_t.Ok, status);
+                totals.unseen_listed += total;
+                var expected: u32 = 0;
+                var last_generation: u64 = 0;
+                for (&graph.entries) |*entry| {
+                    if (entry.state == .Active and !entry.seen) expected += 1;
+                }
+                try testing.expectEqual(expected, total);
+                for (windows[0..total]) |window| {
+                    const slot = call_find_active(graph, window).?;
+                    try testing.expect(!graph.entries[slot].seen);
+                    try testing.expect(graph.entries[slot].record.generation > last_generation);
+                    last_generation = graph.entries[slot].record.generation;
+                }
+            }
+        },
+    }
+    try check_invariants(graph);
+}
+
+fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above: u32, drain_max: u32, refresh_ops: bool, totals: *trace_totals_t) !void {
     const graph = try probe_graph(testing.allocator);
     defer call_destroy(graph);
     var consumer = consumer_t.init(testing.allocator);
@@ -6790,18 +7161,27 @@ fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above:
         var before: u64 = 0;
         var status: status_t = .Ok;
         var obs = sentinel_observation();
-        if (choice < 80) {
+        var offered_window: u64 = 0;
+        const was_open = graph.refresh_open;
+        if (choice < 66) {
             var facts = random_trace_facts(random, variants, base, stamp, tick);
             if (random.uintLessThan(u32, 20) == 0) facts.stamp -= 3;
             lookup_probe.mode = if (random.uintLessThan(u32, 30) == 0) .Fail else .Ok;
-            before = state_digest(graph);
-            status = call_observe(graph, TestEpoch, &facts, &obs);
+            before = state_digest_unmarked(graph);
+            const use_offer = if (was_open) random.boolean() else random.uintLessThan(u32, 25) == 0;
+            if (use_offer) {
+                offered_window = facts.window;
+                totals.offers += 1;
+                status = call_refresh_offer(graph, TestEpoch, &facts, &obs);
+            } else {
+                status = call_observe(graph, TestEpoch, &facts, &obs);
+            }
             lookup_probe.mode = .Ok;
-        } else if (choice < 88) {
+        } else if (choice < 72) {
             const window = base + random.uintLessThan(u64, count);
-            before = state_digest(graph);
+            before = state_digest_unmarked(graph);
             status = call_note_destroyed(graph, TestEpoch, window, stamp, tick, &obs);
-        } else if (choice < 94) {
+        } else if (choice < 78) {
             var entries: [MaxEntries]retiring_entry_t = undefined;
             var total: u32 = 0;
             try testing.expectEqual(status_t.Ok, call_list_retiring(graph, &entries, MaxEntries, &total));
@@ -6812,9 +7192,17 @@ fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above:
             }
             try check_invariants(graph);
             continue;
-        } else {
+        } else if (choice < 86) {
             try consumer.drain(graph, random.uintLessThan(u32, drain_max + 1));
             try check_invariants(graph);
+            continue;
+        } else if (!refresh_ops) {
+            try consumer.drain(graph, random.uintLessThan(u32, drain_max + 1));
+            try check_invariants(graph);
+            continue;
+        } else {
+            try trace_refresh_op(graph, random, choice - 86, base, count, totals);
+            if (graph.ring_len > drain_above) try consumer.drain(graph, EventCapacity);
             continue;
         }
         switch (status) {
@@ -6823,8 +7211,18 @@ fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above:
                 try testing.expect(obs.events_queued <= MaxCallEvents);
             },
             .Cycle => {},
-            .AtCapacity, .QueueFull, .LookupFailed, .StaleFacts => try testing.expectEqual(before, state_digest(graph)),
+            .NoRefresh => {
+                try testing.expect(offered_window != 0 and !was_open);
+                try testing.expectEqual(before, state_digest_unmarked(graph));
+            },
+            .AtCapacity, .QueueFull, .LookupFailed, .StaleFacts => try testing.expectEqual(before, state_digest_unmarked(graph)),
             else => return error.TestUnexpectedResult,
+        }
+        if (offered_window != 0 and status != .NoRefresh) {
+            // Seen rule: after any outcome whatever exists for the offered window carries the mark.
+            try testing.expect(was_open);
+            if (call_find_active(graph, offered_window)) |slot| try testing.expect(graph.entries[slot].seen);
+            if (call_find_deferred(graph, offered_window)) |slot| try testing.expect(graph.deferred[slot].seen);
         }
         try check_invariants(graph);
         if (graph.ring_len > drain_above) try consumer.drain(graph, EventCapacity);
@@ -6853,12 +7251,13 @@ fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above:
 test "random operation traces keep every graph invariant and the event stream ordered" {
     var totals = trace_totals_t{};
     // Few windows: constant reuse, reclassification and incarnation churn.
-    try run_random_trace(0x5EED_0001, 0x100, 12, 4000, 150, 5, &totals);
-    try run_random_trace(0x5EED_0002, 0x100, 12, 4000, 150, 5, &totals);
+    try run_random_trace(0x5EED_0001, 0x100, 12, 4000, 150, 5, true, &totals);
+    try run_random_trace(0x5EED_0002, 0x100, 12, 4000, 150, 5, true, &totals);
     // Many windows: capacity pressure, deferral overflow and cycles; a lazy consumer provokes QueueFull.
-    try run_random_trace(0x5EED_0003, 0x1000, 220, 8000, 150, 5, &totals);
-    try run_random_trace(0x5EED_0004, 0x1000, 220, 8000, 150, 5, &totals);
-    try run_random_trace(0x5EED_0005, 0x1000, 90, 6000, 256, 1, &totals);
+    try run_random_trace(0x5EED_0003, 0x1000, 220, 8000, 150, 5, false, &totals);
+    try run_random_trace(0x5EED_0004, 0x1000, 220, 8000, 150, 5, false, &totals);
+    try run_random_trace(0x5EED_0005, 0x1000, 90, 6000, 256, 1, true, &totals);
+    try run_random_trace(0x5EED_0006, 0x1000, 220, 12000, 150, 5, true, &totals);
     // The generator really exercised the interesting paths.
     try testing.expect(totals.reclassified > 20);
     try testing.expect(totals.updates > 20);
@@ -6869,6 +7268,15 @@ test "random operation traces keep every graph invariant and the event stream or
     try testing.expect(totals.queue_full > 0);
     try testing.expect(totals.lookup_failures > 5);
     try testing.expect(totals.stale_facts > 5);
+    // ... and so did the refresh engine.
+    try testing.expect(totals.offers > 200);
+    try testing.expect(totals.keeps > 100);
+    try testing.expect(totals.commits > 20);
+    try testing.expect(totals.commit_retired > 20);
+    try testing.expect(totals.commit_queue_full > 0);
+    try testing.expect(totals.aborts > 5);
+    try testing.expect(totals.invalidations > 5);
+    try testing.expect(totals.unseen_listed > 20);
 }
 
 test "observe_locked runs the plan on the facts it is given without applying the call guards" {
@@ -6887,4 +7295,681 @@ test "observe_locked runs the plan on the facts it is given without applying the
     try testing.expectEqual(status_t.InvalidFacts, call_observe_locked(graph, &facts, &obs));
     try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
     try testing.expectEqual(@as(u64, 1), graph.stats.rejected_invalid_facts);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Refresh engine tests.
+// ---------------------------------------------------------------------------------------------
+
+fn call_refresh_begin(graph: *graph_t, epoch: u64) status_t {
+    return @call(.never_inline, refresh_begin, .{ graph, epoch });
+}
+
+fn call_refresh_offer(graph: *graph_t, epoch: u64, facts: *const facts_t, out: *observation_t) status_t {
+    return @call(.never_inline, refresh_offer, .{ graph, epoch, facts, out });
+}
+
+fn call_refresh_keep(graph: *graph_t, epoch: u64, window: u64) status_t {
+    return @call(.never_inline, refresh_keep, .{ graph, epoch, window });
+}
+
+fn call_refresh_unseen(graph: *graph_t, epoch: u64, windows: ?[*]u64, capacity: u32, out_count: *u32) status_t {
+    return @call(.never_inline, refresh_unseen, .{ graph, epoch, windows, capacity, out_count });
+}
+
+fn call_refresh_commit(graph: *graph_t, epoch: u64, retired_out: ?*u32) status_t {
+    return @call(.never_inline, refresh_commit, .{ graph, epoch, retired_out });
+}
+
+fn call_refresh_abort(graph: *graph_t, epoch: u64) status_t {
+    return @call(.never_inline, refresh_abort, .{ graph, epoch });
+}
+
+fn call_invalidate_all(graph: *graph_t, epoch: u64, retired_out: ?*u32) status_t {
+    return @call(.never_inline, invalidate_all, .{ graph, epoch, retired_out });
+}
+
+fn call_active_by_generation(graph: *const graph_t, order: *[MaxEntries]u8) u32 {
+    return @call(.never_inline, active_by_generation, .{ graph, order });
+}
+
+/// Like `state_digest` but blind to the seen marks, for calls that may only change marks.
+fn state_digest_unmarked(graph: *const graph_t) u64 {
+    var entries = graph.entries;
+    for (&entries) |*entry| entry.seen = false;
+    var deferred = graph.deferred;
+    for (&deferred) |*slot| slot.seen = false;
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(std.mem.asBytes(&entries));
+    hasher.update(std.mem.asBytes(&deferred));
+    hasher.update(std.mem.asBytes(&graph.ring));
+    hasher.update(std.mem.asBytes(&graph.ring_head));
+    hasher.update(std.mem.asBytes(&graph.ring_len));
+    hasher.update(std.mem.asBytes(&graph.generations_issued));
+    hasher.update(std.mem.asBytes(&graph.next_seq));
+    hasher.update(std.mem.asBytes(&graph.stamp_high_water));
+    hasher.update(std.mem.asBytes(&graph.tick_base));
+    return hasher.final();
+}
+
+fn refresh_open_ok(graph: *graph_t) !void {
+    try testing.expectEqual(status_t.Ok, call_refresh_begin(graph, TestEpoch));
+    try testing.expect(graph.refresh_open);
+    try check_invariants(graph);
+}
+
+fn refresh_offer_ok(graph: *graph_t, facts: *const facts_t) !observation_t {
+    var obs = sentinel_observation();
+    try testing.expectEqual(status_t.Ok, call_refresh_offer(graph, TestEpoch, facts, &obs));
+    try check_invariants(graph);
+    return obs;
+}
+
+/// Offer inside the open refresh, expect `want`, an untouched observation, and no change but the marks.
+fn refresh_offer_fails(graph: *graph_t, facts: *const facts_t, want: status_t) !void {
+    var obs = sentinel_observation();
+    const before = state_digest_unmarked(graph);
+    try testing.expectEqual(want, call_refresh_offer(graph, TestEpoch, facts, &obs));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing.expectEqual(before, state_digest_unmarked(graph));
+    try check_invariants(graph);
+}
+
+fn refresh_commit_ok(graph: *graph_t) !u32 {
+    var retired: u32 = 0xDEAD_BEEF;
+    try testing.expectEqual(status_t.Ok, call_refresh_commit(graph, TestEpoch, &retired));
+    try testing.expect(!graph.refresh_open);
+    try check_invariants(graph);
+    return retired;
+}
+
+fn active_seen(graph: *const graph_t, window: u64) bool {
+    return graph.entries[call_find_active(graph, window).?].seen;
+}
+
+fn deferred_seen(graph: *const graph_t, window: u64) bool {
+    return graph.deferred[call_find_deferred(graph, window).?].seen;
+}
+
+test "refresh_begin opens the refresh, clears every mark and reports an already open refresh" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x900, 0x777, 11);
+    try testing.expect(active_seen(graph, 0x100));
+    try testing.expect(deferred_seen(graph, 0x900));
+    try testing.expectEqual(@as(u32, 0), current_stats(graph).refresh_active);
+    try refresh_open_ok(graph);
+    try testing.expect(!active_seen(graph, 0x100));
+    try testing.expect(!deferred_seen(graph, 0x900));
+    try testing.expectEqual(@as(u32, 1), current_stats(graph).refresh_active);
+    // A second begin leaves the open refresh and its marks alone.
+    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x100));
+    const before = state_digest(graph);
+    try testing.expectEqual(status_t.RefreshActive, call_refresh_begin(graph, TestEpoch));
+    try testing.expectEqual(before, state_digest(graph));
+    try testing.expect(graph.refresh_open);
+    try testing.expect(active_seen(graph, 0x100));
+    try testing.expectEqual(@as(u32, 1), current_stats(graph).refresh_active);
+    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_commits);
+    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_aborts);
+}
+
+test "offering every live window and committing retires nothing" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x50, 10);
+    _ = try admit_top(graph, 0x100, 11);
+    _ = try admit_dialog(graph, 0x200, 0x100, 12);
+    _ = try admit_dialog(graph, 0x900, 0x777, 13);
+    _ = discard_events(graph);
+    const lookups = lookup_probe.calls;
+    try refresh_open_ok(graph);
+    var facts = window_facts(0x50, 20);
+    var obs = try refresh_offer_ok(graph, &facts);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+    facts = window_facts(0x100, 21);
+    obs = try refresh_offer_ok(graph, &facts);
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 2, 0, ReasonNone);
+    facts = owned_facts(0x200, 0x100, 22);
+    obs = try refresh_offer_ok(graph, &facts);
+    try expect_obs(obs, DispositionUnchanged, RoleDialog, 3, 0, ReasonNone);
+    facts = owned_facts(0x900, 0x777, 23);
+    obs = try refresh_offer_ok(graph, &facts);
+    try testing.expectEqual(DispositionDeferred, obs.disposition);
+    try expect_counts(obs, 0, 0, 0, 0);
+    try testing.expectEqual(lookups, lookup_probe.calls);
+    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
+    try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Retiring));
+    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.refresh_commits);
+    try testing.expectEqual(@as(u64, 0), stats.refresh_aborts);
+    try testing.expectEqual(@as(u32, 0), stats.refresh_active);
+    try testing.expectEqual(@as(u64, 0), stats.retire_intents);
+    try testing.expectEqual(@as(u64, 0), stats.deferred_dropped);
+    // The next call without an open refresh is refused.
+    try testing.expectEqual(status_t.NoRefresh, call_refresh_commit(graph, TestEpoch, null));
+}
+
+test "a commit retires every unseen entry children first with reason RefreshUnseen" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    try build_family(graph);
+    try refresh_open_ok(graph);
+    const retired = try refresh_commit_ok(graph);
+    try testing.expectEqual(@as(u32, 5), retired);
+    var events: [8]event_t = undefined;
+    try testing.expectEqual(@as(usize, 5), try drain_events(graph, &events));
+    try expect_ev(events[0], EventRetireIntent, 0x400, 5, 0x200, 3, ReasonRefreshUnseen);
+    try expect_ev(events[1], EventRetireIntent, 0x300, 4, 0x100, 2, ReasonRefreshUnseen);
+    try expect_ev(events[2], EventRetireIntent, 0x200, 3, 0x100, 2, ReasonRefreshUnseen);
+    try expect_ev(events[3], EventRetireIntent, 0x100, 2, 0, 0, ReasonRefreshUnseen);
+    try expect_ev(events[4], EventRetireIntent, 0x50, 1, 0, 0, ReasonRefreshUnseen);
+    try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
+    try testing.expectEqual(@as(u32, 5), call_count_state(graph, .Retiring));
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing.expectEqual(@as(u64, 5), current_stats(graph).retire_intents);
+}
+
+test "a seen child of an unseen parent retires with it as ParentRetired and is never re-deferred" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    try build_family(graph);
+    try refresh_open_ok(graph);
+    // Seen: Q, C1, G. Unseen: P (the parent of C1 and C2) and C2.
+    var facts = window_facts(0x50, 20);
+    _ = try refresh_offer_ok(graph, &facts);
+    facts = owned_facts(0x200, 0x100, 21);
+    _ = try refresh_offer_ok(graph, &facts);
+    facts = owned_facts(0x400, 0x200, 22);
+    _ = try refresh_offer_ok(graph, &facts);
+    var windows: [MaxEntries]u64 = undefined;
+    var total: u32 = 0;
+    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, MaxEntries, &total));
+    try testing.expectEqual(@as(u32, 2), total);
+    try testing.expectEqualSlices(u64, &[_]u64{ 0x100, 0x300 }, windows[0..2]);
+    const retired = try refresh_commit_ok(graph);
+    try testing.expectEqual(@as(u32, 4), retired);
+    var events: [8]event_t = undefined;
+    try testing.expectEqual(@as(usize, 4), try drain_events(graph, &events));
+    try expect_ev(events[0], EventRetireIntent, 0x300, 4, 0x100, 2, ReasonRefreshUnseen);
+    try expect_ev(events[1], EventRetireIntent, 0x400, 5, 0x200, 3, ReasonParentRetired);
+    try expect_ev(events[2], EventRetireIntent, 0x200, 3, 0x100, 2, ReasonParentRetired);
+    try expect_ev(events[3], EventRetireIntent, 0x100, 2, 0, 0, ReasonRefreshUnseen);
+    try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
+    try testing.expect(call_find_active(graph, 0x50) != null);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing.expectEqual(@as(u32, 4), call_count_state(graph, .Retiring));
+}
+
+test "a commit drops unseen deferred records and keeps the seen ones" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_dialog(graph, 0x900, 0x777, 10);
+    _ = try admit_dialog(graph, 0xA00, 0x777, 11);
+    _ = try admit_dialog(graph, 0xB00, 0x888, 12);
+    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    try refresh_open_ok(graph);
+    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0xA00));
+    var facts = owned_facts(0xB00, 0x888, 20);
+    const obs = try refresh_offer_ok(graph, &facts);
+    try testing.expectEqual(DispositionDeferred, obs.disposition);
+    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x900));
+    try testing.expect(call_find_deferred(graph, 0xA00) != null);
+    try testing.expect(call_find_deferred(graph, 0xB00) != null);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+    try testing.expectEqual(@as(u64, 0), current_stats(graph).deferred_evicted);
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+}
+
+test "offers that fail still mark the window seen so the commit keeps it" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10); // StaleFacts
+    _ = try admit_top(graph, 0x200, 10); // InvalidFacts
+    _ = try admit_dialog(graph, 0xB00, 0x888, 10); // LookupFailed (deferred record of another incarnation)
+    _ = try admit_top(graph, 0x700, 10); // Cycle
+    _ = try admit_top(graph, 0x400, 10); // never offered
+    _ = try admit_dialog(graph, 0x800, 0x900, 11);
+    _ = discard_events(graph);
+    // 0x800 is deferred behind 0x900; make it a cycle partner of the live window 0x700.
+    graph.deferred[call_find_deferred(graph, 0x800).?].record.parent_window = 0x700;
+    try check_invariants(graph);
+    try refresh_open_ok(graph);
+
+    var facts = window_facts(0x100, 5);
+    try refresh_offer_fails(graph, &facts, .StaleFacts);
+    try testing.expect(active_seen(graph, 0x100));
+
+    facts = window_facts(0x200, 30);
+    facts.stamp = 0;
+    try refresh_offer_fails(graph, &facts, .InvalidFacts);
+    try testing.expect(active_seen(graph, 0x200));
+
+    facts = owned_facts(0xB00, 0x888, 31);
+    facts.process_id += 1;
+    lookup_probe.mode = .Fail;
+    try refresh_offer_fails(graph, &facts, .LookupFailed);
+    lookup_probe.mode = .Ok;
+    try testing.expect(deferred_seen(graph, 0xB00));
+
+    facts = owned_facts(0x700, 0x800, 32);
+    try refresh_offer_fails(graph, &facts, .Cycle);
+    try testing.expect(active_seen(graph, 0x700));
+
+    try testing.expect(!active_seen(graph, 0x400));
+    try testing.expect(!deferred_seen(graph, 0x800));
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.rejected_stale_facts);
+    try testing.expectEqual(@as(u64, 1), stats.rejected_invalid_facts);
+    try testing.expectEqual(@as(u64, 1), stats.lookup_failures);
+    try testing.expectEqual(@as(u64, 1), stats.rejected_cycle);
+    try testing.expectEqual(@as(u32, 1), try refresh_commit_ok(graph));
+    try testing.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
+    try testing.expectEqual(@as(?usize, null), call_find_active(graph, 0x400));
+    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x800));
+    try testing.expect(call_find_deferred(graph, 0xB00) != null);
+    const ev = try next_ev(graph);
+    try expect_ev(ev, EventRetireIntent, 0x400, 4, 0, 0, ReasonRefreshUnseen);
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+}
+
+test "an offer rejected with QueueFull is not applied but marks the window seen" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x5000, 10);
+    _ = try admit_top(graph, 0x5001, 11);
+    _ = discard_events(graph);
+    fill_ring(graph, EventCapacity);
+    try testing.expectEqual(@as(u32, 0), call_ring_room(graph));
+    try refresh_open_ok(graph);
+    var facts = window_facts(0x5000, 20);
+    facts.x += 7;
+    try refresh_offer_fails(graph, &facts, .QueueFull);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
+    try testing.expect(active_seen(graph, 0x5000));
+    try testing.expect(!active_seen(graph, 0x5001));
+    try testing.expect(graph.entries[call_find_active(graph, 0x5000).?].record.x != facts.x);
+    // Keep the other window too: the commit has no victim and needs no ring room.
+    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x5001));
+    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing.expectEqual(@as(u32, 2), call_count_state(graph, .Active));
+    try testing.expectEqual(@as(u32, EventCapacity), graph.ring_len);
+}
+
+test "a flush leftover cut off by capacity survives the commit only when it is offered again" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_dialog(graph, 0x7000, 0x7001, 10);
+    _ = try admit_dialog(graph, 0x7002, 0x7001, 11);
+    try fill_graph(graph, 63);
+    try refresh_open_ok(graph);
+    var index: u64 = 0;
+    while (index < 63) : (index += 1) {
+        try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x8000 + index));
+    }
+    // The owner takes the 64th slot; both owned windows stay deferred and unseen.
+    var facts = window_facts(0x7001, 200);
+    const obs = try refresh_offer_ok(graph, &facts);
+    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    try expect_counts(obs, 1, 1, 0, 0);
+    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing.expect(!deferred_seen(graph, 0x7000));
+    try testing.expect(!deferred_seen(graph, 0x7002));
+    // Offering 0x7000 again hits the full graph: AtCapacity, yet the record is marked.
+    facts = owned_facts(0x7000, 0x7001, 201);
+    try refresh_offer_fails(graph, &facts, .AtCapacity);
+    try testing.expect(deferred_seen(graph, 0x7000));
+    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing.expect(call_find_deferred(graph, 0x7000) != null);
+    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x7002));
+    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+}
+
+test "refresh_keep and refresh_unseen: statuses, ordering, truncation and null rules" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    // Without a refresh: the argument check outranks NoRefresh.
+    try testing.expectEqual(status_t.NoRefresh, call_refresh_keep(graph, TestEpoch, 0x100));
+    try testing.expectEqual(status_t.InvalidArgument, call_refresh_keep(graph, TestEpoch, 0));
+    var total: u32 = 0xABCD;
+    var windows = [_]u64{0xEEEE} ** 4;
+    try testing.expectEqual(status_t.NoRefresh, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
+    try testing.expectEqual(status_t.InvalidArgument, call_refresh_unseen(graph, TestEpoch, null, 1, &total));
+    try testing.expectEqual(@as(u32, 0xABCD), total);
+
+    // Slot order differs from generation order: 0x200 reuses the slot of 0x400.
+    _ = try admit_top(graph, 0x400, 10);
+    _ = try admit_top(graph, 0x300, 11);
+    _ = try destroy_hint(graph, 0x400, 50, 2000);
+    try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x400, 1, &ProofOk));
+    _ = try admit_top(graph, 0x200, 12);
+    _ = try admit_dialog(graph, 0x900, 0x777, 13);
+    _ = try admit_top(graph, 0x500, 14);
+    _ = try destroy_hint(graph, 0x500, 60, 2000); // Retiring: never listed, never kept
+    try testing.expectEqual(@as(usize, 0), call_find_active(graph, 0x200).?);
+    try testing.expectEqual(@as(usize, 1), call_find_active(graph, 0x300).?);
+    var order = [_]u8{0xFF} ** MaxEntries;
+    try testing.expectEqual(@as(u32, 2), call_active_by_generation(graph, &order));
+    try testing.expectEqualSlices(u8, &[_]u8{ 1, 0, 0xFF }, order[0..3]);
+
+    try refresh_open_ok(graph);
+    try testing.expectEqual(status_t.InvalidArgument, call_refresh_keep(graph, TestEpoch, 0));
+    try testing.expectEqual(status_t.None, call_refresh_keep(graph, TestEpoch, 0xBAD));
+    try testing.expectEqual(status_t.None, call_refresh_keep(graph, TestEpoch, 0x400));
+    try testing.expectEqual(status_t.None, call_refresh_keep(graph, TestEpoch, 0x500));
+    try testing.expect(!graph.entries[call_find_exact(graph, 0x500, 4).?].seen);
+
+    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
+    try testing.expectEqual(@as(u32, 2), total);
+    try testing.expectEqualSlices(u64, &[_]u64{ 0x300, 0x200, 0xEEEE, 0xEEEE }, &windows);
+    // Truncation: the total stays visible, the rest of the array is untouched.
+    windows = [_]u64{0xEEEE} ** 4;
+    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 1, &total));
+    try testing.expectEqual(@as(u32, 2), total);
+    try testing.expectEqualSlices(u64, &[_]u64{ 0x300, 0xEEEE, 0xEEEE, 0xEEEE }, &windows);
+    // Capacity 0 accepts a null array and still reports the total.
+    total = 0;
+    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, null, 0, &total));
+    try testing.expectEqual(@as(u32, 2), total);
+    // A null array with a nonzero capacity is rejected and leaves the count alone.
+    total = 0xABCD;
+    try testing.expectEqual(status_t.InvalidArgument, call_refresh_unseen(graph, TestEpoch, null, 2, &total));
+    try testing.expectEqual(@as(u32, 0xABCD), total);
+
+    // keep marks Active entries and deferred records; the listing follows.
+    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x300));
+    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x900));
+    try testing.expect(active_seen(graph, 0x300));
+    try testing.expect(deferred_seen(graph, 0x900));
+    windows = [_]u64{0xEEEE} ** 4;
+    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
+    try testing.expectEqual(@as(u32, 1), total);
+    try testing.expectEqualSlices(u64, &[_]u64{ 0x200, 0xEEEE, 0xEEEE, 0xEEEE }, &windows);
+    // An Ok plain observe marks, an offer marks, and the listing is empty at the end.
+    var facts = window_facts(0x200, 70);
+    _ = try offer(graph, &facts);
+    try testing.expect(active_seen(graph, 0x200));
+    total = 9;
+    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
+    try testing.expectEqual(@as(u32, 0), total);
+    try testing.expectEqualSlices(u64, &[_]u64{ 0x200, 0xEEEE, 0xEEEE, 0xEEEE }, &windows);
+    try check_invariants(graph);
+    // The listing moved no mark and no event.
+    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+}
+
+test "a commit that does not fit the ring changes nothing and succeeds after draining" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x6000, 10);
+    _ = try admit_top(graph, 0x6001, 11);
+    _ = try admit_top(graph, 0x6002, 12);
+    _ = try admit_dialog(graph, 0x6100, 0x7777, 13);
+    _ = discard_events(graph);
+    fill_ring(graph, EventCapacity - 2);
+    try refresh_open_ok(graph);
+    const before = state_digest(graph);
+    var retired: u32 = 0xDEAD_BEEF;
+    try testing.expectEqual(status_t.QueueFull, call_refresh_commit(graph, TestEpoch, &retired));
+    try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+    try testing.expectEqual(before, state_digest(graph));
+    try testing.expect(graph.refresh_open);
+    try check_invariants(graph);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
+    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_commits);
+    try testing.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
+    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    // One slot freed: room 3 for exactly 3 victims.
+    var ev = std.mem.zeroes(event_t);
+    try testing.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &ev));
+    try testing.expectEqual(@as(u32, 3), call_ring_room(graph));
+    try testing.expectEqual(@as(u32, 3), try refresh_commit_ok(graph));
+    try testing.expectEqual(@as(u32, 0), call_ring_room(graph));
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).refresh_commits);
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+}
+
+test "refresh_abort closes the refresh without retiring or dropping anything" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x900, 0x777, 11);
+    _ = discard_events(graph);
+    try testing.expectEqual(status_t.NoRefresh, call_refresh_abort(graph, TestEpoch));
+    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_aborts);
+    try refresh_open_ok(graph);
+    const before = state_digest(graph);
+    try testing.expectEqual(status_t.Ok, call_refresh_abort(graph, TestEpoch));
+    try testing.expect(!graph.refresh_open);
+    try testing.expectEqual(before, state_digest(graph));
+    try check_invariants(graph);
+    var stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.refresh_aborts);
+    try testing.expectEqual(@as(u64, 0), stats.refresh_commits);
+    try testing.expectEqual(@as(u32, 0), stats.refresh_active);
+    try testing.expectEqual(status_t.NoRefresh, call_refresh_commit(graph, TestEpoch, null));
+    try testing.expectEqual(status_t.NoRefresh, call_refresh_keep(graph, TestEpoch, 0x100));
+    var facts = window_facts(0x100, 20);
+    var obs = sentinel_observation();
+    try testing.expectEqual(status_t.NoRefresh, call_refresh_offer(graph, TestEpoch, &facts, &obs));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing.expectEqual(before, state_digest(graph));
+    // A new refresh starts from clean marks and can commit normally.
+    try refresh_open_ok(graph);
+    try testing.expect(!active_seen(graph, 0x100));
+    try testing.expectEqual(@as(u32, 1), try refresh_commit_ok(graph));
+    stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 1), stats.refresh_commits);
+    try testing.expectEqual(@as(u64, 1), stats.refresh_aborts);
+}
+
+test "an offer without an open refresh returns NoRefresh after the argument checks and marks nothing" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    // Invalid facts are not even looked at: the NoRefresh check precedes validation.
+    var facts = window_facts(0x100, 0);
+    var obs = sentinel_observation();
+    const before = state_digest(graph);
+    try testing.expectEqual(status_t.NoRefresh, call_refresh_offer(graph, TestEpoch, &facts, &obs));
+    try testing.expectEqual(before, state_digest(graph));
+    try testing.expectEqual(@as(u64, 0), current_stats(graph).rejected_invalid_facts);
+    // Inside a refresh the same facts fail validation and still mark the window.
+    try refresh_open_ok(graph);
+    try refresh_offer_fails(graph, &facts, .InvalidFacts);
+    try testing.expect(active_seen(graph, 0x100));
+    // Window 0 can not be marked and fails validation without touching any mark.
+    facts = window_facts(0, 11);
+    try refresh_offer_fails(graph, &facts, .InvalidFacts);
+}
+
+test "refresh_offer hands the lookup its own stack copy of the facts" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    try refresh_open_ok(graph);
+    var facts = window_facts(0x100, 10);
+    const obs = try refresh_offer_ok(graph, &facts);
+    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    try testing.expect(lookup_probe.last_pointer != @intFromPtr(&facts));
+    try testing.expectEqual(@as(u64, 0x100), lookup_probe.last_window);
+    // A new generation is born seen.
+    try testing.expect(active_seen(graph, 0x100));
+    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+}
+
+test "a reclassification inside a refresh keeps the new generation seen and its re-deferred children unseen" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    try build_family(graph);
+    try refresh_open_ok(graph);
+    var facts = reclassify_facts(20);
+    const obs = try refresh_offer_ok(graph, &facts);
+    try testing.expectEqual(DispositionReclassified, obs.disposition);
+    // Q (0x50) is unseen, the reclassified P and its flushed children inherit the marks of their entries.
+    try testing.expect(active_seen(graph, 0x100));
+    try testing.expect(!active_seen(graph, 0x50));
+    // Q is the owner of P now: the commit retires Q and with it the whole new subtree.
+    _ = discard_events(graph);
+    const retired = try refresh_commit_ok(graph);
+    try testing.expectEqual(@as(u32, 5), retired);
+    try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
+}
+
+test "invalidate_all retires every Active entry children first with reason Invalidated" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    try build_family(graph);
+    _ = try admit_dialog(graph, 0x900, 0x777, 20);
+    _ = try admit_dialog(graph, 0xA00, 0x888, 21);
+    // A quarantined entry stays exactly as it is.
+    _ = try destroy_hint(graph, 0x50, 30, 2000);
+    _ = discard_events(graph);
+    try refresh_open_ok(graph);
+    // Room for 3 of the 4 victims: QueueFull and nothing changed, the refresh stays open.
+    fill_ring(graph, EventCapacity - 3);
+    const before = state_digest(graph);
+    var retired: u32 = 0xDEAD_BEEF;
+    try testing.expectEqual(status_t.QueueFull, call_invalidate_all(graph, TestEpoch, &retired));
+    try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+    try testing.expectEqual(before, state_digest(graph));
+    try testing.expect(graph.refresh_open);
+    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
+    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_aborts);
+    try check_invariants(graph);
+    _ = discard_events(graph);
+    try testing.expectEqual(status_t.Ok, call_invalidate_all(graph, TestEpoch, &retired));
+    try testing.expectEqual(@as(u32, 4), retired);
+    try check_invariants(graph);
+    var events: [8]event_t = undefined;
+    try testing.expectEqual(@as(usize, 4), try drain_events(graph, &events));
+    try expect_ev(events[0], EventRetireIntent, 0x400, 5, 0x200, 3, ReasonInvalidated);
+    try expect_ev(events[1], EventRetireIntent, 0x300, 4, 0x100, 2, ReasonInvalidated);
+    try expect_ev(events[2], EventRetireIntent, 0x200, 3, 0x100, 2, ReasonInvalidated);
+    try expect_ev(events[3], EventRetireIntent, 0x100, 2, 0, 0, ReasonInvalidated);
+    try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
+    try testing.expectEqual(@as(u32, 5), call_count_state(graph, .Retiring));
+    try testing.expectEqual(ReasonDestroyed, graph.entries[call_find_exact(graph, 0x50, 1).?].record.retire_reason);
+    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing.expect(!graph.refresh_open);
+    const stats = current_stats(graph);
+    try testing.expectEqual(@as(u64, 2), stats.deferred_dropped);
+    try testing.expectEqual(@as(u64, 1), stats.refresh_aborts);
+    try testing.expectEqual(@as(u64, 0), stats.refresh_commits);
+    try testing.expectEqual(@as(u32, 0), stats.refresh_active);
+    try testing.expectEqual(status_t.NoRefresh, call_refresh_commit(graph, TestEpoch, null));
+    // Repeating it on an empty Active set is Ok, retires nothing and aborts nothing more.
+    try testing.expectEqual(status_t.Ok, call_invalidate_all(graph, TestEpoch, &retired));
+    try testing.expectEqual(@as(u32, 0), retired);
+    try testing.expectEqual(status_t.Ok, call_invalidate_all(graph, TestEpoch, null));
+    try testing.expectEqual(@as(u64, 1), current_stats(graph).refresh_aborts);
+}
+
+test "every refresh function rejects a stale epoch and changes only the rejection counter" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = discard_events(graph);
+    try refresh_open_ok(graph);
+    const before = state_digest(graph);
+    var facts = window_facts(0x100, 20);
+    var obs = sentinel_observation();
+    var windows = [_]u64{0xEEEE};
+    var total: u32 = 0xABCD;
+    var retired: u32 = 0xDEAD_BEEF;
+    var rejected: u64 = 0;
+    for ([_]u64{ TestEpoch + 1, 0 }) |stale| {
+        try testing.expectEqual(status_t.StaleEpoch, call_refresh_begin(graph, stale));
+        try testing.expectEqual(status_t.StaleEpoch, call_refresh_offer(graph, stale, &facts, &obs));
+        try testing.expectEqual(status_t.StaleEpoch, call_refresh_keep(graph, stale, 0x100));
+        try testing.expectEqual(status_t.StaleEpoch, call_refresh_unseen(graph, stale, &windows, 1, &total));
+        try testing.expectEqual(status_t.StaleEpoch, call_refresh_commit(graph, stale, &retired));
+        try testing.expectEqual(status_t.StaleEpoch, call_refresh_abort(graph, stale));
+        try testing.expectEqual(status_t.StaleEpoch, call_invalidate_all(graph, stale, &retired));
+        rejected += 7;
+        try testing.expectEqual(rejected, current_stats(graph).rejected_stale_epoch);
+    }
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing.expectEqual(@as(u64, 0xEEEE), windows[0]);
+    try testing.expectEqual(@as(u32, 0xABCD), total);
+    try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+    try testing.expectEqual(before, state_digest(graph));
+    try testing.expect(graph.refresh_open);
+    try testing.expect(!graph.busy);
+}
+
+const refresh_thread_probe_t = struct {
+    graph: *graph_t,
+    statuses: [7]status_t = [_]status_t{.Ok} ** 7,
+};
+
+fn refresh_thread_body(probe: *refresh_thread_probe_t) void {
+    var facts = window_facts(0x100, 20);
+    var obs = sentinel_observation();
+    var windows = [_]u64{0xEEEE};
+    var total: u32 = 0;
+    var retired: u32 = 0;
+    probe.statuses[0] = call_refresh_begin(probe.graph, TestEpoch);
+    probe.statuses[1] = call_refresh_offer(probe.graph, TestEpoch, &facts, &obs);
+    probe.statuses[2] = call_refresh_keep(probe.graph, TestEpoch, 0x100);
+    probe.statuses[3] = call_refresh_unseen(probe.graph, TestEpoch, &windows, 1, &total);
+    probe.statuses[4] = call_refresh_commit(probe.graph, TestEpoch, &retired);
+    probe.statuses[5] = call_refresh_abort(probe.graph, TestEpoch);
+    probe.statuses[6] = call_invalidate_all(probe.graph, TestEpoch, &retired);
+}
+
+test "every refresh function from a foreign thread returns WrongThread and touches nothing" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    try refresh_open_ok(graph);
+    // Busy is set too: WrongThread must outrank Reentrant, and a wrong epoch must not be counted.
+    graph.busy = true;
+    const before = state_digest(graph);
+    const stats_before = graph.stats;
+    var probe = refresh_thread_probe_t{ .graph = graph };
+    const thread = try std.Thread.spawn(.{}, refresh_thread_body, .{&probe});
+    thread.join();
+    for (probe.statuses) |status| try testing.expectEqual(status_t.WrongThread, status);
+    try testing.expectEqual(before, state_digest(graph));
+    try testing.expectEqualSlices(u8, std.mem.asBytes(&stats_before), stats_bytes(graph));
+    try testing.expect(graph.busy);
+    graph.busy = false;
+    try testing.expect(graph.refresh_open);
+}
+
+test "every refresh function called while the graph is busy returns Reentrant and touches nothing" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    try refresh_open_ok(graph);
+    graph.busy = true;
+    const before = state_digest(graph);
+    const stats_before = graph.stats;
+    var facts = window_facts(0x100, 20);
+    var obs = sentinel_observation();
+    var windows = [_]u64{0xEEEE};
+    var total: u32 = 0xABCD;
+    var retired: u32 = 0xDEAD_BEEF;
+    try testing.expectEqual(status_t.Reentrant, call_refresh_begin(graph, TestEpoch));
+    try testing.expectEqual(status_t.Reentrant, call_refresh_offer(graph, TestEpoch, &facts, &obs));
+    try testing.expectEqual(status_t.Reentrant, call_refresh_keep(graph, TestEpoch, 0x100));
+    try testing.expectEqual(status_t.Reentrant, call_refresh_unseen(graph, TestEpoch, &windows, 1, &total));
+    try testing.expectEqual(status_t.Reentrant, call_refresh_commit(graph, TestEpoch, &retired));
+    try testing.expectEqual(status_t.Reentrant, call_refresh_abort(graph, TestEpoch));
+    try testing.expectEqual(status_t.Reentrant, call_invalidate_all(graph, TestEpoch, &retired));
+    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing.expectEqual(@as(u32, 0xABCD), total);
+    try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+    try testing.expectEqual(before, state_digest(graph));
+    try testing.expectEqualSlices(u8, std.mem.asBytes(&stats_before), stats_bytes(graph));
+    graph.busy = false;
 }
