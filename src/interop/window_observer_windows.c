@@ -31,7 +31,7 @@
  *    failed queries commits and returns Ok.
  *  - Cadence. last_attempt_ms is stamped before the desktop check; latch_ms is stamped whenever the
  *    full-refresh latch is set. refresh_due is true iff Started and (no attempt yet, or 250 ms
- *    elapsed, or latched with last_attempt_ms < latch_ms), so a frozen clock with a persistently
+ *    elapsed, or a latch event not yet consumed by an attempt, tracked by latch_unconsumed), so a frozen clock with a persistently
  *    failing refresh runs at most one refresh per latch event.
  *  - Native table. create returns Unsupported when GetDpiForWindow is missing or the calling
  *    thread is not DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. The native query clamps width and
@@ -166,6 +166,7 @@ struct window_observer_t {
     uint32_t have_attempt; /**< Nonzero once last_attempt_ms is valid (a refresh attempt happened since start). */
     uint64_t last_attempt_ms; /**< Cadence clock value of the latest refresh attempt. */
     uint64_t latch_ms; /**< Cadence clock value when the refresh latch was last set. */
+    uint32_t latch_unconsumed; /**< Nonzero from a latch event until the next refresh attempt starts; makes a refresh due once per event even when the clock did not move. */
     _Atomic uint64_t hints_wrong_thread; /**< Off-thread hint counter (the only cross-thread write). */
     window_observer_stats_t stats; /**< Counters; owner thread only. */
     dirty_entry_t dirty[WindowObserverDirtyCapacity]; /**< Dirty table. */
@@ -567,6 +568,7 @@ static window_observer_status_t start_locked(window_observer_t *observer) {
     observer->overflow = 0u;
     observer->refresh_requested = 1u;
     observer->latch_ms = observer->api.monotonic_ms(observer->api_context);
+    observer->latch_unconsumed = 1u;
     observer->have_attempt = 0u;
     observer->last_attempt_ms = 0u;
     observer->desktop_active = 0u;
@@ -605,6 +607,7 @@ window_observer_status_t window_observer_set_preedit_window(window_observer_t *o
         if (observer->state == WindowObserverStateStarted) {
             observer->refresh_requested = 1u;
             observer->latch_ms = observer->api.monotonic_ms(observer->api_context);
+            observer->latch_unconsumed = 1u;
         }
     }
     observer->busy = 0u;
@@ -716,6 +719,7 @@ static void desktop_refuse(window_observer_t *observer, uint64_t now_ms) {
     observer->desktop_blocked = 1u;
     observer->refresh_requested = 1u;
     observer->latch_ms = now_ms;
+    observer->latch_unconsumed = 0u;
     observer->last_attempt_ms = now_ms;
     observer->have_attempt = 1u;
     bump(&observer->stats.pumps_desktop_inactive);
@@ -939,6 +943,7 @@ static window_observer_status_t pump_locked(window_observer_t *observer, interop
         const uint64_t now_ms = observer->api.monotonic_ms(observer->api_context);
         observer->refresh_requested = 1u;
         observer->latch_ms = now_ms;
+        observer->latch_unconsumed = 0u;
         observer->last_attempt_ms = now_ms;
         observer->have_attempt = 1u;
         return refresh_body(observer, graph, epoch);
@@ -1135,6 +1140,7 @@ window_observer_status_t window_observer_refresh(window_observer_t *observer, in
     native_call_begin();
     /* Step 1: stamp the attempt BEFORE anything can fail, then check the desktop. */
     const uint64_t now_ms = observer->api.monotonic_ms(observer->api_context);
+    observer->latch_unconsumed = 0u;
     observer->last_attempt_ms = now_ms;
     observer->have_attempt = 1u;
     window_observer_status_t status;
@@ -1170,7 +1176,7 @@ static int refresh_due_core(const window_observer_t *observer, uint64_t now_ms) 
         return 1;
     }
     /* A latch event is consumed by any attempt stamped at or after it, even a failed one. */
-    return observer->refresh_requested != 0u && observer->last_attempt_ms < observer->latch_ms;
+    return observer->refresh_requested != 0u && observer->latch_unconsumed != 0u;
 }
 
 /** @copydoc window_observer_refresh_due */
