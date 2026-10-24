@@ -2344,3 +2344,30 @@ by verification. Readers must verify before relying on provenance. Make verifies
 existing packaged binaries, and explicit qemu-vendor-from-source replaces the
 system package only with a validated pinned build. The obsolete source sidecar
 is removed only after successful packaging. No directory tree is cleaned.
+
+### 8.8 All-mount supervisor ownership
+
+The event-loop-owned daemon_state_t retains the legacy first virtiofs process
+for wire status and seven additional records, one contiguous owned prefix and
+an immutable mount-identity snapshot for the active VM. Mount0 keeps the legacy
+socket/log names; indices1..7 use virtiofsd-<index>.sock/.log. Named-device lock
+handoff regenerates every log path after resolving the persistent state root.
+
+Validate the whole mount set and unique drive letters, locate required binaries,
+then start all backends in config order with exact read-only flags before AV
+preparation and QEMU. Pass the ordered backend/drive array to the QEMU API. A
+partial startup unwinds in reverse order; teardown errors override the initial
+error and retain the failed record plus every unvisited lower index for retry.
+Live QEMU always stops/reaps before any backend or AV mapping is released.
+
+A readiness timeout retains the VM and all backends. A retry polls QEMU first;
+a live VM requires identical mount identities and no replacement children. A
+dead VM permits cleanup and changed config. Stop, kill, natural reap and restart
+close QEMU log/QMP descriptors only after confirmed child death; zero-mount,
+AV-disabled restarts follow the same rule. Unexpected kill/wait failures retain
+resources. Idle supervisor shutdown refuses any remaining mount owner, including
+additional records invisible to the legacy first-PID status field. Kill responses
+report actual errors/state rather than unconditional success. All mutations are
+serialized by the daemon event loop; there are no independent mount threads.
+This milestone does not install guest drive bindings or prove canonical-path,
+restart-stress, compositor or native guest filesystem acceptance.

@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,17 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+static atomic_int fail_kill_request;
+
+int __real_daemon_state_kill_subsystem(daemon_state_t *state);
+int __wrap_daemon_state_kill_subsystem(daemon_state_t *state) {
+    if (atomic_load_explicit(&fail_kill_request, memory_order_relaxed)) {
+        errno = EPERM;
+        return -1;
+    }
+    return __real_daemon_state_kill_subsystem(state);
+}
 
 /** @brief Verify final config reload and nested lock lifetime without starting a VM. */
 static void test_named_startup_handoff(void) {
@@ -222,14 +234,27 @@ static void test_server_ipc(void) {
     assert(hdr.msg_type == DaemonMsgShutdownResp && hdr.sequence == 121);
     assert(result.status_code == EBUSY);
 
-    /* 3. Kill Request */
+    /* Failed kill reports errno and retains the actual Running state. */
+    atomic_store_explicit(&fail_kill_request, 1, memory_order_relaxed);
     assert(waddle_daemon_send_msg(client_fd, DaemonMsgKillReq, 103, NULL, 0) == 0);
     waddle_daemon_result_resp_t kill_resp;
     assert(waddle_daemon_recv_msg(client_fd, &hdr, &kill_resp, sizeof(kill_resp), 2000) == 0);
     assert(hdr.msg_type == DaemonMsgKillResp);
     assert(hdr.sequence == 103);
-    assert(kill_resp.status_code == 0);
-    assert(kill_resp.subsystem_state == SubsystemStateStopped);
+    assert(kill_resp.status_code == EPERM);
+    assert(kill_resp.subsystem_state == SubsystemStateRunning);
+    assert(kill_resp.error_msg[0] == '\0');
+    assert(waddle_daemon_send_msg(client_fd, DaemonMsgShutdownReq, 124, NULL, 0) == 0);
+    assert(waddle_daemon_recv_msg(client_fd, &hdr, &result, sizeof(result), 2000) == 0);
+    assert(hdr.msg_type == DaemonMsgShutdownResp && hdr.sequence == 124);
+    assert(result.status_code == EBUSY && result.subsystem_state == SubsystemStateRunning);
+
+    /* A normal retry succeeds once the injected failure is removed. */
+    atomic_store_explicit(&fail_kill_request, 0, memory_order_relaxed);
+    assert(waddle_daemon_send_msg(client_fd, DaemonMsgKillReq, 104, NULL, 0) == 0);
+    assert(waddle_daemon_recv_msg(client_fd, &hdr, &kill_resp, sizeof(kill_resp), 2000) == 0);
+    assert(hdr.msg_type == DaemonMsgKillResp && hdr.sequence == 104);
+    assert(kill_resp.status_code == 0 && kill_resp.subsystem_state == SubsystemStateStopped);
 
     /* Malformed shutdown stays connected; idle shutdown replies before exiting. */
     uint8_t unexpected = 1;
@@ -248,6 +273,8 @@ static void test_server_ipc(void) {
 static void test_reaped_av_cleanup(void) {
     daemon_state_t state = {0};
     state.av_environment.fd = -1;
+    state.qemu.log_fd = -1;
+    state.qemu.qmp.socket_fd = -1;
     daemon_config_init_defaults(&state.config);
     state.config.av_enabled = 1;
     char root[] = "/tmp/waddle-av-reap-XXXXXX";
@@ -263,10 +290,46 @@ static void test_reaped_av_cleanup(void) {
     assert(access(state.config.av_shm_path, F_OK) != 0);
     rmdir(root);
 }
+static void test_reaped_qemu_closes_log_and_qmp_descriptors_without_mounts_or_av(void) {
+    daemon_state_t state = {0};
+    state.av_environment.fd = -1;
+    state.qemu.log_fd = -1;
+    state.qemu.qmp.socket_fd = -1;
+    daemon_config_init_defaults(&state.config);
+    state.config.mount_count = 0;
+    state.config.av_enabled = 0;
+
+    int log_fd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    int qmp_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    assert(log_fd >= 0 && qmp_fd >= 0);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) _exit(0);
+    siginfo_t child_info;
+    memset(&child_info, 0, sizeof(child_info));
+    assert(waitid(P_PID, (id_t)child, &child_info, WEXITED | WNOWAIT) == 0);
+
+    state.qemu.pid = child;
+    state.qemu.is_running = 1;
+    state.qemu.log_fd = log_fd;
+    state.qemu.qmp.socket_fd = qmp_fd;
+    state.state = SubsystemStateFailed;
+    daemon_state_reap_children(&state);
+    assert(state.qemu.pid == 0 && !state.qemu.is_running);
+    assert(state.qemu.log_fd == -1 && state.qemu.qmp.socket_fd == -1);
+    errno = 0;
+    assert(fcntl(log_fd, F_GETFD) == -1 && errno == EBADF);
+    errno = 0;
+    assert(fcntl(qmp_fd, F_GETFD) == -1 && errno == EBADF);
+}
 static void test_live_readiness_retry(void) {
     daemon_state_t state = {0};
     state.av_environment.fd = -1;
+    state.qemu.log_fd = -1;
+    state.qemu.qmp.socket_fd = -1;
     daemon_config_init_defaults(&state.config);
+    /* This fixture retains only an AV/QEMU child, with no filesystem backend. */
+    state.config.mount_count = 0;
     state.config.av_enabled = 1;
     char root[] = "/tmp/waddle-av-retry-XXXXXX";
     assert(mkdtemp(root));
@@ -322,6 +385,7 @@ int main(void) {
     test_graceful_only_timeout();
     test_live_readiness_retry();
     test_reaped_av_cleanup();
+    test_reaped_qemu_closes_log_and_qmp_descriptors_without_mounts_or_av();
     test_named_startup_handoff();
     test_lockfile_concurrency();
     test_server_ipc();

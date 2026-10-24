@@ -36,7 +36,7 @@ acceptance remain pending.
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
-| #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 20% | Root fallback removal and bounded QEMU many-mount API accepted; lifecycle, guest binding and canonical/symlink gates pending |
+| #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 50% | Root fix, QEMU mount arrays and owned supervisor lifecycle accepted; guest binding, canonical/symlink and native qualification pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `13.40%`
+**Total Feature Completion**: `13.70%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -74,7 +74,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot primitives 20%; first-fit reservations 20%; focused coverage gates pass |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
-| #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal10%; QEMU many-mount API10%; argument/QMP and leak-enabled fault fixtures pass |
+| #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; fault/IPC/real-descriptor tests pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
 Execution resumed at the user's request from checkpoint4079560. Current
@@ -430,7 +430,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Linux/Windows reruns remain pending. No native or overall acceptance credit.
     Source commit51f3923 contains this recorder correction.
 
-- **Commit `HEAD`**: `fix(interop): bind vendor packages to verified executable provenance`
+- **Commit `571c884`**: `fix(interop): bind vendor packages to verified executable provenance`
   - **Task Impact**: +0% to TODO #8 (+0% overall; total13.40%).
   - **Summary**: Prevents stale source-build attribution after a system-QEMU
     copy. Bounded probes, source/stamp/hash validation, exclusive identity lock,
@@ -438,4 +438,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     origins. virtiofsd requires advertised --readonly support. Fourteen isolated
     tests and actual pinned-QEMU9.2.4/virtiofsd1.13.2 packaging/verification pass.
     Publication interruption is detectable by hash verification; no atomic-pair
-    or native guest behavior claim. HEAD identifies this packaging commit.
+    or native guest behavior claim. Source commit571c884.
+
+- **Commit `HEAD`**: `feat(interop): supervise all configured filesystem backends`
+  - **Task Impact**: +30% to TODO #9 (+0.30% overall; total13.70%).
+  - **Summary**: Owns all eight ordered backends with per-mount policy, reverse
+    rollback and retained teardown failures. QEMU-first stop/reap, exact live
+    retry identities and all log paths are covered. Lead review fixes dead-VM
+    log/QMP descriptor leaks and unconditional successful KillResp; IPC fault
+    injection and actual descriptor closure regressions pass. Full make test
+    passes before the final focused fixes; updated server/lifecycle tests pass
+    afterward, including ASan/LSan/UBSan with leak detection. Native smoke proves
+    two backend startup and QMP mount IDs after temporary vhost-vsock access,
+    but the harness then failed on its assumption that CLI kill retains the
+    supervisor. The ACL is restored and all task-owned processes are stopped;
+    no completed native qualification or guest drive/write-denial credit.
+    HEAD identifies this containing supervisor lifecycle commit.

@@ -92,7 +92,8 @@ static int handle_client_message(daemon_state_t *state,
         if (hdr->payload_len != 0) {
             resp.status_code = EINVAL;
         } else if ((state->state != SubsystemStateStopped && state->state != SubsystemStateFailed) ||
-                   state->qemu.pid != 0 || state->virtiofs.pid != 0) {
+                   state->qemu.pid != 0 || state->virtiofs.pid != 0 ||
+                   state->virtiofs_owned_count != 0) {
             resp.status_code = EBUSY;
         }
         int sent = waddle_daemon_send_msg(client_fd, DaemonMsgShutdownResp,
@@ -108,11 +109,14 @@ static int handle_client_message(daemon_state_t *state,
     }
 
     case DaemonMsgKillReq: {
-        (void)daemon_state_kill_subsystem(state);
+        int r = daemon_state_kill_subsystem(state);
         waddle_daemon_result_resp_t resp;
         memset(&resp, 0, sizeof(resp));
-        resp.status_code = 0;
-        resp.subsystem_state = SubsystemStateStopped;
+        resp.status_code = (r == 0) ? 0 : ((errno != 0) ? (uint32_t)errno : 1);
+        resp.subsystem_state = (uint32_t)state->state;
+        if (r != 0 && state->last_error[0] != '\0') {
+            snprintf(resp.error_msg, sizeof(resp.error_msg), "%s", state->last_error);
+        }
         (void)waddle_daemon_send_msg(client_fd, DaemonMsgKillResp, hdr->sequence, &resp, sizeof(resp));
         break;
     }

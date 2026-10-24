@@ -33,6 +33,12 @@ typedef struct daemon_state_t {
     qemu_process_t qemu;
     /** @brief VirtIO-FS daemon process manager handle. */
     virtiofs_process_t virtiofs;
+    /** @brief Additional VirtIO-FS process handles for configured mounts 1..7. */
+    virtiofs_process_t virtiofs_additional[WaddleMaxMounts - 1];
+    /** @brief Contiguous prefix of mount slots retaining process/socket ownership. */
+    uint32_t virtiofs_owned_count;
+    /** @brief Mount identity snapshots for safe retries while QEMU remains alive. */
+    waddle_daemon_fs_mount_t virtiofs_mount_config[WaddleMaxMounts];
     /** @brief Owned AV mapping, prepared before QEMU and released after stop. */
     av_environment_t av_environment;
 
@@ -46,6 +52,8 @@ typedef struct daemon_state_t {
     char qmp_sock_path[WaddleMaxPathLen];
     /** @brief Path to VirtIO-FS vhost-user socket ($XDG_RUNTIME_DIR/waddle/virtiofsd.sock). */
     char virtiofsd_sock_path[WaddleMaxPathLen];
+    /** @brief Socket paths for additional mount slots 1..7. */
+    char virtiofsd_additional_sock_path[WaddleMaxMounts - 1][WaddleMaxPathLen];
     /** @brief Optional override path for mock guest socket in testing environments. */
     char mock_guest_sock_path[WaddleMaxPathLen];
 
@@ -59,6 +67,8 @@ typedef struct daemon_state_t {
     char qemu_log_path[WaddleMaxPathLen];
     /** @brief Log file path for VirtIO-FS output. */
     char virtiofsd_log_path[WaddleMaxPathLen];
+    /** @brief Log paths for additional mount slots 1..7. */
+    char virtiofsd_additional_log_path[WaddleMaxMounts - 1][WaddleMaxPathLen];
 
     /** @brief Open file descriptor for waddle.lock (-1 if not held). */
     int lock_fd;
