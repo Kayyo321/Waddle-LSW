@@ -22,7 +22,7 @@ typedef enum interop_mapping_windows_status_t {
     InteropMappingWindowsOutOfMemory = 2, /**< Owner/detail allocation failed. */
     InteropMappingWindowsBusy = 3, /**< Owned resources forbid open/destroy. */
     InteropMappingWindowsOsError = 4, /**< Acquisition failed and fully unwound. */
-    InteropMappingWindowsInvalidMapping = 5, /**< Successful driver reply was invalid; fully unwound. */
+    InteropMappingWindowsInvalidMapping = 5, /**< SDK detail/map data was malformed; fully unwound. */
     InteropMappingWindowsCleanupPending = 6, /**< Resources remain recorded; retry close. */
     InteropMappingWindowsMissingProof = 7 /**< Published map requires explicit quiescence assertion. */
 } interop_mapping_windows_status_t;
@@ -95,6 +95,8 @@ interop_mapping_windows_status_t interop_mapping_windows_open(
  * CleanupPending preserves resources whose cleanup failed. Map release failure
  * forbids closing its driver handle. Successful release clears map ownership
  * before handle close, so a close retry never releases that mapping twice.
+ * Proof 1 remains required on retries while a published map remains owned;
+ * after successful map release, handle/set-only retries may use proof 0.
  * Independent SetupAPI cleanup is still attempted. Primary error is retained;
  * cleanup_error records the first failed cleanup in this attempt, or zero.
  * @note Stop all view users before the first valid attempt. A published view is

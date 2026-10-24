@@ -744,7 +744,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     portable leak-enabled API doubles and native SDK fixtures; neither can stand
     in for live driver or compositor proof. Source commit8493582 contains this interface/specification.
 
-- **Commit `HEAD`**: `docs(interop): qualify shared session milestones on Linux and Windows`
+- **Commit `4dc8df7`**: `docs(interop): qualify shared session milestones on Linux and Windows`
   - **Task Impact**: +25% to TODO #6 and +25% to TODO #7 (+2.00% overall; total16.40%).
   - **Summary**: Accepts framing5% (9f921d9), owned queue5% (ab676a8),
     handshake10% (ce9178d) and liveness5% (31fbea9) for each endpoint after
@@ -754,5 +754,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     production line/branch gates pass. No OS loop, signed driver, live surface
     or integrated endpoint/native acceptance is credited. Native AV regression
     state and future disposable Windows runner plan are preserved separately.
-    [Qualification](session_core_qualification_2026_10_24.json). HEAD identifies
-    this containing milestone qualification commit.
+    [Qualification](session_core_qualification_2026_10_24.json). Source commit4dc8df7 contains this milestone qualification.
+
+- **Commit `HEAD`**: `docs(interop): clarify published-map cleanup retry proof`
+  - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total16.40%).
+  - **Summary**: Review requires proof1 on every retry while a published driver
+    map remains owned, but permits proof0 for retained handle/set after successful
+    release. Clarifies malformed SDK data and cleanup-only diagnostic results,
+    and requires fake SDK resource accounting independent of owner flags. Assigns
+    source latch correction and failure regressions to separate Luna owners.
+    HEAD identifies this containing review-contract commit.

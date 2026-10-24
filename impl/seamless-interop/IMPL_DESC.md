@@ -2893,8 +2893,11 @@ even if CloseHandle then fails. Destroy-device-set failure retains that handle t
 Keep the first cleanup failure of each attempt separately from the primary error.
 Return CleanupPending if anything remains; a later close retries only retained
 resources. Failed-open views were never published, so rollback/close may use proof0.
-Published leases require explicit proof1 on close; no EOF/Goodbye/handshake/timer
-provides it. The caller stops every local user and satisfies external detach
+Published leases require explicit proof1 on every close attempt while the driver
+map remains owned, including after a failed release. Successful release ends that
+requirement: retries of only a retained device handle/set may use proof0. Keep
+the publication-history latch until map release succeeds. No EOF/Goodbye/handshake/timer
+provides proof. The caller stops every local user and satisfies external detach
 obligations before a valid close attempt, after which the old borrowed view must
 never be used even if cleanup is pending. Destroy rejects any owned resource.
 
@@ -2909,3 +2912,12 @@ cleanup, retry, one-time release/close and zero owned resources/bytes at test en
 C ASan/LSan/UBSan, >=90% production line/branch and actual Windows CPU fixture
 execution remain gates. These doubles do not qualify a live signed-driver lease
 or any part of full host/guest/compositor acceptance by themselves.
+
+Malformed detail size, empty/unterminated path and malformed successful map reply
+use InvalidMapping/ERROR_INVALID_DATA when rollback succeeds; probe/fetch/Open/IOCTL
+API failures use OsError with the normalized acquisition error. A failed final
+temporary-set destruction is a cleanup-only failure: primary_error remains0,
+cleanup_error records that failure, map/device rollback is attempted and the set
+remains retained for a later close. Fake SDK resource counts must independently
+track successful sets/handles/maps and successful cleanup, not merely inspect
+the owner's cached flags or count call attempts.
