@@ -716,7 +716,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     combined native CI requalifies the normalized sources before task credit.
     [Qualification](session_namespace_qualification_2026_10_24.json). Source commit317d307 contains this conformance change.
 
-- **Commit `HEAD`**: `feat(interop): bound shared request identifier occupancy`
+- **Commit `e5014ac`**: `feat(interop): bound shared request identifier occupancy`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Adds one fixed4096-record request namespace per direction,
     sequential nonzero wrap skipping live IDs, explicit release and retirement
@@ -724,5 +724,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     stress to64 retained IDs with varied interior churn across wrap and adds
     runtime zero-sentinel guards. Seven tests pass,96.43% production lines/90%
     branches; native Windows CI is wired after successful cross-build.
-    [Qualification](request_ids_qualification_2026_10_24.json). HEAD identifies
-    this containing implementation commit.
+    [Qualification](request_ids_qualification_2026_10_24.json). Source commite5014ac contains this implementation.
+
+- **Commit `HEAD`**: `docs(interop): retain next adapter review boundaries`
+  - **Task Impact**: +0% to TODO #5/#6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Saves independent raw Win32 mapping/lifecycle and complete
+    message/capability/request-correlation proposals for the next connected
+    endpoint layer. Both are explicitly unaccepted; common controls do not
+    authorize unnegotiated facilities and transport closure is not mapping drain.
+    Records released source ownership and running combined CI after all local
+    regression, leak-enabled sanitizer and production coverage gates passed.
+    HEAD identifies this containing research/coordination commit.

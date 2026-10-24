@@ -109,26 +109,7 @@
     "Worker tests use separate /tmp output/cache; no acceptance from mocked/native-unrun results"
   ],
   "checkpoint_status": "active",
-  "active_workers": [
-    {
-      "agent": "luna_layout",
-      "model": "gpt-6-luna",
-      "effort": "high",
-      "allocation_source": "user_override",
-      "owned_files": [
-        "src/interop/request_ids.zig"
-      ],
-      "task": "Implement shared bounded per-direction request identifier value owner against IMPL_DESC8.17",
-      "acceptance": [
-        "isolated Zig tests for full capacity/wrap/stress",
-        "lead unchanged90% production line/branch and native Windows CI"
-      ],
-      "constraints": [
-        "No shared build/Git/VM/Claude or recursive agents"
-      ],
-      "runner_ownership": "isolated /tmp CPU only"
-    }
-  ],
+  "active_workers": [],
   "completed_followups": [
     {
       "agent": "luna_layout",
@@ -150,6 +131,27 @@
       "effort": "high",
       "work": "QEMU arrays, supervisor lifecycle, process-group and FD/IPC review fixes, path proposal",
       "handoff": "All edits accepted; canonical-path proposal unapproved"
+    },
+    {
+      "agent": "luna_layout",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "work": "Typed handshake, terminal callback fixes and common request namespace; lead accepted local test/coverage and committed",
+      "handoff": "Source ownership released; native Windows CI pending"
+    },
+    {
+      "agent": "luna_qemu_build",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "work": "Liveness and expired-ID review fixes; independent handshake/version/request review; raw Win32 mapping proposal",
+      "handoff": "Liveness committed with local gates; mapping proposal is unapproved"
+    },
+    {
+      "agent": "luna_mounts",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "work": "Send queue, bounded SemVer2 codec correction and peer/capability boundary investigation",
+      "handoff": "Source committed with local gates; peer/policy proposals are unapproved"
     }
   ],
   "resume_entry": "checkpoint_2026_10_24.md",
@@ -181,5 +183,5 @@
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
   },
-  "lead_current_work": "Review parser/codec correction, integrate common request ownership and qualify combined Linux/Windows session core CI"
+  "lead_current_work": "Combined local interop, leak-enabled sanitizer and coverage gates pass at e5014ac; push CI40114904773/40114904783 running. No dependency on Claude. Next OS adapter proposals remain unaccepted until lifetime/capability policy review."
 }
