@@ -1,0 +1,26 @@
+# Adversarial review of O5 priority-destroy proposal
+
+## Capacity argument
+
+The `129 = 2*64 + 1` figure is safe only as a maximum mailbox size under the reservation protocol; it is not a standalone guarantee. Under the stated invariants, I could not construct a capacity overflow in the normal owner-thread path:
+
+- Let `M` be current pending mailbox HWNDs, `T` the exact unique Active+Retiring snapshot, `c` the one candidate, and `F` the exact Free graph entry count. Before a callback-capable admission, reserve `U=M∪T∪{c}` plus `F` additional distinct slots. A callback before graph commit can only produce Destroy hints for `T` or `c`; those keys are already in `U`. One graph offer can publish at most `F` new Active HWNDs because the primary plus flushed Deferred entries must occupy the shared 64-entry Active/Retiring array. No callback-capable call may occur between graph commit and the callback-free snapshot. Therefore after snapshot the union of retained `M`, new `T`, and any candidate-event mailbox entry is no larger than `|U|+F <=129`.
+- During a mailbox `note_destroyed`, a reentrant clock callback can enqueue destroys only for current `T` (or the candidate if the drain is part of candidate preparation). Preparation must reserve the union before entering the graph call. `QueueFull` leaves the graph item unapplied; the mailbox entry is retained. On success, clearing only the saved `(HWND, destroy_stamp)` leaves a newer reentrant stamp intact. A mailbox pass is capped at 129 graph calls.
+- A successful `complete_retire` only removes an entry; it cannot increase `T`. New graph admissions after it use the fresh snapshot and newly free-slot count. Reusing the same HWND while an older generation remains Retiring remains one tracked key; the old release proof remains separate.
+- A Deferred flush is bounded by `F`, not by all 64 Deferred records when fewer graph entries are Free. With 64 historical pending keys, a candidate, and 64 Free entries, `|U|+F` is at most129. At 65 historical pending keys, a failed mailbox drain must block before query/lookup/admission. The included test requirement exercises this boundary.
+
+These conclusions depend on a callback-free graph snapshot that returns exact `F`, a single serialized graph owner, and mandatory preparation before all admission paths. Any coordinator path that admits/flushes without preparation invalidates the proof.
+
+## Concrete lifecycle counterexample that remains
+
+The proposal does not yet close the hook-installation gap. The current observer contract says `note_hint` is ignored unless the observer state is `Started`; `start()` installs hooks while the state is not yet Started and relies on a later full refresh. If a same-epoch restart begins with a tracked Active HWND and `EVENT_OBJECT_DESTROY` is delivered reentrantly during `install_hook`, that delivered destroy is discarded. The subsequent refresh can see the same HWND identity tuple and cannot detect the recycled incarnation. This is exactly the O5 failure class, even though mailbox capacity is available.
+
+Required amendment: the coordinator must synchronize the graph snapshot and establish a `Starting` callback mode before installing the first hook. In `Starting`, tracked/candidate Destroy events use the protected mailbox; ordinary hints may remain covered by the full-refresh latch. Hook rollback/stop must retain those mailbox entries. `Started` is published only after all hooks install. A new observer object must receive `sync_tracked` before `start`; it cannot assume an empty graph. Add a test API whose `install_hook` reenters `note_hint(Destroy, tracked_hwnd)` and prove the mailbox retains it through both successful start and partial-install rollback/retry.
+
+## Failure-path caveat
+
+A snapshot failure after graph commit cannot safely install a partial set. Since the admission reserve already covers all newly possible keys, the caller can mark the observer terminally poisoned before returning to the message loop; subsequent callbacks must not lead to graph admission, surface release, or resource reclamation. The proposal currently says “no callback may run before quarantine,” which cannot be guaranteed once control returns to the OS/message loop. Make the implementable rule explicit: an unexpected post-commit snapshot failure latches a permanent tracking fault; the callback path may set only that fault, and the coordinator quarantines/retains the entire old owner bundle. No further observer operations or graph slot release are allowed. This is fail-closed loss of service, not successful destroy processing. Test reentrant message delivery after the injected snapshot failure and assert the owner bundle remains retained.
+
+## No other counterexample under stated invariants
+
+The ordinary 512-entry overflow cannot clear sidecar entries; untracked destroys remain ordinary by scope. The queue-full drain path is safe if preparation runs before the next query/admission and no operation clears on failure. Stop/EOF/new token is not an epoch reset; protocol v2 supplies no host-drain receipt, so the retained-object rule is conservative. I ran no code, build, or Git commands; this is a source-free contract review.

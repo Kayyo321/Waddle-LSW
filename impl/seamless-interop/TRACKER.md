@@ -985,7 +985,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     [Qualification](claude_window_graph/snapshot_qualification_2026_10_24.json).
     HEAD identifies this implementation commit.
 
-- **Commit `HEAD`**: `refactor(interop): conform graph ABI type bindings to naming rules`
+- **Commit `3e564ad`**: `refactor(interop): conform graph ABI type bindings to naming rules`
   - **Task Impact**: +0% to TODO #10 (+0% overall; total17.80%).
   - **Summary**: Renames26 owned type-binding tokens: BadKind to bad_kind_t,
     Job to job_t and generic T to value_t. Inverse lexical substitution exactly
@@ -994,3 +994,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     exports and wire layouts unchanged; actual final-source CI remains pending.
     [Token proof](claude_window_graph/type_naming_receipt_2026_10_24.json).
     HEAD identifies this identifier-only conformance commit.
+
+- **Commit `HEAD`**: `docs(interop): archive green import CI and open destroy preservation design`
+  - **Task Impact**: +0% to TODO #7/#10/#34 (+0% overall; total17.80%).
+  - **Summary**: Graph CI40128006111 at exact57847b1 passes Linux and actual
+    Windows, joining green interop40128006140 and Native AV40128006121. Later
+    snapshot/native guards at3e564ad have fresh CI pending. Preserves O5 capacity,
+    lifecycle and local cleanup proposals with explicit advisory status. Initial
+    Linux socket draft tests pass but71.21% line52.02% branch coverage fails90%;
+    independent review finds pending-frame starvation and unresolved POLLERR
+    dispatch. Source stays unaccepted while Luna fixes/expands tests. No
+    observer/native/socket-owner credit is granted. HEAD is this audit commit.

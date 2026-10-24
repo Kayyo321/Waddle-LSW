@@ -1,0 +1,466 @@
+windows	Set up job	﻿2026-10-24T20:15:10.4125962Z Current runner version: '2.338.0'
+windows	Set up job	2026-10-24T20:15:10.4201031Z ##[group]Runner Image Provisioner
+windows	Set up job	2026-10-24T20:15:10.4202347Z Hosted Compute Agent
+windows	Set up job	2026-10-24T20:15:10.4203192Z Version: 20261021.618
+windows	Set up job	2026-10-24T20:15:10.4204123Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+windows	Set up job	2026-10-24T20:15:10.4205243Z Build Date: 2026-10-21T00:45:21Z
+windows	Set up job	2026-10-24T20:15:10.4206264Z Worker ID: {e47b7662-f3ab-48b0-817b-0292c9cac200}
+windows	Set up job	2026-10-24T20:15:10.4207487Z Region: westcentralus
+windows	Set up job	2026-10-24T20:15:10.4208390Z Cloud: Azure
+windows	Set up job	2026-10-24T20:15:10.4209162Z ##[endgroup]
+windows	Set up job	2026-10-24T20:15:10.4211518Z ##[group]Operating System
+windows	Set up job	2026-10-24T20:15:10.4212546Z Microsoft Windows Server 2022
+windows	Set up job	2026-10-24T20:15:10.4213573Z 10.0.20348
+windows	Set up job	2026-10-24T20:15:10.4214358Z Datacenter
+windows	Set up job	2026-10-24T20:15:10.4215121Z ##[endgroup]
+windows	Set up job	2026-10-24T20:15:10.4215969Z ##[group]Runner Image
+windows	Set up job	2026-10-24T20:15:10.4216903Z Image: windows-2022
+windows	Set up job	2026-10-24T20:15:10.4217828Z Version: 20261022.344.1
+windows	Set up job	2026-10-24T20:15:10.4219694Z Included Software: https://github.com/actions/runner-images/blob/win22/20261022.344/images/windows/Windows2022-Readme.md
+windows	Set up job	2026-10-24T20:15:10.4223782Z Image Release: https://github.com/actions/runner-images/releases/tag/win22%2F20261022.344
+windows	Set up job	2026-10-24T20:15:10.4225412Z ##[endgroup]
+windows	Set up job	2026-10-24T20:15:10.4227324Z ##[group]GITHUB_TOKEN Permissions
+windows	Set up job	2026-10-24T20:15:10.4230049Z Contents: read
+windows	Set up job	2026-10-24T20:15:10.4231017Z Metadata: read
+windows	Set up job	2026-10-24T20:15:10.4231912Z ##[endgroup]
+windows	Set up job	2026-10-24T20:15:10.4235514Z Secret source: Actions
+windows	Set up job	2026-10-24T20:15:10.4236985Z Cache mode: write
+windows	Set up job	2026-10-24T20:15:10.4238079Z Prepare workflow directory
+windows	Set up job	2026-10-24T20:15:10.4594038Z Prepare all required actions
+windows	Set up job	2026-10-24T20:15:10.4649017Z Getting action download info
+windows	Set up job	2026-10-24T20:15:10.8079981Z Download action repository 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+windows	Set up job	2026-10-24T20:15:11.5628462Z Complete job name: windows
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	﻿2026-10-24T20:15:11.7234353Z ##[group]Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.7236656Z with:
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.7237281Z   name: interop-window-graph-windows
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.7237991Z   path: build
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.7238554Z   merge-multiple: false
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.7239185Z   repository: Kayyo321/Waddle-LSW
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.7239842Z   run-id: 40128006111
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.7240678Z ##[endgroup]
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.9486842Z Downloading single artifact
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.9697973Z (node:1228) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:11.9699678Z (Use `node --trace-deprecation ...` to show where the warning was created)
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:12.1865859Z Preparing to download the following artifacts:
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:12.1868712Z - interop-window-graph-windows (ID: 12573986598, Size: 1413435, Expected Digest: sha256:4eb5600c2c17bce2269b78e3f8f43a6eaf63528f863dc942b27d6184c4eb510a)
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:12.3945559Z Redirecting to blob download url: https://productionresultssa16.blob.core.windows.net/actions-results/6252be91-98a4-863a-9554-ae6a974bfe52/workflow-job-run-3a23de96-d8d9-5aff-9322-c0498fcafd01/artifacts/d51d5d7d03d43a262aaf70b8d76bd76fe7f8818dc9b8cfd229a95eaa5f164731.zip
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:12.3953003Z Starting download of artifact to: D:\a\Waddle-LSW\Waddle-LSW\build
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:12.6268514Z (node:1228) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:12.9048169Z SHA256 digest of downloaded artifact is 4eb5600c2c17bce2269b78e3f8f43a6eaf63528f863dc942b27d6184c4eb510a
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:12.9051360Z Artifact download completed successfully.
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:12.9052854Z Total of 1 artifact(s) downloaded
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T20:15:12.9058523Z Download artifact has finished successfully
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	﻿2026-10-24T20:15:12.9439159Z ##[group]Run $ErrorActionPreference = 'Stop'
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:12.9440385Z ^[[36;1m$ErrorActionPreference = 'Stop'^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:12.9445520Z ^[[36;1mforeach ($test_name in @('window_graph_c_test.exe', 'window_observer_test.exe', 'window_observer_native_test.exe', 'window_graph_unit_test.exe', 'window_graph_abi_unit_test.exe')) {^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:12.9447938Z ^[[36;1m  & ".\build\$test_name"^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:12.9448787Z ^[[36;1m  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:12.9449662Z ^[[36;1m}^[[0m
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:12.9841847Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:12.9843107Z ##[endgroup]
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3932796Z window_graph: ok runtime_sizes
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3935119Z window_graph: ok create_destroy
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3936422Z window_graph: ok create_alias_preserves_inputs
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3937780Z window_graph: ok invalid_arguments
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3938927Z window_graph: ok lifecycle
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3940262Z window_graph: ok update_coalescing
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3941444Z window_graph: ok child_before_parent
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3942869Z window_graph: ok capacity
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3943981Z window_graph: ok deferral_overflow
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3945147Z window_graph: ok classification
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3946097Z window_graph: ok observe_errors
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3947033Z window_graph: ok queue_full
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3947950Z window_graph: ok drain_sink
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3948859Z window_graph: ok retirement
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3949853Z window_graph: ok complete_retire_matrix
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3950914Z window_graph: ok note_destroyed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3951857Z window_graph: ok tick_wrap
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3952789Z window_graph: ok identity_and_reclassify
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3953816Z window_graph: ok refresh
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3954717Z window_graph: ok invalidate_all
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3955890Z window_graph: ok capacity_diagnostic
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3957199Z window_graph: ok stats_and_find
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3958449Z window_graph: ok wrong_thread
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3959717Z window_graph: ok reentrancy
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3960979Z window_graph: ok epoch_isolation
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3962306Z window_graph: ok generation_monotonic
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3963632Z window_graph: ok random_trace
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:13.3964882Z window_graph: 27 tests passed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9563061Z ok test_create_validation
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9565310Z ok test_create_config_overlaps_slot
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9566655Z skip test_create_no_memory: built without -DWgObsWrapCalloc=1 and --wrap=calloc
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9567415Z ok test_create_no_memory
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9567910Z ok test_lifecycle_start_stop_restart
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9568434Z ok test_lifecycle_second_observer
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9568979Z ok test_lifecycle_reservation_covers_hook_removal
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9569631Z ok test_lifecycle_hook_failure_rollback
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9570167Z ok test_lifecycle_unhook_failure
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9570785Z ok test_lifecycle_start_rollback_unhook_retry
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9571365Z ok test_lifecycle_destroy_started
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9571851Z ok test_lifecycle_wrong_thread
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9572329Z ok test_hint_filter_table
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9572752Z ok test_hint_wrong_thread
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9573294Z ok test_release_slot_waits_for_inflight_hint
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9573988Z ok test_dirty_coalesce_order_budget
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9574435Z ok test_dirty_overflow_recovery
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9574737Z ok test_flood_child_hints_no_churn
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9575057Z ok test_overflow_recovery_gone_and_recycled
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9575388Z ok test_overflow_pump_statuses
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9575685Z ok test_dirty_reserved_slot
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9575970Z ok test_pump_admit_update_hide
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9576248Z ok test_pump_cloak
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9576711Z ok test_pump_destroy_and_reuse
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9577158Z ok test_pump_gone_vs_failed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9577442Z ok test_pump_queue_full
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9580465Z ok test_pump_queue_full_destroy_information
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9581631Z ok test_pump_desktop_inactive
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9581927Z ok test_pump_busy_reentrant
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9582333Z ok test_pump_graph_reentrant
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9582933Z ok test_pump_stamp_exhausted
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9583225Z ok test_refresh_admits_in_order
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9583533Z ok test_refresh_defers_child_before_parent
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9583892Z ok test_refresh_failed_window_kept
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9584238Z ok test_refresh_unenumerated_survives
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9584548Z ok test_refresh_vanished_retired
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9584948Z ok test_refresh_enum_failure
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9585248Z ok test_refresh_truncated_degrades
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9585542Z ok test_refresh_cadence_latch
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9585822Z ok test_refresh_queue_full_abort
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9586106Z ok test_refresh_commit_queue_full
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9586408Z ok test_refresh_replacement_observer
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9586740Z ok test_owner_hidden_promotion
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9587034Z ok test_owner_hidden_gone_and_failed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9587341Z ok test_hidden_window_skips_owner_query
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9587648Z ok test_owner_hidden_uac
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9587912Z ok test_preedit_parenting
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9588179Z ok test_preedit_from_config
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9588457Z ok test_own_process_excluded
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9588734Z ok test_teardown_with_hints
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9588998Z ok test_stats_accounting
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9589268Z ok test_entry_arguments_and_threads
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9589558Z ok test_start_zero_token
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9589816Z ok test_hint_during_install
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9590086Z ok test_hint_destroy_coalesces
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9590365Z ok test_facts_overlay_corners
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9590642Z ok test_putback_merge_queue_full
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9590923Z ok test_putback_merge_fatal
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9591191Z ok test_putback_merge_retry
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9591481Z ok test_pump_destroy_status_paths
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9591789Z ok test_refresh_enumeration_oddities
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9592089Z ok test_refresh_graph_refresh_lost
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9592396Z ok test_refresh_unseen_stamp_exhausted
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9592694Z ok test_cadence_corners
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9593145Z   fuzz: 40 seeds x 3000 steps = 120000 steps, 5452 generations, 405 overflow recoveries
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9593647Z ok test_fuzz_convergence
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9594045Z   fuzz: 8 seeds x 3000 steps = 24000 steps, 1144 generations, 188 overflow recoveries
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9594496Z ok test_fuzz_convergence_stressed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:14.9594899Z window_observer_windows: 65 tests passed
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0460775Z native observer: real ownerless query, visibility, Gone, target-correlated hook and teardown passed; hints=11
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0559731Z 1/145 window_graph.test.classification matrix covers every step of the header table...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0560974Z 2/145 window_graph.test.every excluded class matches exactly, case-insensitively and nothing else...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0561874Z 3/145 window_graph.test.classification parents follow owner_root, never the raw owner...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0562742Z 4/145 window_graph.test.classification never reads past an unvalidated class or image length...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0563511Z 5/145 window_graph.test.valid facts: defaults, maxima and boundaries...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0564225Z 6/145 window_graph.test.validate_facts rejects each violated rule and nothing else...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0564977Z 7/145 window_graph.test.validate_facts checks text only over the stated length...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0565846Z 8/145 window_graph.test.utf8_valid_no_nul accepts well-formed text and rejects every malformed class...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0566806Z 9/145 window_graph.test.app_key_valid matches the frozen codec rule and the 3..200 length rule...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0567675Z 10/145 window_graph.test.class_hash_of follows FNV-1a 64 and distinguishes case...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0570242Z 11/145 window_graph.test.ascii_eql_ignore_case folds only ASCII letters over the full length...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0571546Z 12/145 window_graph.test.unwrap_tick resolves a raw tick to the 64-bit value nearest the base...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0572392Z 13/145 window_graph.test.derive_state maps facts to protocol bits and never sets Activated...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0573175Z 14/145 window_graph.test.identity_equal compares process, thread, start time and class hash...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0573843Z 15/145 window_graph.test.record_init returns an all-zero record...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0574431Z 16/145 window_graph.test.bump increments and saturates without wrapping...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0575086Z 17/145 window_graph.test.status values and constants equal the committed header...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0608814Z 18/145 window_graph.test.app_key_valid agrees with the codec rule on random keys up to 200 bytes...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0614464Z 19/145 window_graph.test.create validates every configuration field and builds a zeroed graph...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0615781Z 20/145 window_graph.test.create copies the configuration by value...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0618147Z 21/145 window_graph.test.create under allocator failure leaves no graph and leaks nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0619368Z 22/145 window_graph.test.create takes the default monotonic clock when no now_ms is given...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0621343Z 23/145 window_graph.test.enter applies thread, busy and epoch rules in order...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0626745Z 24/145 window_graph.test.a foreign thread gets WrongThread and touches nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0630218Z 25/145 window_graph.test.ring wraps around over many more pushes than its capacity...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0632369Z 26/145 window_graph.test.a full ring refuses a new event and changes nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0633453Z 27/145 window_graph.test.announce and update merge keep the announce kind and OR the change mask...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0635482Z 28/145 window_graph.test.update and update merge OR their masks and count only appended updates...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0636869Z 29/145 window_graph.test.events never merge across a retire intent...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0638750Z 30/145 window_graph.test.retire intents are always appended and an older update stays unmerged...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0639878Z 31/145 window_graph.test.events of another generation or window do not merge...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0641916Z 32/145 window_graph.test.next_event reports None on an empty queue and leaves the output alone...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0643200Z 33/145 window_graph.test.drain delivers events oldest first up to max_events...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0645184Z 34/145 window_graph.test.drain on an empty queue reports None and delivered 0...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0646475Z 35/145 window_graph.test.drain stops at a refused event and redelivers it first next time...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0648487Z 36/145 window_graph.test.drain rejects bad arguments after the common rules and changes nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0649664Z 37/145 window_graph.test.graph calls made from inside the sink are Reentrant and nothing is delivered twice...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0651620Z 38/145 window_graph.test.check_action is Ok only for the exact Active pair...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0653293Z 39/145 window_graph.test.lookup helpers distinguish Active, Retiring and deferred records...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0654291Z 40/145 window_graph.test.find_live describes only Active entries...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0656339Z 41/145 window_graph.test.list_retiring orders by generation, reports the total and truncates...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0657623Z 42/145 window_graph.test.complete_retire releases only the exact Retiring generation...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0659980Z 43/145 window_graph.test.get_stats fills counters and recomputed gauges...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0661855Z 44/145 window_graph.test.stamp high water is read through the guard and the plain getter...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0664129Z 45/145 window_graph.test.capacity diagnostic is None without reading the clock when every counter is zero...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0665417Z 46/145 window_graph.test.capacity diagnostic follows the sixty second rate limit...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0667570Z 47/145 window_graph.test.capacity diagnostic takes its first sample even at clock zero and guards the clock callback...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0670117Z 48/145 window_graph.test.first admission announces the full payload with the looked-up key...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0672328Z 49/145 window_graph.test.the lookup receives a stack copy of the facts, never the caller's struct...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0689827Z 50/145 window_graph.test.each fact group maps to its change bit in a queued Update...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0691668Z 51/145 window_graph.test.updates coalesce into a pending Announce or Update and OR their masks...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0693536Z 52/145 window_graph.test.an identical offer is Unchanged, queues nothing and still advances stamp and tick...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0695812Z 53/145 window_graph.test.an older tick advances the record but never moves the tick base backwards...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0698376Z 54/145 window_graph.test.an Update that cannot be queued returns QueueFull unless a pending event absorbs it...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0700849Z 55/145 window_graph.test.a child whose parent is absent is deferred, then flushed in age order behind its parent...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0703011Z 56/145 window_graph.test.re-offering a deferred window updates its record in place without a new lookup...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0704932Z 57/145 window_graph.test.a deferred window offered with an Active parent is admitted from the stored key...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0713174Z 58/145 window_graph.test.a three-deep chain is announced root first whatever the arrival order...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0715037Z 59/145 window_graph.test.flushed children are admitted breadth first in deferral age order...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0718552Z 60/145 window_graph.test.owner cycles through deferred records return Cycle and drop only the offered window's record...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0721095Z 61/145 window_graph.test.a live window offered with an owner cycle stays unchanged...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0722995Z 62/145 window_graph.test.identity change retires the old generation and its descendants and admits a fresh generation...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0730686Z 63/145 window_graph.test.identity change of a thread, start time or class also forces a replacement...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0747511Z 64/145 window_graph.test.identity change keeps the retirement when the replacement cannot be admitted...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0748732Z 65/145 window_graph.test.identity change whose replacement must wait for its parent is deferred with a fresh key...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0750864Z 66/145 window_graph.test.identity replacement drops the full deferred child chain before flushing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0752283Z 67/145 window_graph.test.identity replacement drops deferred children of every Active cascade member...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0754196Z 68/145 window_graph.test.deferred parent identity replacement drops its deferred descendant chain...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0760899Z 69/145 window_graph.test.Deferred-only identity shortfalls drop the old subtree and exclude the replacement...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0766581Z 70/145 window_graph.test.accepted destruction and NotExported parents invalidate cached descendants...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0772075Z 71/145 window_graph.test.refresh commit invalidates seen deferred descendants of unseen Active parents...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0775068Z 72/145 window_graph.test.QueueFull preserves planned deferred drops and replacement retry applies them once...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0777913Z 73/145 window_graph.test.QueueFull preserves a Deferred replacement subtree until its admission can commit...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0779380Z 74/145 window_graph.test.identity replacement lookup failure still drops cached descendants...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0781602Z 75/145 window_graph.test.reclassification retires the cascade descending and re-announces it behind the new parent...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0784597Z 76/145 window_graph.test.reclassifying a window under its own descendant retires the cascade and defers nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0787562Z 77/145 window_graph.test.reclassification toward an unannounced parent defers the window and re-defers its descendants...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0790939Z 78/145 window_graph.test.reclassification with one free slot admits the window and leaves its descendants deferred...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0794119Z 79/145 window_graph.test.reclassification with a cut flush keeps the unadmitted descendant deferred...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0798135Z 80/145 window_graph.test.reclassification with no free slot degrades to retire-only and retries on the next offer...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0799208Z 81/145 window_graph.test.a role change without a parent change also reclassifies...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0802655Z 82/145 window_graph.test.retirement for every non-reclassify cause leaves the descendants retired and not deferred...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0803818Z 83/145 window_graph.test.a window that is not exported is Excluded and drops its deferred record...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0807065Z 84/145 window_graph.test.an off-desktop offer is Suspended and changes no entry, record or event...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0811460Z 85/145 window_graph.test.64 exported entries refuse a 65th window, evict nothing and free a slot only after completion...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0814804Z 86/145 window_graph.test.a flush cut by capacity leaves the youngest children deferred and counts them...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0819434Z 87/145 window_graph.test.a 65th deferred record evicts the oldest deferral...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0823388Z 88/145 window_graph.test.lookup failure, invalid keys and re-entry publish nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0828226Z 89/145 window_graph.test.QueueFull changes nothing and the same offer succeeds after a drain...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0831042Z 90/145 window_graph.test.QueueFull on a forced retirement counts nothing else and keeps the entry live...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0833025Z 91/145 window_graph.test.generations grow by one, run out cleanly and leave existing entries working...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0834148Z 92/145 window_graph.test.a flush cut by the last generations counts them as generation exhaustion...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0836215Z 93/145 window_graph.test.reusing an HWND always yields a fresh generation and a late completion cannot touch it...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0840669Z 94/145 window_graph.test.stale epochs, invalid facts and stale facts are rejected before any state change...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0841881Z 95/145 window_graph.test.a genuine destroy hint retires the live entry and advances the high-water marks...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0843607Z 96/145 window_graph.test.a destroy hint older than the admitting facts is ignored...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0845703Z 97/145 window_graph.test.a destroy hint for a deferred record needs both a newer stamp and a non-older tick...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0848617Z 98/145 window_graph.test.tick wrap: a destroy across the 32-bit wrap retires, one just before the admission does not...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0851803Z 99/145 window_graph.test.destroy hints still work 30 and 60 simulated days after the admission...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0852996Z 100/145 window_graph.test.with a clock that does not advance, a silence longer than half the range still aliases...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0855064Z 101/145 window_graph.test.tick_estimate adds the clock time elapsed since the anchor, never goes below the base and saturates...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0856333Z 102/145 window_graph.test.the estimate anchor follows ticks and clock: newer ticks re-anchor, delayed ticks keep the estimate...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0858703Z 103/145 window_graph.test.a rejected call reads the clock but changes neither tick_base nor its anchor...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0861542Z 104/145 window_graph.test.a graph without a now_ms callback unwraps with its default timer and keeps working...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0921921Z 105/145 window_graph.test.after a silence longer than 2^31 ms of the graph clock, current-tick offers repair the base and a genuine destroy hint retires...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0923989Z 106/145 window_graph.test.the very first tick-carrying call after a long silence is unwrapped by the clock estimate...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0925713Z 107/145 window_graph.test.estimate unwrap tolerates a clock that runs ahead of the ticks by less than half the range...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0929180Z 108/145 window_graph.test.a reclassification whose new parent chain re-enters the cascade through a deferred leftover is retire-only...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0936262Z 109/145 window_graph.test.the cascade rule follows a longer deferred chain and a plain chain to a non-cascade terminal still defers...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0937556Z 110/145 window_graph.test.OwnerHidden promotes an owned window and a later flag change reclassifies it...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0939887Z 111/145 window_graph.test.an IME preedit window follows its owner and loses the parent when the owner is hidden...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0941113Z 112/145 window_graph.test.classify_public reports the pure verdict in the C struct...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0942443Z 113/145 window_graph.test.classify_public rejects bad arguments and invalid facts and leaves the verdict alone...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0943385Z 114/145 window_graph.test.OwnerHidden is valid only together with an owner...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0944341Z 115/145 window_graph.test.collect_cascade gathers Active descendants by exact parent pair, descending by generation...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0945787Z 116/145 window_graph.test.retire_cascade keeps records, marks Retiring and queues children before the root...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0946822Z 117/145 window_graph.test.event_from_record copies every payload field and leaves the rest zero...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0948166Z 118/145 window_graph.test.record_from_facts copies identity and geometry and only the stated title bytes...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0949172Z 119/145 window_graph.test.defer_insert uses a saturating age and evicts the lowest index among equal ages...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0950041Z 120/145 window_graph.test.drop_deferred empties the slot and counts a drop, not an eviction...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0951378Z 121/145 window_graph.test.mark_seen marks the Active entry and the deferred record but never a Retiring entry...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0952434Z 122/145 window_graph.test.bump_by adds and saturates...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0954003Z 123/145 window_graph.test.ring_merge_target returns the newest Announce or Update and stops at a RetireIntent...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0958692Z 124/145 window_graph.test.seen marks follow entries through re-deferral, promotion and flush...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:15.0963217Z 125/145 window_graph.test.a deferred record of another incarnation is dropped and its key is never reused...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0655733Z 126/145 window_graph.test.random operation traces keep every graph invariant and the event stream ordered...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0657234Z 127/145 window_graph.test.observe_locked runs the plan on the facts it is given without applying the call guards...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0658883Z 128/145 window_graph.test.refresh_begin opens the refresh, clears every mark and reports an already open refresh...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0661589Z 129/145 window_graph.test.offering every live window and committing retires nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0663688Z 130/145 window_graph.test.a commit retires every unseen entry children first with reason RefreshUnseen...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0665893Z 131/145 window_graph.test.a seen child of an unseen parent retires with it as ParentRetired and is never re-deferred...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0667752Z 132/145 window_graph.test.a commit drops unseen deferred records and keeps the seen ones...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0672622Z 133/145 window_graph.test.offers that fail still mark windows seen; accepted Deferred mismatch drops its subtree...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0675233Z 134/145 window_graph.test.an offer rejected with QueueFull is not applied but marks the window seen...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0679739Z 135/145 window_graph.test.a flush leftover cut off by capacity survives the commit only when it is offered again...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0681652Z 136/145 window_graph.test.refresh_keep and refresh_unseen: statuses, ordering, truncation and null rules...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0684184Z 137/145 window_graph.test.a commit that does not fit the ring changes nothing and succeeds after draining...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0686786Z 138/145 window_graph.test.refresh_abort closes the refresh without retiring or dropping anything...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0691183Z 139/145 window_graph.test.an offer without an open refresh returns NoRefresh after the argument checks and marks nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0692695Z 140/145 window_graph.test.refresh_offer hands the lookup its own stack copy of the facts...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0695350Z 141/145 window_graph.test.a reclassification inside a refresh keeps the new generation seen and its re-deferred children unseen...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0697930Z 142/145 window_graph.test.invalidate_all retires every Active entry children first with reason Invalidated...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0699975Z 143/145 window_graph.test.every refresh function rejects a stale epoch and changes only the rejection counter...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0706525Z 144/145 window_graph.test.every refresh function from a foreign thread returns WrongThread and touches nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0708881Z 145/145 window_graph.test.every refresh function called while the graph is busy returns Reentrant and touches nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0709854Z All 145 tests passed.
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0816404Z 1/159 window_graph_abi.test.create rejects bad slot and config pointers and nulls every valid slot...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0819116Z 2/159 window_graph_abi.test.create maps allocation failure to NoMemory and frees everything it took...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0822425Z 3/159 window_graph_abi.test.destroy handles null, empty, repeated, misaligned and self-containing slots...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0825839Z 4/159 window_graph_abi.test.null and misaligned graph handles are InvalidArgument for every export...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0834273Z 5/159 window_graph_abi.test.a foreign thread gets WrongThread from every graph export and touches nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0835675Z 6/159 window_graph_abi.test.calls from inside the lookup and sink callbacks return Reentrant and destroy keeps the graph...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0837679Z 7/159 window_graph_abi.test.a stale epoch is decided before argument errors and changes only its counter...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0841045Z 8/159 window_graph_abi.test.pointer faults are rejected before the engine for every export with pointer arguments...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0847446Z 9/159 window_graph_abi.test.a pointer fault on a foreign thread is WrongThread and a stale epoch is StaleEpoch...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0848374Z 10/159 window_graph_abi.test.classify validates its arguments and facts...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0849382Z 11/159 window_graph_abi.test.zero-capacity arrays ignore their pointer and truncation reports the full count...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0851500Z 12/159 window_graph_abi.test.drain reports SinkFailed with the delivered count and keeps the refused event...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0854684Z 13/159 window_graph_abi.test.capacity diagnostic, invalidate_all and lookup failures through the exports...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0856980Z 14/159 window_graph_abi.test.lifecycle through the exports: admit, events, retire, complete, refresh, drain...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0858151Z 15/159 window_graph.test.classification matrix covers every step of the header table...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0859339Z 16/159 window_graph.test.every excluded class matches exactly, case-insensitively and nothing else...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0860835Z 17/159 window_graph.test.classification parents follow owner_root, never the raw owner...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0862179Z 18/159 window_graph.test.classification never reads past an unvalidated class or image length...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0863340Z 19/159 window_graph.test.valid facts: defaults, maxima and boundaries...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0864404Z 20/159 window_graph.test.validate_facts rejects each violated rule and nothing else...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0865529Z 21/159 window_graph.test.validate_facts checks text only over the stated length...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0866631Z 22/159 window_graph.test.utf8_valid_no_nul accepts well-formed text and rejects every malformed class...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0867885Z 23/159 window_graph.test.app_key_valid matches the frozen codec rule and the 3..200 length rule...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0868955Z 24/159 window_graph.test.class_hash_of follows FNV-1a 64 and distinguishes case...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0869988Z 25/159 window_graph.test.ascii_eql_ignore_case folds only ASCII letters over the full length...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0871218Z 26/159 window_graph.test.unwrap_tick resolves a raw tick to the 64-bit value nearest the base...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0872406Z 27/159 window_graph.test.derive_state maps facts to protocol bits and never sets Activated...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0873718Z 28/159 window_graph.test.identity_equal compares process, thread, start time and class hash...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0874832Z 29/159 window_graph.test.record_init returns an all-zero record...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0875671Z 30/159 window_graph.test.bump increments and saturates without wrapping...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0876694Z 31/159 window_graph.test.status values and constants equal the committed header...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0909087Z 32/159 window_graph.test.app_key_valid agrees with the codec rule on random keys up to 200 bytes...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0914514Z 33/159 window_graph.test.create validates every configuration field and builds a zeroed graph...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0915681Z 34/159 window_graph.test.create copies the configuration by value...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0918266Z 35/159 window_graph.test.create under allocator failure leaves no graph and leaks nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0919450Z 36/159 window_graph.test.create takes the default monotonic clock when no now_ms is given...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0921473Z 37/159 window_graph.test.enter applies thread, busy and epoch rules in order...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.0926965Z 38/159 window_graph.test.a foreign thread gets WrongThread and touches nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1008897Z 39/159 window_graph.test.ring wraps around over many more pushes than its capacity...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1013164Z 40/159 window_graph.test.a full ring refuses a new event and changes nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1014489Z 41/159 window_graph.test.announce and update merge keep the announce kind and OR the change mask...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1015855Z 42/159 window_graph.test.update and update merge OR their masks and count only appended updates...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1017158Z 43/159 window_graph.test.events never merge across a retire intent...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1018430Z 44/159 window_graph.test.retire intents are always appended and an older update stays unmerged...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1019791Z 45/159 window_graph.test.events of another generation or window do not merge...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1021103Z 46/159 window_graph.test.next_event reports None on an empty queue and leaves the output alone...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1022302Z 47/159 window_graph.test.drain delivers events oldest first up to max_events...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1023519Z 48/159 window_graph.test.drain on an empty queue reports None and delivered 0...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1024814Z 49/159 window_graph.test.drain stops at a refused event and redelivers it first next time...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1026097Z 50/159 window_graph.test.drain rejects bad arguments after the common rules and changes nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1027975Z 51/159 window_graph.test.graph calls made from inside the sink are Reentrant and nothing is delivered twice...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1030651Z 52/159 window_graph.test.check_action is Ok only for the exact Active pair...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1031235Z 53/159 window_graph.test.lookup helpers distinguish Active, Retiring and deferred records...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1031781Z 54/159 window_graph.test.find_live describes only Active entries...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1032306Z 55/159 window_graph.test.list_retiring orders by generation, reports the total and truncates...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1032907Z 56/159 window_graph.test.complete_retire releases only the exact Retiring generation...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1033435Z 57/159 window_graph.test.get_stats fills counters and recomputed gauges...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1033964Z 58/159 window_graph.test.stamp high water is read through the guard and the plain getter...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1034603Z 59/159 window_graph.test.capacity diagnostic is None without reading the clock when every counter is zero...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1035243Z 60/159 window_graph.test.capacity diagnostic follows the sixty second rate limit...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1035898Z 61/159 window_graph.test.capacity diagnostic takes its first sample even at clock zero and guards the clock callback...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1036592Z 62/159 window_graph.test.first admission announces the full payload with the looked-up key...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1037224Z 63/159 window_graph.test.the lookup receives a stack copy of the facts, never the caller's struct...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1037932Z 64/159 window_graph.test.each fact group maps to its change bit in a queued Update...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1038899Z 65/159 window_graph.test.updates coalesce into a pending Announce or Update and OR their masks...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1039699Z 66/159 window_graph.test.an identical offer is Unchanged, queues nothing and still advances stamp and tick...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1040765Z 67/159 window_graph.test.an older tick advances the record but never moves the tick base backwards...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1041594Z 68/159 window_graph.test.an Update that cannot be queued returns QueueFull unless a pending event absorbs it...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1042687Z 69/159 window_graph.test.a child whose parent is absent is deferred, then flushed in age order behind its parent...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1043544Z 70/159 window_graph.test.re-offering a deferred window updates its record in place without a new lookup...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1044517Z 71/159 window_graph.test.a deferred window offered with an Active parent is admitted from the stored key...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1045378Z 72/159 window_graph.test.a three-deep chain is announced root first whatever the arrival order...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1046151Z 73/159 window_graph.test.flushed children are admitted breadth first in deferral age order...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1047172Z 74/159 window_graph.test.owner cycles through deferred records return Cycle and drop only the offered window's record...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1047854Z 75/159 window_graph.test.a live window offered with an owner cycle stays unchanged...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1048522Z 76/159 window_graph.test.identity change retires the old generation and its descendants and admits a fresh generation...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1049253Z 77/159 window_graph.test.identity change of a thread, start time or class also forces a replacement...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1049939Z 78/159 window_graph.test.identity change keeps the retirement when the replacement cannot be admitted...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1050658Z 79/159 window_graph.test.identity change whose replacement must wait for its parent is deferred with a fresh key...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1051368Z 80/159 window_graph.test.identity replacement drops the full deferred child chain before flushing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1052063Z 81/159 window_graph.test.identity replacement drops deferred children of every Active cascade member...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1053561Z 82/159 window_graph.test.deferred parent identity replacement drops its deferred descendant chain...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1057064Z 83/159 window_graph.test.Deferred-only identity shortfalls drop the old subtree and exclude the replacement...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1065376Z 84/159 window_graph.test.accepted destruction and NotExported parents invalidate cached descendants...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1073506Z 85/159 window_graph.test.refresh commit invalidates seen deferred descendants of unseen Active parents...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1077665Z 86/159 window_graph.test.QueueFull preserves planned deferred drops and replacement retry applies them once...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1081763Z 87/159 window_graph.test.QueueFull preserves a Deferred replacement subtree until its admission can commit...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1083889Z 88/159 window_graph.test.identity replacement lookup failure still drops cached descendants...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1086519Z 89/159 window_graph.test.reclassification retires the cascade descending and re-announces it behind the new parent...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1089426Z 90/159 window_graph.test.reclassifying a window under its own descendant retires the cascade and defers nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1093688Z 91/159 window_graph.test.reclassification toward an unannounced parent defers the window and re-defers its descendants...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1099116Z 92/159 window_graph.test.reclassification with one free slot admits the window and leaves its descendants deferred...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1104126Z 93/159 window_graph.test.reclassification with a cut flush keeps the unadmitted descendant deferred...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1110390Z 94/159 window_graph.test.reclassification with no free slot degrades to retire-only and retries on the next offer...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1113426Z 95/159 window_graph.test.a role change without a parent change also reclassifies...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1117326Z 96/159 window_graph.test.retirement for every non-reclassify cause leaves the descendants retired and not deferred...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1118686Z 97/159 window_graph.test.a window that is not exported is Excluded and drops its deferred record...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1121750Z 98/159 window_graph.test.an off-desktop offer is Suspended and changes no entry, record or event...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1126905Z 99/159 window_graph.test.64 exported entries refuse a 65th window, evict nothing and free a slot only after completion...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1130427Z 100/159 window_graph.test.a flush cut by capacity leaves the youngest children deferred and counts them...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1135759Z 101/159 window_graph.test.a 65th deferred record evicts the oldest deferral...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1140103Z 102/159 window_graph.test.lookup failure, invalid keys and re-entry publish nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1145099Z 103/159 window_graph.test.QueueFull changes nothing and the same offer succeeds after a drain...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1147957Z 104/159 window_graph.test.QueueFull on a forced retirement counts nothing else and keeps the entry live...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1150427Z 105/159 window_graph.test.generations grow by one, run out cleanly and leave existing entries working...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1151718Z 106/159 window_graph.test.a flush cut by the last generations counts them as generation exhaustion...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1153739Z 107/159 window_graph.test.reusing an HWND always yields a fresh generation and a late completion cannot touch it...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1158093Z 108/159 window_graph.test.stale epochs, invalid facts and stale facts are rejected before any state change...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1159793Z 109/159 window_graph.test.a genuine destroy hint retires the live entry and advances the high-water marks...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1161401Z 110/159 window_graph.test.a destroy hint older than the admitting facts is ignored...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1163262Z 111/159 window_graph.test.a destroy hint for a deferred record needs both a newer stamp and a non-older tick...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1165869Z 112/159 window_graph.test.tick wrap: a destroy across the 32-bit wrap retires, one just before the admission does not...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1169483Z 113/159 window_graph.test.destroy hints still work 30 and 60 simulated days after the admission...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1171023Z 114/159 window_graph.test.with a clock that does not advance, a silence longer than half the range still aliases...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1172739Z 115/159 window_graph.test.tick_estimate adds the clock time elapsed since the anchor, never goes below the base and saturates...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1174533Z 116/159 window_graph.test.the estimate anchor follows ticks and clock: newer ticks re-anchor, delayed ticks keep the estimate...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1176691Z 117/159 window_graph.test.a rejected call reads the clock but changes neither tick_base nor its anchor...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1178281Z 118/159 window_graph.test.a graph without a now_ms callback unwraps with its default timer and keeps working...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1237942Z 119/159 window_graph.test.after a silence longer than 2^31 ms of the graph clock, current-tick offers repair the base and a genuine destroy hint retires...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1239149Z 120/159 window_graph.test.the very first tick-carrying call after a long silence is unwrapped by the clock estimate...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1241382Z 121/159 window_graph.test.estimate unwrap tolerates a clock that runs ahead of the ticks by less than half the range...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1244981Z 122/159 window_graph.test.a reclassification whose new parent chain re-enters the cascade through a deferred leftover is retire-only...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1251810Z 123/159 window_graph.test.the cascade rule follows a longer deferred chain and a plain chain to a non-cascade terminal still defers...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1253467Z 124/159 window_graph.test.OwnerHidden promotes an owned window and a later flag change reclassifies it...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1255532Z 125/159 window_graph.test.an IME preedit window follows its owner and loses the parent when the owner is hidden...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1256356Z 126/159 window_graph.test.classify_public reports the pure verdict in the C struct...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1257341Z 127/159 window_graph.test.classify_public rejects bad arguments and invalid facts and leaves the verdict alone...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1258091Z 128/159 window_graph.test.OwnerHidden is valid only together with an owner...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1259056Z 129/159 window_graph.test.collect_cascade gathers Active descendants by exact parent pair, descending by generation...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1259950Z 130/159 window_graph.test.retire_cascade keeps records, marks Retiring and queues children before the root...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1260950Z 131/159 window_graph.test.event_from_record copies every payload field and leaves the rest zero...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1261728Z 132/159 window_graph.test.record_from_facts copies identity and geometry and only the stated title bytes...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1262741Z 133/159 window_graph.test.defer_insert uses a saturating age and evicts the lowest index among equal ages...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1263995Z 134/159 window_graph.test.drop_deferred empties the slot and counts a drop, not an eviction...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1266034Z 135/159 window_graph.test.mark_seen marks the Active entry and the deferred record but never a Retiring entry...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1266667Z 136/159 window_graph.test.bump_by adds and saturates...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1267915Z 137/159 window_graph.test.ring_merge_target returns the newest Announce or Update and stops at a RetireIntent...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1273381Z 138/159 window_graph.test.seen marks follow entries through re-deferral, promotion and flush...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:24.1277801Z 139/159 window_graph.test.a deferred record of another incarnation is dropped and its key is never reused...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5516805Z 140/159 window_graph.test.random operation traces keep every graph invariant and the event stream ordered...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5518971Z 141/159 window_graph.test.observe_locked runs the plan on the facts it is given without applying the call guards...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5520611Z 142/159 window_graph.test.refresh_begin opens the refresh, clears every mark and reports an already open refresh...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5522141Z 143/159 window_graph.test.offering every live window and committing retires nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5523809Z 144/159 window_graph.test.a commit retires every unseen entry children first with reason RefreshUnseen...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5525873Z 145/159 window_graph.test.a seen child of an unseen parent retires with it as ParentRetired and is never re-deferred...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5527292Z 146/159 window_graph.test.a commit drops unseen deferred records and keeps the seen ones...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5531234Z 147/159 window_graph.test.offers that fail still mark windows seen; accepted Deferred mismatch drops its subtree...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5533687Z 148/159 window_graph.test.an offer rejected with QueueFull is not applied but marks the window seen...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5537823Z 149/159 window_graph.test.a flush leftover cut off by capacity survives the commit only when it is offered again...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5539641Z 150/159 window_graph.test.refresh_keep and refresh_unseen: statuses, ordering, truncation and null rules...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5542012Z 151/159 window_graph.test.a commit that does not fit the ring changes nothing and succeeds after draining...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5544296Z 152/159 window_graph.test.refresh_abort closes the refresh without retiring or dropping anything...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5547518Z 153/159 window_graph.test.an offer without an open refresh returns NoRefresh after the argument checks and marks nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5548600Z 154/159 window_graph.test.refresh_offer hands the lookup its own stack copy of the facts...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5550749Z 155/159 window_graph.test.a reclassification inside a refresh keeps the new generation seen and its re-deferred children unseen...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5553114Z 156/159 window_graph.test.invalidate_all retires every Active entry children first with reason Invalidated...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5555564Z 157/159 window_graph.test.every refresh function rejects a stale epoch and changes only the rejection counter...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5563225Z 158/159 window_graph.test.every refresh function from a foreign thread returns WrongThread and touches nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5565233Z 159/159 window_graph.test.every refresh function called while the graph is busy returns Reentrant and touches nothing...OK
+windows	Execute graph C ABI, observer doubles and real Win32 adapter smoke	2026-10-24T20:15:32.5565925Z All 159 tests passed.
+windows	Complete job	﻿2026-10-24T20:15:32.6609987Z Cleaning up orphan processes
+windows	Complete job	2026-10-24T20:15:32.6650729Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
