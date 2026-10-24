@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig include/waddle/interop_protocol.h | build
@@ -107,3 +107,8 @@ interop-slot-runtime-coverage:
 	python3 tests/av/coverage.py interop_slot_runtime
 build/interop_slot_runtime_test.exe: src/interop/interop_slot_runtime.zig src/interop/interop_heap.zig src/interop/interop_layout.zig | build
 	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
+
+.PHONY: interop-device-smoke-cleanup-test
+# Fault-only fixture: no VM, device, ACL or process signaling occurs.
+interop-device-smoke-cleanup-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/device_smoke_cleanup.py

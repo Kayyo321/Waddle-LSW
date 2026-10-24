@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "guest_os": false,
+  "status": "passed",
+  "cycles": [
+    {
+      "cycle": 0,
+      "mount_count": 0,
+      "readonly_count": 0,
+      "qmp_running": true,
+      "mount_ids": [],
+      "all_children_and_supervisor_reaped": true
+    },
+    {
+      "cycle": 1,
+      "mount_count": 1,
+      "readonly_count": 0,
+      "qmp_running": true,
+      "mount_ids": [
+        "waddle_fs_dev_d"
+      ],
+      "all_children_and_supervisor_reaped": true
+    },
+    {
+      "cycle": 2,
+      "mount_count": 8,
+      "readonly_count": 4,
+      "qmp_running": true,
+      "mount_ids": [
+        "waddle_fs_dev_d",
+        "waddle_fs_dev_e",
+        "waddle_fs_dev_f",
+        "waddle_fs_dev_g",
+        "waddle_fs_dev_h",
+        "waddle_fs_dev_i",
+        "waddle_fs_dev_j",
+        "waddle_fs_dev_k"
+      ],
+      "all_children_and_supervisor_reaped": true
+    }
+  ],
+  "waddle_sha256": "dc2aca9a83a24e4297ab1a15f1e027bfb08a165616904895fb1cabb711b21a1e",
+  "limits": [
+    "Empty disk boot/QMP/backend configuration only",
+    "No guest drive binding, read-only write-denial, audio or peripheral acceptance"
+  ],
+  "vhost_acl_restored": true
+}

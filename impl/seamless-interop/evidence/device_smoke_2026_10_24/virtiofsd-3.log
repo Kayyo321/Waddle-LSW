@@ -1,0 +1,1 @@
+[2026-10-24T16:05:32Z WARN  virtiofsd::limits] Failure when trying to set the limit to 1000000, the hard limit (524288) of open file descriptors is used instead.

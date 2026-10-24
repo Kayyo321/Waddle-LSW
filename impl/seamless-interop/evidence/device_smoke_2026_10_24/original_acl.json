@@ -1,0 +1,1 @@
+{"getfacl": "# file: /dev/vhost-vsock\n# owner: root\n# group: kvm\nuser::rw-\ngroup::rw-\nother::---\n\n"}

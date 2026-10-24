@@ -528,7 +528,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     split into10% pure bookkeeping and15% live integration; weights unchanged.
     [Qualification](slot_runtime_qualification_2026_10_24.json). Source commitc6ed0b6 contains this implementation.
 
-- **Commit `HEAD`**: `docs(interop): qualify slot bookkeeping on Linux and Windows`
+- **Commit `cb4379c`**: `docs(interop): qualify slot bookkeeping on Linux and Windows`
   - **Task Impact**: +10% to TODO #5 (+0.30% overall; total14.40%).
   - **Summary**: Accepts the pure pin/growth/drain bookkeeping milestone from
     c6ed0b6 after run40109278457 passes Linux gates and actual Windows execution
@@ -536,4 +536,16 @@ its uncompiled draft earns no credit until current acceptance passes.
     [the qualification receipt](slot_runtime_qualification_2026_10_24.json).
     Live mapping/capture/session integration and the separate15% allocation
     remain open. This is CPU module qualification, not compositor acceptance.
-    HEAD identifies this containing qualification commit.
+    Source commitcb4379c contains this qualification.
+
+- **Commit `HEAD`**: `test(interop): preserve disposable device lifecycle evidence`
+  - **Task Impact**: +0% to TODO #8/#9/#34 (+0% overall; total14.40%).
+  - **Summary**: Adds the native private-profile/blank-disk smoke fixture and
+    passing0/1/8-mount evidence, including QMP identity, four readonly backend
+    arguments, process reap and exact temporary ACL restoration. Removes unsafe
+    PID fallback signaling; failed supervisor/ACL cleanup retains private state
+    and a failed receipt, with interrupts deferred through final cleanup. Four
+    fault-only cleanup tests join hardware-free CI. This proves startup/backend
+    configuration only; guest drive binding/write denial and other native
+    devices remain open. Existing Windows disk untouched. [Evidence receipt](device_smoke_qualification_2026_10_24.json).
+    HEAD identifies this containing fixture/evidence commit.

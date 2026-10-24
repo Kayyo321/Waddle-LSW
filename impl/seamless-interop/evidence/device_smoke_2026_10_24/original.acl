@@ -1,0 +1,7 @@
+# file: /dev/vhost-vsock
+# owner: root
+# group: kvm
+user::rw-
+group::rw-
+other::---
+

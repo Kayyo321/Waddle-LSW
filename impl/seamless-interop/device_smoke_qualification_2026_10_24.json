@@ -1,0 +1,80 @@
+{
+  "recorded_utc": "2026-10-24T16:04:01.412996+00:00",
+  "base": "c6ed0b67aedefc35d916e6f7a1684d7812ab974a",
+  "source_sha256": {
+    "tests/interop/device_smoke.py": "c8168d052cc71a8d69bc57294e6d1fbd34b1ce174c85dba9d8e6dcd9b3f25a60",
+    "tests/interop/device_smoke_cleanup.py": "9b60bc7c4e9a376b613f89aa7ebc63457491a871c19929eba86f457367d4dba8"
+  },
+  "commands": [
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/device_smoke.py --waddle build/waddle --out /tmp/seamless_native_device_accepted --temporary-vsock-acl",
+      "host_escalated": true,
+      "exit_code": 0
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/device_smoke_cleanup.py",
+      "exit_code": 0,
+      "tests_passed": 4
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/cleanup_tests.log",
+      "sha256": "d094b1bd2c8318c96097f80c50da282add5b2972970a77046de8db6c8935f6ca"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/commands.jsonl",
+      "sha256": "99b8fc66288afb2affca376c39a13773ce40248b7fba4fc845c730909f06b6d8"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/original.acl",
+      "sha256": "cbf9eda9a0bab64fcfaa8ec957b52201944085302747098942a83e8a834b14ab"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/original_acl.json",
+      "sha256": "5999f780a3528d12824ccb4dcbd9f1979e0e500954fa05b20e762ddf3f45f994"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/qemu.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/receipt.json",
+      "sha256": "1b1bf26b6778dfb3d2a72a08d832c3b6dd7bda68332425bf03158a77a1aa5fdc"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/virtiofsd-1.log",
+      "sha256": "1d3383f70d825cde992676131c82b1aec16b46cd74188f682d8c4fb37ec5794a"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/virtiofsd-2.log",
+      "sha256": "1d3383f70d825cde992676131c82b1aec16b46cd74188f682d8c4fb37ec5794a"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/virtiofsd-3.log",
+      "sha256": "1d3383f70d825cde992676131c82b1aec16b46cd74188f682d8c4fb37ec5794a"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/virtiofsd-4.log",
+      "sha256": "1d3383f70d825cde992676131c82b1aec16b46cd74188f682d8c4fb37ec5794a"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/virtiofsd-5.log",
+      "sha256": "1d3383f70d825cde992676131c82b1aec16b46cd74188f682d8c4fb37ec5794a"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/virtiofsd-6.log",
+      "sha256": "1d3383f70d825cde992676131c82b1aec16b46cd74188f682d8c4fb37ec5794a"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/virtiofsd-7.log",
+      "sha256": "1d3383f70d825cde992676131c82b1aec16b46cd74188f682d8c4fb37ec5794a"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/device_smoke_2026_10_24/virtiofsd.log",
+      "sha256": "553e09cdb36368f9555bf64060ec94a237c9b9cb48cc27b0d15c68a4094cac94"
+    }
+  ],
+  "scope": "Disposable empty-disk Waddle/QEMU startup and cleanup for 0,1,8 exports. Four readonly argv policies in eight-export case. Not guest binding or actual write denial. No audio/peripheral or existing Windows VM acceptance.",
+  "progress_credit": 0
+}
