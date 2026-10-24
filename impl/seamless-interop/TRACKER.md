@@ -1044,7 +1044,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     consolidated normative observer contract and implementation pass review.
     HEAD identifies this advisory review preservation commit.
 
-- **Commit `HEAD`**: `feat(interop): own bounded Linux connected socket transport`
+- **Commit `3b50946`**: `feat(interop): own bounded Linux connected socket transport`
   - **Task Impact**: +5% to TODO #7 (+0.20% overall; total18.00%); +0% to #6/#34.
   - **Summary**: Implements exclusive fd/peer ownership, bounded copied RX/TX,
     exact positive-send ACKs, single-use cookies, mapping wait, finite drain
@@ -1059,3 +1059,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     VSOCK, native mappings/session, reconnect and release proof remain open.
     [Qualification](linux_socket_owner_qualification_2026_10_24.json).
     HEAD identifies this byte-owner implementation and acceptance commit.
+
+- **Commit `HEAD`**: `docs(interop): preserve Linux admission and singleton work plan`
+  - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
+  - **Summary**: Maps existing daemon/device/guest-exec/AV-lock seams and
+    missing GuestReady/session runtime to a bounded next-slice investigation.
+    Specifies proposed lease ordering, port5002 preflight and connection owner
+    transfer boundaries, without treating daemon reachability or EOF as native
+    authority. Advisory only; normative API review and implementation remain
+    pending. HEAD identifies this investigation preservation commit.
