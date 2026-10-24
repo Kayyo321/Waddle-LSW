@@ -4,9 +4,10 @@
  * @file interop_window_graph.h
  * @brief Public C ABI of the bounded, session-wide guest window graph (TODO #10).
  *
- * The graph is a pure state machine implemented in Zig (src/interop/window_graph.zig,
- * src/interop/window_graph_abi.zig). It never calls the operating system. A native
- * observer (window_observer_windows.h) turns Win32 state into value snapshots
+ * The graph is a pure state machine implemented in Zig (src/interop/window_graph.zig). The Zig
+ * engine consumes the structs of this header directly through Zig's C import; no Zig mirror of any ABI
+ * struct exists, so the layouts asserted below are the only layout. It never calls the operating
+ * system. A native observer (window_observer_windows.h) turns Win32 state into value snapshots
  * (interop_window_facts_t); the graph classifies them (IMPL_DESC section 4.4), assigns
  * monotonic identities, orders parents before children, bounds storage, and emits
  * value events (Announce, Update, RetireIntent). It serializes no wire frame, owns no
@@ -37,9 +38,16 @@
  * Unless a function documents otherwise, a call that returns a status other than Ok or
  * None leaves all graph state and all output parameters unchanged, except diagnostic
  * counters. The documented exceptions are Cycle (observe, refresh_offer: drops a stale
- * deferred record) and SinkFailed (drain: events accepted before the failure stay
+ * deferred record), the seen mark of refresh_offer (written for every outcome once the guards
+ * pass, see refresh_offer) and SinkFailed (drain: events accepted before the failure stay
  * consumed). Mutating calls are plan, pre-check, one external call, infallible apply;
- * the plan phase never writes.
+ * the plan phase never writes (the refresh_offer seen mark is the only write that precedes it).
+ *
+ * Facts copy: observe and refresh_offer copy the caller's interop_window_facts_t into a
+ * stack-local at entry (about 1.7 KiB of stack, no allocation), validate only that copy, and use
+ * only that copy for the rest of the call. The app-key lookup callback receives the copy, never
+ * the caller's pointer, so a callback or another thread cannot change the facts between
+ * validation and use.
  *
  * Identity: (session_epoch, window, generation). generation is assigned at admission
  * from a graph-owned counter that starts at 1, increases by one per admission, is never
@@ -52,7 +60,36 @@
  * replacement observer can start above it. Facts older than the newest facts accepted
  * for the same window are rejected with StaleFacts.
  *
- * Classification (pure function of facts and uac_mode; first matching step wins):
+ * Tick clock: facts.captured_ms (observe, refresh_offer) and event_time_ms (note_destroyed) stay
+ * 32-bit wire values in the Win32 tick domain, which wraps every 2^32 ms (about 49.7 days). The
+ * graph never compares two 32-bit ticks directly. It keeps an internal 64-bit base, tick_base,
+ * and unwraps every tick t32 to
+ *     t64 = tick_base + (int64_t)(int32_t)(t32 - (uint32_t)tick_base)
+ * where the subtraction wraps modulo 2^32. Every call that returns Ok and carries a tick then
+ * sets tick_base to the larger of the old base and the t64 it computed (the base never moves
+ * backwards; a delayed older tick unwraps below the base without changing it); a call
+ * that does not return Ok never changes tick_base. The base starts at 2^32 so that no unwrapped
+ * value is negative; only differences between unwrapped values are observable. Records store the
+ * unwrapped 64-bit values (admission tick, last offered tick) and the destroy rule compares them
+ * with a plain 64-bit "<". Unwrapping is exact while an Ok call that carries a tick happens at
+ * least once per 2^31 ms (about 24.8 days); the observer's refresh cadence of
+ * InteropWindowGraphRefreshIntervalMs satisfies this by orders of magnitude. After a longer
+ * silence a tick can alias by a multiple of 2^32 ms, so a destroy hint may be ignored or applied
+ * wrongly; the next refresh corrects both (RefreshUnseen retires a vanished window, a requery
+ * re-admits a live one).
+ *
+ * Classification (pure function of facts and uac_mode; first matching step wins; exported as
+ * interop_window_graph_classify() so the observer can classify an owner window without a graph):
+ *  Definition. A window is "owned" iff owner != 0 AND OwnerHidden is clear. The observer sets
+ *  OwnerHidden when the window's owner (owner_root) can never be exported or no longer exists. Such
+ *  a window is treated as NOT owned in steps 4 to 7 and for the ImePreedit parent: a Menu stays a
+ *  Menu with parent 0, a popup or owned tool window is judged with owned = false, and an owned
+ *  window that is not APPWINDOW becomes Toplevel with parent 0. This is a deliberate refinement of
+ *  IMPL_DESC section 4.4, which is silent about owners that are never exportable; it needs Codex
+ *  sign-off. The observer alone decides the flag, so rejecting the refinement means the observer
+ *  never sets OwnerHidden (nothing else in the graph changes). A change of the flag is not itself
+ *  a change: only the resulting role or parent change goes through the Reclassified path
+ *  (the old generation retires, a new one is announced).
  *  0. OnInputDesktop clear: Suspended (nothing admitted, retired or updated; the observer
  *     resynchronizes when the desktop returns). Visible clear: not exported (NotVisible).
  *  1. Excluded classes, compared ASCII case-insensitively over the full class length:
@@ -61,8 +98,9 @@
  *     only when the image basename equals ShellExperienceHost.exe, StartMenuExperienceHost.exe
  *     or SearchHost.exe (ASCII case-insensitive); any other owner, or an unknown image,
  *     is not excluded. A class with ClassTruncated set matches no class rule. AgentOwned:
- *     AgentPreedit selects role ImePreedit (steps 2 to 7 skipped, step 8 still applies),
- *     otherwise the window is excluded.
+ *     AgentPreedit selects role ImePreedit (steps 2 to 7 skipped, step 8 still applies) with
+ *     parent = owner_root when owner != 0 and OwnerHidden is clear, otherwise parent 0 (so the host
+ *     can map the preedit as a popup of its owner); without AgentPreedit the window is excluded.
  *  2. Image consent.exe: class "$$$Secure UAP Dummy Window Class For Interim Dialog" is
  *     excluded in every mode; class "Credential Dialog Xaml Host" is role UacConsent in
  *     modes Window and Auto and not exported (UacNativeHidden) in mode Native; any other
@@ -73,7 +111,8 @@
  *     clear. The NOACTIVATE exclusion binds to the style clause only.
  *  5. Tooltip: class "tooltips_class32", or WS_EX_NOACTIVATE, or (WS_EX_TOOLWINDOW and owned).
  *  6. Owned and WS_EX_APPWINDOW clear: Dialog with parent = owner_root.
- *  7. Otherwise Toplevel (no parent).
+ *  7. Otherwise Toplevel (no parent); this includes an owned APPWINDOW and every window whose
+ *     owner is hidden.
  *  8. Gate for every role: width == 0 or height == 0 is not exported (ZeroArea);
  *     Layered and LayeredAlphaKnown and alpha == 0 is not exported (Transparent). A layered
  *     window without alpha information, or with a color key only, is treated as opaque.
@@ -150,11 +189,12 @@ typedef enum interop_window_fact_flag_t {
     InteropWindowFactAgentPreedit = 1u << 8, /**< Window is the agent's IME preedit window (requires AgentOwned). */
     InteropWindowFactOnInputDesktop = 1u << 9, /**< The snapshot was taken while the interactive input desktop was the Default desktop. */
     InteropWindowFactClassTruncated = 1u << 10, /**< class_name was cut to fit InteropWindowGraphMaxClassBytes; it then matches no class rule. */
-    InteropWindowFactImageUnknown = 1u << 11 /**< The process image could not be read (access denied); set if and only if image_length is 0. */
+    InteropWindowFactImageUnknown = 1u << 11, /**< The process image could not be read (neither OpenProcess nor the process-list fallback); set if and only if image_length is 0. */
+    InteropWindowFactOwnerHidden = 1u << 12 /**< Observer-computed: owner != 0 and the owner window (owner_root) is never exported or no longer exists; classification then treats the window as not owned (see the classification text). Requires owner != 0. */
 } interop_window_fact_flag_t;
 
 /** @brief Mask of all defined interop_window_fact_flag_t bits. */
-#define InteropWindowFactMask 0x0FFFu
+#define InteropWindowFactMask 0x1FFFu
 
 /** @brief Bits of the changed_mask in events: which payload groups differ from what the consumer last saw. */
 typedef enum interop_window_change_t {
@@ -181,6 +221,17 @@ typedef enum interop_window_uac_mode_t {
     InteropWindowUacAuto = 1, /**< Same export rule as Window (a prompt should not appear; if it does, exporting is fail-visible). */
     InteropWindowUacNative = 2 /**< Hide the consent dialog from export; the coordinator reads it by other means. */
 } interop_window_uac_mode_t;
+
+/**
+ * @brief Outcome kinds of the pure classification (interop_window_graph_classify).
+ *
+ * Stored in interop_window_verdict_t.kind. The values are stable and nonzero.
+ */
+typedef enum interop_window_verdict_kind_t {
+    InteropWindowVerdictEligible = 1, /**< The window would be exported: role and parent_window are valid. */
+    InteropWindowVerdictNotExported = 2, /**< The window is not exported: reason (1..9) says why. */
+    InteropWindowVerdictSuspended = 3 /**< OnInputDesktop is clear (classification step 0); no judgment is made. */
+} interop_window_verdict_kind_t;
 
 /** @brief Outcome class of one observe, refresh_offer or note_destroyed call that returned Ok. */
 typedef enum interop_window_disposition_t {
@@ -212,11 +263,11 @@ typedef enum interop_window_reason_t {
     InteropWindowReasonZeroArea = 8, /**< Width or height is zero. */
     InteropWindowReasonTransparent = 9, /**< Layered with known constant alpha 0. */
     InteropWindowReasonParentPending = 10, /**< Deferred: the parent is not an announced, still-exported generation. */
-    InteropWindowReasonDestroyed = 11, /**< A destroy hint applied, or the window no longer exists. */
+    InteropWindowReasonDestroyed = 11, /**< A destroy hint applied (see the destroy rule and its deviation note), or the window no longer exists. */
     InteropWindowReasonIncarnationChanged = 12, /**< Same HWND, different (process, thread, start time, class) identity. */
-    InteropWindowReasonReclassified = 13, /**< Role or parent changed, which needs a new host surface. */
-    InteropWindowReasonParentRetired = 14, /**< An ancestor was retired (children retire first). */
-    InteropWindowReasonRefreshUnseen = 15, /**< Not offered during a committed refresh. */
+    InteropWindowReasonReclassified = 13, /**< Role or parent changed (also through an OwnerHidden change), which needs a new host surface. */
+    InteropWindowReasonParentRetired = 14, /**< An ancestor was retired (children retire first); the reason of every descendant of a retired entry, whatever the cause. Descendants are re-deferred only when the ancestor's own cause is Reclassified of the same incarnation; for every other cause they are not re-deferred and return through their next hint or refresh offer. */
+    InteropWindowReasonRefreshUnseen = 15, /**< Not marked seen (offered or kept) during a committed refresh. */
     InteropWindowReasonInvalidated = 16 /**< interop_window_graph_invalidate_all(). */
 } interop_window_reason_t;
 
@@ -229,8 +280,8 @@ typedef enum interop_window_reason_t {
  */
 typedef enum interop_window_graph_status_t {
     InteropWindowGraphStatusOk = 0, /**< The call completed and its outputs are valid. */
-    InteropWindowGraphStatusNone = 1, /**< Benign: nothing to return (empty queue, nothing due, no live window). Outputs unchanged. */
-    InteropWindowGraphStatusInvalidArgument = 2, /**< NULL graph/pointer, zero window/generation/budget, bad config; nothing changed. */
+    InteropWindowGraphStatusNone = 1, /**< Benign: nothing to return (empty queue, nothing due, no live window, refresh_keep found neither an Active entry nor a deferred record). Outputs unchanged. */
+    InteropWindowGraphStatusInvalidArgument = 2, /**< NULL graph/pointer, zero window/generation/budget, bad config, uac_mode above 2; nothing changed. */
     InteropWindowGraphStatusInvalidFacts = 3, /**< Facts violate the validation list on interop_window_facts_t; nothing changed. */
     InteropWindowGraphStatusWrongThread = 4, /**< Not the creating thread; nothing touched (a destroy does not free). */
     InteropWindowGraphStatusReentrant = 5, /**< Called from inside a graph callback; nothing touched. */
@@ -240,12 +291,12 @@ typedef enum interop_window_graph_status_t {
     InteropWindowGraphStatusStaleFacts = 9, /**< Facts are older than the newest accepted for that window; nothing changed. */
     InteropWindowGraphStatusQueueFull = 10, /**< The event ring lacks room for the whole plan; nothing changed; drain and retry. */
     InteropWindowGraphStatusAtCapacity = 11, /**< 64 exported entries (Active plus Retiring) and no eviction is allowed; nothing changed. */
-    InteropWindowGraphStatusCycle = 12, /**< Self-ownership or an owner cycle through deferred records; see Cycle exception. */
+    InteropWindowGraphStatusCycle = 12, /**< Self-ownership or an owner cycle through deferred records; see Cycle exception. A cycle met while replacing a live entry whose identity changed, or a cascade cycle, is not returned: the retirement happens and the call returns Ok (Retired). */
     InteropWindowGraphStatusLookupFailed = 13, /**< app_key_lookup returned nonzero; nothing published or fabricated. */
     InteropWindowGraphStatusAppKeyInvalid = 14, /**< The looked-up key is not a valid protocol-v2 application key (3..200 bytes, "a-" or "p-" prefix, only ASCII letters, digits, '_' and '-'); nothing published. */
     InteropWindowGraphStatusGenerationExhausted = 15, /**< No generation is left; existing entries keep working; roll to a new epoch. */
     InteropWindowGraphStatusRefreshActive = 16, /**< refresh_begin while a refresh is already open; the open refresh continues. */
-    InteropWindowGraphStatusNoRefresh = 17, /**< refresh_offer/commit/abort with no open refresh. */
+    InteropWindowGraphStatusNoRefresh = 17, /**< refresh_offer/keep/unseen/commit/abort with no open refresh. */
     InteropWindowGraphStatusProofIncomplete = 18, /**< complete_retire proof flags are not both exactly 1; the entry stays quarantined. */
     InteropWindowGraphStatusNotRetiring = 19, /**< complete_retire named an Active entry; nothing changed. */
     InteropWindowGraphStatusSinkFailed = 20 /**< The drain sink refused an event; that event stays queued. */
@@ -263,7 +314,8 @@ typedef struct interop_window_graph_t interop_window_graph_t;
  *  - window, root and stamp are nonzero; owner != 0 requires owner_root != 0 and
  *    owner == 0 requires owner_root == 0.
  *  - flags contains only InteropWindowFactMask bits; AgentPreedit requires AgentOwned;
- *    LayeredAlphaKnown requires Layered; ImageUnknown is set if and only if image_length is 0.
+ *    LayeredAlphaKnown requires Layered; ImageUnknown is set if and only if image_length is 0;
+ *    OwnerHidden requires owner != 0 (otherwise InvalidFacts).
  *  - dpi is in InteropWindowGraphMinDpi..InteropWindowGraphMaxDpi.
  *  - width, height, min_width and min_height are at most InteropWindowGraphMaxExtent. The
  *    graph never clamps: a larger window is rejected, not silently resized.
@@ -273,6 +325,10 @@ typedef struct interop_window_graph_t interop_window_graph_t;
  *    nothing above U+10FFFF) without NUL. Bytes after the stated length are ignored and
  *    never copied. title_length 0 is valid.
  *  - reserved0 is zero.
+ *
+ * Ticks: captured_ms is a 32-bit wire value; the graph unwraps it against an internal 64-bit
+ * base (see Tick clock in the file comment), so the caller always passes the raw 32-bit tick.
+ * observe and refresh_offer validate and use a stack-local copy of this struct (see Facts copy).
  */
 typedef struct interop_window_facts_t {
     uint64_t window; /**< HWND zero-extended; nonzero. */
@@ -283,10 +339,10 @@ typedef struct interop_window_facts_t {
     uint64_t stamp; /**< Observer logical clock; nonzero, non-decreasing across calls. */
     uint32_t style; /**< Raw GWL_STYLE bits. */
     uint32_t ex_style; /**< Raw GWL_EXSTYLE bits. */
-    uint32_t flags; /**< interop_window_fact_flag_t bits. */
+    uint32_t flags; /**< interop_window_fact_flag_t bits (InteropWindowFactMask, 13 bits). */
     uint32_t process_id; /**< Owning process id (reported as is). */
     uint32_t thread_id; /**< Creating thread id. */
-    uint32_t captured_ms; /**< Tick-domain time of the query; compared wrap-safely with signed arithmetic. */
+    uint32_t captured_ms; /**< Raw 32-bit tick-domain time of the query. Never compared as 32-bit values: the graph unwraps it to 64 bits against its internal tick_base, advances the base on every Ok call, and stores the unwrapped value as the record's admission or last-offered tick. */
     int32_t x; /**< Left edge in guest desktop pixels (restored geometry when iconic). */
     int32_t y; /**< Top edge in guest desktop pixels (restored geometry when iconic). */
     uint32_t width; /**< Physical pixel width, 0..InteropWindowGraphMaxExtent. */
@@ -303,6 +359,20 @@ typedef struct interop_window_facts_t {
     uint8_t image_name[InteropWindowGraphMaxImageBytes]; /**< Image basename such as consent.exe, UTF-8, not NUL-terminated. */
     uint8_t title[InteropWindowGraphMaxTitleBytes]; /**< Window title, UTF-8, cut at a code-point boundary by the observer, not NUL-terminated. */
 } interop_window_facts_t;
+
+/**
+ * @brief Result of the pure classification interop_window_graph_classify. Caller-owned value.
+ *
+ * Which fields are meaningful depends on kind; every field that is not meaningful for the kind is
+ * written as zero. The struct holds no pointer and is fully written on Ok.
+ */
+typedef struct interop_window_verdict_t {
+    uint32_t kind; /**< interop_window_verdict_kind_t; always valid on Ok. */
+    uint32_t role; /**< interop_window_role_t; meaningful only for Eligible, otherwise 0. */
+    uint32_t reason; /**< interop_window_reason_t, 1..9 (a classification outcome); meaningful only for NotExported, otherwise 0. */
+    uint32_t reserved0; /**< Zero. */
+    uint64_t parent_window; /**< Parent HWND the role implies (0 = none); meaningful only for Eligible, otherwise 0. Whether that parent is announced is a graph matter and not judged here. */
+} interop_window_verdict_t;
 
 /**
  * @brief One queued event. Value copy; nothing in it points into graph storage.
@@ -431,7 +501,7 @@ typedef struct interop_window_graph_stats_t {
     uint64_t rejected_stale_epoch; /**< Calls rejected with StaleEpoch. */
     uint64_t rejected_stale_facts; /**< Offers rejected with StaleFacts. */
     uint64_t rejected_invalid_facts; /**< Offers rejected with InvalidFacts. */
-    uint64_t rejected_cycle; /**< Offers rejected with Cycle. */
+    uint64_t rejected_cycle; /**< Offers rejected with Cycle (also counted when the cycle was met during a forced retirement and the call returned Ok). */
     uint64_t rejected_generation_exhausted; /**< Admissions blocked by an exhausted counter. */
     uint64_t lookup_failures; /**< app_key_lookup returned nonzero. */
     uint64_t app_key_invalid; /**< Lookup produced an invalid key. */
@@ -449,7 +519,9 @@ typedef struct interop_window_graph_stats_t {
  * must not retain facts or key.
  *
  * @param[in,out] context Opaque pointer from the config; may be NULL; owned by the caller.
- * @param[in] facts Non-NULL borrowed snapshot of the window being admitted or deferred; valid only during the call.
+ * @param[in] facts Non-NULL borrowed snapshot of the window being admitted or deferred: the graph's
+ *                  stack-local copy of the caller's facts (never the caller's own pointer); valid only
+ *                  during the call.
  * @param[out] key Non-NULL writable buffer of capacity bytes (always InteropMaxAppKeyBytes); not NUL-terminated.
  * @param[in] capacity Bytes writable in key; the callback must never write more.
  * @param[out] length Non-NULL; preset to 0 before the call. The callback stores the full key length;
@@ -498,13 +570,15 @@ _Static_assert(sizeof(interop_window_fact_flag_t) == 4, "fact flag enum ABI");
 _Static_assert(sizeof(interop_window_change_t) == 4, "change enum ABI");
 _Static_assert(sizeof(interop_window_event_kind_t) == 4, "event kind enum ABI");
 _Static_assert(sizeof(interop_window_uac_mode_t) == 4, "uac mode enum ABI");
+_Static_assert(sizeof(interop_window_verdict_kind_t) == 4, "verdict kind enum ABI");
 _Static_assert(sizeof(interop_window_disposition_t) == 4, "disposition enum ABI");
 _Static_assert(sizeof(interop_window_reason_t) == 4, "reason enum ABI");
 _Static_assert(sizeof(interop_window_graph_status_t) == 4, "status enum ABI");
 _Static_assert(InteropWindowGraphMaxCallEvents == 3u * InteropMaxWindows, "per-call event bound is three per window");
 _Static_assert(InteropWindowGraphMaxCallEvents <= InteropWindowGraphEventCapacity, "one call must fit an empty ring");
 _Static_assert(InteropWindowGraphMaxDeferred == InteropMaxWindows, "deferred bound matches IMPL_DESC 3.2.8");
-_Static_assert(InteropWindowFactMask == ((InteropWindowFactImageUnknown << 1) - 1u), "fact mask covers all flags");
+_Static_assert(InteropWindowFactMask == 0x1FFFu, "fact mask is 13 bits");
+_Static_assert(InteropWindowFactMask == ((InteropWindowFactOwnerHidden << 1) - 1u), "fact mask covers all flags");
 _Static_assert(InteropWindowChangeMask == ((InteropWindowChangeMinSize << 1) - 1u), "change mask covers all bits");
 
 _Static_assert(sizeof(interop_window_facts_t) == 1656, "facts ABI");
@@ -535,6 +609,13 @@ _Static_assert(offsetof(interop_window_facts_t, reserved0) == 113, "facts reserv
 _Static_assert(offsetof(interop_window_facts_t, class_name) == 116, "facts class_name ABI");
 _Static_assert(offsetof(interop_window_facts_t, image_name) == 372, "facts image_name ABI");
 _Static_assert(offsetof(interop_window_facts_t, title) == 632, "facts title ABI");
+
+_Static_assert(sizeof(interop_window_verdict_t) == 24, "verdict ABI");
+_Static_assert(offsetof(interop_window_verdict_t, kind) == 0, "verdict kind ABI");
+_Static_assert(offsetof(interop_window_verdict_t, role) == 4, "verdict role ABI");
+_Static_assert(offsetof(interop_window_verdict_t, reason) == 8, "verdict reason ABI");
+_Static_assert(offsetof(interop_window_verdict_t, reserved0) == 12, "verdict reserved ABI");
+_Static_assert(offsetof(interop_window_verdict_t, parent_window) == 16, "verdict parent ABI");
 
 _Static_assert(sizeof(interop_window_event_t) == 1328, "event ABI");
 _Static_assert(offsetof(interop_window_event_t, session_epoch) == 0, "event epoch ABI");
@@ -684,25 +765,72 @@ interop_window_graph_status_t interop_window_graph_create(const interop_window_g
 interop_window_graph_status_t interop_window_graph_destroy(interop_window_graph_t **graph_slot);
 
 /**
+ * @brief Classify one fact snapshot with the exact rules of the graph, without a graph.
+ *
+ * Applies the same facts validation as observe (every rule on interop_window_facts_t, including a
+ * nonzero stamp and OwnerHidden requiring owner != 0) and then the classification steps 0 to 8 of the
+ * file comment, so the observer can ask "would this owner window be exported?" before it offers a
+ * window that depends on it. The function is pure: it needs no graph, no thread binding and no epoch,
+ * allocates nothing, keeps no state, touches no counter and calls no callback. It does not check
+ * freshness (no StaleFacts) and does not look at parents, capacity or deferral: Eligible says only
+ * "the role rules accept this snapshot", not "the graph would admit it now".
+ *
+ * @param[in] facts Non-NULL borrowed snapshot; read during the call only, never retained.
+ * @param[in] uac_mode An interop_window_uac_mode_t value, 0..2 (InteropWindowUacWindow,
+ *                     InteropWindowUacAuto or InteropWindowUacNative); anything above 2 is InvalidArgument.
+ * @param[out] verdict Non-NULL caller struct; written fully on Ok, unchanged on every other status.
+ *                     kind is Eligible (role and parent_window valid, reason 0), NotExported (reason
+ *                     valid, role and parent_window 0) or Suspended (everything else 0, because
+ *                     OnInputDesktop is clear).
+ * @return Ok; InvalidArgument for a NULL facts or verdict pointer or a uac_mode above 2; InvalidFacts
+ *         when the facts violate the validation list. Non-Ok statuses leave verdict unchanged.
+ * @note Thread-safe and re-entrant: usable from any thread, including from inside a graph callback,
+ *       because it never reads or writes graph memory. No allocation.
+ */
+interop_window_graph_status_t interop_window_graph_classify(const interop_window_facts_t *facts,
+                                                            uint32_t uac_mode,
+                                                            interop_window_verdict_t *verdict);
+
+/**
  * @brief Offer one fact snapshot: classify, then admit, update, defer or retire.
  *
+ * Order of work (each stage stops the call at its first failure; nothing is mutated before the last
+ * pre-check, so every failure below leaves the graph unchanged except where stated):
+ *  1. Common rules. The caller's facts are copied into a stack-local (see Facts copy in the file
+ *     comment) and the copy is validated (InvalidFacts). All later stages use only the copy.
+ *  2. StaleFacts: the stamp is below the window's newest accepted stamp.
+ *  3. Classification of the copy (rules of interop_window_graph_classify).
+ *  4. Identity check, BEFORE the cycle check. A live entry L whose identity tuple (process_id,
+ *     thread_id, process_start_time, class hash) differs from the copy is scheduled to retire with
+ *     reason IncarnationChanged. A deferred record D for the window whose identity tuple differs
+ *     from the copy is dropped (deferred_dropped) and the window is treated as having no deferred
+ *     record: the key lookup runs afresh and a new deferral takes a new age position. Both changes are
+ *     applied together with the rest of the plan.
+ *  5. Cycle, capacity, generation, event-queue room for the whole plan (QueueFull), then the single
+ *     lookup (LookupFailed, AppKeyInvalid).
+ *
  * Outcomes on Ok (observation->disposition):
- *  - Suspended: OnInputDesktop was clear; no state changed.
- *  - Excluded: classification says not exported and no live entry existed; a deferred record for
- *    the window, if any, is dropped (deferred_dropped).
+ *  - Suspended: OnInputDesktop was clear; no entry, deferred record or event changed.
+ *  - Excluded: classification says not exported and no live entry existed; a deferred record for the
+ *    window, if any, is dropped (deferred_dropped).
  *  - Retired: classification says not exported (reason = the classification reason) or a
  *    replacement could not be admitted; the live entry and its descendants moved to Retiring
- *    (descendants first, descending generation), one RetireIntent each; a deferred record for the
- *    window is dropped.
+ *    (descendants first, descending generation), one RetireIntent each (reason ParentRetired for
+ *    descendants, never re-deferred except as the Reclassified bullet states); a deferred record for
+ *    the window is dropped.
  *  - Unchanged / Updated: a live entry exists with the same identity tuple (process_id, thread_id,
  *    process_start_time, class hash), role and parent. Rect, derived state, dpi, title and
  *    min size are compared; no difference is Unchanged, otherwise an Update is queued or
- *    coalesced. Parent and role changes are never sent as Update.
- *  - Reclassified: role or parent_window changed, or ownership changed. The entry and its
- *    descendants retire (reason Reclassified for the entry, ParentRetired for descendants), then a
- *    new generation is announced reusing the stored application key (no new lookup). Descendants
- *    are re-deferred in descendant order and re-announced after the new parent Announce as far
- *    as capacity allows; leftovers stay deferred.
+ *    coalesced. Parent and role changes are never sent as Update. A change of the OwnerHidden flag
+ *    that leaves role and parent unchanged is Unchanged.
+ *  - Reclassified: role or parent_window changed (including because OwnerHidden changed), or ownership
+ *    changed. The entry and its descendants retire (reason Reclassified for the entry, ParentRetired
+ *    for descendants), then a new generation is announced reusing the stored application key (no new
+ *    lookup). Cascade re-deferral: ONLY in this case, where the incarnation is the same, the
+ *    descendants are still alive and still owned by that HWND; they are re-deferred in descendant
+ *    order and re-announced after the new parent Announce as far as capacity allows; leftovers stay
+ *    deferred and, being seen, survive a refresh commit. Every re-deferred record inherits the seen
+ *    mark of the Active entry it replaces.
  *  - Admitted: no live entry existed (or the identity tuple differed, in which case the old entry
  *    retired first with retired_generation set and reason IncarnationChanged) and the window is
  *    eligible with no parent or an Active parent. app_key_lookup runs once; the Announce is
@@ -710,38 +838,47 @@ interop_window_graph_status_t interop_window_graph_destroy(interop_window_graph_
  *    parent Announce strictly before child Announce, cut off by remaining capacity and
  *    generations (cut-off children stay deferred and are counted as at_capacity).
  *  - Deferred: eligible but the parent is absent, itself deferred, or Retiring. The key lookup runs
- *    at the first deferral and its result is stored; a full deferred set evicts the oldest
+ *    at the first deferral and its result is stored (a stored record with a different identity tuple
+ *    is replaced as described in stage 4); a full deferred set evicts the oldest
  *    deferral (deferred_dropped). Deferral does not consume exported capacity.
  *  Replacement rule: whenever an identity change or reclassification retires the live
  *  entry, the disposition describes the replacement (Admitted for an identity change,
  *  Reclassified for a role/parent change, Deferred if the new parent is not yet announced,
  *  Retired if the new facts classify as not exported), retired_generation is nonzero, and
  *  reason names the cause (IncarnationChanged, Reclassified or the classification reason).
- *  Replacement shortfall: if the retirement is required but the replacement cannot be
- *  admitted for a persistent reason (AtCapacity, GenerationExhausted, LookupFailed,
- *  AppKeyInvalid), the retirement still happens, the call returns Ok with disposition
- *  Retired, the matching counter increments, and the next offer retries admission. A
- *  transient shortage (QueueFull) changes nothing instead. This prevents a stale surface
- *  from staying live under the wrong identity or role.
+ *  Replacement shortfall (forced retirement): if the retirement is required but the replacement
+ *  cannot be admitted for a persistent reason (AtCapacity, GenerationExhausted, LookupFailed,
+ *  AppKeyInvalid; and Cycle when the retirement is an identity change or the cascade cycle below),
+ *  the retirement still happens, the call returns Ok with disposition Retired and reason
+ *  IncarnationChanged or Reclassified, the matching counter increments, and the next offer
+ *  retries admission. A transient shortage (QueueFull) changes nothing instead. This prevents a
+ *  stale surface from staying live under the wrong identity or role.
  *
- * Cycle: owner_root == window returns Cycle with no effect. A parent chain through deferred
- * records that leads back to the window returns Cycle and drops that window's own deferred
- * record (the only status other than SinkFailed that mutates); a live entry is left unchanged.
- * Checks before any mutation: facts valid, StaleFacts (stamp below the window's newest accepted
- * stamp), classification, cycle, capacity, generation, event-queue room for the whole plan
- * (QueueFull), then the single lookup (LookupFailed, AppKeyInvalid).
+ * Cycle: owner_root == window, or a parent chain through deferred records that leads back to the
+ * window, returns Cycle and drops that window's own deferred record (a documented mutation on a
+ * non-Ok status); a live entry is left unchanged, with two exceptions that are forced retirements.
+ * (a) Identity change: the identity check (stage 4) precedes the cycle check, so a live entry with a
+ * different identity tuple retires with reason IncarnationChanged even when the replacement is
+ * rejected with Cycle, and the call returns Ok (Retired). (b) Cascade cycle: if the new parent of a
+ * reclassified window is in that window's own descendant (cascade) set, the replacement is treated as
+ * Cycle: the cascade retires (the window with reason Reclassified, its descendants with
+ * ParentRetired), nothing is deferred or re-deferred, and the call returns Ok (Retired).
  *
- * While a refresh is open an Ok result also marks the window seen.
+ * Seen marking: while a refresh is open, a plain observe marks the window seen only when it
+ * returns Ok. refresh_offer is the call that marks every outcome seen; use it for refresh offers.
  *
  * @param[in,out] graph Non-NULL owner-thread handle.
  * @param[in] session_epoch Captured epoch; must equal the graph's.
- * @param[in] facts Non-NULL borrowed snapshot; read during the call only and copied where kept.
+ * @param[in] facts Non-NULL borrowed snapshot. Copied into a stack-local at entry; only the copy is
+ *                  validated, used and passed to app_key_lookup. The caller's struct is never
+ *                  retained or modified.
  * @param[out] observation Non-NULL caller struct; written fully on Ok and unchanged otherwise.
  * @return Ok; the common-rule statuses; InvalidFacts; StaleFacts; Cycle; AtCapacity;
  *         GenerationExhausted; QueueFull; LookupFailed; AppKeyInvalid. Every non-Ok status leaves
- *         graph state and observation unchanged except counters and the Cycle exception.
+ *         graph state and observation unchanged except counters and the Cycle exception. A shortfall
+ *         status met while a retirement is forced is not returned (see Replacement shortfall).
  * @note Owner thread only; the only callback inside the call is app_key_lookup (Reentrant if it
- *       calls back). No allocation. stamp_high_water advances only on Ok.
+ *       calls back). No heap allocation. stamp_high_water and tick_base advance only on Ok.
  */
 interop_window_graph_status_t interop_window_graph_observe(interop_window_graph_t *graph,
                                                            uint64_t session_epoch,
@@ -751,25 +888,38 @@ interop_window_graph_status_t interop_window_graph_observe(interop_window_graph_
 /**
  * @brief Apply a window-destroyed hint without trusting it blindly.
  *
- * The live entry L for window retires (reason Destroyed, descendants ParentRetired) only if
- * hint_stamp > L.admit_stamp AND NOT (signed 32-bit difference event_time_ms minus L's admission
- * captured_ms is negative). A hint older than the facts that admitted L describes an earlier
- * incarnation of a recycled HWND and is ignored. Equal ticks are ambiguous and count as destroyed
- * (conservative churn, never a stuck stale surface). A deferred record D for the window is dropped
- * if hint_stamp > D.last_stamp. Other hints (hide, show, name, location) carry no authority; the
- * observer requeries and calls observe instead. Retiring entries are never touched.
+ * Destroy rule. Let e64 be event_time_ms unwrapped to 64 bits against the graph's tick_base (Tick
+ * clock in the file comment). The live entry L for window retires (reason Destroyed, descendants
+ * ParentRetired, never re-deferred) iff hint_stamp > L.admit_stamp AND NOT (e64 < L.admit_captured64),
+ * where admit_captured64 is the unwrapped captured_ms of the facts that admitted L and "<" is a plain
+ * 64-bit comparison. A hint older than the facts that admitted L describes an earlier incarnation of a
+ * recycled HWND and is ignored. Equal ticks are ambiguous and count as destroyed (conservative
+ * churn, never a stuck stale surface). A deferred record D for the window is dropped iff
+ * hint_stamp > D.last_stamp AND NOT (e64 < D.last_captured64), where last_captured64 is the unwrapped
+ * captured_ms of the newest facts accepted for D. Other hints (hide, show, name, location) carry no
+ * authority; the observer requeries and calls observe instead. Retiring entries are never touched.
+ *
+ * Deviation note (honest scope of the rule). The rule narrows, but does not literally satisfy, the
+ * handoff wording that a hint about an earlier incarnation must never retire a newer one. It can
+ * retire and then readmit a newer incarnation when the ticks are equal, or when the destroy fell
+ * between the observer's tick sample and its native read of the facts that admitted L (the event time
+ * is then not older than captured_ms although the facts already describe the new window). The cost
+ * is churn bounded by one lost generation: the observer's next query of the window finds it alive
+ * and admits it under a new generation, so a live window is never permanently lost. Acceptance of
+ * this deviation and the native clock check are tracked in IMPL_DESC section 8.6.
  *
  * @param[in,out] graph Non-NULL owner-thread handle.
  * @param[in] session_epoch Captured epoch; must equal the graph's.
  * @param[in] window Nonzero HWND.
  * @param[in] hint_stamp Nonzero observer stamp assigned when the hint (or query result) arrived.
- * @param[in] event_time_ms Tick-domain time the OS generated the event, or the query tick for a
- *                          "window is gone" result.
+ * @param[in] event_time_ms Raw 32-bit tick-domain time the OS generated the event, or the query tick
+ *                          for a "window is gone" result; unwrapped by the graph (never compared as
+ *                          32-bit). An Ok call advances tick_base to the unwrapped value.
  * @param[out] observation Non-NULL; written fully on Ok. disposition is Retired when an entry moved
  *                         to Retiring, otherwise Unchanged (deferred_dropped may be 1).
  * @return Ok; common-rule statuses; InvalidArgument for window 0, hint_stamp 0 or NULL output;
  *         QueueFull when the ring lacks room for the RetireIntent events (nothing changed).
- * @note Owner thread only; no callback; no allocation. stamp_high_water advances on Ok.
+ * @note Owner thread only; no callback; no allocation. stamp_high_water and tick_base advance on Ok.
  */
 interop_window_graph_status_t interop_window_graph_note_destroyed(interop_window_graph_t *graph,
                                                                   uint64_t session_epoch,
@@ -837,10 +987,12 @@ interop_window_graph_status_t interop_window_graph_invalidate_all(interop_window
                                                                   uint32_t *retired_out);
 
 /**
- * @brief Open a refresh: clears every seen mark and starts collecting offers.
+ * @brief Open a refresh: clears every seen mark and starts collecting seen marks.
  *
  * The caller runs one refresh every InteropWindowGraphRefreshIntervalMs. Evicted or capacity-
- * blocked windows are re-offered by the next refresh.
+ * blocked windows are re-offered by the next refresh. Within an open refresh a window is "seen" when
+ * refresh_offer was called for it (any outcome), refresh_keep was called for it, or a plain observe
+ * returned Ok for it. refresh_unseen lists what is still unseen; refresh_commit retires it.
  *
  * @param[in,out] graph Non-NULL owner-thread handle.
  * @param[in] session_epoch Captured epoch; must equal the graph's.
@@ -851,21 +1003,33 @@ interop_window_graph_status_t interop_window_graph_refresh_begin(interop_window_
                                                                  uint64_t session_epoch);
 
 /**
- * @brief Offer one snapshot inside an open refresh: observe plus mark seen.
+ * @brief Offer one snapshot inside an open refresh: observe plus mark seen for every outcome.
  *
- * Behaves exactly like interop_window_graph_observe and, only when it returns Ok, marks the
- * window seen. Deferred records and entries promoted from them by a flush keep the seen mark.
- * Any non-Ok status (QueueFull, AtCapacity, StaleFacts, InvalidFacts, Cycle, ...) leaves the offer
- * unapplied and the window unseen; QueueFull and AtCapacity offers can be repeated after draining.
- * Offer order is the caller's order and is deterministic; a parent offered after its child makes the
- * child defer and flush.
+ * Behaves exactly like interop_window_graph_observe (including the facts copy, the identity check
+ * before the cycle check, the forced-retire rule and the cascade rules) and additionally applies the
+ * seen rule. Seen rule: an offered window is alive for the purposes of this refresh. After the common
+ * guards (graph, thread, reentrancy, epoch) have passed, a NULL facts or observation pointer returns
+ * InvalidArgument and marks nothing (the arguments are unusable); then, if no refresh is open,
+ * NoRefresh is returned and nothing is marked; otherwise the window of the copied facts (when
+ * nonzero) is marked seen for EVERY outcome, including every error status and QueueFull: the Active
+ * entry and the deferred record that exist for it, and any entry or record the call creates for
+ * it (a new generation is born seen, a record created by a deferral is seen). Marking happens
+ * before the plan; a failed call changes nothing else. Because the mark survives a failure,
+ * a window whose offer failed (StaleFacts, InvalidFacts, Cycle, AtCapacity, QueueFull, ...) is not
+ * retired by the commit; it is simply not updated, and the next refresh offers it again. Deferred
+ * records, entries promoted from them by a flush, flush leftovers cut off by capacity (they stay
+ * deferred) and records re-deferred by a Reclassified cascade keep their seen mark, so they
+ * survive the commit. Offer order is the caller's order and is deterministic; a parent offered
+ * after its child makes the child defer and flush.
  *
  * @param[in,out] graph Non-NULL owner-thread handle.
  * @param[in] session_epoch Captured epoch; must equal the graph's.
- * @param[in] facts Non-NULL borrowed snapshot.
+ * @param[in] facts Non-NULL borrowed snapshot; copied into a stack-local at entry (the lookup
+ *                  callback receives the copy), never retained or modified.
  * @param[out] observation Non-NULL; written fully on Ok.
- * @return As observe, plus NoRefresh when no refresh is open (checked before facts validation).
- * @note Owner thread only; same callback rule as observe.
+ * @return As observe, plus NoRefresh when no refresh is open (checked after the argument checks
+ *         and before facts validation). The seen mark is written for every status after NoRefresh.
+ * @note Owner thread only; same callback rule as observe; no heap allocation.
  */
 interop_window_graph_status_t interop_window_graph_refresh_offer(interop_window_graph_t *graph,
                                                                  uint64_t session_epoch,
@@ -873,11 +1037,59 @@ interop_window_graph_status_t interop_window_graph_refresh_offer(interop_window_
                                                                  interop_window_observation_t *observation);
 
 /**
+ * @brief Mark a window seen without offering facts, so the commit will not retire it.
+ *
+ * For a window whose current state could not be determined (a failed native query). Marks the Active
+ * entry of window and the deferred record of window seen, whichever exist. Retiring entries carry no
+ * seen mark and are not touched. Queues no event, changes no entry, record, stamp or tick.
+ *
+ * @param[in,out] graph Non-NULL owner-thread handle.
+ * @param[in] session_epoch Captured epoch; must equal the graph's.
+ * @param[in] window Nonzero HWND.
+ * @return Ok when an Active entry or a deferred record was marked; None when neither exists (nothing
+ *         marked); NoRefresh when no refresh is open; InvalidArgument for window 0; common-rule statuses.
+ * @note Owner thread only; no callback; no allocation. Only the seen mark and counters can change.
+ */
+interop_window_graph_status_t interop_window_graph_refresh_keep(interop_window_graph_t *graph,
+                                                                uint64_t session_epoch,
+                                                                uint64_t window);
+
+/**
+ * @brief List the Active windows that are still unseen in the open refresh.
+ *
+ * Lists only Active entries (never Retiring ones, never deferred records), in ascending generation
+ * order, at most capacity of them. These are exactly the windows interop_window_graph_refresh_commit
+ * would retire with reason RefreshUnseen if it ran now; the caller can requery each one and call
+ * refresh_offer, refresh_keep or note_destroyed before committing. A value copy: the list is not
+ * updated by later calls, and no seen mark changes.
+ *
+ * @param[in,out] graph Non-NULL owner-thread handle.
+ * @param[in] session_epoch Captured epoch; must equal the graph's.
+ * @param[out] windows Caller array of capacity HWND values (zero-extended); may be NULL only if
+ *                     capacity is 0. Up to capacity entries are written on Ok; the rest of the array
+ *                     is untouched. InteropMaxWindows always suffices.
+ * @param[in] capacity Elements available in windows.
+ * @param[out] count Non-NULL; on Ok receives the total number of unseen Active windows even when it
+ *                   exceeds capacity (truncation is then visible to the caller). Unchanged otherwise.
+ * @return Ok; NoRefresh when no refresh is open; InvalidArgument (NULL count, NULL windows with
+ *         capacity > 0); common-rule statuses. Non-Ok statuses leave windows and count unchanged.
+ * @note Owner thread only; no callback; no allocation; no state change except counters.
+ */
+interop_window_graph_status_t interop_window_graph_refresh_unseen(interop_window_graph_t *graph,
+                                                                  uint64_t session_epoch,
+                                                                  uint64_t *windows,
+                                                                  uint32_t capacity,
+                                                                  uint32_t *count);
+
+/**
  * @brief Close the refresh: retire every Active entry not seen, drop every unseen deferred record.
  *
- * Retirement is children first, reason RefreshUnseen (ParentRetired for descendants). The caller
- * must not commit a refresh in which any offer returned Suspended or in which its enumeration was
- * partial or a query failed: absence of an offer is treated as destruction.
+ * "Not seen" means no refresh_offer, refresh_keep or Ok observe named the window since refresh_begin.
+ * Retirement is children first, reason RefreshUnseen (ParentRetired for descendants, never
+ * re-deferred). The caller must not commit a refresh in which any offer returned Suspended or in
+ * which its enumeration was partial: absence from the enumeration is treated as destruction. A window
+ * whose query failed is kept with refresh_keep and a refresh containing failed queries may commit;
+ * refresh_unseen lets the caller requery the would-be victims first.
  *
  * @param[in,out] graph Non-NULL owner-thread handle.
  * @param[in] session_epoch Captured epoch; must equal the graph's.
