@@ -2,13 +2,41 @@
  * @file window_observer_windows.c
  * @brief Win32 observation adapter feeding the session window graph (TODO #10).
  *
- * The file has two layers. The portable core (lifecycle, dirty-hint table, pump, refresh,
- * cadence, counters) compiles on every platform and reaches the operating system only through
- * the injected window_observer_api_t table. The native section, compiled only under _WIN32,
- * provides that table for the real Win32 desktop (WinEvent hooks, window queries, enumeration).
- * The contract of every public function lives in window_observer_windows.h; this file only
- * repeats what an implementer needs to see and records the decisions taken where the header is
- * silent.
+ * The file has two layers. The portable core (lifecycle, busy flag, dirty-hint table, pump,
+ * refresh, cadence and latch, counters) compiles on every platform and reaches the operating
+ * system only through the injected window_observer_api_t table. The native section, compiled only
+ * under _WIN32, provides that table for the real Win32 desktop (three WinEvent hooks, window
+ * queries, enumeration, the Unsupported check of create). The contract of every public function
+ * lives in window_observer_windows.h and is authoritative; this file only repeats what an
+ * implementer needs to see and records the decisions taken where the header is silent.
+ *
+ * Contract summary (see the header for the full text):
+ *  - Busy flag. Every entry point except window_observer_note_hint refuses with Reentrant (0 for
+ *    refresh_due, WaitForever for next_timeout_ms) and touches nothing while another entry point
+ *    of the observer is active. Mutating entry points hold the flag for their whole duration; the
+ *    read-only ones (status, refresh_due, next_timeout_ms) only test it. note_hint never reads or
+ *    writes it.
+ *  - Hooks. start() installs three out-of-context hooks in this order: the object range
+ *    [ObjectCreate, ObjectParentChange], the system range [SystemMinimizeStart, SystemMinimizeEnd]
+ *    and the cloak range [ObjectCloaked, ObjectUncloaked]. Rollback and stop() remove them in
+ *    reverse order. The hint filter accepts exactly those three ranges.
+ *  - Dirty table. While pump holds a popped key, one slot stays reserved for its put-back
+ *    (popped_in_flight), so a put-back never forces an overflow.
+ *  - Facts. The core overlays stamp, captured_ms, AgentOwned, AgentPreedit and OnInputDesktop,
+ *    forces title_length 0 on AgentOwned snapshots and computes OwnerHidden itself with a second
+ *    api->query_facts on owner_root plus interop_window_graph_classify (config uac_mode).
+ *  - Refresh. enumerate; begin; query and offer every window (a Failed query is kept with
+ *    refresh_keep, a Gone one stays unseen); list the unseen Active windows and requery each
+ *    individually (Exists offers, Gone notes the destruction, Failed keeps); commit. A refresh with
+ *    failed queries commits and returns Ok.
+ *  - Cadence. last_attempt_ms is stamped before the desktop check; latch_ms is stamped whenever the
+ *    full-refresh latch is set. refresh_due is true iff Started and (no attempt yet, or 250 ms
+ *    elapsed, or latched with last_attempt_ms < latch_ms), so a frozen clock with a persistently
+ *    failing refresh runs at most one refresh per latch event.
+ *  - Native table. create returns Unsupported when GetDpiForWindow is missing or the calling
+ *    thread is not DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. The native query clamps width and
+ *    height to InteropWindowGraphMaxExtent, never reads the title of a window of the current
+ *    process and falls back to a Toolhelp32 process snapshot for the image basename.
  *
  * Decisions where the header is silent:
  *  - Hints and dirty entries: hints_received counts every accepted hint (new entry or merge),
@@ -16,26 +44,34 @@
  *    latches overflow. A hint delivered while the observer is not Started (including from inside
  *    install_hook) is ignored without a counter; start() latches a full refresh that covers it.
  *  - Destroy information already applied to the graph is cleared from a key before the key is
- *    put back, so a retry never repeats an applied destroy. Put-back keys that find the table
- *    full (a hint filled the freed slot) latch overflow, which makes pump recover by invalidation.
- *  - graph_errors counts every graph status that is neither Ok nor None (dropped or stopping).
- *  - A refresh offer answered by a "drop" status (InvalidFacts, StaleFacts, Cycle, AtCapacity,
- *    GenerationExhausted, LookupFailed, AppKeyInvalid, Stale) is counted and skipped and the
- *    refresh continues, exactly as the file-comment mapping in the header says; only QueueFull
- *    and the "anything else" statuses abort the refresh.
- *  - Cadence versus desktop: the refresh latch counts as "due" only while the desktop_active gauge
- *    is 1 (the latest check returned Default), otherwise refresh_due would be permanently 1 and
- *    the owner loop would spin. A pump or refresh that finds the desktop inactive stamps the
- *    cadence clock, so the next desktop poll happens one InteropWindowGraphRefreshIntervalMs
- *    later. start() clears the gauge and the cadence clock, so a freshly started observer is due
- *    immediately through the cadence rule.
- *  - A graph Suspended disposition returned to pump puts the key back and returns DesktopInactive;
- *    in refresh it aborts the refresh and returns DesktopInactive. QueueFull put-backs go to the
- *    tail of the dirty table, other stops (GraphError, StampExhausted, Suspended) to the head.
- *  - OnInputDesktop is set on every offered snapshot because the desktop was checked Default at
- *    the start of the call (pump) or before and after the whole enumeration (refresh).
- *  - AgentPreedit additionally requires the window to belong to own_process_id (the graph demands
- *    AgentPreedit implies AgentOwned).
+ *    put back, so a retry never repeats an applied destroy. The put-back helpers keep a defensive
+ *    overflow latch for a full table; with the popped_in_flight reservation it cannot be reached.
+ *  - graph_errors counts every graph status that is neither Ok nor None (dropped, stopping or
+ *    Reentrant). refresh_keep answering None (nothing to mark) is benign and counts as Ok.
+ *  - A drop-class status answering refresh_begin, refresh_unseen, refresh_commit or refresh_abort
+ *    (not meaningful for those calls) is handled as a call-level status: GraphError.
+ *  - Desktop gauges: desktop_blocked (latest check returned non-Default) only suppresses the
+ *    hint-backlog term of next_timeout_ms so that the loop does not spin while the desktop is
+ *    inactive. A refusal (desktop_refuse) sets it, the next Default check clears it, start() clears it.
+ *  - A graph Suspended disposition (defensive; the core always sets OnInputDesktop) puts the pump
+ *    key back at the head and returns DesktopInactive; in refresh it aborts the refresh and
+ *    returns DesktopInactive. In both cases desktop_refuse stamps the attempt and the latch.
+ *  - The overflow recovery in pump reads the clock once and uses that value for both
+ *    latch_ms and the attempt stamp, so the recovery refresh consumes its own latch event.
+ *  - The unseen list lives on the stack (InteropMaxWindows entries); a count above the capacity is
+ *    clamped (the graph never exceeds it). Windows listed by refresh_unseen are requeried even when
+ *    they were in the enumeration (a Gone answer there skipped them in the first pass).
+ *  - A query whose api answer is outside the three result values, or whose facts name another
+ *    window, counts as Failed.
+ *  - The Toolhelp snapshot of the native table is per outermost pump or refresh call, scoped by
+ *    two private functions (native_call_begin, native_call_end) that the core calls on every
+ *    platform; they are no-ops off Windows. If QueryFullProcessImageName fails on an opened
+ *    process, the snapshot fallback still supplies the basename and the real start time is kept.
+ *  - The optional stats snapshot of pump and refresh is skipped for every Reentrant result, also one
+ *    that comes from the graph (the header lists Reentrant among the statuses without a snapshot);
+ *    window_observer_status reads the counters afterwards, including last_graph_status.
+ *  - set_preedit_window called while another entry point is active returns Reentrant and the
+ *    change is not applied; the caller repeats it after the outer call returns.
  *  - Stamp exhaustion: UINT64_MAX is the sentinel for "no stamp left"; first_stamp must be
  *    nonzero and below it, and stats.next_stamp reads UINT64_MAX once the clock is exhausted.
  *  - Lifetime safety of the process-wide slot: note_hint registers itself in a process-wide
@@ -57,7 +93,11 @@
 #endif
 #include <windows.h>
 #include <dwmapi.h>
+#include <tlhelp32.h>
 #endif
+
+/** @brief Number of out-of-context hooks the observer installs (object, system, cloak). */
+#define ObserverHookCount 3u
 
 /** @brief Bits recorded per dirty entry; only DirtyKindDestroy carries authority. */
 typedef enum dirty_kind_t {
@@ -67,7 +107,8 @@ typedef enum dirty_kind_t {
     DirtyKindHide = 1u << 3,
     DirtyKindObjectOther = 1u << 4,
     DirtyKindMinimizeStart = 1u << 5,
-    DirtyKindMinimizeEnd = 1u << 6
+    DirtyKindMinimizeEnd = 1u << 6,
+    DirtyKindCloak = 1u << 7
 } dirty_kind_t;
 
 /** @brief How a graph status is handled by pump and refresh. */
@@ -75,8 +116,22 @@ typedef enum fold_t {
     FoldContinue = 0, /**< Ok or None: carry on. */
     FoldDrop = 1, /**< Counted; the key or offer is dropped and processing continues. */
     FoldQueueFull = 2, /**< Counted; processing stops with GraphQueueFull. */
-    FoldFatal = 3 /**< Counted; processing stops with GraphError. */
+    FoldReentrant = 3, /**< Counted; processing stops with Reentrant. */
+    FoldFatal = 4 /**< Counted; processing stops with GraphError. */
 } fold_t;
+
+/** @brief Inclusive WinEvent id range of one hook. */
+typedef struct hook_range_t {
+    uint32_t event_min; /**< Lowest event id delivered. */
+    uint32_t event_max; /**< Highest event id delivered (inclusive). */
+} hook_range_t;
+
+/** The three hooks in installation order; removal runs in reverse order. */
+static const hook_range_t HookRanges[ObserverHookCount] = {
+    {WindowObserverEventObjectCreate, WindowObserverEventObjectParentChange},
+    {WindowObserverEventSystemMinimizeStart, WindowObserverEventSystemMinimizeEnd},
+    {WindowObserverEventObjectCloaked, WindowObserverEventObjectUncloaked},
+};
 
 /** @brief One coalesced dirty-handle entry. */
 typedef struct dirty_entry_t {
@@ -96,19 +151,21 @@ struct window_observer_t {
     void *api_context; /**< Passed to every api entry. */
     uint32_t owner_thread; /**< Thread id captured at create. */
     uint32_t state; /**< window_observer_state_t. */
-    uintptr_t hook_object; /**< Token of the object-range hook; 0 = none. */
-    uintptr_t hook_system; /**< Token of the system-range hook; 0 = none. */
+    uintptr_t hooks[ObserverHookCount]; /**< Hook tokens in installation order; 0 = not installed. */
     uint32_t dirty_count; /**< Entries in dirty[0..dirty_count), first-seen order. */
     uint32_t own_process_id; /**< Agent process id. */
+    uint32_t uac_mode; /**< interop_window_uac_mode_t used to classify owner windows. */
+    uint32_t popped_in_flight; /**< 1 while pump holds a popped key (one slot stays reserved for it). */
     uint64_t next_stamp; /**< Next logical stamp; UINT64_MAX = exhausted. */
     uint64_t preedit_window; /**< Preedit HWND or 0. */
     uint32_t overflow; /**< Overflow latch. */
     uint32_t refresh_requested; /**< Full-refresh latch. */
     uint32_t desktop_active; /**< Gauge: latest desktop check returned Default. */
-    uint32_t desktop_blocked; /**< Latest desktop check returned non-Default (drives the cadence rules). */
-    uint64_t last_refresh_ms; /**< Cadence clock value of the latest attempt. */
-    uint32_t have_refresh_ms; /**< Nonzero once last_refresh_ms is valid. */
-    uint32_t reserved0; /**< Padding, zero. */
+    uint32_t desktop_blocked; /**< Latest desktop check returned non-Default (drives the next_timeout rules). */
+    uint32_t busy; /**< Owner-thread busy flag: an entry point is active. */
+    uint32_t have_attempt; /**< Nonzero once last_attempt_ms is valid (a refresh attempt happened since start). */
+    uint64_t last_attempt_ms; /**< Cadence clock value of the latest refresh attempt. */
+    uint64_t latch_ms; /**< Cadence clock value when the refresh latch was last set. */
     _Atomic uint64_t hints_wrong_thread; /**< Off-thread hint counter (the only cross-thread write). */
     window_observer_stats_t stats; /**< Counters; owner thread only. */
     dirty_entry_t dirty[WindowObserverDirtyCapacity]; /**< Dirty table. */
@@ -119,6 +176,17 @@ struct window_observer_t {
 static _Atomic(window_observer_t *) g_active_observer = NULL;
 /** Number of note_hint calls currently between slot load and completion. */
 static _Atomic uint32_t g_hint_inflight = 0;
+
+#ifdef _WIN32
+/* Return nonzero when the native table can run here (GetDpiForWindow resolvable, PMv2 thread). */
+static int native_table_runnable(void);
+/* Scope of the per-call process snapshot used for image basenames. */
+static void native_call_begin(void);
+static void native_call_end(void);
+#else
+#define native_call_begin() ((void)0)
+#define native_call_end() ((void)0)
+#endif
 
 /* ------------------------------------------------------------------------------------------ */
 /* Small helpers                                                                              */
@@ -143,6 +211,17 @@ static void bump_atomic(_Atomic uint64_t *counter) {
 /* Return nonzero when the caller runs on the observer's owner thread. */
 static int on_owner_thread(const window_observer_t *observer) {
     return observer->api.current_thread_id(observer->api_context) == observer->owner_thread;
+}
+
+/* Gate of every owner-thread entry point: Ok, WrongThread or Reentrant; changes nothing. */
+static window_observer_status_t entry_gate(const window_observer_t *observer) {
+    if (!on_owner_thread(observer)) {
+        return WindowObserverStatusWrongThread;
+    }
+    if (observer->busy != 0u) {
+        return WindowObserverStatusReentrant;
+    }
+    return WindowObserverStatusOk;
 }
 
 /* Issue the next logical stamp; returns 0 when the clock reached the UINT64_MAX sentinel. */
@@ -203,14 +282,23 @@ static fold_t fold_status(window_observer_t *observer, interop_window_graph_stat
         return FoldDrop;
     case InteropWindowGraphStatusQueueFull:
         return FoldQueueFull;
+    case InteropWindowGraphStatusReentrant:
+        return FoldReentrant;
     default:
         return FoldFatal;
     }
 }
 
-/* Convert a non-offer graph fold into a pump/refresh status (Drop is not meaningful there). */
+/* Convert a stopping fold into a pump/refresh status (Drop is not meaningful there and maps to GraphError). */
 static window_observer_status_t stop_status(fold_t fold) {
-    return fold == FoldQueueFull ? WindowObserverStatusGraphQueueFull : WindowObserverStatusGraphError;
+    switch (fold) {
+    case FoldQueueFull:
+        return WindowObserverStatusGraphQueueFull;
+    case FoldReentrant:
+        return WindowObserverStatusReentrant;
+    default:
+        return WindowObserverStatusGraphError;
+    }
 }
 
 /* ------------------------------------------------------------------------------------------ */
@@ -255,7 +343,11 @@ static int dirty_pop_front(window_observer_t *observer, dirty_entry_t *out) {
     return 1;
 }
 
-/* Put an entry back at the head (processing stopped); merges into a newer entry of the same window. */
+/*
+ * Put an entry back at the head (processing stopped); merges into a newer entry of the same window.
+ * Only called for the key pump has popped, whose slot is reserved, so the full-table branch is
+ * defensive and cannot be reached while popped_in_flight is honored by note_hint.
+ */
 static void dirty_push_front(window_observer_t *observer, const dirty_entry_t *entry) {
     int index = dirty_find(observer, entry->window);
     if (index >= 0) {
@@ -271,7 +363,7 @@ static void dirty_push_front(window_observer_t *observer, const dirty_entry_t *e
     observer->dirty_count += 1u;
 }
 
-/* Put a retried entry back at the tail; merges into a newer entry of the same window. */
+/* Put a retried entry back at the tail; merges into a newer entry of the same window (same reservation rule). */
 static void dirty_push_back_retry(window_observer_t *observer, const dirty_entry_t *entry) {
     int index = dirty_find(observer, entry->window);
     if (index >= 0) {
@@ -301,25 +393,27 @@ static uint32_t dirty_kind_for_event(uint32_t event) {
         return DirtyKindMinimizeStart;
     case WindowObserverEventSystemMinimizeEnd:
         return DirtyKindMinimizeEnd;
+    case WindowObserverEventObjectCloaked:
+    case WindowObserverEventObjectUncloaked:
+        return DirtyKindCloak;
     default:
         return DirtyKindObjectOther;
     }
 }
 
-/* Return nonzero when the event id lies in one of the two hooked ranges. */
+/* Return nonzero when the event id lies in one of the three hooked ranges (and nowhere else). */
 static int event_in_hooked_range(uint32_t event) {
-    return (event >= WindowObserverEventObjectCreate && event <= WindowObserverEventObjectNameChange) ||
-           (event >= WindowObserverEventSystemMinimizeStart && event <= WindowObserverEventSystemMinimizeEnd);
+    for (uint32_t i = 0; i < ObserverHookCount; i++) {
+        if (event >= HookRanges[i].event_min && event <= HookRanges[i].event_max) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------------------------------ */
 /* Lifecycle                                                                                  */
 /* ------------------------------------------------------------------------------------------ */
-
-#ifdef _WIN32
-/* Return nonzero when the native table can run on this OS (GetDpiForWindow is resolvable). */
-static int native_dpi_available(void);
-#endif
 
 /** @copydoc window_observer_create */
 window_observer_status_t window_observer_create(const window_observer_config_t *config,
@@ -328,8 +422,8 @@ window_observer_status_t window_observer_create(const window_observer_config_t *
         return WindowObserverStatusInvalidArgument;
     }
     *out_observer = NULL;
-    if (config == NULL || config->reserved0 != 0u || config->first_stamp == 0u || config->first_stamp == UINT64_MAX ||
-        config->own_process_id == 0u) {
+    if (config == NULL || config->uac_mode > (uint32_t)InteropWindowUacNative || config->first_stamp == 0u ||
+        config->first_stamp == UINT64_MAX || config->own_process_id == 0u) {
         return WindowObserverStatusInvalidArgument;
     }
     const window_observer_api_t *api = config->api;
@@ -346,8 +440,8 @@ window_observer_status_t window_observer_create(const window_observer_config_t *
         return WindowObserverStatusInvalidArgument;
     }
 #ifdef _WIN32
-    if (api == window_observer_native_api() && !native_dpi_available()) {
-        return WindowObserverStatusInvalidArgument; /* Windows older than 10 1607: no GetDpiForWindow */
+    if (api == window_observer_native_api() && !native_table_runnable()) {
+        return WindowObserverStatusUnsupported; /* checked before any allocation */
     }
 #endif
     window_observer_t *observer = calloc(1u, sizeof(*observer));
@@ -361,18 +455,13 @@ window_observer_status_t window_observer_create(const window_observer_config_t *
     observer->next_stamp = config->first_stamp;
     observer->preedit_window = config->preedit_window;
     observer->own_process_id = config->own_process_id;
+    observer->uac_mode = config->uac_mode;
     *out_observer = observer;
     return WindowObserverStatusOk;
 }
 
-/** @copydoc window_observer_stop */
-window_observer_status_t window_observer_stop(window_observer_t *observer) {
-    if (observer == NULL) {
-        return WindowObserverStatusInvalidArgument;
-    }
-    if (!on_owner_thread(observer)) {
-        return WindowObserverStatusWrongThread;
-    }
+/* Body of stop; the caller holds the busy flag and has checked thread and argument. */
+static window_observer_status_t stop_locked(window_observer_t *observer) {
     if (observer->state == WindowObserverStateFailed) {
         return WindowObserverStatusBadState;
     }
@@ -381,15 +470,14 @@ window_observer_status_t window_observer_stop(window_observer_t *observer) {
     }
     release_slot(observer);
     int failed = 0;
-    if (observer->hook_system != 0u) {
-        failed |= observer->api.remove_hook(observer->api_context, observer->hook_system) != 0;
-        observer->hook_system = 0u;
-    }
-    if (observer->hook_object != 0u) {
-        failed |= observer->api.remove_hook(observer->api_context, observer->hook_object) != 0;
-        observer->hook_object = 0u;
+    for (uint32_t i = ObserverHookCount; i-- > 0u;) {
+        if (observer->hooks[i] != 0u) {
+            failed |= observer->api.remove_hook(observer->api_context, observer->hooks[i]) != 0;
+            observer->hooks[i] = 0u;
+        }
     }
     observer->dirty_count = 0u;
+    observer->popped_in_flight = 0u;
     observer->overflow = 0u;
     observer->refresh_requested = 0u;
     if (failed) {
@@ -398,6 +486,21 @@ window_observer_status_t window_observer_stop(window_observer_t *observer) {
     }
     observer->state = WindowObserverStateStopped;
     return WindowObserverStatusOk;
+}
+
+/** @copydoc window_observer_stop */
+window_observer_status_t window_observer_stop(window_observer_t *observer) {
+    if (observer == NULL) {
+        return WindowObserverStatusInvalidArgument;
+    }
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) {
+        return gate;
+    }
+    observer->busy = 1u;
+    const window_observer_status_t result = stop_locked(observer);
+    observer->busy = 0u;
+    return result;
 }
 
 /** @copydoc window_observer_destroy */
@@ -409,12 +512,14 @@ window_observer_status_t window_observer_destroy(window_observer_t **observer_sl
     if (observer == NULL) {
         return WindowObserverStatusOk;
     }
-    if (!on_owner_thread(observer)) {
-        return WindowObserverStatusWrongThread;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) {
+        return gate;
     }
+    observer->busy = 1u; /* never cleared: the observer is freed below */
     window_observer_status_t result = WindowObserverStatusOk;
     if (observer->state == WindowObserverStateStarted) {
-        result = window_observer_stop(observer);
+        result = stop_locked(observer);
     }
     release_slot(observer);
     free(observer);
@@ -423,24 +528,15 @@ window_observer_status_t window_observer_destroy(window_observer_t **observer_sl
                                                       : WindowObserverStatusOk;
 }
 
-/* Remove the hooks installed so far (reverse order) after a failed start. */
-static void start_unwind(window_observer_t *observer, uintptr_t object_hook, uintptr_t system_hook) {
-    if (system_hook != 0u) {
-        (void)observer->api.remove_hook(observer->api_context, system_hook);
-    }
-    if (object_hook != 0u) {
-        (void)observer->api.remove_hook(observer->api_context, object_hook);
+/* Remove the first `installed` hooks (reverse order) after a failed start; failures are ignored. */
+static void start_unwind(window_observer_t *observer, const uintptr_t *tokens, uint32_t installed) {
+    for (uint32_t i = installed; i-- > 0u;) {
+        (void)observer->api.remove_hook(observer->api_context, tokens[i]);
     }
 }
 
-/** @copydoc window_observer_start */
-window_observer_status_t window_observer_start(window_observer_t *observer) {
-    if (observer == NULL) {
-        return WindowObserverStatusInvalidArgument;
-    }
-    if (!on_owner_thread(observer)) {
-        return WindowObserverStatusWrongThread;
-    }
+/* Body of start; the caller holds the busy flag and has checked thread and argument. */
+static window_observer_status_t start_locked(window_observer_t *observer) {
     if (observer->state != WindowObserverStateCreated && observer->state != WindowObserverStateStopped) {
         return WindowObserverStatusBadState;
     }
@@ -449,35 +545,49 @@ window_observer_status_t window_observer_start(window_observer_t *observer) {
         return WindowObserverStatusAlreadyActive;
     }
     observer->dirty_count = 0u;
+    observer->popped_in_flight = 0u;
     observer->overflow = 0u;
 
-    uintptr_t object_hook = 0u;
-    uintptr_t system_hook = 0u;
-    int rc = observer->api.install_hook(observer->api_context, WindowObserverEventObjectCreate,
-                                        WindowObserverEventObjectNameChange, &object_hook);
-    if (rc != 0 || object_hook == 0u) {
-        release_slot(observer);
-        observer->state = WindowObserverStateFailed;
-        return WindowObserverStatusHookFailed;
+    uintptr_t tokens[ObserverHookCount];
+    memset(tokens, 0, sizeof(tokens));
+    for (uint32_t i = 0; i < ObserverHookCount; i++) {
+        uintptr_t token = 0u;
+        const int rc = observer->api.install_hook(observer->api_context, HookRanges[i].event_min,
+                                                  HookRanges[i].event_max, &token);
+        if (rc != 0 || token == 0u) {
+            start_unwind(observer, tokens, i);
+            release_slot(observer);
+            observer->state = WindowObserverStateFailed;
+            return WindowObserverStatusHookFailed;
+        }
+        tokens[i] = token;
     }
-    rc = observer->api.install_hook(observer->api_context, WindowObserverEventSystemMinimizeStart,
-                                    WindowObserverEventSystemMinimizeEnd, &system_hook);
-    if (rc != 0 || system_hook == 0u) {
-        start_unwind(observer, object_hook, 0u);
-        release_slot(observer);
-        observer->state = WindowObserverStateFailed;
-        return WindowObserverStatusHookFailed;
-    }
-    observer->hook_object = object_hook;
-    observer->hook_system = system_hook;
+    memcpy(observer->hooks, tokens, sizeof(tokens));
     observer->dirty_count = 0u; /* hints that raced the install were ignored; the latch below covers them */
     observer->overflow = 0u;
     observer->refresh_requested = 1u;
+    observer->latch_ms = observer->api.monotonic_ms(observer->api_context);
+    observer->have_attempt = 0u;
+    observer->last_attempt_ms = 0u;
     observer->desktop_active = 0u;
     observer->desktop_blocked = 0u;
-    observer->have_refresh_ms = 0u;
     observer->state = WindowObserverStateStarted;
     return WindowObserverStatusOk;
+}
+
+/** @copydoc window_observer_start */
+window_observer_status_t window_observer_start(window_observer_t *observer) {
+    if (observer == NULL) {
+        return WindowObserverStatusInvalidArgument;
+    }
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) {
+        return gate;
+    }
+    observer->busy = 1u;
+    const window_observer_status_t result = start_locked(observer);
+    observer->busy = 0u;
+    return result;
 }
 
 /** @copydoc window_observer_set_preedit_window */
@@ -485,15 +595,19 @@ window_observer_status_t window_observer_set_preedit_window(window_observer_t *o
     if (observer == NULL) {
         return WindowObserverStatusInvalidArgument;
     }
-    if (!on_owner_thread(observer)) {
-        return WindowObserverStatusWrongThread;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) {
+        return gate;
     }
+    observer->busy = 1u;
     if (observer->preedit_window != window) {
         observer->preedit_window = window;
         if (observer->state == WindowObserverStateStarted) {
             observer->refresh_requested = 1u;
+            observer->latch_ms = observer->api.monotonic_ms(observer->api_context);
         }
     }
+    observer->busy = 0u;
     return WindowObserverStatusOk;
 }
 
@@ -503,8 +617,9 @@ window_observer_status_t window_observer_status(const window_observer_t *observe
     if (observer == NULL || stats == NULL) {
         return WindowObserverStatusInvalidArgument;
     }
-    if (!on_owner_thread(observer)) {
-        return WindowObserverStatusWrongThread;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) {
+        return gate;
     }
     fill_stats(observer, stats);
     return WindowObserverStatusOk;
@@ -548,7 +663,8 @@ static void note_hint_active(window_observer_t *observer, uint32_t event, uint64
         bump(&observer->stats.hints_coalesced);
         return;
     }
-    if (observer->dirty_count >= WindowObserverDirtyCapacity) {
+    /* A popped key keeps one slot reserved for its put-back, so a put-back never forces an overflow. */
+    if (observer->dirty_count + observer->popped_in_flight >= WindowObserverDirtyCapacity) {
         observer->overflow = 1u;
         bump(&observer->stats.hint_overflows);
         return;
@@ -580,66 +696,121 @@ void window_observer_note_hint(uint32_t event, uint64_t window, int32_t object_i
 }
 
 /* ------------------------------------------------------------------------------------------ */
-/* Query plumbing shared by pump and refresh                                                  */
+/* Desktop and query plumbing shared by pump and refresh                                      */
 /* ------------------------------------------------------------------------------------------ */
 
-/* Record an inactive desktop: latch a refresh, stamp the cadence clock and count the refusal. */
-static void desktop_mark_inactive(window_observer_t *observer) {
-    observer->desktop_active = 0u;
-    observer->desktop_blocked = 1u;
-    observer->refresh_requested = 1u;
-    observer->last_refresh_ms = observer->api.monotonic_ms(observer->api_context);
-    observer->have_refresh_ms = 1u;
-    bump(&observer->stats.pumps_desktop_inactive);
-}
-
-/* Check the input desktop; returns 1 for Default, otherwise records the inactive desktop and returns 0. */
-static int desktop_check(window_observer_t *observer) {
+/* Check the input desktop; returns 1 for Default (gauges updated), 0 otherwise (caller refuses). */
+static int desktop_is_default(window_observer_t *observer) {
     const window_observer_desktop_t desktop = observer->api.query_input_desktop(observer->api_context);
     if (desktop == WindowObserverDesktopDefault) {
         observer->desktop_active = 1u;
         observer->desktop_blocked = 0u;
         return 1;
     }
-    desktop_mark_inactive(observer);
     return 0;
 }
 
-/* Zero facts, run the native query, validate the answer and account for it. */
-static window_observer_query_result_t query_one(window_observer_t *observer, uint64_t window,
-                                                interop_window_facts_t *facts) {
-    memset(facts, 0, sizeof(*facts));
-    window_observer_query_result_t result = observer->api.query_facts(observer->api_context, window, facts);
-    if (result == WindowObserverQueryExists && facts->window != window) {
-        result = WindowObserverQueryFailed;
-    }
-    switch (result) {
-    case WindowObserverQueryExists:
-        bump(&observer->stats.queries_exists);
-        return result;
-    case WindowObserverQueryGone:
-        bump(&observer->stats.queries_gone);
-        return result;
-    default:
-        bump(&observer->stats.queries_failed);
-        return WindowObserverQueryFailed;
-    }
+/* Record a refused call: gauges, latch (latch_ms = now), attempt stamp (= now) and the counter. */
+static void desktop_refuse(window_observer_t *observer, uint64_t now_ms) {
+    observer->desktop_active = 0u;
+    observer->desktop_blocked = 1u;
+    observer->refresh_requested = 1u;
+    observer->latch_ms = now_ms;
+    observer->last_attempt_ms = now_ms;
+    observer->have_attempt = 1u;
+    bump(&observer->stats.pumps_desktop_inactive);
 }
 
-/* Overwrite the fields the core owns: stamp, captured time and the three observer flags. */
+/* Zero facts, run the native query and sanitize the answer (no accounting). */
+static window_observer_query_result_t query_raw(window_observer_t *observer, uint64_t window,
+                                                interop_window_facts_t *facts) {
+    memset(facts, 0, sizeof(*facts));
+    const window_observer_query_result_t result = observer->api.query_facts(observer->api_context, window, facts);
+    if (result == WindowObserverQueryGone) {
+        return WindowObserverQueryGone;
+    }
+    if (result == WindowObserverQueryExists && facts->window == window) {
+        return WindowObserverQueryExists;
+    }
+    return WindowObserverQueryFailed;
+}
+
+/*
+ * Overwrite the fields the core owns: stamp, captured time, the three observer flags and the title of
+ * AgentOwned windows. OwnerHidden is cleared here; only resolve_owner may set it.
+ */
 static void overlay_facts(const window_observer_t *observer, interop_window_facts_t *facts, uint64_t stamp,
                           uint32_t captured_ms) {
     facts->stamp = stamp;
     facts->captured_ms = captured_ms;
     facts->flags &= ~((uint32_t)InteropWindowFactAgentOwned | (uint32_t)InteropWindowFactAgentPreedit |
-                      (uint32_t)InteropWindowFactOnInputDesktop);
+                      (uint32_t)InteropWindowFactOnInputDesktop | (uint32_t)InteropWindowFactOwnerHidden);
     facts->flags |= (uint32_t)InteropWindowFactOnInputDesktop;
     if (facts->process_id == observer->own_process_id) {
         facts->flags |= (uint32_t)InteropWindowFactAgentOwned;
+        facts->title_length = 0u; /* no title for the agent's own windows */
         if (observer->preedit_window != 0u && facts->window == observer->preedit_window) {
             facts->flags |= (uint32_t)InteropWindowFactAgentPreedit;
         }
     }
+}
+
+/*
+ * Owner sub-query: decide OwnerHidden for a window whose overlay is complete. Returns Exists when the
+ * window's facts are usable (flag set or clear) and Failed when the owner could not be judged.
+ * No recursion: the owner is classified with OwnerHidden clear and its own owner is never queried.
+ */
+static window_observer_query_result_t resolve_owner(window_observer_t *observer, interop_window_facts_t *facts,
+                                                    uint64_t stamp, uint32_t captured_ms) {
+    if (facts->owner_root == 0u || facts->owner_root == facts->window) {
+        return WindowObserverQueryExists;
+    }
+    interop_window_facts_t owner;
+    const window_observer_query_result_t result = query_raw(observer, facts->owner_root, &owner);
+    if (result == WindowObserverQueryGone) {
+        facts->flags |= (uint32_t)InteropWindowFactOwnerHidden;
+        return WindowObserverQueryExists;
+    }
+    if (result != WindowObserverQueryExists) {
+        return WindowObserverQueryFailed;
+    }
+    overlay_facts(observer, &owner, stamp, captured_ms);
+    interop_window_verdict_t verdict;
+    memset(&verdict, 0, sizeof(verdict));
+    if (interop_window_graph_classify(&owner, observer->uac_mode, &verdict) != InteropWindowGraphStatusOk) {
+        return WindowObserverQueryFailed;
+    }
+    if (verdict.kind == (uint32_t)InteropWindowVerdictNotExported) {
+        facts->flags |= (uint32_t)InteropWindowFactOwnerHidden;
+    }
+    return WindowObserverQueryExists;
+}
+
+/*
+ * Facts assembly for one window: query, overlay the core fields, resolve OwnerHidden, count one
+ * result. Exists leaves facts ready for observe or refresh_offer.
+ */
+static window_observer_query_result_t query_window(window_observer_t *observer, uint64_t window,
+                                                   interop_window_facts_t *facts, uint64_t stamp,
+                                                   uint32_t captured_ms) {
+    window_observer_query_result_t result = query_raw(observer, window, facts);
+    if (result == WindowObserverQueryExists) {
+        overlay_facts(observer, facts, stamp, captured_ms);
+        result = resolve_owner(observer, facts, stamp, captured_ms);
+    }
+    switch (result) {
+    case WindowObserverQueryExists:
+        bump(&observer->stats.queries_exists);
+        break;
+    case WindowObserverQueryGone:
+        bump(&observer->stats.queries_gone);
+        break;
+    default:
+        bump(&observer->stats.queries_failed);
+        result = WindowObserverQueryFailed;
+        break;
+    }
+    return result;
 }
 
 /* Count a result whose reason says the UAC consent window is hidden by mode Native. */
@@ -660,17 +831,15 @@ static void refresh_abort_quiet(window_observer_t *observer, interop_window_grap
 /* Pump                                                                                       */
 /* ------------------------------------------------------------------------------------------ */
 
-/* Apply a note_destroyed result to a key; Ok means "continue with this key", other values stop or drop. */
-static window_observer_status_t apply_destroy(window_observer_t *observer, interop_window_graph_t *graph,
-                                              uint64_t epoch, uint64_t window, uint64_t stamp,
-                                              uint32_t event_ms, fold_t *fold) {
+/* Apply a note_destroyed call and fold its status. */
+static fold_t apply_destroy(window_observer_t *observer, interop_window_graph_t *graph, uint64_t epoch,
+                            uint64_t window, uint64_t stamp, uint32_t event_ms) {
     interop_window_observation_t observation;
     memset(&observation, 0, sizeof(observation));
     const interop_window_graph_status_t status =
         interop_window_graph_note_destroyed(graph, epoch, window, stamp, event_ms, &observation);
     bump(&observer->stats.destroys_noted);
-    *fold = fold_status(observer, status);
-    return WindowObserverStatusOk;
+    return fold_status(observer, status);
 }
 
 /* Put a stopped key back: QueueFull goes to the tail, any other stop to the head (first-seen order). */
@@ -687,9 +856,8 @@ static window_observer_status_t process_key(window_observer_t *observer, interop
                                             uint64_t epoch, dirty_entry_t *entry) {
     fold_t fold = FoldContinue;
     if (entry->destroy_stamp != 0u) {
-        (void)apply_destroy(observer, graph, epoch, entry->window, entry->destroy_stamp, entry->destroy_event_ms,
-                            &fold);
-        if (fold == FoldQueueFull || fold == FoldFatal) {
+        fold = apply_destroy(observer, graph, epoch, entry->window, entry->destroy_stamp, entry->destroy_event_ms);
+        if (fold == FoldQueueFull || fold == FoldReentrant || fold == FoldFatal) {
             put_back(observer, entry, fold);
             return stop_status(fold);
         }
@@ -708,10 +876,9 @@ static window_observer_status_t process_key(window_observer_t *observer, interop
     }
     const uint32_t captured_ms = observer->api.tick_ms(observer->api_context);
     interop_window_facts_t facts;
-    const window_observer_query_result_t result = query_one(observer, entry->window, &facts);
+    const window_observer_query_result_t result = query_window(observer, entry->window, &facts, stamp, captured_ms);
 
     if (result == WindowObserverQueryExists) {
-        overlay_facts(observer, &facts, stamp, captured_ms);
         interop_window_observation_t observation;
         memset(&observation, 0, sizeof(observation));
         const interop_window_graph_status_t status = interop_window_graph_observe(graph, epoch, &facts, &observation);
@@ -719,14 +886,15 @@ static window_observer_status_t process_key(window_observer_t *observer, interop
         if (fold == FoldContinue) {
             count_uac_hidden(observer, &observation);
             if (observation.disposition == InteropWindowDispositionSuspended) {
+                /* Defensive: the core always sets OnInputDesktop, so the graph cannot answer Suspended. */
                 dirty_push_front(observer, entry);
-                desktop_mark_inactive(observer);
+                desktop_refuse(observer, observer->api.monotonic_ms(observer->api_context));
                 return WindowObserverStatusDesktopInactive;
             }
             return WindowObserverStatusOk;
         }
     } else if (result == WindowObserverQueryGone) {
-        (void)apply_destroy(observer, graph, epoch, entry->window, stamp, captured_ms, &fold);
+        fold = apply_destroy(observer, graph, epoch, entry->window, stamp, captured_ms);
         if (fold == FoldContinue) {
             return WindowObserverStatusOk;
         }
@@ -747,14 +915,15 @@ static window_observer_status_t process_key(window_observer_t *observer, interop
     return stop_status(fold);
 }
 
-/* Forward declaration: full refresh used by the pump's overflow recovery (defined below). */
-static window_observer_status_t refresh_run(window_observer_t *observer, interop_window_graph_t *graph,
-                                            uint64_t epoch, int desktop_known_default);
+/* Forward declaration: refresh steps 2 to 6, shared with the pump's overflow recovery (defined below). */
+static window_observer_status_t refresh_body(window_observer_t *observer, interop_window_graph_t *graph,
+                                             uint64_t epoch);
 
-/* Body of pump after argument, thread and state checks. */
-static window_observer_status_t pump_run(window_observer_t *observer, interop_window_graph_t *graph,
-                                         uint64_t epoch, uint32_t budget) {
-    if (!desktop_check(observer)) {
+/* Body of pump after argument, thread, busy and state checks; the busy flag is held. */
+static window_observer_status_t pump_locked(window_observer_t *observer, interop_window_graph_t *graph,
+                                            uint64_t epoch, uint32_t budget) {
+    if (!desktop_is_default(observer)) {
+        desktop_refuse(observer, observer->api.monotonic_ms(observer->api_context));
         return WindowObserverStatusDesktopInactive;
     }
     if (observer->overflow != 0u) {
@@ -766,8 +935,13 @@ static window_observer_status_t pump_run(window_observer_t *observer, interop_wi
         bump(&observer->stats.invalidations);
         observer->dirty_count = 0u;
         observer->overflow = 0u;
+        /* One clock read stamps both the latch and the attempt, so this refresh consumes its own latch event. */
+        const uint64_t now_ms = observer->api.monotonic_ms(observer->api_context);
         observer->refresh_requested = 1u;
-        return refresh_run(observer, graph, epoch, 1);
+        observer->latch_ms = now_ms;
+        observer->last_attempt_ms = now_ms;
+        observer->have_attempt = 1u;
+        return refresh_body(observer, graph, epoch);
     }
     const uint32_t available = observer->dirty_count;
     const uint32_t limit = budget < available ? budget : available;
@@ -776,8 +950,10 @@ static window_observer_status_t pump_run(window_observer_t *observer, interop_wi
         if (!dirty_pop_front(observer, &entry)) {
             break;
         }
+        observer->popped_in_flight = 1u; /* reserves the put-back slot against note_hint */
         bump(&observer->stats.keys_processed);
         const window_observer_status_t status = process_key(observer, graph, epoch, &entry);
+        observer->popped_in_flight = 0u;
         if (status != WindowObserverStatusOk) {
             return status;
         }
@@ -792,15 +968,22 @@ window_observer_status_t window_observer_pump(window_observer_t *observer, inter
     if (observer == NULL || graph == NULL || budget == 0u) {
         return WindowObserverStatusInvalidArgument;
     }
-    if (!on_owner_thread(observer)) {
-        return WindowObserverStatusWrongThread;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) {
+        return gate;
     }
     if (observer->state != WindowObserverStateStarted) {
         snapshot_stats(observer, stats);
         return WindowObserverStatusBadState;
     }
-    const window_observer_status_t status = pump_run(observer, graph, session_epoch, budget);
-    snapshot_stats(observer, stats);
+    observer->busy = 1u;
+    native_call_begin();
+    const window_observer_status_t status = pump_locked(observer, graph, session_epoch, budget);
+    native_call_end();
+    observer->busy = 0u;
+    if (status != WindowObserverStatusReentrant) { /* the header excludes Reentrant from the stats snapshot */
+        snapshot_stats(observer, stats);
+    }
     return status;
 }
 
@@ -827,64 +1010,58 @@ static window_observer_status_t refresh_open(window_observer_t *observer, intero
     return fold == FoldContinue ? WindowObserverStatusOk : stop_status(fold);
 }
 
-/* Query and offer every enumerated window, then recheck the desktop; the refresh is open on entry. */
-static window_observer_status_t refresh_offer_all(window_observer_t *observer, interop_window_graph_t *graph,
-                                                  uint64_t epoch, uint32_t count) {
-    for (uint32_t i = 0; i < count; i++) {
-        const uint64_t window = observer->enum_buffer[i];
-        if (window == 0u) {
-            continue;
-        }
-        uint64_t stamp = 0;
-        if (!stamp_next(observer, &stamp)) {
-            refresh_abort_quiet(observer, graph, epoch);
-            return WindowObserverStatusStampExhausted;
-        }
-        const uint32_t captured_ms = observer->api.tick_ms(observer->api_context);
-        interop_window_facts_t facts;
-        const window_observer_query_result_t result = query_one(observer, window, &facts);
-        if (result == WindowObserverQueryGone) {
-            continue; /* stays unseen; the commit retires it */
-        }
-        if (result != WindowObserverQueryExists) {
-            refresh_abort_quiet(observer, graph, epoch);
-            return WindowObserverStatusQueryFailed;
-        }
-        overlay_facts(observer, &facts, stamp, captured_ms);
+/*
+ * Query one window of an open refresh and report it to the graph. unseen_pass is 0 for the enumerated
+ * windows (Gone: skipped, the window stays unseen) and 1 for the windows refresh_unseen listed (Gone:
+ * note_destroyed with a fresh stamp and tick). Exists is offered, Failed is kept. Ok = continue; any
+ * other status means the refresh was aborted (QueueFull, call-level status, Reentrant, stamp
+ * exhaustion, defensive Suspended) and is the status of the whole call.
+ */
+static window_observer_status_t refresh_visit(window_observer_t *observer, interop_window_graph_t *graph,
+                                              uint64_t epoch, uint64_t window, int unseen_pass) {
+    uint64_t stamp = 0;
+    if (!stamp_next(observer, &stamp)) {
+        refresh_abort_quiet(observer, graph, epoch);
+        return WindowObserverStatusStampExhausted;
+    }
+    const uint32_t captured_ms = observer->api.tick_ms(observer->api_context);
+    interop_window_facts_t facts;
+    const window_observer_query_result_t result = query_window(observer, window, &facts, stamp, captured_ms);
+    fold_t fold = FoldContinue;
+    if (result == WindowObserverQueryExists) {
         interop_window_observation_t observation;
         memset(&observation, 0, sizeof(observation));
-        const interop_window_graph_status_t status =
-            interop_window_graph_refresh_offer(graph, epoch, &facts, &observation);
-        const fold_t fold = fold_status(observer, status);
-        if (fold == FoldDrop) {
-            continue;
+        fold = fold_status(observer, interop_window_graph_refresh_offer(graph, epoch, &facts, &observation));
+        if (fold == FoldContinue) {
+            count_uac_hidden(observer, &observation);
+            if (observation.disposition == InteropWindowDispositionSuspended) {
+                refresh_abort_quiet(observer, graph, epoch);
+                desktop_refuse(observer, observer->api.monotonic_ms(observer->api_context));
+                return WindowObserverStatusDesktopInactive;
+            }
         }
-        if (fold != FoldContinue) {
-            refresh_abort_quiet(observer, graph, epoch);
-            return stop_status(fold);
+    } else if (result == WindowObserverQueryGone) {
+        if (!unseen_pass) {
+            return WindowObserverStatusOk; /* stays unseen; the unseen pass requeries it if it is Active */
         }
-        count_uac_hidden(observer, &observation);
-        if (observation.disposition == InteropWindowDispositionSuspended) {
-            refresh_abort_quiet(observer, graph, epoch);
-            desktop_mark_inactive(observer);
-            return WindowObserverStatusDesktopInactive;
-        }
+        fold = apply_destroy(observer, graph, epoch, window, stamp, captured_ms);
+    } else {
+        fold = fold_status(observer, interop_window_graph_refresh_keep(graph, epoch, window));
     }
-    if (!desktop_check(observer)) {
-        refresh_abort_quiet(observer, graph, epoch);
-        return WindowObserverStatusDesktopInactive;
+    if (fold == FoldContinue || fold == FoldDrop) {
+        return WindowObserverStatusOk;
     }
-    return WindowObserverStatusOk;
+    refresh_abort_quiet(observer, graph, epoch);
+    return stop_status(fold);
 }
 
-/* Body of refresh after argument, thread and state checks. */
-static window_observer_status_t refresh_run(window_observer_t *observer, interop_window_graph_t *graph,
-                                            uint64_t epoch, int desktop_known_default) {
-    observer->last_refresh_ms = observer->api.monotonic_ms(observer->api_context);
-    observer->have_refresh_ms = 1u;
-    if (!desktop_known_default && !desktop_check(observer)) {
-        return WindowObserverStatusDesktopInactive;
-    }
+/*
+ * Steps 2 to 6 of the refresh: enumerate, begin, query and offer every window, requery the unseen
+ * Active windows, commit. The attempt is already stamped and the desktop already checked Default by
+ * the caller; the busy flag is held. Failed queries never fail the refresh.
+ */
+static window_observer_status_t refresh_body(window_observer_t *observer, interop_window_graph_t *graph,
+                                             uint64_t epoch) {
     uint32_t count = 0;
     const window_observer_enum_result_t enumerated = observer->api.enum_top_level_windows(
         observer->api_context, observer->enum_buffer, WindowObserverMaxEnumerated, &count);
@@ -895,13 +1072,40 @@ static window_observer_status_t refresh_run(window_observer_t *observer, interop
     if (status != WindowObserverStatusOk) {
         return status;
     }
-    status = refresh_offer_all(observer, graph, epoch, count);
-    if (status != WindowObserverStatusOk) {
-        return status;
+    for (uint32_t i = 0; i < count; i++) {
+        const uint64_t window = observer->enum_buffer[i];
+        if (window == 0u) {
+            continue;
+        }
+        status = refresh_visit(observer, graph, epoch, window, 0);
+        if (status != WindowObserverStatusOk) {
+            return status;
+        }
     }
+
+    uint64_t unseen[InteropMaxWindows];
+    uint32_t unseen_count = 0;
+    const fold_t listed = fold_status(
+        observer, interop_window_graph_refresh_unseen(graph, epoch, unseen, InteropMaxWindows, &unseen_count));
+    if (listed != FoldContinue) {
+        refresh_abort_quiet(observer, graph, epoch);
+        return stop_status(listed);
+    }
+    if (unseen_count > InteropMaxWindows) {
+        unseen_count = InteropMaxWindows;
+    }
+    for (uint32_t i = 0; i < unseen_count; i++) {
+        if (unseen[i] == 0u) {
+            continue;
+        }
+        status = refresh_visit(observer, graph, epoch, unseen[i], 1);
+        if (status != WindowObserverStatusOk) {
+            return status;
+        }
+    }
+
     uint32_t retired = 0;
-    const interop_window_graph_status_t commit = interop_window_graph_refresh_commit(graph, epoch, &retired);
-    const fold_t fold = fold_status(observer, commit);
+    const fold_t fold = fold_status(observer, interop_window_graph_refresh_commit(graph, epoch, &retired));
     if (fold == FoldContinue) {
         bump(&observer->stats.refreshes_committed);
         observer->refresh_requested = 0u;
@@ -919,15 +1123,32 @@ window_observer_status_t window_observer_refresh(window_observer_t *observer, in
     if (observer == NULL || graph == NULL) {
         return WindowObserverStatusInvalidArgument;
     }
-    if (!on_owner_thread(observer)) {
-        return WindowObserverStatusWrongThread;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) {
+        return gate;
     }
     if (observer->state != WindowObserverStateStarted) {
         snapshot_stats(observer, stats);
         return WindowObserverStatusBadState;
     }
-    const window_observer_status_t status = refresh_run(observer, graph, session_epoch, 0);
-    snapshot_stats(observer, stats);
+    observer->busy = 1u;
+    native_call_begin();
+    /* Step 1: stamp the attempt BEFORE anything can fail, then check the desktop. */
+    const uint64_t now_ms = observer->api.monotonic_ms(observer->api_context);
+    observer->last_attempt_ms = now_ms;
+    observer->have_attempt = 1u;
+    window_observer_status_t status;
+    if (!desktop_is_default(observer)) {
+        desktop_refuse(observer, now_ms);
+        status = WindowObserverStatusDesktopInactive;
+    } else {
+        status = refresh_body(observer, graph, session_epoch);
+    }
+    native_call_end();
+    observer->busy = 0u;
+    if (status != WindowObserverStatusReentrant) { /* the header excludes Reentrant from the stats snapshot */
+        snapshot_stats(observer, stats);
+    }
     return status;
 }
 
@@ -935,38 +1156,46 @@ window_observer_status_t window_observer_refresh(window_observer_t *observer, in
 /* Cadence                                                                                    */
 /* ------------------------------------------------------------------------------------------ */
 
-/* Return nonzero when the 250 ms cadence has elapsed (or no attempt was made yet). */
-static int cadence_elapsed(const window_observer_t *observer, uint64_t now_ms) {
-    if (observer->have_refresh_ms == 0u) {
+/* Milliseconds since the latest refresh attempt; a clock that went backwards counts as zero. */
+static uint64_t attempt_elapsed(const window_observer_t *observer, uint64_t now_ms) {
+    return now_ms >= observer->last_attempt_ms ? now_ms - observer->last_attempt_ms : 0u;
+}
+
+/* Cadence rule of refresh_due for a Started observer, without the thread and busy gate. */
+static int refresh_due_core(const window_observer_t *observer, uint64_t now_ms) {
+    if (observer->have_attempt == 0u) {
         return 1;
     }
-    const uint64_t elapsed = now_ms >= observer->last_refresh_ms ? now_ms - observer->last_refresh_ms : 0u;
-    return elapsed >= InteropWindowGraphRefreshIntervalMs;
+    if (attempt_elapsed(observer, now_ms) >= InteropWindowGraphRefreshIntervalMs) {
+        return 1;
+    }
+    /* A latch event is consumed by any attempt stamped at or after it, even a failed one. */
+    return observer->refresh_requested != 0u && observer->last_attempt_ms < observer->latch_ms;
 }
 
 /** @copydoc window_observer_refresh_due */
 int window_observer_refresh_due(const window_observer_t *observer, uint64_t now_ms) {
-    if (observer == NULL || observer->state != WindowObserverStateStarted || !on_owner_thread(observer)) {
+    if (observer == NULL || entry_gate(observer) != WindowObserverStatusOk ||
+        observer->state != WindowObserverStateStarted) {
         return 0;
     }
-    if (observer->refresh_requested != 0u && observer->desktop_active != 0u) {
-        return 1;
-    }
-    return cadence_elapsed(observer, now_ms);
+    return refresh_due_core(observer, now_ms);
 }
 
 /** @copydoc window_observer_next_timeout_ms */
 uint32_t window_observer_next_timeout_ms(const window_observer_t *observer, uint64_t now_ms) {
-    if (observer == NULL || observer->state != WindowObserverStateStarted || !on_owner_thread(observer)) {
+    if (observer == NULL || entry_gate(observer) != WindowObserverStatusOk ||
+        observer->state != WindowObserverStateStarted) {
         return WindowObserverWaitForever;
     }
-    if (window_observer_refresh_due(observer, now_ms)) {
+    if (refresh_due_core(observer, now_ms)) {
         return 0u;
     }
     if ((observer->dirty_count != 0u || observer->overflow != 0u) && observer->desktop_blocked == 0u) {
         return 0u;
     }
-    const uint64_t elapsed = now_ms >= observer->last_refresh_ms ? now_ms - observer->last_refresh_ms : 0u;
+    /* No refresh is due, so an attempt exists and less than one interval has elapsed since it. */
+    const uint64_t elapsed = attempt_elapsed(observer, now_ms);
     const uint64_t remaining = InteropWindowGraphRefreshIntervalMs > elapsed ? InteropWindowGraphRefreshIntervalMs - elapsed : 1u;
     return (uint32_t)(remaining < 1u ? 1u : remaining);
 }
@@ -980,8 +1209,21 @@ uint32_t window_observer_next_timeout_ms(const window_observer_t *observer, uint
 /** Signature of GetDpiForWindow, resolved at run time because it exists only on Windows 10 1607+. */
 typedef UINT(WINAPI *get_dpi_for_window_fn_t)(HWND);
 
-/** Resolved GetDpiForWindow; NULL until native_dpi_available() succeeds. */
+/** Signature of GetThreadDpiAwarenessContext (Windows 10 1607+), resolved at run time. */
+typedef DPI_AWARENESS_CONTEXT(WINAPI *get_thread_dpi_context_fn_t)(void);
+
+/** Signature of AreDpiAwarenessContextsEqual (Windows 10 1607+), resolved at run time. */
+typedef BOOL(WINAPI *are_dpi_contexts_equal_fn_t)(DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT);
+
+/** Resolved GetDpiForWindow; NULL until native_resolve_dpi() succeeds. */
 static _Atomic(get_dpi_for_window_fn_t) g_get_dpi_for_window = NULL;
+
+#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((DPI_AWARENESS_CONTEXT) - 4)
+#endif
+
+/** Maximum rect extent exported by the native query (equals InteropWindowGraphMaxExtent). */
+#define NativeMaxExtent InteropWindowGraphMaxExtent
 
 /** Bytes of UTF-8 a title may keep (equals InteropWindowGraphMaxTitleBytes). */
 #define NativeTitleBytes 1024
@@ -1013,8 +1255,32 @@ static get_dpi_for_window_fn_t native_resolve_dpi(void) {
     return resolved;
 }
 
-static int native_dpi_available(void) {
-    return native_resolve_dpi() != NULL;
+/*
+ * Unsupported check of window_observer_create, run on the creating thread before any allocation:
+ * GetDpiForWindow must exist and the thread's DPI awareness context must be per-monitor-aware V2
+ * (rects and dpi are then physical pixels of a known scale). The observer never changes awareness.
+ * The two awareness entry points arrived with GetDpiForWindow (Windows 10 1607) and are resolved the
+ * same way; a missing one counts as unsupported.
+ */
+static int native_table_runnable(void) {
+    if (native_resolve_dpi() == NULL) {
+        return 0;
+    }
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 == NULL) {
+        return 0;
+    }
+    FARPROC raw_get = GetProcAddress(user32, "GetThreadDpiAwarenessContext");
+    FARPROC raw_equal = GetProcAddress(user32, "AreDpiAwarenessContextsEqual");
+    if (raw_get == NULL || raw_equal == NULL) {
+        return 0;
+    }
+    get_thread_dpi_context_fn_t get_context = NULL;
+    are_dpi_contexts_equal_fn_t contexts_equal = NULL;
+    memcpy(&get_context, &raw_get, sizeof(get_context));
+    memcpy(&contexts_equal, &raw_equal, sizeof(contexts_equal));
+    const DPI_AWARENESS_CONTEXT context = get_context();
+    return contexts_equal(context, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) ? 1 : 0;
 }
 
 /* HWND to the zero-extended 32-bit significant value used by the graph. */
@@ -1224,45 +1490,135 @@ static int native_fill_title(HWND window, interop_window_facts_t *facts) {
     return 1;
 }
 
-/* Fill image basename and process start time from a limited-rights process handle (best effort). */
-static int native_fill_process(DWORD process_id, interop_window_facts_t *facts) {
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
-    if (process == NULL) {
-        facts->flags |= (uint32_t)InteropWindowFactImageUnknown;
-        return 1;
+/*
+ * Per-call process snapshot used when OpenProcess cannot name a process (elevated or protected ones).
+ * It is scoped by native_call_begin/native_call_end around one outermost pump or refresh call, is
+ * touched only on the owner thread of the single Started observer, holds at most one Toolhelp32
+ * handle and creates at most two snapshots per call: the first lazily, the second only to retry a
+ * process-id miss against a snapshot taken earlier in the same call.
+ */
+typedef struct native_scan_t {
+    HANDLE snapshot; /**< Current snapshot handle, INVALID_HANDLE_VALUE when none is open. */
+    uint32_t created; /**< Snapshots created in this call, 0..2. */
+} native_scan_t;
+
+static native_scan_t g_native_scan = {INVALID_HANDLE_VALUE, 0u};
+
+/* Close the snapshot (if any) and reset the per-call state. */
+static void native_call_end(void) {
+    if (g_native_scan.snapshot != INVALID_HANDLE_VALUE) {
+        CloseHandle(g_native_scan.snapshot);
     }
-    WCHAR *path = malloc((size_t)NativeImagePathWchars * sizeof(WCHAR));
-    if (path == NULL) {
-        CloseHandle(process);
-        return 0; /* Failed: a missing image would silently disable the UAC rules */
+    g_native_scan.snapshot = INVALID_HANDLE_VALUE;
+    g_native_scan.created = 0u;
+}
+
+/* Start a call scope: no snapshot yet. A leftover handle (a call that never ended) is closed first. */
+static void native_call_begin(void) {
+    native_call_end();
+}
+
+/* Create the next snapshot of the call; INVALID_HANDLE_VALUE when the per-call budget is spent or the OS refuses. */
+static HANDLE native_scan_create(void) {
+    if (g_native_scan.created >= 2u) {
+        return INVALID_HANDLE_VALUE;
     }
-    DWORD path_length = NativeImagePathWchars;
-    uint32_t image_bytes = 0u;
-    if (QueryFullProcessImageNameW(process, 0, path, &path_length) && path_length > 0u) {
-        DWORD base = 0;
-        for (DWORD i = 0; i < path_length; i++) {
-            if (path[i] == L'\\' || path[i] == L'/') {
-                base = i + 1u;
-            }
+    g_native_scan.created += 1u;
+    g_native_scan.snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    return g_native_scan.snapshot;
+}
+
+/* Walk the current snapshot for process_id; *found tells whether the id exists; returns the basename bytes. */
+static uint32_t native_scan_walk(DWORD process_id, uint8_t *dest, int *found) {
+    PROCESSENTRY32W entry;
+    memset(&entry, 0, sizeof(entry));
+    entry.dwSize = (DWORD)sizeof(entry);
+    *found = 0;
+    if (!Process32FirstW(g_native_scan.snapshot, &entry)) {
+        return 0u;
+    }
+    do {
+        if (entry.th32ProcessID == process_id) {
+            *found = 1;
+            entry.szExeFile[MAX_PATH - 1] = L'\0';
+            int cut = 0;
+            return utf8_from_wide(entry.szExeFile, (int)wcslen(entry.szExeFile), WC_ERR_INVALID_CHARS, 0, dest,
+                                  InteropWindowGraphMaxImageBytes, &cut);
         }
-        int cut = 0;
-        image_bytes = utf8_from_wide(path + base, (int)(path_length - base), WC_ERR_INVALID_CHARS, 0,
-                                     facts->image_name, InteropWindowGraphMaxImageBytes, &cut);
+    } while (Process32NextW(g_native_scan.snapshot, &entry));
+    return 0u;
+}
+
+/* Resolve the image basename of process_id from the call's snapshot; 0 when unknown. */
+static uint32_t native_scan_image_name(DWORD process_id, uint8_t *dest) {
+    int fresh = 0;
+    if (g_native_scan.snapshot == INVALID_HANDLE_VALUE) {
+        if (g_native_scan.created != 0u || native_scan_create() == INVALID_HANDLE_VALUE) {
+            return 0u; /* an earlier creation in this call failed, or this one does */
+        }
+        fresh = 1;
     }
-    free(path);
-    path = NULL;
+    int found = 0;
+    const uint32_t bytes = native_scan_walk(process_id, dest, &found);
+    if (found || fresh || g_native_scan.created >= 2u) {
+        return bytes;
+    }
+    /* Miss against a snapshot from earlier in this call: retake it once. */
+    CloseHandle(g_native_scan.snapshot);
+    g_native_scan.snapshot = INVALID_HANDLE_VALUE;
+    if (native_scan_create() == INVALID_HANDLE_VALUE) {
+        return 0u;
+    }
+    return native_scan_walk(process_id, dest, &found);
+}
+
+/*
+ * Fill image basename and process start time. Step 1: OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)
+ * with QueryFullProcessImageName gives the basename and GetProcessTimes the real start time. Step 2,
+ * when OpenProcess fails (or yields no basename): the basename comes from the per-call Toolhelp32
+ * snapshot and the start time stays what step 1 produced (0 when OpenProcess failed). ImageUnknown is
+ * set, with image_length 0, only when both steps fail. Returns 0 only when the bounded path buffer
+ * cannot be allocated (the caller reports Failed: a missing image would silently disable UAC rules).
+ */
+static int native_fill_process(DWORD process_id, interop_window_facts_t *facts) {
+    uint32_t image_bytes = 0u;
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    if (process != NULL) {
+        WCHAR *path = malloc((size_t)NativeImagePathWchars * sizeof(WCHAR));
+        if (path == NULL) {
+            CloseHandle(process);
+            return 0;
+        }
+        DWORD path_length = NativeImagePathWchars;
+        if (QueryFullProcessImageNameW(process, 0, path, &path_length) && path_length > 0u) {
+            DWORD base = 0;
+            for (DWORD i = 0; i < path_length; i++) {
+                if (path[i] == L'\\' || path[i] == L'/') {
+                    base = i + 1u;
+                }
+            }
+            int cut = 0;
+            image_bytes = utf8_from_wide(path + base, (int)(path_length - base), WC_ERR_INVALID_CHARS, 0,
+                                         facts->image_name, InteropWindowGraphMaxImageBytes, &cut);
+        }
+        free(path);
+        path = NULL;
+        FILETIME created;
+        FILETIME exited;
+        FILETIME kernel;
+        FILETIME user;
+        if (GetProcessTimes(process, &created, &exited, &kernel, &user)) {
+            facts->process_start_time = ((uint64_t)created.dwHighDateTime << 32) | (uint64_t)created.dwLowDateTime;
+        }
+        CloseHandle(process);
+    }
+    if (image_bytes == 0u) {
+        image_bytes = native_scan_image_name(process_id, facts->image_name);
+    }
     facts->image_length = image_bytes;
     if (image_bytes == 0u) {
         facts->flags |= (uint32_t)InteropWindowFactImageUnknown;
     }
-    FILETIME created;
-    FILETIME exited;
-    FILETIME kernel;
-    FILETIME user;
-    if (GetProcessTimes(process, &created, &exited, &kernel, &user)) {
-        facts->process_start_time = ((uint64_t)created.dwHighDateTime << 32) | (uint64_t)created.dwLowDateTime;
-    }
-    CloseHandle(process);
     return 1;
 }
 
@@ -1288,8 +1644,11 @@ static int native_fill_rect(HWND window, int iconic, interop_window_facts_t *fac
     }
     facts->x = (int32_t)rect.left;
     facts->y = (int32_t)rect.top;
-    facts->width = (uint32_t)(rect.right - rect.left);
-    facts->height = (uint32_t)(rect.bottom - rect.top);
+    /* Clamp to the graph maximum: an oversized window is exported at the maximum, not rejected. */
+    const uint32_t width = (uint32_t)((int64_t)rect.right - (int64_t)rect.left);
+    const uint32_t height = (uint32_t)((int64_t)rect.bottom - (int64_t)rect.top);
+    facts->width = width > NativeMaxExtent ? NativeMaxExtent : width;
+    facts->height = height > NativeMaxExtent ? NativeMaxExtent : height;
     *screen_rect = rect;
     return 1;
 }
@@ -1421,7 +1780,13 @@ static window_observer_query_result_t native_query_facts(void *context, uint64_t
         return native_read_failed(handle);
     }
     facts->dpi = (uint32_t)dpi;
-    if (!native_fill_class(handle, facts) || !native_fill_title(handle, facts) ||
+    /*
+     * GetWindowTextW on a window of the current process sends WM_GETTEXT, which can deadlock or
+     * re-enter the owner thread. Own-process windows (exactly the AgentOwned set) therefore get no
+     * title (title_length stays 0) and receive no message at all.
+     */
+    const int own_process = process_id == GetCurrentProcessId();
+    if (!native_fill_class(handle, facts) || (!own_process && !native_fill_title(handle, facts)) ||
         !native_fill_process(process_id, facts)) {
         return native_read_failed(handle);
     }
