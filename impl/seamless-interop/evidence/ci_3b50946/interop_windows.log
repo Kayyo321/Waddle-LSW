@@ -1,0 +1,422 @@
+windows	Set up job	﻿2026-10-24T21:32:34.0620623Z Current runner version: '2.338.0'
+windows	Set up job	2026-10-24T21:32:34.0671455Z ##[group]Runner Image Provisioner
+windows	Set up job	2026-10-24T21:32:34.0672304Z Hosted Compute Agent
+windows	Set up job	2026-10-24T21:32:34.0672830Z Version: 20261021.618
+windows	Set up job	2026-10-24T21:32:34.0673424Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+windows	Set up job	2026-10-24T21:32:34.0674099Z Build Date: 2026-10-21T00:45:21Z
+windows	Set up job	2026-10-24T21:32:34.0674750Z Worker ID: {ca4e2e69-5f77-4f86-bd2f-464e208de94c}
+windows	Set up job	2026-10-24T21:32:34.0675436Z Region: westcentralus
+windows	Set up job	2026-10-24T21:32:34.0675940Z Cloud: Azure
+windows	Set up job	2026-10-24T21:32:34.0676404Z ##[endgroup]
+windows	Set up job	2026-10-24T21:32:34.0677742Z ##[group]Operating System
+windows	Set up job	2026-10-24T21:32:34.0678352Z Microsoft Windows Server 2022
+windows	Set up job	2026-10-24T21:32:34.0678939Z 10.0.20348
+windows	Set up job	2026-10-24T21:32:34.0679417Z Datacenter
+windows	Set up job	2026-10-24T21:32:34.0679862Z ##[endgroup]
+windows	Set up job	2026-10-24T21:32:34.0680349Z ##[group]Runner Image
+windows	Set up job	2026-10-24T21:32:34.0680879Z Image: windows-2022
+windows	Set up job	2026-10-24T21:32:34.0681400Z Version: 20261022.344.1
+windows	Set up job	2026-10-24T21:32:34.0682383Z Included Software: https://github.com/actions/runner-images/blob/win22/20261022.344/images/windows/Windows2022-Readme.md
+windows	Set up job	2026-10-24T21:32:34.0684137Z Image Release: https://github.com/actions/runner-images/releases/tag/win22%2F20261022.344
+windows	Set up job	2026-10-24T21:32:34.0684980Z ##[endgroup]
+windows	Set up job	2026-10-24T21:32:34.0685969Z ##[group]GITHUB_TOKEN Permissions
+windows	Set up job	2026-10-24T21:32:34.0688215Z Contents: read
+windows	Set up job	2026-10-24T21:32:34.0688819Z Metadata: read
+windows	Set up job	2026-10-24T21:32:34.0689303Z ##[endgroup]
+windows	Set up job	2026-10-24T21:32:34.0691226Z Secret source: Actions
+windows	Set up job	2026-10-24T21:32:34.0692129Z Cache mode: write
+windows	Set up job	2026-10-24T21:32:34.0692972Z Prepare workflow directory
+windows	Set up job	2026-10-24T21:32:34.1095184Z Prepare all required actions
+windows	Set up job	2026-10-24T21:32:34.1166061Z Getting action download info
+windows	Set up job	2026-10-24T21:32:34.4075379Z Download action repository 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+windows	Set up job	2026-10-24T21:32:35.1066533Z Complete job name: windows
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	﻿2026-10-24T21:32:35.2854388Z ##[group]Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.2855978Z with:
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.2856488Z   name: interop-codec-windows
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.2857075Z   path: build
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.2857572Z   merge-multiple: false
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.2858132Z   repository: Kayyo321/Waddle-LSW
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.2858717Z   run-id: 40133523501
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.2859443Z ##[endgroup]
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.5025705Z Downloading single artifact
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.5186151Z (node:1724) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.5187606Z (Use `node --trace-deprecation ...` to show where the warning was created)
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.6939736Z Preparing to download the following artifacts:
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.6941540Z - interop-codec-windows (ID: 12576581587, Size: 7806425, Expected Digest: sha256:610e75a2dd417c86cf7cd3ced66ac5434946f8d355cbbfa76866f20826a2aebb)
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.9080783Z Redirecting to blob download url: https://productionresultssa2.blob.core.windows.net/actions-results/458c95d2-21d1-8071-9420-c6a76ddd64d8/workflow-job-run-144580b7-c3c2-576a-ba7c-865e1062ac05/artifacts/6806fc7dc58b2c318009a96d79f65fe5ef9387065efc7964c9ab69aa90cae854.zip
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:35.9084518Z Starting download of artifact to: D:\a\Waddle-LSW\Waddle-LSW\build
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:36.1876649Z (node:1724) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:36.7617604Z SHA256 digest of downloaded artifact is 610e75a2dd417c86cf7cd3ced66ac5434946f8d355cbbfa76866f20826a2aebb
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:36.7619066Z Artifact download completed successfully.
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:36.7619748Z Total of 1 artifact(s) downloaded
+windows	Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093	2026-10-24T21:32:36.7625130Z Download artifact has finished successfully
+windows	Run ABI and foundation tests natively on Windows	﻿2026-10-24T21:32:36.7955574Z ##[group]Run $ErrorActionPreference = 'Stop'
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:36.7956189Z ^[[36;1m$ErrorActionPreference = 'Stop'^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:36.7960567Z ^[[36;1mforeach ($test_name in @('interop_codec_abi_test.exe', 'interop_layout_test.exe', 'interop_heap_test.exe', 'interop_manifest_test.exe', 'interop_layout_abi_test.exe', 'interop_native_atomic_test.exe', 'interop_slot_runtime_test.exe', 'interop_slot_runtime_abi_test.exe', 'interop_slot_runtime_abi_unit_test.exe', 'interop_mapping_init_test.exe', 'interop_stream_reader_test.exe', 'interop_stream_send_queue_test.exe', 'interop_session_liveness_test.exe', 'interop_session_handshake_test.exe', 'interop_agent_version_test.exe', 'interop_request_ids_test.exe', 'interop_mapping_windows_test.exe', 'interop_host_buffer_registry_test.exe', 'interop_host_buffer_registry_adversarial_test.exe', 'interop_control_peer_test.exe', 'interop_control_peer_abi_c_test.exe', 'interop_control_peer_abi_unit_test.exe')) {^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:36.7963513Z ^[[36;1m  & ".\build\$test_name"^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:36.7963942Z ^[[36;1m  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:36.7964336Z ^[[36;1m}^[[0m
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:36.8362823Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:36.8363476Z ##[endgroup]
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.1580369Z interop codec ABI: header, fields, writer and transfers agree across C and Zig
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.1706193Z 1/8 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.1707594Z 2/8 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.1708981Z 3/8 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.1710347Z 4/8 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.1713355Z 5/8 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.1714328Z 6/8 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.1715088Z 7/8 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2548846Z 8/8 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2549803Z All 8 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2636637Z 1/17 interop_heap.test.initialization and capacity errors preserve outputs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2637446Z 2/17 interop_heap.test.first fit skips a partially occupied candidate...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2696202Z 3/17 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2697767Z 4/17 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2698807Z 5/17 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2702978Z 6/17 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2704279Z 7/17 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.2705213Z 8/17 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.3523196Z 9/17 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.3524457Z 10/17 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.3525481Z 11/17 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.3526320Z 12/17 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.3527317Z 13/17 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.3532805Z 14/17 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.3534470Z 15/17 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.3535145Z 16/17 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4364489Z 17/17 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4365295Z All 17 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4462615Z 1/12 manifest.test.schema one parses all host and guest record kinds with owned borrowed views...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4471620Z 2/12 manifest.test.all frozen schema one kinds parse with their kind-specific fields...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4478138Z 3/12 manifest.test.rejects malformed schema duplicate keys and duplicate record ids...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4490593Z 4/12 manifest.test.rejects root type omissions and malformed JSON paths...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4518461Z 5/12 manifest.test.rejects each required record field when missing or mistyped...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4532896Z 6/12 manifest.test.validates prior variants and optional record values...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4548260Z 7/12 manifest.test.rejects record kind field prior hash UTF8 and string bound violations...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4595009Z 8/12 manifest.test.enforces input record string and nesting bounds...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4599047Z 9/12 manifest.test.valid parse releases every arena allocation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4601356Z 10/12 manifest.test.document owns strings independently of input and deinit is idempotent...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4606701Z 11/12 manifest.test.invalid parse frees partial allocations under allocation failure...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4659493Z 12/12 manifest.test.allocation failures cover record and duplicate-index growth...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.4660102Z All 12 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5076541Z 1/40 interop_slot_runtime.test.admission, descriptor indices, identity and unchanged errors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5077801Z 2/40 interop_slot_runtime.test.provisional writer has distinct cancellation and exact release pin...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5078977Z 3/40 interop_slot_runtime.test.growth waits on every pin and switches only free descriptors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5080029Z 4/40 interop_slot_runtime.test.retirement quarantines claims and releases on exact final pin...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5081294Z 5/40 interop_slot_runtime.test.drain requires producer and host proofs and releases all pinned runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5095475Z 6/40 interop_slot_runtime.test.all descriptor indices are assigned and generation never reuses...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5098416Z 7/40 interop_slot_runtime.test.transactional allocation errors preserve output and allocator...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5099939Z 8/40 interop_slot_runtime.test.shrink updates future geometry without replacing pinned runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5101620Z 9/40 interop_slot_runtime.test.invalid writer evidence fails closed and explicit proof still drains...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5103440Z 10/40 interop_slot_runtime.test.sequence is strictly increasing and exhausted sequence cannot wrap...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5127035Z 11/40 interop_slot_runtime.test.long-running slot cycle preserves exact ownership across reuse...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5128347Z 12/40 interop_slot_runtime.test.capture dimensions use frozen independent clamps...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5129651Z 13/40 interop_slot_runtime.test.retirement cancels a provisional claim before releasing descriptors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5130960Z 14/40 interop_slot_runtime.test.drain releases mixed active replacement and retired runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5132194Z 15/40 interop_slot_runtime.test.slot capacity corruption is rejected without claiming a writer...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5133434Z 16/40 interop_slot_runtime.test.growth release corruption fails closed and retains reservations...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5136140Z 17/40 interop_slot_runtime.test.retirement release corruption remains recoverable only with drain proof...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5137743Z 18/40 interop_slot_runtime.test.host drain allocation failure does not partially release runtime runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5139256Z 19/40 interop_slot_runtime.test.caller-owned runtime allocation has a complete leak-free lifecycle...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5140527Z 20/40 interop_slot_runtime.test.writer identity guards and active-writer drain guard...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5141813Z 21/40 interop_slot_runtime.test.pending growth accepts a smaller desired geometry without dropping replacement...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5143136Z 22/40 interop_slot_runtime.test.corrupt post-publication bookkeeping fails closed and preserves all runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5144384Z 23/40 interop_slot_runtime.test.stale asynchronous writer work cannot mutate a replacement session...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5145540Z 24/40 interop_heap.test.initialization and capacity errors preserve outputs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5146453Z 25/40 interop_heap.test.first fit skips a partially occupied candidate...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5201409Z 26/40 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5202839Z 27/40 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5204182Z 28/40 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5207904Z 29/40 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5209351Z 30/40 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5210614Z 31/40 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5779370Z 32/40 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5781055Z 33/40 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5782591Z 34/40 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5784240Z 35/40 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5785941Z 36/40 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5787409Z 37/40 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5788169Z 38/40 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.5788872Z 39/40 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6669174Z 40/40 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6669836Z All 40 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6771082Z opaque slot runtime ABI tests passed
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6850473Z 1/47 interop_slot_runtime_abi.test.runtime error status mapping is exhaustive and has frozen values...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6854489Z 2/47 interop_slot_runtime_abi.test.C ABI address checks preserve outputs and session epochs gate every operation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6855736Z 3/47 interop_slot_runtime_abi.test.every exported operation rejects a null runtime before reading caller outputs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6856936Z 4/47 interop_slot_runtime_abi.test.exported writer and release errors preserve scalar output snapshots...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6857853Z 5/47 interop_slot_runtime_abi.test.exported geometry growth capacity and lifecycle errors are observable...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6866595Z 6/47 interop_slot_runtime_abi.test.exported heap exhaustion and window-table capacity leave outputs unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6867709Z 7/47 interop_slot_runtime_abi.test.exported current-session corruption fails closed and remains drainable...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6869592Z 8/47 interop_slot_runtime.test.admission, descriptor indices, identity and unchanged errors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6870560Z 9/47 interop_slot_runtime.test.provisional writer has distinct cancellation and exact release pin...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6871414Z 10/47 interop_slot_runtime.test.growth waits on every pin and switches only free descriptors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6872345Z 11/47 interop_slot_runtime.test.retirement quarantines claims and releases on exact final pin...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6873568Z 12/47 interop_slot_runtime.test.drain requires producer and host proofs and releases all pinned runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6881275Z 13/47 interop_slot_runtime.test.all descriptor indices are assigned and generation never reuses...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6882701Z 14/47 interop_slot_runtime.test.transactional allocation errors preserve output and allocator...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6884269Z 15/47 interop_slot_runtime.test.shrink updates future geometry without replacing pinned runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6885661Z 16/47 interop_slot_runtime.test.invalid writer evidence fails closed and explicit proof still drains...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6886429Z 17/47 interop_slot_runtime.test.sequence is strictly increasing and exhausted sequence cannot wrap...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6911375Z 18/47 interop_slot_runtime.test.long-running slot cycle preserves exact ownership across reuse...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6912802Z 19/47 interop_slot_runtime.test.capture dimensions use frozen independent clamps...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6913777Z 20/47 interop_slot_runtime.test.retirement cancels a provisional claim before releasing descriptors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6915080Z 21/47 interop_slot_runtime.test.drain releases mixed active replacement and retired runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6915912Z 22/47 interop_slot_runtime.test.slot capacity corruption is rejected without claiming a writer...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6916795Z 23/47 interop_slot_runtime.test.growth release corruption fails closed and retains reservations...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6917879Z 24/47 interop_slot_runtime.test.retirement release corruption remains recoverable only with drain proof...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6919360Z 25/47 interop_slot_runtime.test.host drain allocation failure does not partially release runtime runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6920118Z 26/47 interop_slot_runtime.test.caller-owned runtime allocation has a complete leak-free lifecycle...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6920769Z 27/47 interop_slot_runtime.test.writer identity guards and active-writer drain guard...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6921655Z 28/47 interop_slot_runtime.test.pending growth accepts a smaller desired geometry without dropping replacement...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6922703Z 29/47 interop_slot_runtime.test.corrupt post-publication bookkeeping fails closed and preserves all runs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6923577Z 30/47 interop_slot_runtime.test.stale asynchronous writer work cannot mutate a replacement session...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6924565Z 31/47 interop_heap.test.initialization and capacity errors preserve outputs...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6925117Z 32/47 interop_heap.test.first fit skips a partially occupied candidate...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6987160Z 33/47 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6988616Z 34/47 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6989820Z 35/47 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6993381Z 36/47 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6994892Z 37/47 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.6996114Z 38/47 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.7445937Z 39/47 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.7448308Z 40/47 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.7449116Z 41/47 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.7449990Z 42/47 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.7450851Z 43/47 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.7452070Z 44/47 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.7453267Z 45/47 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.7454095Z 46/47 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8284854Z 47/47 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8285855Z All 47 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8371190Z mapping metadata initialization tests passed
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8473644Z 1/12 stream_reader.test.real codec ping frame is framed at every split and bytewise...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8474714Z 2/12 stream_reader.test.coalesced frames stop at one boundary and require explicit consume...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8475401Z 3/12 stream_reader.test.maximum frame is bounded and payload validation remains visible...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8476078Z 4/12 stream_reader.test.bad header fails closed and retains exact codec error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8477085Z 5/12 stream_reader.test.initialization rejects unsupported producer directions...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8478212Z 6/12 stream_reader.test.oversize and unaligned payload headers are rejected by codec...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8479142Z 7/12 stream_reader.test.input alias is rejected before any reader state changes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8479780Z 8/12 stream_reader.test.EOF distinguishes partial header body and pending complete frame...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8480477Z 9/12 stream_reader.test.payload schema and producer direction errors are returned without hiding frame...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8499344Z 10/12 stream_reader.test.deterministic header mutation corpus never exceeds fixed storage...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8500472Z 11/12 stream_reader.test.payload-only fragments preserve the boundary and clean EOF rejects later access...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8501151Z 12/12 stream_reader.test.failed header refuses every consumer and EOF operation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8501550Z All 12 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8582196Z 1/10 stream_send_queue.test.enqueue owns copied frame and partial acknowledgements preserve exact FIFO bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8617368Z 2/10 stream_send_queue.test.data reservation control admission full capacity and ring wrap preserve FIFO...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8618755Z 3/10 stream_send_queue.test.codec rejects malformed maximum-size and wrong-direction frames before allocation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8624031Z 4/10 stream_send_queue.test.maximum valid optional extension frame is copied and acknowledged without truncation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8625122Z 5/10 stream_send_queue.test.enqueue requires one exact frame and rejects invalid header lengths...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8626301Z 6/10 stream_send_queue.test.allocation failure leaves existing frames offsets and counters unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8627060Z 7/10 stream_send_queue.test.single frame allocation is covered by an allocator failure sweep...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8627766Z 8/10 stream_send_queue.test.deinit frees partial frames idempotently and closes future operations...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8628480Z 9/10 stream_send_queue.test.enqueue may borrow an already queued frame while copying another record...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8696436Z 10/10 stream_send_queue.test.deterministic queue stress preserves acknowledgement byte totals...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8697554Z All 10 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8775844Z 1/13 session_liveness.test.host cadence registration and matched pong handoff...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8776913Z 2/13 session_liveness.test.guest echoes only nonzero Ping and never asks to ping...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8778001Z 3/13 session_liveness.test.exact any-frame deadline closes before a boundary frame...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8778762Z 4/13 session_liveness.test.ping records expire independently during continuous ordinary traffic...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8779588Z 5/13 session_liveness.test.registration limits are transactional and reused IDs require release...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8780366Z 6/13 session_liveness.test.expired ID remains unavailable until an event returns its release...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8781120Z 7/13 session_liveness.test.multiple pongs match out of order and unknown IDs remain harmless...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8781939Z 8/13 session_liveness.test.Ping APIs close at connection deadline and wrong-role Pong is transactional...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8782693Z 9/13 session_liveness.test.local errors and stale tokens preserve complete state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8783339Z 10/13 session_liveness.test.disconnect releases all pending IDs exactly once...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8784003Z 11/13 session_liveness.test.role errors at future times do not mutate or trigger timeout...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8784686Z 12/13 session_liveness.test.elapsed comparisons remain correct near uint64 maximum...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8962908Z 13/13 session_liveness.test.deterministic long Ready traffic stays bounded and allocation free...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.8963886Z All 13 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9053984Z 1/16 session_handshake.test.host validates Hello and mapping before Ack becomes Ready...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9056233Z 2/16 session_handshake.test.guest waits for complete Hello and accepts capability subset...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9057601Z 3/16 session_handshake.test.wire incompatibilities return frozen errors and clear readiness...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9058887Z 4/16 session_handshake.test.Hello rejects zero identifiers epochs and unknown capabilities...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9060180Z 5/16 session_handshake.test.guest rejects ack capability supersets and malformed version...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9061498Z 6/16 session_handshake.test.guest ack protocol correlation and layout violations use their frozen errors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9063626Z 7/16 session_handshake.test.local failures preserve the complete value and reject stale tokens...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9064859Z 8/16 session_handshake.test.deadline is overall and exact at uint64 boundary...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9065885Z 9/16 session_handshake.test.drain transport loss and close are idempotent...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9067495Z 10/16 session_handshake.test.Closed is terminal for wire receive and lifecycle callbacks...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9068313Z 11/16 session_handshake.test.deadline guards precede each callback-specific validation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9069056Z 12/16 session_handshake.test.every asynchronous callback rejects stale tokens and backward time unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9069712Z 13/16 session_handshake.test.wire handshake message in wrong role is fatal...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9070297Z 14/16 session_handshake.test.initialization and host mapping proof guards...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9070866Z 15/16 session_handshake.test.wrong Ack send ID and invalid local phases preserve state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9071557Z 16/16 session_handshake.test.role and phase guards distinguish local events from invalid wire phase...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9072034Z All 16 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9147017Z 1/3 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9147667Z 2/3 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9155090Z 3/3 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9156465Z All 3 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9244957Z 1/7 request_ids.test.reserve starts at one and release creates a hole without resetting order...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:37.9246032Z 2/7 request_ids.test.reservation skips occupied identifiers across uint32 wrap...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.0283530Z 3/7 request_ids.test.full capacity and invalid releases preserve complete state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.0286525Z 4/7 request_ids.test.unknown and repeated release are unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.0287583Z 5/7 request_ids.test.runtime sentinel input is never an occupied or releasable request...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.0288538Z 6/7 request_ids.test.retire clears occupancy and preserves sequence cursor...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7323537Z 7/7 request_ids.test.bounded deterministic reserve release stress preserves uniqueness...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7324361Z All 7 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7504828Z 1/16 host_buffer_registry.test.initialization rejects zero and stores one immutable epoch...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7505944Z 2/16 host_buffer_registry.test.admission validates every key component and errors preserve all state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7507956Z 3/16 host_buffer_registry.test.exact frame lifecycle retains identity through notify and rejects stale callbacks...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7508952Z 4/16 host_buffer_registry.test.never attached requires callback quiescence and exact slot-free before notify...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7515835Z 5/16 host_buffer_registry.test.full capacity preserves state and reuses slots only after committed notification...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7516902Z 6/16 host_buffer_registry.test.drain and quarantine stop admission but retain completions...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7517855Z 7/16 host_buffer_registry.test.quarantine from open and ticket exhaustion never wraps or reuses...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7518591Z 8/16 host_buffer_registry.test.completion lookup rejects wrong epoch unknown ticket and pending phase unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7519660Z 9/16 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7520563Z 10/16 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7521333Z 11/16 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7522275Z 12/16 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7525878Z 13/16 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7526623Z 14/16 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.7527270Z 15/16 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8391284Z 16/16 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8392167Z All 16 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8482761Z 1/8 host_buffer_registry.test.admission validates epoch key fields and preserves state on errors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8483812Z 2/8 host_buffer_registry.test.ticket transitions enforce proof ordering and preserve counts on failure...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8485040Z 3/8 host_buffer_registry.test.never-attached completion requires quiesced callback and exact release sequence...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8485897Z 4/8 host_buffer_registry.test.stale ticket cannot complete a reused slot...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8487082Z 5/8 host_buffer_registry.test.drain and quarantine retain pending and attached records while allowing exact completion...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8493678Z 6/8 host_buffer_registry.test.all 192 records are bounded and capacity failure is transactional...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8494896Z 7/8 host_buffer_registry.test.ticket UINT64_MAX is usable once and exhaustion never wraps...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8530798Z 8/8 host_buffer_registry.test.192-frame varied completion and slot-reuse churn stays bounded...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8531991Z All 8 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8628477Z 1/47 control_peer.test.two peers exchange fragmented Hello and Ack only after mapping and full sends...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8630866Z 2/47 control_peer.test.local token time count and short-output errors preserve peer and caller state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8634365Z 3/47 control_peer.test.coalesced feature frames backpressure at one complete frame and preserve each frame...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8637507Z 4/47 control_peer.test.Hello and Ack readiness require full frame bytes and explicit mapping callbacks...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8640894Z 5/47 control_peer.test.mapping failures do not bypass the external gate or mutate guest on local rejection...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8645778Z 6/47 control_peer.test.ping pong is internal, one matched reply refreshes liveness...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8649286Z 7/47 control_peer.test.scoped Error never receives a recursive reply; malformed Error only drains...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8651850Z 8/47 control_peer.test.exact deadlines and terminal callbacks never reopen the peer...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.8653451Z 9/47 control_peer.test.mandatory Hello queue OOM drains and deinit frees the owned version...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9720612Z 10/47 control_peer.test.private peer composition probes cover allocator, codec, and alias edges...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9726570Z 11/47 control_peer.test.Hello and Ack reject bad major IDs and capability offers...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9728377Z 12/47 control_peer.test.token phase time closed and empty-queue errors preserve observable state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9729246Z 13/47 control_peer.test.initialization rejects invalid local version and unknown capability bits...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9731521Z 14/47 control_peer.test.wire header errors latch draining and wrong-direction controls do not dispatch...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9735413Z 15/47 control_peer.test.Goodbye output preflight is atomic and request IDs are validated...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9736957Z 16/47 control_peer.test.local drain aborts incomplete Hello but still accounts confirmed OS bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9739597Z 17/47 control_peer.test.Goodbye and unknown payload limits drain without recursive protocol replies...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9741923Z 18/47 control_peer.test.unknown Pong refreshes receive liveness but exact silence timeout drains...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9744851Z 19/47 control_peer.test.copy-out rejects aliases into version, peer state, and queued frames...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9780453Z 20/47 control_peer.test.Pong capacity failure is terminal and the full control queue drains on the next Pong...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9784306Z 21/47 control_peer.test.mandatory Pong Ping and Error allocation failures stay terminal...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9786064Z 22/47 control_peer.test.deadline zero-progress acknowledgement drains without discarding OS-accounting state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9788374Z 23/47 control_peer.test.partial HelloAck aborted by drain still consumes its confirmed final bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9790753Z 24/47 control_peer.test.connection token is checked before all peer callbacks and closed peers reject work...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9792595Z 25/47 control_peer.test.mandatory HelloAck allocation failure drains the host...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9795165Z 26/47 control_peer.test.all handshake deadline entry points close at the boundary and stay closed...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9797269Z 27/47 control_peer.test.mapping callbacks reject wrong phase and role before any timeout mutation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9801415Z 28/47 control_peer.test.drain is idempotent, deadline bounded, and Goodbye allocation failure is recorded...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9802984Z 29/47 control_peer.test.zero ACK is a no-op before deadline and while already draining...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9805945Z 30/47 control_peer.test.reader input alias and pending frames are safe across draining and closure...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9808882Z 31/47 control_peer.test.pre-Ready wire errors are never answered recursively and invalid frames drain...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9812714Z 32/47 control_peer.test.premature Ack and replayed Hello or Ack cannot reopen or bypass handshake...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9816484Z 33/47 control_peer.test.zero Ping and Pong identifiers are rejected on their receiving roles...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9818982Z 34/47 control_peer.test.backwards timestamps are local unchanged errors for every timed callback...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9819912Z 35/47 control_peer.test.already-draining callbacks remain terminal and deinit rejects every operation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9822732Z 36/47 control_peer.test.replayed control ID cases and malformed Goodbye status drain...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9825585Z 37/47 control_peer.test.ready-session ACK of Ping bytes accounts sends before exact liveness expiry...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9826487Z 38/47 control_peer.test.empty transport and terminal queue APIs preserve their public errors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9828261Z 39/47 control_peer.test.bad header latches wire drain and records a best-effort protocol error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9830066Z 40/47 control_peer.test.mapping callbacks reject failed epoch and layout results without readiness...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9832203Z 41/47 control_peer.test.bad handshake envelopes and failed host validation latch draining...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9834281Z 42/47 control_peer.test.malformed required Hello and Ack fields are rejected at each handshake boundary...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9837382Z 43/47 control_peer.test.partial bodies stay hidden and queued-frame output aliases are rejected...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9848188Z 44/47 control_peer.test.best effort Ready protocol errors report allocator exhaustion without leaking...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9852017Z 45/47 control_peer.test.best effort Hello and Ack incompatibility replies report allocator exhaustion...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9852975Z 46/47 control_peer.test.host mapping refusal preserves drain when its error reply cannot allocate...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9854966Z 47/47 control_peer.test.valid HelloAck envelope with invalid SemVer drains as incompatible...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9855480Z All 47 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:38.9957175Z control peer C ABI tests passed
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0041718Z 1/84 control_peer_abi.test.raw pointer guards reject null alignment wrap and output alias before dereference...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0048210Z 2/84 control_peer_abi.test.ABI rejects overflowing input and misaligned event output after prior guards pass...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0050291Z 3/84 control_peer_abi.test.ABI operations preserve outputs for wrong tokens after pointer validation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0051101Z 4/84 control_peer_abi.test.fixed ABI enum mappings and creation-only error classification...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0052005Z 5/84 control_peer_abi.test.range and owner overlap helpers cover empty and nonempty owned storage...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0055620Z 6/84 control_peer_abi.test.ABI localizes scalar internal faults without corrupting owned buffers...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0060448Z 7/84 control_peer_abi.test.ABI handshake callback guards normalize impossible scalar phase faults...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0062274Z 8/84 control_peer_abi.test.ABI Ready dispatch normalizes liveness callback faults...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0065788Z 9/84 control_peer_abi.test.owner creation failure sweep releases every staged allocation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0067825Z 10/84 control_peer_abi.test.owned-range validation includes peer value version and full queued frame...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0069438Z 11/84 control_peer_abi.test.destroy rejects an owner slot inside peer-owned version storage...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0070337Z 12/84 control_peer_abi.test.ABI config and output range overlaps are rejected before access...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0071925Z 13/84 control_peer_abi.test.ABI rejects input and output ranges inside full peer-owned buffers...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0074662Z 14/84 control_peer_abi.test.ABI timer and dispatch contain liveness and retirement invariant faults...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0076377Z 15/84 control_peer_abi.test.ABI drain callback contains stale helper token without output mutation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0078625Z 16/84 control_peer_abi.test.ABI acknowledges OS bytes before containing a late liveness callback fault...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0080319Z 17/84 control_peer_abi.test.ABI transport loss reports a closed owner without touching output...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0083260Z 18/84 control_peer_abi.test.ABI catches queue and helper lifecycle failures at method boundaries...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0150759Z 19/84 control_peer_abi.test.ABI returns a valid scoped PeerError as copied event data...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0151887Z 20/84 control_peer_abi.test.ABI Ready dispatch contains a closed liveness observer...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0152795Z 21/84 control_peer_abi.test.independent C client crosses the opaque pointer ABI...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.0153834Z 22/84 control_peer_abi.test.runtime half open address intervals distinguish adjacency from intersection...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1157915Z 23/84 control_peer.test.private peer-boundary test support...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1158986Z 24/84 session_handshake.test.host validates Hello and mapping before Ack becomes Ready...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1160616Z 25/84 session_handshake.test.guest waits for complete Hello and accepts capability subset...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1161832Z 26/84 session_handshake.test.wire incompatibilities return frozen errors and clear readiness...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1163026Z 27/84 session_handshake.test.Hello rejects zero identifiers epochs and unknown capabilities...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1164201Z 28/84 session_handshake.test.guest rejects ack capability supersets and malformed version...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1165480Z 29/84 session_handshake.test.guest ack protocol correlation and layout violations use their frozen errors...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1166681Z 30/84 session_handshake.test.local failures preserve the complete value and reject stale tokens...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1167798Z 31/84 session_handshake.test.deadline is overall and exact at uint64 boundary...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1168783Z 32/84 session_handshake.test.drain transport loss and close are idempotent...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1169849Z 33/84 session_handshake.test.Closed is terminal for wire receive and lifecycle callbacks...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1170987Z 34/84 session_handshake.test.deadline guards precede each callback-specific validation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1172257Z 35/84 session_handshake.test.every asynchronous callback rejects stale tokens and backward time unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1173448Z 36/84 session_handshake.test.wire handshake message in wrong role is fatal...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1174423Z 37/84 session_handshake.test.initialization and host mapping proof guards...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1175497Z 38/84 session_handshake.test.wrong Ack send ID and invalid local phases preserve state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1176705Z 39/84 session_handshake.test.role and phase guards distinguish local events from invalid wire phase...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1177899Z 40/84 stream_reader.test.real codec ping frame is framed at every split and bytewise...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1179017Z 41/84 stream_reader.test.coalesced frames stop at one boundary and require explicit consume...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1180161Z 42/84 stream_reader.test.maximum frame is bounded and payload validation remains visible...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1181211Z 43/84 stream_reader.test.bad header fails closed and retains exact codec error...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1182235Z 44/84 stream_reader.test.initialization rejects unsupported producer directions...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1183332Z 45/84 stream_reader.test.oversize and unaligned payload headers are rejected by codec...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1184389Z 46/84 stream_reader.test.input alias is rejected before any reader state changes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1187262Z 47/84 stream_reader.test.EOF distinguishes partial header body and pending complete frame...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1188737Z 48/84 stream_reader.test.payload schema and producer direction errors are returned without hiding frame...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1190003Z 49/84 stream_reader.test.deterministic header mutation corpus never exceeds fixed storage...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1191250Z 50/84 stream_reader.test.payload-only fragments preserve the boundary and clean EOF rejects later access...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1192418Z 51/84 stream_reader.test.failed header refuses every consumer and EOF operation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1193597Z 52/84 stream_send_queue.test.enqueue owns copied frame and partial acknowledgements preserve exact FIFO bytes...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1230093Z 53/84 stream_send_queue.test.data reservation control admission full capacity and ring wrap preserve FIFO...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1231575Z 54/84 stream_send_queue.test.codec rejects malformed maximum-size and wrong-direction frames before allocation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1237474Z 55/84 stream_send_queue.test.maximum valid optional extension frame is copied and acknowledged without truncation...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1238929Z 56/84 stream_send_queue.test.enqueue requires one exact frame and rejects invalid header lengths...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1240235Z 57/84 stream_send_queue.test.allocation failure leaves existing frames offsets and counters unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1241988Z 58/84 stream_send_queue.test.single frame allocation is covered by an allocator failure sweep...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1243225Z 59/84 stream_send_queue.test.deinit frees partial frames idempotently and closes future operations...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1244442Z 60/84 stream_send_queue.test.enqueue may borrow an already queued frame while copying another record...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1313534Z 61/84 stream_send_queue.test.deterministic queue stress preserves acknowledgement byte totals...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1314825Z 62/84 request_ids.test.reserve starts at one and release creates a hole without resetting order...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.1316027Z 63/84 request_ids.test.reservation skips occupied identifiers across uint32 wrap...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.2199217Z 64/84 request_ids.test.full capacity and invalid releases preserve complete state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.2201061Z 65/84 request_ids.test.unknown and repeated release are unchanged...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.2202181Z 66/84 request_ids.test.runtime sentinel input is never an occupied or releasable request...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.2203433Z 67/84 request_ids.test.retire clears occupancy and preserves sequence cursor...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8323669Z 68/84 request_ids.test.bounded deterministic reserve release stress preserves uniqueness...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8324975Z 69/84 session_liveness.test.host cadence registration and matched pong handoff...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8325978Z 70/84 session_liveness.test.guest echoes only nonzero Ping and never asks to ping...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8326881Z 71/84 session_liveness.test.exact any-frame deadline closes before a boundary frame...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8327852Z 72/84 session_liveness.test.ping records expire independently during continuous ordinary traffic...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8328896Z 73/84 session_liveness.test.registration limits are transactional and reused IDs require release...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8329810Z 74/84 session_liveness.test.expired ID remains unavailable until an event returns its release...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8330584Z 75/84 session_liveness.test.multiple pongs match out of order and unknown IDs remain harmless...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8331408Z 76/84 session_liveness.test.Ping APIs close at connection deadline and wrong-role Pong is transactional...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8332182Z 77/84 session_liveness.test.local errors and stale tokens preserve complete state...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8332840Z 78/84 session_liveness.test.disconnect releases all pending IDs exactly once...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8333731Z 79/84 session_liveness.test.role errors at future times do not mutate or trigger timeout...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8334545Z 80/84 session_liveness.test.elapsed comparisons remain correct near uint64 maximum...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8515684Z 81/84 session_liveness.test.deterministic long Ready traffic stays bounded and allocation free...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8516724Z 82/84 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8517537Z 83/84 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8520949Z 84/84 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8521498Z All 84 tests passed.
+windows	Run ABI and foundation tests natively on Windows	2026-10-24T21:32:39.8527959Z control peer C ABI tests passed
+windows	Complete job	﻿2026-10-24T21:32:39.9698447Z Cleaning up orphan processes
+windows	Complete job	2026-10-24T21:32:39.9733555Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

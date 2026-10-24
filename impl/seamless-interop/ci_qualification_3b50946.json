@@ -1,0 +1,55 @@
+{
+  "source_commit": "3b50946a7b9ac702f28ca16c72711f99efd80545",
+  "qualification_utc": "2026-10-24T21:34:01.739077+00:00",
+  "progress_impact": 0,
+  "scope": "Exact Linux connected-byte-owner implementation and unchanged graph/peer/AV code. Hardware-free Linux regression, leak-enabled sanitizer, production coverage and ordinary-object export gates plus actual Windows CPU/native-smoke tests. No installed seamless session, native resource-release, VSOCK admission, O5 preservation or reconnect acceptance.",
+  "interop": {
+    "run": 40133523501,
+    "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40133523501",
+    "conclusion": "success",
+    "jobs": {
+      "linux": "success",
+      "windows": "success"
+    }
+  },
+  "graph": {
+    "run": 40133523475,
+    "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40133523475",
+    "conclusion": "success",
+    "jobs": {
+      "linux": "success",
+      "windows": "success"
+    }
+  },
+  "native_av": {
+    "run": 40133523473,
+    "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40133523473",
+    "conclusion": "success",
+    "jobs": {
+      "windows": "success",
+      "transport": "success"
+    }
+  },
+  "linux_socket_owner_production_coverage": {
+    "line": {
+      "percent": 97.21,
+      "covered": 731,
+      "total": 752
+    },
+    "branch": {
+      "percent": 90.12,
+      "covered": 547,
+      "total": 607
+    }
+  },
+  "windows_scope": "Graph148/ABI164/C28/observer65 and six-executable native-smoke/synthetic-fault workflow; peer47/ABI84 and independent C fixture in interop workflow. Linux socket owner is Linux-only.",
+  "logs_sha256": {
+    "evidence/ci_3b50946/graph_run.json": "cd649c96dc419f380b77140e88054a6c43bda774b71669af4576801f2ac37c55",
+    "evidence/ci_3b50946/graph_windows.log": "121136f0b6456093dde3b8935156ad73991f00bb2be958ecd8577da0ac77f9dd",
+    "evidence/ci_3b50946/interop_linux.log": "143c20af062c092aa9de72bb3cbf17601abe9634f906d37060267990023b5014",
+    "evidence/ci_3b50946/interop_run.json": "d2e462662352e7caf44bbce5fde3f6e60939edf7434c7ea2d2d4550f661f06bd",
+    "evidence/ci_3b50946/interop_windows.log": "a3114e0608a9cca631900c63c8e488469cca697d70c28c9b85de0f1894117cc3",
+    "evidence/ci_3b50946/native_av_run.json": "b82efbc9bc92323636e546972a12f8cd40f9d0b8a34a3ece9752376200bd1b23",
+    "evidence/ci_3b50946/native_av_windows.log": "4af2359177a6f405a7cd952aec912480d5adb040c8cec4f97edde8051de2d5c8"
+  }
+}

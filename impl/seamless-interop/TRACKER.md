@@ -1069,10 +1069,21 @@ its uncompiled draft earns no credit until current acceptance passes.
     authority. Advisory only; normative API review and implementation remain
     pending. HEAD identifies this investigation preservation commit.
 
-- **Commit `HEAD`**: `docs(interop): record exact committed socket regression gates`
+- **Commit `96f027c`**: `docs(interop): record exact committed socket regression gates`
   - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
   - **Summary**: Rechecks complete interop-test and leak-enabled sanitizer
     sequences after every final owner/fixture correction at implementation
     commit3b50946. Both exit0; archives exact logs and binds the qualification
     receipt to its full SHA. Source, API and accepted progress unchanged.
     Exact implementation CI is still pending; HEAD identifies this evidence commit.
+
+- **Commit `HEAD`**: `docs(interop): record green socket owner Linux and Windows CI`
+  - **Task Impact**: +0% to TODO #7/#10/#34 (+0% overall; total18.00%).
+  - **Summary**: Exact implementation3b50946 passes interop40133523501,
+    graph40133523475 and Native AV40133523473, all Linux/Windows jobs green.
+    CI independently confirms731/752 production lines97.21% and547/607
+    branches90.12%, exact8 exports and leak-enabled owner tests. Archives
+    Linux/actual Windows logs and hashes. O5, integrated session, native mapping
+    and remaining tracker tasks stay open; the100% merge gate remains unmet. [Qualification](ci_qualification_3b50946.json).
+    Saves [verified checkpoint](checkpoint_2026_10_24_after_claude.md); all
+    worker ownership is released. HEAD identifies this CI/checkpoint commit.

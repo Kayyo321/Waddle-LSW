@@ -147,7 +147,23 @@
     "todo_6": "+0%",
     "todo_34": "+0%"
   },
-  "ci": "Pending exact implementation commit; accepted previous code snapshot3e564ad has all3 workflows green.",
+  "ci": {
+    "source_commit": "3b50946a7b9ac702f28ca16c72711f99efd80545",
+    "conclusion": "all three workflows success",
+    "receipt": "ci_qualification_3b50946.json",
+    "production_coverage": {
+      "line": {
+        "percent": 97.21,
+        "covered": 731,
+        "total": 752
+      },
+      "branch": {
+        "percent": 90.12,
+        "covered": 547,
+        "total": 607
+      }
+    }
+  },
   "evidence_sha256": {
     "evidence/linux_socket_owner_2026_10_24/attempt_inventory.json": "db873f5edc90e79e87e0b2128b3db23668e8e475c0f069b68f8d79537f200bbd",
     "evidence/linux_socket_owner_2026_10_24/exact_interop_sanitizers.log": "baf2de15f449dab4cc91e0a54517b27d17684a73cd91552154d12cd3ed137c3b",

@@ -183,7 +183,7 @@
       "handoff": "Source committed with local gates; peer/policy proposals are unapproved"
     }
   ],
-  "resume_entry": "checkpoint_2026_10_24.md",
+  "resume_entry": "checkpoint_2026_10_24_after_claude.md",
   "external_claude_handoff": {
     "status": "reviewed_snapshot_import_qualified",
     "base": "e86cf8e344c6bafea5e562f04129a408e19629ff",
@@ -223,7 +223,7 @@
     "ci_run": 40126247004,
     "ci_conclusion": "success"
   },
-  "lead_current_work": "Reviewed Claude graph import, snapshot and native guards qualified on Linux/actual Windows at3e564ad (all3CIgreen). Linux connected-byte-owner accepted after root optimized/sanitizer/fullcoverage gates:97.21line90.12branch, exactly8exports, source74907d6f; total18.00%. Exact implementation CI pending. All3Luna lanes released; root owns code/build/docs/Git. O5 and Linux admission plans advisory; no VM actions.",
+  "lead_current_work": "Claude graph return reviewed/imported; graph35% accepted. Linux connected-byte-owner accepted5%TODO7; source74907d6f, coverage97.21line90.12branch, eight exports, exact full local gates. Implementation3b50946 pushed and all3CIgreen: interop40133523501, graph40133523475, NativeAV40133523473. Total18.00%; all Luna file ownership released. Root owns Git/build/docs. O5 consolidated contract and host admission are next; advisory plans only. No VM/device changes; execution surface exposes no KVM/VSOCK/DRM nodes.",
   "current_lane_receipts": {
     "luna_qemu_build": "Linux socket source/main released; lead-reviewed corrections/gates accepted5%TODO7. Return in evidence/linux_socket_owner_2026_10_24.",
     "luna_layout": "Guard/private fixtures released; final source74907d6f reviewed. O5 review advisory only.",
