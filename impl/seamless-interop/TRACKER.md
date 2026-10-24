@@ -864,7 +864,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Peer94.46% lines/80.81% branches is still below the unchanged90% branch gate.
     HEAD identifies this containing review/coordination commit.
 
-- **Commit `HEAD`**: `docs(interop): freeze window tracking acceptance and review disposition`
+- **Commit `564d589`**: `docs(interop): freeze window tracking acceptance and review disposition`
   - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total16.40%).
   - **Summary**: Freezes parent #10 subtask allocation before any credit. Records
     exact1a179b0 full Linux/leak/coverage/cross-build success, further cached-child
@@ -872,3 +872,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     on isolated5aff081. Source remains isolated; native results pending, O5
     delivered-destroy loss unaccepted, no parent/native credit awarded.
     HEAD identifies this containing allocation/review commit.
+
+- **Commit `HEAD`**: `docs(interop): require contextual C peer error classification`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
+  - **Summary**: Replaces broad tag-only C status translation with read-only
+    caller preflights and InternalInvariant for unexpected post-preflight helper
+    disagreement. Keeps every legitimate caller status, short-output atomicity
+    and ACK accounting. This closes retry/abort ambiguity independently of
+    coverage; source corrections and exact qualification remain pending.
+    HEAD identifies this containing contract commit.

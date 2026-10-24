@@ -3265,3 +3265,46 @@ The isolated branch now has dedicated Linux/Windows CI; it is allowed to be
 pushed for evidence, never merged into the standard branch before the global
 tracker is100% and all required checks pass. No source is imported at this
 contract commit, and global completion stays16.40%.
+
+
+#### 8.21.1 Caller errors versus internal helper disagreement
+
+This supersedes global tag-only error translation at C operation boundaries.
+After raw address/range/alias validation, each stateful export preflights caller
+conditions read-only in the same order as the core: allocated live owner, nonzero
+matching token, then monotonic time when applicable. Feed rejects Draining/Closed
+with WrongPhase; next_event, TX query/copy and ACK reject Closed with WrongPhase.
+Tick/begin_drain/transport_lost preserve successful idempotent terminal events.
+Guest mapping retains its early layout argument check, then token/time and
+InitializingMapping preflight, false initialization -> MappingFailed, zero epoch
+-> InvalidArgument. Host requires AwaitMapping but false/mismatched proof remains
+Success with Draining. No preflight claims native mapping or detach proof.
+
+ACK additionally preflights the actual front queue: Empty -> NoQueuedFrame,
+count above remainder -> InvalidWriteCount, QueueClosed while owner is live ->
+InternalInvariant. It takes no ownership and changes no queue/time before the
+core call. After all these public conditions pass, any escaped core/helper error
+is InternalInvariant, including helper token/time/phase disagreement; it must
+never be mislabeled a caller error permitting an unsafe retry. The one legitimate
+post-preflight next_event error is OutputTooSmall from its pending-frame-aware
+copy preflight. Wrapper alias validation already covers its entire owner,
+version and every queued allocation. Short RX output still preserves all bytes,
+reader state, clocks and liveness.
+
+TX query/copy calls peek only after public token/phase preflight; unexpected
+queue failure is InternalInvariant. Mapping's exhausted shared IDs and any
+unexpected codec/helper failure are also InternalInvariant. Feed's sticky reader
+failure/InputClosed and any escaped peer alias check after wrapper preflight
+are InternalInvariant. Creation alone keeps config/version/capability argument
+and allocation mappings. No broad global error-tag allowlist is used after
+stateful operation preflight. Outputs stay unchanged on every C error; an
+InternalInvariant may follow internal mutation and requires caller abort,
+quiescence and destruction, not retry. Stable numeric statuses/struct layouts
+and protocol versions remain unchanged.
+
+Tests retain all legitimate public statuses and add safe scalar-only helper
+phase/token/time disagreements with unchanged C outputs and InternalInvariant.
+No owning allocation pointer/count corruption, coverage exclusion, gate change
+or production noinline workaround is authorized. The proposal in
+resume_proposals/peer_contextual_errors.md is advisory; this paragraph is the
+normative wrapper ordering and recovery contract.
