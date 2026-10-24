@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
+interop-test: interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -267,3 +267,8 @@ build/interop_linux_session_owner_test: tests/interop/linux_session_owner.c test
 .PHONY: interop-linux-session-test
 interop-linux-session-test: build/interop_linux_session_owner_test
 	./build/interop_linux_session_owner_test
+
+# Fault-test the isolated runner without launching QEMU, swtpm or any guest.
+.PHONY: interop-native-runner-test
+interop-native-runner-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/interop -p native_guest_runner_test.py

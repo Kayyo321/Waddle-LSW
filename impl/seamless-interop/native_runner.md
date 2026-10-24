@@ -65,3 +65,13 @@ temporary regular files; test break notification and run() cleanup with bounded
 fault fixtures. The preserved base is only opened read-only; no real VM launch
 until root reviews the amended source. Reference: Linux man-pages
 [F_SETLEASE](https://www.man7.org/linux/man-pages/man2/F_SETLEASE.2const.html).
+
+### Continuous recoverability checks
+
+`make interop-native-runner-test` runs the isolated Python contract suite as a
+prerequisite of `interop-test`, so the Linux interop CI hardware-free step also
+executes it. The tests use temporary files and mock child processes; they never
+start QEMU, swtpm, or a Windows guest. The real kernel read-lease tests require
+a Linux filesystem supporting leases and fail if exclusion or break handling
+is unavailable; they do not turn a failed protection check into a skip. This
+qualifies runner recoverability only and grants no installed-session credit.

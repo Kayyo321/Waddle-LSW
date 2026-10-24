@@ -1131,7 +1131,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     mapping/Wayland lifetime and production VSOCK remain open; no runtime credit.
     HEAD identifies this bounded component/qualification commit.
 
-- **Commit `HEAD`**: `feat(daemon): integrate nonblocking GuestReady transactions`
+- **Commit `4c5e74a`**: `feat(daemon): integrate nonblocking GuestReady transactions`
   - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
   - **Summary**: Replaces lossy daemon receive calls/blocking reply writes with
     bounded per-client incremental frames and queued replies, same-UID credentials,
@@ -1143,3 +1143,10 @@ its uncompiled draft earns no credit until current acceptance passes.
     taken arcs. Adds corresponding Linux CI gates. [Qualification](guest_ready_runtime_evidence_2026_10_24/qualification.json).
     The actual waddle-session/Wayland/mapping entry and native VSOCK remain open.
     HEAD identifies this daemon integration/qualification commit.
+
+- **Commit `HEAD`**: `ci(interop): exercise native runner recoverability in hardware-free gates`
+  - **Task Impact**: +0% to TODO #34 (+0% overall; total18.00%).
+  - **Summary**: Makes the 24 isolated runner contract/fault tests an interop-test
+    prerequisite, including real kernel read-lease writer exclusion and break
+    handling. Tests launch no VM or TPM and provide no installed-session credit.
+    Local target passes; remote CI qualification remains required.
