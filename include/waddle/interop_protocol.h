@@ -19,7 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/** @brief Guest VSOCK listen port for interop v1. */
+/** @brief Guest VSOCK listen port for the current interop session protocol. */
 #define InteropControlPort 5002u
 /** @brief Frame magic, bytes 'W' 'I' 'O' 'P'. */
 #define InteropMagic 0x504F4957u
@@ -236,7 +236,7 @@ typedef enum interop_tag_t {
     InteropTagCapabilities = 0x003A, /**< capabilities: u64; critical. interop_capability_t bitmask */
     InteropTagAgentVersion = 0x003B, /**< agent_version: str; critical. Semantic version of the sender */
     InteropTagLayoutVersion = 0x003C, /**< layout_version: u32; critical. IVSHMEM layout version */
-    InteropTagSessionEpoch = 0x003D, /**< session_epoch: u64; critical. Agent session epoch (random nonzero u64 per agent start) */
+    InteropTagSessionEpoch = 0x003D, /**< session_epoch: u64; critical. Fresh nonzero epoch per authorized mapping initialization; transport accept never authorizes reuse */
     InteropTagOutput = 0x003E, /**< output: bytes; critical. u32 output_id, u32 width_px, u32 height_px, u32 scale_120 (scale ×120, 120..480) */
     InteropTagStream = 0x003F, /**< stream: u32; critical. Audio stream / ring index */
     InteropTagPrinterName = 0x0040, /**< printer_name: str; critical. CUPS queue name ≤ 127 */

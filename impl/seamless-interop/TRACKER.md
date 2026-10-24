@@ -778,9 +778,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     integration remains unaccepted and earns no progress by itself.
     [Qualification](mapping_windows_qualification_2026_10_24.json). Source commit3230877 contains this implementation.
 
-- **Commit `HEAD`**: `docs(interop): record exact Windows mapper CI qualification`
+- **Commit `5d67f6f`**: `docs(interop): record exact Windows mapper CI qualification`
   - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total16.40%).
   - **Summary**: Archives successful Linux coverage/leak-enabled sanitizer and
     native Windows CPU fixture CI40117078089 plus Native AV40117078160 at
     exact source3230877. Fake driver calls remain explicit; no installed driver,
-    live mapping or endpoint acceptance is credited. HEAD is this receipt commit.
+    live mapping or endpoint acceptance is credited. Source commit5d67f6f contains this receipt.
+
+- **Commit `HEAD`**: `docs(interop): define retained host frame ownership and safe stop boundaries`
+  - **Task Impact**: +0% to TODO #1/#5/#6/#7/#34 (+0% overall; total16.40%).
+  - **Summary**: Corrects GuestReady to the configured guest-exec service and
+    defines epoch per authorized mapping initialization. Removes unsafe reset
+    and pin-retirement claims on EOF/restart. Preserves independent drain reviews
+    as unaccepted research; freezes a bounded pure registry with exact callback
+    tickets, explicit never-attached completion, notification backpressure and
+    retained quarantine. Assigns separate Luna implementation/tests/review lanes.
+    No protocol-version or runtime behavior changes; HEAD is this contract commit.

@@ -53,7 +53,7 @@
       ]
     }
   ],
-  "baseline": "2cd516e",
+  "baseline": "3230877",
   "workers": [
     {
       "agent": "luna_layout",
@@ -109,7 +109,33 @@
     "Worker tests use separate /tmp output/cache; no acceptance from mocked/native-unrun results"
   ],
   "checkpoint_status": "active",
-  "active_workers": [],
+  "active_workers": [
+    {
+      "agent": "luna_mounts",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "src/interop/host_buffer_registry.zig"
+      ],
+      "task": "Implement accepted appendix8.19 fixed host frame registry; isolated unit tests; no native proof"
+    },
+    {
+      "agent": "luna_layout",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "tests/interop/host_buffer_registry.zig"
+      ],
+      "task": "Independent black-box stale-callback/backpressure/capacity/stress tests and review"
+    },
+    {
+      "agent": "luna_qemu_build",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [],
+      "task": "Read-only single-host-coordinator drain transition review to /tmp; protocol amendment unaccepted"
+    }
+  ],
   "completed_followups": [
     {
       "agent": "luna_layout",
@@ -183,5 +209,5 @@
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
   },
-  "lead_current_work": "Combined session-core CI is green; total16.40%. Raw Windows mapper/fixtures passed local strict, leak-enabled sanitizer, coverage and actual SDK cross-build; awaiting next native CPU CI, then connected-peer/OS-loop integration."
+  "lead_current_work": "Source3230877 passes both CI workflows, including native Windows CPU fixtures. Overall16.40%. Lead corrects startup probe/epoch lifetime contract, reviews registry and keeps shared integration/CI/Git ownership. Claude graph lane remains reserved."
 }

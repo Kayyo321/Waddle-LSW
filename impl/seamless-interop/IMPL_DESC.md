@@ -392,7 +392,7 @@ it is sent as critical.
 | 0x003A | `capabilities` | u64 | yes | `interop_capability_t` bitmask |
 | 0x003B | `agent_version` | str | yes | Semantic version of the sender |
 | 0x003C | `layout_version` | u32 | yes | IVSHMEM layout version |
-| 0x003D | `session_epoch` | u64 | yes | Agent session epoch (random nonzero u64 per agent start) |
+| 0x003D | `session_epoch` | u64 | yes | Fresh nonzero epoch per authorized mapping initialization; never per transport accept |
 | 0x003E | `output` | bytes | yes | `u32 output_id, u32 width_px, u32 height_px, u32 scale_120` (scale ×120, 120..480) |
 | 0x003F | `stream` | u32 | yes | Audio stream / ring index |
 | 0x0040 | `printer_name` | str | yes | CUPS queue name ≤ 127 |
@@ -771,7 +771,7 @@ version 1; new types are additive, old daemons answer `ENOTSUP`):
 | Type | Name | Payload |
 |---|---|---|
 | 0x10 | `DaemonMsgGuestReadyReq` | `u32 timeout_ms` |
-| 0x11 | `DaemonMsgGuestReadyResp` | `i32 status (0 ready, -ETIMEDOUT, -ENOTCONN)`, `u32 cid` |
+| 0x11 | `DaemonMsgGuestReadyResp` | `i32 status (0 guest-exec reachable, -ETIMEDOUT, -ENOTCONN)`, `u32 cid` |
 | 0x12 | `DaemonMsgUsbListReq` | — |
 | 0x13 | `DaemonMsgUsbListResp` | `u32 count`, then per device `u16 vid, u16 pid, u8 bus, u8 addr, u8 attached, u8 reserved, char product[64]` |
 | 0x14 | `DaemonMsgUsbAttachReq` | `u16 vid, u16 pid, u8 bus, u8 addr, u16 reserved` |
@@ -779,10 +779,17 @@ version 1; new types are additive, old daemons answer `ENOTSUP`):
 | 0x16 | `DaemonMsgUsbDetachReq` | `char qom_id[32]` |
 | 0x17 | `DaemonMsgUsbDetachResp` | `i32 status` |
 
-`GuestReady` waits (in the daemon's existing poll loop, non-blocking, with a
-deadline per client) until a VSOCK connect to port 5002 succeeds, then closes
-that probe connection immediately. The session agent tolerates probe
-connections that close before `Hello` (Section 6.1).
+`GuestReady` waits in the daemon's existing nonblocking poll loop, with a
+deadline per client, until the configured guest-exec VSOCK service is reachable
+(`vsock_port`, normally5242). It closes that probe immediately. Status0 means
+only guest-exec reachability; it never grants interop readiness or mapping
+ownership. Only the actual host session owner connects to reserved interop
+port5002 and negotiates Hello/HelloAck. The seamless entry path must reject a
+profile whose guest-exec port is5002 before ensuring/starting that VM; legacy
+non-interop profiles keep their existing configurable-port behavior. No grace
+timer may distinguish a probe from a real interop peer. The current daemon's
+startup reachability probe already uses config.vsock_port; the new GuestReady
+request and seamless entry guard remain implementation work.
 
 ### 3.5 Configuration keys (Frozen)
 
@@ -1710,7 +1717,8 @@ agent feeds a ViGEm virtual Xbox 360 controller.
 
 ### 4.2 Session start (`waddle-session --device N`)
 
-1. Take `session.lock` (non-blocking; held → exit 0, another instance owns it).
+1. Validate the selected profile, rejecting guest-exec port5002 before VM startup.
+   Take `session.lock` (non-blocking; held → exit0, another instance owns it).
 2. Recover manifest journals; run user `migrate` if `waddle_version` differs.
 3. Connect to Wayland; bind globals (required: `wl_compositor` ≥4,
    `xdg_wm_base` ≥2, `wl_shm`, `wl_seat` ≥5; optional: everything else, each
@@ -1835,15 +1843,34 @@ desktop by Windows when maximized).
 
 ### 4.7 Teardown
 
-- `waddle-session` exit (Wayland disconnect, SIGTERM, `waddle stop`): send
-  `Goodbye`, release all surfaces and PipeWire streams, remove the discard
-  sink, unmap IVSHMEM, release `session.lock`. Guest on `Goodbye`/disconnect:
-  release held input, cancel transfers and DnD loops, take back clipboard
-  ownership by rendering all host-owned formats if still within 2 s (else
-  `EmptyClipboard` of agent-owned delayed formats), keep capture slots free,
-  return to Listening. Launched applications keep running.
-- Guest agent exit (logoff): `WM_RENDERALLFORMATS`, `Goodbye`, unhook,
-  destroy synthetic pointer devices.
+Close new user-work admission and release held input on shutdown. Clipboard
+rendering and transfer/DnD cancellation remain bounded independently of mapping
+ownership. An orderly mapping stop must keep the control and Wayland dispatch
+loops alive while the guest stops/joins all frame and audio writers, resolves
+provisional slot claims and flushes final FrameReady publications. The host
+processes that entire FIFO prefix, completes pending imports, waits for actual
+release of every attached compositor buffer, sends exact FrameRelease records,
+stops/joins audio and metadata/heartbeat readers and irrevocably ends host map
+access. The guest processes all exact releases and verifies zero outstanding
+pins before retiring its old runtime. A shared Free state alone is insufficient.
+
+Goodbye, a successful socket write, EOF, timeout, process restart, local proxy
+or surface destruction and the legacy two-second Wayland drain are never these
+proofs. Current protocolv2 has no accepted epoch-wide orderly-stop receipt;
+until the versioned amendment and native owners are implemented, an uncertain
+stop retains/quarantines the mapping, pins and callback ownership and prohibits
+in-place metadata initialization. Do not return to Listening with a reusable
+BAR merely because the transport closed. A new random epoch cannot authorize
+reuse. Crash recovery requires a retained owner with valid evidence or a trusted
+reset that supplies a distinct backing object after old producers stopped;
+old compositor imports must continue to refer to the old object. Such recovery
+is unimplemented and earns no acceptance credit.
+
+Applications keep running when a session stops. Guest logoff may unhook window
+and input callbacks only after their owners stop/join safely; WM_RENDERALLFORMATS
+and synthetic-pointer teardown do not release mapping pins. Session lock and
+backing-owner lifetime must outlive any retained uncertain resource. The protocolv3
+research documents are unaccepted proposals, not permission to skip these facts.
 
 ---
 
@@ -1886,8 +1913,9 @@ desktop by Windows when maximized).
 - Frames on the control connection are processed in order.
 - `FrameReady` for generation G is never sent before `WindowAnnounce` for G.
 - `WindowRetire` is sent only after every slot of the window has been
-  released by the host or the connection dropped; the host drops late
-  `FrameReady`s for retired generations.
+  exactly released by the host. Connection loss quarantines outstanding slots;
+  it never retires their pins. The host rejects late FrameReady for a retired
+  generation while retaining any earlier imports until their own completion.
 - Input serials are strictly increasing; the guest rejects a non-increasing
   serial as `ProtocolViolation`.
 
@@ -1897,12 +1925,15 @@ desktop by Windows when maximized).
 
 ### 6.1 Connection
 
-- Probe connections (daemon `GuestReady`) that close without `Hello` are
-  normal; the agent returns to Listening without logging an error.
-- Any fatal codec error → `Error` then close; the host reconnects with backoff
-  and rebuilds state from the guest's snapshot.
-- VM stop/restart: the daemon state leaves `Running`; the host destroys all
-  surfaces for the device and waits for `Running` again.
+- GuestReady probes the legacy guest-exec service, not interop5002. An aborted
+  pre-Hello connection grants no mapping ownership or reinitialization right.
+- A fatal codec error sends Error when possible and closes the connection.
+  Existing epoch owners retain uncertain resources. Backoff and snapshot rebuild
+  can begin only after the native owner authorizes a safe replacement epoch.
+- VM stop/restart removes Running status and stops new work. Surface destruction
+  is a retirement request, not actual buffer-release evidence. Retain old
+  references until their exact completion; do not reuse the old backing object
+  from daemon Running state alone (Section4.7).
 
 ### 6.2 Resource exhaustion
 
@@ -2929,3 +2960,23 @@ and GUID at this boundary, following the existing AV/vGPU include boundary.
 No Looking Glass runtime is linked, no vendor source is copied and no gitlink
 is changed. CI explicitly initializes that exact existing submodule before
 building the Linux double or cross-compiling the SDK translation unit.
+
+
+### 8.19 Bounded host frame-lifetime registry (2026-10-24)
+
+Accepted lead contract for next pure Zig host_buffer_registry.zig (2026-10-24).
+Protocol remains v2/layout3. No native compositor or epoch proof is implemented.
+Use allocation-free bounded Zig, fixed192 records. Serialized caller owns struct.
+Public types: frame_key_t {session_epoch:u64,window:u64,generation:u64,slot:u32,frame_sequence:u64}; ticket_t=u64; registry_t; counts_t; state_t; registry_error_t. Constants PascalCase, funcs/fields snake_case, all type/module aliases _t. Every public symbol documented ownership/error/thread safety.
+registry_t.init(epoch:u64) !registry_t: reject0. No reset/deinit clearing ownership method. State Open initially. Each record ticket immutable monotonically increasing 1..UINT64_MAX, never wraps or reuses (exhausted permanent admission error). Caller cannot reinit a live registry as cleanup. Tickets scoped to exact registry instance/epoch; callers pass captured epoch on EVERY mutating method/callback plus ticket. No pointers/callback/native resources retained.
+begin_import(epoch,key) !ticket: validate epoch equality/key epoch, all window/generation/sequence nonzero,slot<3; only Open; reject duplicate occupied (window,slot) regardless gen/seq while record remains, max192; all errors leave complete state unchanged. Precondition: caller has acquired the exact validated descriptor Ready->Consuming before begin_import, with no import/native callback started; on admission error caller retains that native claim and must handle it separately. Record ImportPending, slot_free=false. Ticket assigned only successful admission, cursor unchanged on error. Bound selected from frozen SlotCount. Key is copied.
+mark_attached(epoch,ticket)!void: only ImportPending -> Attached. Caller assertion: async import resolved, callback context immutable/no later import callback, live wl_buffer listener installed, adapter commits attach atomically on same serialized loop; adapter must not dispatch reentrant callback between state transition and actual attach. Production adapter not yet implemented. Repeated attached/error unchanged.
+complete_never_attached(epoch,ticket,callbacks_quiesced:bool)!void: only ImportPending; require true indicating async callback impossible and no attach ever issued. -> Released, completion_kind NeverAttached. False leaves unchanged. No timeout/EOF/proxy destruction/retire shortcut. Failed/cancelled import sends same exact wire FrameRelease after explicit non-compositor proof; kind local only.
+buffer_released(epoch,ticket)!void: only Attached -> Released, kind CompositorRelease. Called ONLY actual wl_buffer.release. Exact epoch/ticket guards reject stale/duplicate. A value-only API cannot authenticate a caller's native fact.
+get_completion(epoch,ticket)!completion_t: only Released; copied key + kind + slot_free bool; read-only; no state mutation.
+mark_slot_free(epoch,ticket)!void: only Released,slot_free false; caller asserts successful exact descriptor CAS Consuming->Free release ordering , identity checked immediately before transition. ->slot_free true. repeated error unchanged. Do not enqueue FrameRelease before this succeeds. Failed CAS escalates outer quarantine; no retirement.
+notify_committed(epoch,ticket)!void: only Released+slot_free; caller asserts bounded send queue OWNS exact encoded FrameRelease, no future native callback holds this ticket. Clears record; never resets monotonic cursor. Queue full does not invoke this and retains key. Queue ACK/socket send not native lifetime proof. Reused slot gets new ticket; late callbacks must fail.
+begin_drain(epoch)!void: Open->Draining, idempotent Draining, forbids new admission, preserves records; existing mutations continue. IMPORTANT adapter invokes only after fully processing FIFO prefix before guest producer-ready, not immediately on local drain request, or prior publications would be dropped.
+quarantine(epoch)!void: ->Quarantined (idempotent), forbids admission; retains all records and allows exact completion callbacks/slot_free/notify to progress. Never auto-open; no free-all.
+counts() counts_t: counts import_pending,attached,released,total,admission state; sums192. zero records necessary not sufficient for unmap; no API returns can_unmap/drained proof. No allocation, mapping access, wire parsing/encoding, Wayland operations, callback storage, timeline or proof generation.
+Tests production bothline/branch>=90; no exclusions/loweredgate. Full192, invalidfields, wrongphase, wrong/staleepoch/ticket, UINT64_MAX exhaustion, stale ticket after reuse, callback sequences, duplicate events, neverattached false proof, queuebackpressure, drain/quarantine whilepending and attached, stress192 records variedcompletion. Tests should assert full-state unchanged on errors. Lead separately implements build/Windows/coverage gates. Worker test output/cache /tmp, no sharedmake/build/Git/VM/README/Claude reserved paths.
