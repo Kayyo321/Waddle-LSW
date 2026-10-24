@@ -591,12 +591,14 @@ pub const TickBaseStart: u64 = 4294967296;
 /// Unwrap a raw 32-bit tick against a 64-bit base.
 ///
 /// Computes `base + (i64)(i32)(t32 -% (u32)base)` with the subtraction wrapping modulo 2^32, so the
-/// result is the 64-bit value congruent to `t32` that lies within +-2^31 of `base`. The result is
-/// exact while the base is advanced at least once per 2^31 ms. The caller (never this function)
-/// advances `graph_t.tick_base` to the larger of the old base and the result, and only when the call
-/// returns Ok.
+/// result is the 64-bit value congruent to `t32` that lies within +-2^31 of `base`. The graph passes
+/// the clock-advanced estimate `tick_estimate`, not the raw `graph_t.tick_base`, so the result is
+/// exact while the graph clock does not trail the tick domain by 2^31 ms between two Ok calls that
+/// carry a tick. The caller (never this function) advances `graph_t.tick_base` (and
+/// `tick_clock_at_base`, see `commit_ok`) to the larger of the old value and the result, and only
+/// when the call returns Ok.
 ///
-/// @param[in] base Current 64-bit base, at least `TickBaseStart` so the result cannot underflow.
+/// @param[in] base 64-bit base or estimate, at least `TickBaseStart` so the result cannot underflow.
 /// @param[in] t32 Raw 32-bit tick-domain value from the wire.
 /// @return The unwrapped 64-bit tick; below `base` for a delayed older tick.
 /// @note Pure; thread-safe. Wrapping arithmetic only, no overflow trap.
@@ -939,6 +941,9 @@ pub const graph_t = struct {
     /// Monotonic 64-bit tick base (`unwrap_tick`); advanced to the larger of itself and the
     /// unwrapped tick on every Ok call that carries a tick; starts at `TickBaseStart`.
     tick_base: u64 = TickBaseStart,
+    /// Reading of the graph clock (`clock_now_ms`) at which `tick_base` is exact. Together with
+    /// `tick_base` it gives the unwrap estimate `tick_estimate`; 0 at creation.
+    tick_clock_at_base: u64 = 0,
     /// Next deferral age to assign; starts at 1, saturating.
     next_seq: u64,
     /// Clock reading of the last successful capacity diagnostic.
@@ -996,6 +1001,7 @@ pub fn create(allocator: std.mem.Allocator, config: *const config_t) error{ OutO
     graph.timer = std.time.Timer.start() catch null;
     graph.next_seq = 1;
     graph.tick_base = TickBaseStart;
+    graph.tick_clock_at_base = 0;
     return graph;
 }
 
@@ -1434,6 +1440,24 @@ fn clock_now_ms(graph: *graph_t) u64 {
     return 0;
 }
 
+/// Estimate of the current 64-bit tick: `tick_base` plus the graph-clock time elapsed since
+/// `tick_clock_at_base`.
+///
+/// The elapsed time is 0 when `now` is not after `tick_clock_at_base` (a clock that does not move,
+/// has no timer, or went backwards), so the estimate is never below `tick_base` and the result
+/// saturates instead of wrapping. Unwrapping an incoming tick against this estimate keeps the unwrap
+/// exact across a silence of any length (no Ok call that carries a tick for more than 2^31 ms) as
+/// long as the graph clock kept running.
+///
+/// @param[in] graph Non-null graph; never written.
+/// @param[in] now Clock reading taken for this call (`clock_now_ms`).
+/// @return The estimate, at least `graph.tick_base`.
+/// @note Owner thread only; pure.
+pub fn tick_estimate(graph: *const graph_t, now: u64) u64 {
+    const elapsed: u64 = if (now > graph.tick_clock_at_base) now - graph.tick_clock_at_base else 0;
+    return graph.tick_base +| elapsed;
+}
+
 /// Take the rate-limited capacity diagnostic.
 ///
 /// None without reading the clock when all four diagnostic counters are zero. Otherwise the
@@ -1721,10 +1745,46 @@ pub fn mark_seen(graph: *graph_t, window: u64) void {
     if (find_deferred(graph, window)) |slot| graph.deferred[slot].seen = true;
 }
 
-/// Follow the owner chain of a candidate parent through deferred records.
+/// Result of following an owner chain through deferred records (`deferred_chain_end`).
+pub const chain_end_t = struct {
+    /// True when the chain hit the offered window itself or did not end within 65 steps.
+    cycle: bool,
+    /// HWND of the Active entry that ended the chain; 0 when the chain ended at a window with
+    /// neither an Active entry nor a deferred record, or when `cycle` is true.
+    terminal_window: u64,
+};
+
+/// Follow the owner chain of a candidate parent through deferred records and report where it ends.
 ///
 /// Starting at `parent`, the chain follows each deferred record's `parent_window` (always nonzero)
 /// for at most 65 steps and stops at an Active entry or at a window with no deferred record.
+///
+/// @param[in] graph Non-null graph; never written.
+/// @param[in] window The window being offered.
+/// @param[in] parent Its candidate parent HWND (nonzero).
+/// @return `cycle` true when `parent == window`, when a deferred hop names `window`, or when the
+///         chain does not end within 65 steps (a pre-existing cycle). Otherwise `terminal_window`
+///         is the Active entry that ended the chain (0 when it ended without one). The caller uses
+///         it to detect a chain that re-enters the cascade of a retiring entry, which a purely
+///         deferred walk cannot see.
+/// @note Owner thread only; pure read.
+pub fn deferred_chain_end(graph: *const graph_t, window: u64, parent: u64) chain_end_t {
+    if (parent == window) return .{ .cycle = true, .terminal_window = 0 };
+    var cursor = parent;
+    var steps: u32 = 0;
+    while (steps <= 65) : (steps += 1) {
+        if (find_active(graph, cursor) != null) return .{ .cycle = false, .terminal_window = cursor };
+        const slot = find_deferred(graph, cursor) orelse return .{ .cycle = false, .terminal_window = 0 };
+        const next = graph.deferred[slot].record.parent_window;
+        if (next == window) return .{ .cycle = true, .terminal_window = 0 };
+        cursor = next;
+    }
+    return .{ .cycle = true, .terminal_window = 0 };
+}
+
+/// Follow the owner chain of a candidate parent through deferred records.
+///
+/// Thin wrapper over `deferred_chain_end` that keeps only the `cycle` verdict.
 ///
 /// @param[in] graph Non-null graph; never written.
 /// @param[in] window The window being offered.
@@ -1733,17 +1793,7 @@ pub fn mark_seen(graph: *graph_t, window: u64) void {
 ///         within 65 steps (a pre-existing cycle).
 /// @note Owner thread only; pure read.
 pub fn deferred_chain_cycle(graph: *const graph_t, window: u64, parent: u64) bool {
-    if (parent == window) return true;
-    var cursor = parent;
-    var steps: u32 = 0;
-    while (steps <= 65) : (steps += 1) {
-        if (find_active(graph, cursor) != null) return false;
-        const slot = find_deferred(graph, cursor) orelse return false;
-        const next = graph.deferred[slot].record.parent_window;
-        if (next == window) return true;
-        cursor = next;
-    }
-    return true;
+    return deferred_chain_end(graph, window, parent).cycle;
 }
 
 /// Build the persistent record for a window from validated facts.
@@ -1962,14 +2012,24 @@ const call_t = struct {
     graph: *graph_t,
     facts: *const facts_t,
     t64: u64,
+    now: u64,
     l_slot: ?usize,
     d_slot: ?usize,
     tally: tally_t = .{},
 };
 
-fn commit_ok(graph: *graph_t, stamp: u64, t64: u64) void {
+/// Commit an Ok call: raise `stamp_high_water` and the tick base.
+///
+/// `tick_base` becomes the larger of itself and `t64`. `tick_clock_at_base` is chosen so that the
+/// estimate right now, `max(tick_estimate(now), t64)`, is preserved: a tick at or beyond the old
+/// estimate re-anchors the pair at `now`; a delayed older tick leaves the estimate unchanged, so
+/// the estimate never moves backwards (except when the clock itself went backwards, which
+/// re-anchors at `now`).
+fn commit_ok(graph: *graph_t, stamp: u64, t64: u64, now: u64) void {
+    const estimate = @max(tick_estimate(graph, now), t64);
     graph.stamp_high_water = @max(graph.stamp_high_water, stamp);
     graph.tick_base = @max(graph.tick_base, t64);
+    graph.tick_clock_at_base = now -| (estimate - graph.tick_base);
 }
 
 fn write_observation(out: *observation_t, window: u64, tally: *const tally_t, disposition: u32, role: u32, generation: u64, retired_generation: u64, reason: u32) void {
@@ -1990,7 +2050,7 @@ fn write_observation(out: *observation_t, window: u64, tally: *const tally_t, di
 
 fn observe_suspended(call: *call_t, out: *observation_t) status_t {
     bump(&call.graph.stats.suspended);
-    commit_ok(call.graph, call.facts.stamp, call.t64);
+    commit_ok(call.graph, call.facts.stamp, call.t64, call.now);
     write_observation(out, call.facts.window, &call.tally, DispositionSuspended, 0, 0, 0, ReasonNone);
     return .Ok;
 }
@@ -2009,7 +2069,7 @@ fn observe_not_exported(call: *call_t, reason: u32, out: *observation_t) status_
     } else if (call.d_slot) |slot| {
         drop_deferred(graph, slot, &call.tally);
     }
-    commit_ok(graph, call.facts.stamp, call.t64);
+    commit_ok(graph, call.facts.stamp, call.t64, call.now);
     write_observation(out, call.facts.window, &call.tally, disposition, 0, 0, retired_generation, reason);
     return .Ok;
 }
@@ -2053,7 +2113,7 @@ fn observe_update(call: *call_t, slot: usize, out: *observation_t) status_t {
         if (ring_push_or_coalesce(graph, &ev)) call.tally.events += 1;
         disposition = DispositionUpdated;
     }
-    commit_ok(graph, facts.stamp, call.t64);
+    commit_ok(graph, facts.stamp, call.t64, call.now);
     write_observation(out, facts.window, &call.tally, disposition, rec.role, rec.generation, 0, ReasonNone);
     return .Ok;
 }
@@ -2123,11 +2183,18 @@ fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) sta
     if (call.d_slot) |slot| plan.drop_d = !identity_equal(&graph.deferred[slot].record, facts);
 
     // Stage 5a: cycle check, including the cascade-set rule.
+    // The cascade rule follows the new parent chain through deferred records to the Active entry
+    // that ends it; a terminal inside the retiring cascade (a capacity-cut deferred leftover
+    // chained to a descendant) would let the replacement, or the re-deferred descendants, close a
+    // deferred cycle, so it is forced to the same retire-only outcome as a direct cascade parent.
     var chain_cycle = false;
     var cascade_cycle = false;
     if (verdict.parent_window != 0) {
-        chain_cycle = deferred_chain_cycle(graph, facts.window, verdict.parent_window);
-        cascade_cycle = !chain_cycle and plan.retire and cascade_has_window(graph, &plan.cascade, verdict.parent_window);
+        const end = deferred_chain_end(graph, facts.window, verdict.parent_window);
+        chain_cycle = end.cycle;
+        cascade_cycle = !chain_cycle and plan.retire and
+            (cascade_has_window(graph, &plan.cascade, verdict.parent_window) or
+            (end.terminal_window != 0 and cascade_has_window(graph, &plan.cascade, end.terminal_window)));
     }
     if (chain_cycle or cascade_cycle) {
         const forced = plan.retire and (plan.cause == ReasonIncarnationChanged or cascade_cycle);
@@ -2264,7 +2331,7 @@ fn apply_eligible(call: *call_t, plan: *plan_t, verdict: eligible_t, key: *const
     }
     if (plan.redefer) redefer_descendants(graph, &plan.cascade, &plan.flush.cascade_admitted, tally);
 
-    commit_ok(graph, facts.stamp, call.t64);
+    commit_ok(graph, facts.stamp, call.t64, call.now);
     var disposition: u32 = DispositionRetired;
     var reason: u32 = plan.cause;
     var role: u32 = 0;
@@ -2293,7 +2360,8 @@ fn apply_eligible(call: *call_t, plan: *plan_t, verdict: eligible_t, key: *const
 /// role/parent change (Reclassified), deferred-record identity check, cycle check (including the
 /// cascade-set rule), capacity and generations, ring room for the whole plan (QueueFull), the single
 /// lookup, then the infallible apply. Every Ok marks the window's entry and record seen and advances
-/// `stamp_high_water` and `tick_base`.
+/// `stamp_high_water` and `tick_base` (with `tick_clock_at_base`). Valid facts read the graph clock
+/// once, before the stale check, to unwrap `captured_ms` against `tick_estimate`.
 ///
 /// @param[in,out] graph Non-null graph with `busy` set by `enter`.
 /// @param[in] facts Non-null stack-local copy of the caller's facts; it is the only copy used and
@@ -2301,16 +2369,19 @@ fn apply_eligible(call: *call_t, plan: *plan_t, verdict: eligible_t, key: *const
 /// @param[out] out Non-null; fully written on Ok, unchanged otherwise.
 /// @return Ok; InvalidFacts; StaleFacts; Cycle; AtCapacity; GenerationExhausted; QueueFull;
 ///         LookupFailed; AppKeyInvalid. A shortfall met while a retirement is forced is not returned.
-/// @note Owner thread only; the only callback is `app_key_lookup`; no allocation.
+/// @note Owner thread only; the callbacks are `app_key_lookup` and the clock (`now_ms`, read once per
+///       call with valid facts); no allocation.
 pub fn observe_locked(graph: *graph_t, facts: *const facts_t, out: *observation_t) status_t {
     if (!validate_facts(facts)) {
         bump(&graph.stats.rejected_invalid_facts);
         return .InvalidFacts;
     }
+    const now = clock_now_ms(graph);
     var call = call_t{
         .graph = graph,
         .facts = facts,
-        .t64 = unwrap_tick(graph.tick_base, facts.captured_ms),
+        .now = now,
+        .t64 = unwrap_tick(tick_estimate(graph, now), facts.captured_ms),
         .l_slot = find_active(graph, facts.window),
         .d_slot = find_deferred(graph, facts.window),
     };
@@ -2344,7 +2415,8 @@ pub fn observe_locked(graph: *graph_t, facts: *const facts_t, out: *observation_
 /// @param[in] facts Non-null borrowed snapshot; copied at entry, never retained or modified.
 /// @param[out] out Non-null; fully written on Ok, unchanged otherwise.
 /// @return Ok; WrongThread, Reentrant or StaleEpoch per `enter`; the statuses of `observe_locked`.
-/// @note Owner thread only; the lookup callback receives the stack copy; no allocation.
+/// @note Owner thread only; the lookup callback receives the stack copy; the clock callback is read
+///       once for valid facts; no allocation.
 pub fn observe(graph: *graph_t, epoch: u64, facts: *const facts_t, out: *observation_t) status_t {
     if (enter(graph, epoch)) |status| return status;
     defer leave(graph);
@@ -2354,7 +2426,8 @@ pub fn observe(graph: *graph_t, epoch: u64, facts: *const facts_t, out: *observa
 
 /// Apply a window-destroyed hint without trusting it blindly.
 ///
-/// With e64 the event time unwrapped against `tick_base`: the Active entry of the window retires
+/// With e64 the event time unwrapped against `tick_estimate` (`tick_base` advanced by the graph-clock
+/// time elapsed since it was set; the clock is read once per call): the Active entry of the window retires
 /// (reason Destroyed, descendants ParentRetired, never re-deferred) iff
 /// `hint_stamp > admit_stamp` and not `e64 < admit_captured_ms` (plain 64-bit compare; equal
 /// ticks count as destroyed). The deferred record of the window is dropped iff
@@ -2370,13 +2443,14 @@ pub fn observe(graph: *graph_t, epoch: u64, facts: *const facts_t, out: *observa
 ///             Unchanged (generation and role describe a still-live entry, deferred_dropped may be 1).
 /// @return Ok; InvalidArgument for window 0 or stamp 0; QueueFull; WrongThread, Reentrant or
 ///         StaleEpoch per `enter`.
-/// @note Owner thread only; no callback; no allocation. `stamp_high_water` and `tick_base`
-///       advance on Ok.
+/// @note Owner thread only; the only callback is the clock (`now_ms`, read once after the argument
+///       check); no allocation. `stamp_high_water` and `tick_base` advance on Ok.
 pub fn note_destroyed(graph: *graph_t, epoch: u64, window: u64, hint_stamp: u64, event_time_ms: u32, out: *observation_t) status_t {
     if (enter(graph, epoch)) |status| return status;
     defer leave(graph);
     if (window == 0 or hint_stamp == 0) return .InvalidArgument;
-    const e64 = unwrap_tick(graph.tick_base, event_time_ms);
+    const now = clock_now_ms(graph);
+    const e64 = unwrap_tick(tick_estimate(graph, now), event_time_ms);
     var tally = tally_t{};
     var cascade = cascade_t{};
     var retire_slot: ?usize = null;
@@ -2398,7 +2472,7 @@ pub fn note_destroyed(graph: *graph_t, epoch: u64, window: u64, hint_stamp: u64,
         const rec = &graph.deferred[slot].record;
         if (hint_stamp > rec.last_stamp and !(e64 < rec.last_captured_ms)) drop_deferred(graph, slot, &tally);
     }
-    commit_ok(graph, hint_stamp, e64);
+    commit_ok(graph, hint_stamp, e64, now);
     if (retire_slot != null) {
         write_observation(out, window, &tally, DispositionRetired, 0, 0, retired_generation, ReasonDestroyed);
     } else if (live) |slot| {
@@ -4790,6 +4864,7 @@ fn state_digest(graph: *const graph_t) u64 {
     hasher.update(std.mem.asBytes(&graph.next_seq));
     hasher.update(std.mem.asBytes(&graph.stamp_high_water));
     hasher.update(std.mem.asBytes(&graph.tick_base));
+    hasher.update(std.mem.asBytes(&graph.tick_clock_at_base));
     return hasher.final();
 }
 
@@ -6462,16 +6537,270 @@ test "destroy hints still work 30 and 60 simulated days after the admission" {
     }
 }
 
-test "without a tick-carrying call for longer than half the range the unwrap can alias" {
+test "with a clock that does not advance, a silence longer than half the range still aliases" {
     const graph = try probe_graph(testing.allocator);
     defer call_destroy(graph);
     _ = try admit_at(graph, 0x100, 10, 0xFFFF_0000);
-    // 30 days later but no Ok call in between: the single 32-bit jump reads as negative and is ignored.
+    // 30 days later but no Ok call in between and a graph clock that did not move (so the elapsed
+    // time estimate is 0): the single 32-bit jump reads as negative and is ignored.
     const obs = try destroy_hint(graph, 0x100, 11, @truncate(0xFFFF_0000 + 30 * DayMs));
     try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
     // The next refresh-style offer or hint inside the window of validity corrects it.
     const later = try destroy_hint(graph, 0x100, 12, 0xFFFF_0000);
     try expect_obs(later, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+}
+
+test "tick_estimate adds the clock time elapsed since the anchor, never goes below the base and saturates" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    graph.tick_base = TickBaseStart + 1000;
+    graph.tick_clock_at_base = 400;
+    try testing.expectEqual(TickBaseStart + 1000, tick_estimate(graph, 400));
+    try testing.expectEqual(TickBaseStart + 1600, tick_estimate(graph, 1000));
+    // A clock that went backwards (or never moved) counts as 0 elapsed.
+    try testing.expectEqual(TickBaseStart + 1000, tick_estimate(graph, 399));
+    try testing.expectEqual(TickBaseStart + 1000, tick_estimate(graph, 0));
+    graph.tick_base = std.math.maxInt(u64) - 5;
+    graph.tick_clock_at_base = 0;
+    try testing.expectEqual(@as(u64, std.math.maxInt(u64)), tick_estimate(graph, 100));
+}
+
+test "the estimate anchor follows ticks and clock: newer ticks re-anchor, delayed ticks keep the estimate" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    test_clock.now = 100;
+    _ = try admit_at(graph, 0x100, 10, 5000);
+    try testing.expectEqual(TickBaseStart + 5000, graph.tick_base);
+    try testing.expectEqual(@as(u64, 100), graph.tick_clock_at_base);
+    // 500 ms of clock later the estimate is base + 500. A delayed tick 200 ms behind the estimate
+    // still raises the base (monotonic max) but the estimate stays where it was.
+    test_clock.now = 600;
+    var facts = window_facts(0x100, 11);
+    facts.captured_ms = 5300;
+    _ = try offer(graph, &facts);
+    try testing.expectEqual(TickBaseStart + 5300, graph.tick_base);
+    try testing.expectEqual(TickBaseStart + 5500, tick_estimate(graph, 600));
+    // A tick 7 ms ahead of the estimate re-anchors the pair at the current clock reading.
+    facts.stamp = 12;
+    facts.captured_ms = 5507;
+    _ = try offer(graph, &facts);
+    try testing.expectEqual(TickBaseStart + 5507, graph.tick_base);
+    try testing.expectEqual(@as(u64, 600), graph.tick_clock_at_base);
+    // A delayed tick older than the base changes neither value.
+    test_clock.now = 700;
+    facts.stamp = 13;
+    facts.captured_ms = 5000;
+    _ = try offer(graph, &facts);
+    try testing.expectEqual(TickBaseStart + 5507, graph.tick_base);
+    try testing.expectEqual(@as(u64, 600), graph.tick_clock_at_base);
+    // A clock that went backwards re-anchors at the new reading; the base itself never decreases.
+    test_clock.now = 50;
+    facts.stamp = 14;
+    facts.captured_ms = 5600;
+    _ = try offer(graph, &facts);
+    try testing.expectEqual(TickBaseStart + 5600, graph.tick_base);
+    try testing.expectEqual(@as(u64, 50), graph.tick_clock_at_base);
+    test_clock.now = 10;
+    _ = try destroy_hint(graph, 0x777, 20, 5000);
+    try testing.expectEqual(TickBaseStart + 5600, graph.tick_base);
+    try testing.expectEqual(@as(u64, 10), graph.tick_clock_at_base);
+}
+
+test "a rejected call reads the clock but changes neither tick_base nor its anchor" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_at(graph, 0x100, 10, 5000);
+    test_clock.now = 9000;
+    var stale = window_facts(0x100, 5);
+    stale.captured_ms = 9000;
+    try offer_fails(graph, &stale, .StaleFacts);
+    var obs = sentinel_observation();
+    try testing.expectEqual(status_t.InvalidArgument, call_note_destroyed(graph, TestEpoch, 0, 20, 9000, &obs));
+    try testing.expectEqual(TickBaseStart + 5000, graph.tick_base);
+    try testing.expectEqual(@as(u64, 0), graph.tick_clock_at_base);
+}
+
+test "a graph without a now_ms callback unwraps with its default timer and keeps working" {
+    var config = test_config(TestEpoch);
+    config.now_ms = null;
+    config.now_ms_context = null;
+    lookup_probe = .{};
+    config.app_key_lookup = probe_lookup;
+    const graph = try call_create(testing.allocator, &config);
+    defer call_destroy(graph);
+    lookup_probe.graph = graph;
+    _ = try admit_at(graph, 0x100, 10, 0xFFFF_FFF0);
+    const obs = try destroy_hint(graph, 0x100, 11, 0x0000_0010);
+    try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+    try testing.expectEqual(TickBaseStart + 0x10, graph.tick_base);
+}
+
+test "after a silence longer than 2^31 ms of the graph clock, current-tick offers repair the base and a genuine destroy hint retires" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    test_clock.now = 5;
+    var first = window_facts(0x100, 10);
+    first.captured_ms = 1000;
+    _ = try offer(graph, &first);
+    // 30 days with no graph call at all (a locked guest). The tick domain and the clock both run on.
+    const thirty_days: u64 = 30 * DayMs;
+    var clock_now: u64 = 5 + thirty_days;
+    var tick_now: u64 = 1000 + thirty_days;
+    var stamp: u64 = 11;
+    var round: u32 = 0;
+    while (round < 14_400) : (round += 1) {
+        test_clock.now = clock_now;
+        var facts = window_facts(0x100, stamp);
+        facts.captured_ms = @truncate(tick_now);
+        var obs = sentinel_observation();
+        try testing.expectEqual(status_t.Ok, call_observe(graph, TestEpoch, &facts, &obs));
+        try testing.expectEqual(DispositionUnchanged, obs.disposition);
+        if (round % 1000 == 0) try check_invariants(graph);
+        stamp += 1;
+        clock_now += 250;
+        tick_now += 250;
+    }
+    // The base follows the true time although 30 days exceed half the 32-bit range.
+    try testing.expectEqual(TickBaseStart + 1000 + thirty_days + 14_399 * 250, graph.tick_base);
+    test_clock.now = clock_now;
+    const obs = try destroy_hint(graph, 0x100, stamp, @truncate(tick_now));
+    try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+}
+
+test "the very first tick-carrying call after a long silence is unwrapped by the clock estimate" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_at(graph, 0x100, 10, 0xFFFF_0000);
+    test_clock.now = 30 * DayMs;
+    // A genuine destroy hint 30 days after the admission: no offer in between, only the clock.
+    var obs = try destroy_hint(graph, 0x100, 11, @truncate(0xFFFF_0000 + 30 * DayMs));
+    try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+    // A hint for a window re-admitted afterwards, older than its admission by 10 ms, stays ignored.
+    var facts = window_facts(0x100, 12);
+    facts.captured_ms = @truncate(0xFFFF_0000 + 30 * DayMs);
+    obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, 2, 0, ReasonNone);
+    obs = try destroy_hint(graph, 0x100, 13, @truncate(0xFFFF_0000 + 30 * DayMs - 10));
+    try expect_obs(obs, DispositionUnchanged, RoleToplevel, 2, 0, ReasonNone);
+}
+
+test "estimate unwrap tolerates a clock that runs ahead of the ticks by less than half the range" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    _ = try admit_at(graph, 0x100, 10, 5000);
+    // The clock ran 20 days but the offered tick is only 2 days after the base: 18 days behind the
+    // estimate, inside +-2^31 ms (24.8 days) of it, so the unwrap is still exact.
+    test_clock.now = 20 * DayMs;
+    var facts = window_facts(0x100, 11);
+    facts.captured_ms = @truncate(5000 + 2 * DayMs);
+    _ = try offer(graph, &facts);
+    try testing.expectEqual(TickBaseStart + 5000 + 2 * DayMs, graph.tick_base);
+    try testing.expectEqual(TickBaseStart + 5000 + 20 * DayMs, tick_estimate(graph, 20 * DayMs));
+}
+
+fn fill_toplevels(graph: *graph_t, first: u64, count: u64, stamp: *u64) !void {
+    var index: u64 = 0;
+    while (index < count) : (index += 1) {
+        stamp.* += 1;
+        const facts = window_facts(first + index, stamp.*);
+        _ = try offer(graph, &facts);
+    }
+}
+
+/// Build the capacity-cut leftover state: X (0x300) waits for C (0x200); W (0x100) and then C (a
+/// dialog of W) are admitted in the last free slots, so X stays deferred with the Active parent C.
+fn cut_leftover_state(graph: *graph_t, stamp: *u64) !void {
+    var facts = owned_facts(0x300, 0x200, stamp.*);
+    var obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    try fill_toplevels(graph, 0x10000, 62, stamp);
+    stamp.* += 1;
+    facts = window_facts(0x100, stamp.*);
+    obs = try offer(graph, &facts);
+    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    stamp.* += 1;
+    facts = owned_facts(0x200, 0x100, stamp.*);
+    obs = try offer(graph, &facts);
+    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    try testing.expect(call_find_deferred(graph, 0x300) != null);
+    _ = discard_events(graph);
+}
+
+test "a reclassification whose new parent chain re-enters the cascade through a deferred leftover is retire-only" {
+    const graph = try probe_graph(testing.allocator);
+    defer call_destroy(graph);
+    var stamp: u64 = 10;
+    try cut_leftover_state(graph, &stamp);
+    const cycles_before = current_stats(graph).rejected_cycle;
+    // W (0x100) is now owned by X (0x300); X is deferred with parent C, and C is W's own dialog.
+    // Deferring W would close X -> C -> W -> X; the replacement is rejected, the cascade retires.
+    stamp += 1;
+    const facts = owned_facts(0x100, 0x300, stamp);
+    const obs = try offer(graph, &facts);
+    try expect_obs(obs, DispositionRetired, 0, 0, 63, ReasonReclassified);
+    try expect_counts(obs, 2, 0, 2, 0);
+    try testing.expectEqual(cycles_before + 1, current_stats(graph).rejected_cycle);
+    try testing.expect(call_find_active(graph, 0x100) == null);
+    try testing.expect(call_find_active(graph, 0x200) == null);
+    try testing.expect(call_find_deferred(graph, 0x100) == null);
+    try testing.expect(call_find_deferred(graph, 0x200) == null);
+    // X keeps waiting for C; no deferred link was added.
+    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing.expect(call_find_deferred(graph, 0x300) != null);
+    try check_invariants(graph);
+    // The retirement events are the only events: C (child) first, then W.
+    var ev = try next_ev(graph);
+    try expect_ev(ev, EventRetireIntent, 0x200, 64, 0x100, 63, ReasonParentRetired);
+    ev = try next_ev(graph);
+    try expect_ev(ev, EventRetireIntent, 0x100, 63, 0, 0, ReasonReclassified);
+    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+}
+
+test "the cascade rule follows a longer deferred chain and a plain chain to a non-cascade terminal still defers" {
+    {
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        var stamp: u64 = 10;
+        try cut_leftover_state(graph, &stamp);
+        // Y (0x400) waits for X, so the chain Y -> X -> C ends in W's cascade after two deferred hops.
+        stamp += 1;
+        var facts = owned_facts(0x400, 0x300, stamp);
+        var obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        stamp += 1;
+        facts = owned_facts(0x100, 0x400, stamp);
+        obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionRetired, 0, 0, 63, ReasonReclassified);
+        try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+        try check_invariants(graph);
+    }
+    {
+        // Control: the same deferred leftover X -> C, but the reclassified window is a sibling of C.
+        const graph = try probe_graph(testing.allocator);
+        defer call_destroy(graph);
+        var stamp: u64 = 10;
+        try cut_leftover_state(graph, &stamp);
+        // Free one slot (a filler is destroyed), then admit 0x500 as a top-level window.
+        stamp += 1;
+        var obs = try destroy_hint(graph, 0x10000, stamp, 1000);
+        try testing.expectEqual(DispositionRetired, obs.disposition);
+        _ = discard_events(graph);
+        const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
+        try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x10000, 1, &proof));
+        _ = discard_events(graph);
+        stamp += 1;
+        var facts = window_facts(0x500, stamp);
+        obs = try offer(graph, &facts);
+        try testing.expectEqual(DispositionAdmitted, obs.disposition);
+        // 0x500 becomes owned by X: X -> C(Active, not in 0x500's cascade). Deferred, no cycle.
+        stamp += 1;
+        facts = owned_facts(0x500, 0x300, stamp);
+        obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 65, ReasonReclassified);
+        try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+        try check_invariants(graph);
+    }
 }
 
 test "OwnerHidden promotes an owned window and a later flag change reclassifies it" {
@@ -6966,6 +7295,7 @@ const consumer_t = struct {
 };
 
 const trace_totals_t = struct {
+    steps: u32 = 0,
     reclassified: u64 = 0,
     updates: u64 = 0,
     coalesced: u64 = 0,
@@ -7155,8 +7485,12 @@ fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above:
     var tick: u32 = 0xFFFF_FF00;
     var step: u32 = 0;
     while (step < steps) : (step += 1) {
+        totals.steps += 1;
         stamp += 1;
-        tick +%= random.uintLessThan(u32, 40);
+        const advance = random.uintLessThan(u32, 40);
+        tick +%= advance;
+        // The graph clock runs with the tick domain, so the unwrap estimate is exercised on every step.
+        test_clock.now += advance;
         const choice = random.uintLessThan(u32, 100);
         var before: u64 = 0;
         var status: status_t = .Ok;
@@ -7251,13 +7585,15 @@ fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above:
 test "random operation traces keep every graph invariant and the event stream ordered" {
     var totals = trace_totals_t{};
     // Few windows: constant reuse, reclassification and incarnation churn.
-    try run_random_trace(0x5EED_0001, 0x100, 12, 4000, 150, 5, true, &totals);
-    try run_random_trace(0x5EED_0002, 0x100, 12, 4000, 150, 5, true, &totals);
+    try run_random_trace(0x5EED_0001, 0x100, 12, 20000, 150, 5, true, &totals);
+    try run_random_trace(0x5EED_0002, 0x100, 12, 20000, 150, 5, true, &totals);
     // Many windows: capacity pressure, deferral overflow and cycles; a lazy consumer provokes QueueFull.
-    try run_random_trace(0x5EED_0003, 0x1000, 220, 8000, 150, 5, false, &totals);
-    try run_random_trace(0x5EED_0004, 0x1000, 220, 8000, 150, 5, false, &totals);
-    try run_random_trace(0x5EED_0005, 0x1000, 90, 6000, 256, 1, true, &totals);
-    try run_random_trace(0x5EED_0006, 0x1000, 220, 12000, 150, 5, true, &totals);
+    try run_random_trace(0x5EED_0003, 0x1000, 220, 40000, 150, 5, false, &totals);
+    try run_random_trace(0x5EED_0004, 0x1000, 220, 40000, 150, 5, false, &totals);
+    try run_random_trace(0x5EED_0005, 0x1000, 90, 30000, 256, 1, true, &totals);
+    try run_random_trace(0x5EED_0006, 0x1000, 220, 60000, 150, 5, true, &totals);
+    // 210000 steps in total (the invariants are checked after every step).
+    try testing.expectEqual(@as(u32, 210000), totals.steps);
     // The generator really exercised the interesting paths.
     try testing.expect(totals.reclassified > 20);
     try testing.expect(totals.updates > 20);
@@ -7349,6 +7685,7 @@ fn state_digest_unmarked(graph: *const graph_t) u64 {
     hasher.update(std.mem.asBytes(&graph.next_seq));
     hasher.update(std.mem.asBytes(&graph.stamp_high_water));
     hasher.update(std.mem.asBytes(&graph.tick_base));
+    hasher.update(std.mem.asBytes(&graph.tick_clock_at_base));
     return hasher.final();
 }
 
