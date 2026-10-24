@@ -823,7 +823,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     deadline/terminal regressions are mandatory before acceptance. Source commit
     e72422c contains this clarification.
 
-- **Commit `HEAD`**: `feat(interop): retain exact host frame lifetimes through notification`
+- **Commit `6dd76a2`**: `feat(interop): retain exact host frame lifetimes through notification`
   - **Task Impact**: +0% to TODO #5/#7/#34 (+0% overall; total16.40%).
   - **Summary**: Adds a fixed192-record Zig ledger with exact epoch/frame keys,
     non-reused tickets, explicit compositor versus never-attached completion,
@@ -833,4 +833,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     Full interop and leak-enabled C sanitizer suites pass, both Windows suites
     cross-build and native CI is wired. No live compositor or unmap proof is
     implied. [Qualification](host_buffer_registry_qualification_2026_10_24.json).
-    HEAD is this containing implementation commit.
+    Source commit6dd76a2 contains this implementation.
+
+- **Commit `HEAD`**: `docs(interop): freeze copied control peer C boundary`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
+  - **Summary**: Defines an opaque C-allocator owner, exact64-bit struct layouts,
+    copied RX/TX buffers, output/clock preservation, complete allocation alias
+    checks and stable phase/event/status values for C OS adapters. Specifies
+    runtime guard, leak-enabled C and native Windows tests before acceptance.
+    Pure control implementation and its wrapper remain unaccepted while failure
+    coverage is expanded; no live endpoint or mapping proof is claimed. HEAD is
+    this interface/specification commit.

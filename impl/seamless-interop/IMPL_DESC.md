@@ -3152,3 +3152,72 @@ budget, still without facility dispatch. A peer may transiently become Ready
 from bytes already in flight; no wire exchange can recall them. This grants
 no local facility admission, drain proof or safe reconnect, and every native
 owner must keep the old epoch retained until its own accepted proof path.
+
+### 8.21 Pure connected peer C ABI (2026-10-24)
+
+`include/waddle/interop_peer.h` is the exact stable C surface for the appendix8.20
+control-only peer; `src/interop/control_peer_abi.zig` is its implementation. It
+adds no facility TX, wire field/version, native socket/mapping or drain proof.
+It exposes only copied output bytes and scalar events, never borrowed TX pointers.
+The C platform loop owns its send buffer and reports actual OS byte counts once.
+Two-call size/copy operations are serialized with no intervening peer mutation.
+
+The supported ABI is x86_64 Linux/Windows with 8-byte size_t/pointers. Config is
+48 bytes aligned8, offsets role0/reserved4/token8/time16/version_pointer24/
+version_size32/capabilities40. Event is56 bytes aligned8: kind0/phase4/flags8/
+error12/epoch16/capabilities24/layout32/type36/request40/reserved44/copied_size48.
+Enums/constants have explicit header values; convert phase/event kinds explicitly
+rather than relying on Zig enum representation. Unused event fields/reserved are
+zero. Flags reflect persistent abort/terminal-send-unavailable state on EVERY
+successful event, including state snapshots and transport Closed.
+
+The opaque owner is one C-allocator allocation holding peer_t plus any internal
+version/queue allocations, all released through destroy after I/O quiesces.
+Create requires a NULL owner slot and preserves it on failure; failure destroys
+any partial allocation in reverse order. Destroy(NULL-valued slot) is idempotent;
+success deinitializes core, frees owner and writes NULL. It has no native proof
+precondition because the pure peer owns no external/native resources. Native
+resource owners must survive separately; destroying core is never their cleanup.
+
+All pointer parameters enter Zig as raw usize ABI words, following the existing
+slot-runtime wrapper's supported64-bit GP register boundary. Before ANY dereference
+validate nonnull required objects, natural alignment, nonwrapping address+size,
+and disjoint ranges. Byte NULL+size0 is allowed and converted to an empty slice;
+nonempty bytes require nonzero/nonwrapping storage. Caller still guarantees
+accessible live allocations; arithmetic guards cannot authenticate forged or
+freed addresses. Owner addresses must identify a live object from create.
+For existing owners, reject every input/output range overlapping the opaque owner,
+version allocation or ANY queue frame's FULL owned allocation (including already
+ACKed prefixes). Reject overlap among outputs and between output and caller input.
+Validate every output before invoking a mutating core method; on every API error
+leave all output bytes/scalars unchanged. Local argument errors preserve core
+state. InternalInvariant means a violated owned invariant: output remains unchanged,
+but the owner must abort/quiesce and destroy rather than assume core rollback.
+
+get_state/pending_bytes/tx_bytes validate the captured token before copied
+observation. get_state succeeds after transport Closed, returning kindNone and
+terminal phase/flags; pending_bytes can observe retained RX length. tx_bytes and
+copy_tx obey the core Closed rejection. copy_tx returns length0 without writing
+buffer for empty/abort-required TX. Short output leaves buffer/length/state
+unchanged; tx_bytes supplies required length before retry. next_event uses
+pending_bytes for retry; short output preserves clocks and pending frame. No
+wrapper may consume bytes merely to discover size. Core failure results map to
+explicit C statuses in the header; mandatory queue failure is Success with
+Draining flags/event, not an unchanged API failure.
+
+mapping_result selects Host/Guest by configured role. succeeded must be exactly0
+or1. Guest layout must equal current InteropLayoutVersion before invoking core;
+wrong guest version is unchanged InvalidArgument. Host actual epoch/layout and
+succeeded are forwarded as validation evidence; mismatch/false follows core
+ErrorAndDrain. Guest succeeded0 maps MappingFailed unchanged; native loop must
+begin drain on real initialization failure. No mapping pointer is accepted.
+
+Required gates: C static ABI offset/size assertions; real C client round-trip
+between two opaque peers with partial copies/sends, mapping callbacks, Ping/Pong,
+short RX/TX copy preservation, stale tokens/time/count errors, terminal flags,
+transport Closed and idempotent destruction. Null/alignment/overflow/overlap
+probes must run at runtime so compiler folding cannot hide guards. Tests execute
+under ASan/LSan/UBSan with detect_leaks1 and actual Windows CPU CI. Zig builtin
+allocator tests inject creation/queue allocation failures with zero bytes leaked.
+Production wrapper line AND branch coverage remain>=90%; no native endpoint or
+parent progress credit follows a standalone pure C ABI pass.
