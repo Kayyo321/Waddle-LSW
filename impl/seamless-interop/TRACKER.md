@@ -478,10 +478,20 @@ its uncompiled draft earns no credit until current acceptance passes.
     every receipt-listed artifact is tracked and SHA256-matched. No code or
     acceptance change. Source commit2cd516e preserves the evidence logs.
 
-- **Commit `HEAD`**: `docs(interop): specify resumed lifetime recovery and path work`
+- **Commit `e86cf8e`**: `docs(interop): specify resumed lifetime recovery and path work`
   - **Task Impact**: +0% to TODO #5/#9/#33/#34 (+0% overall; total14.00%).
   - **Summary**: Records lead decisions on generation/sequence, delayed frame
     release pins, growth/drain, canonical path behavior and durable journal
     boundaries before three exclusive Luna implementation lanes resume. Both
     checkpoint-head workflows succeed (40058148467 interop,40058148519 Native
-    AV). Planning and prior CI add no feature credit. HEAD is this commit.
+    AV). Planning and prior CI add no feature credit. Source commite86cf8e.
+
+- **Commit `HEAD`**: `docs(interop): reserve an isolated Claude window graph handoff`
+  - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total14.00%).
+  - **Summary**: At the user's request, prepares a manual Claude Code handoff
+    and mandatory return template, with a dedicated feature worktree pinned to
+    e86cf8e and exclusive window-graph/Win32-observer paths. The Claude session
+    is not launched; no subagent skill runner is used. Local commits and tests
+    stay isolated; shared source/build/CI/runner/Git integration remain with
+    Codex. Existing Luna lanes have no overlapping files. Planning earns no
+    implementation credit. HEAD identifies this containing handoff commit.

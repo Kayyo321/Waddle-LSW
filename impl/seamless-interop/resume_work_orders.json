@@ -181,5 +181,33 @@
       "handoff": "All edits accepted; canonical-path proposal unapproved"
     }
   ],
-  "resume_entry": "checkpoint_2026_10_24.md"
+  "resume_entry": "checkpoint_2026_10_24.md",
+  "external_claude_handoff": {
+    "status": "reserved_manual_session_not_launched",
+    "base": "e86cf8e344c6bafea5e562f04129a408e19629ff",
+    "branch": "feat/seamless-window-graph",
+    "worktree": "/home/dev/.codex/worktrees/seamless-window-graph/Waddle-LSW",
+    "handoff": "CLAUDE_HANDOFF.md",
+    "return_document": "impl/seamless-interop/claude_window_graph/HANDOFF_RETURN.md",
+    "owned_files": [
+      "src/interop/window_graph.zig",
+      "src/interop/window_graph_abi.zig",
+      "include/waddle/interop_window_graph.h",
+      "src/interop/window_observer_windows.c",
+      "src/interop/window_observer_windows.h",
+      "tests/interop/window_graph.c",
+      "tests/interop/window_observer_windows.c",
+      "tests/interop/window_observer_api_double.h",
+      "scripts/interop_window_graph.mk",
+      "impl/seamless-interop/claude_window_graph/IMPL_DESC.md",
+      "impl/seamless-interop/claude_window_graph/TRACKER.md",
+      "impl/seamless-interop/claude_window_graph/HANDOFF_RETURN.md"
+    ],
+    "constraints": [
+      "No main-checkout edits or shared build/Git/runner access",
+      "No native VM/GPU/CI/installs/recursive agents",
+      "Local atomic commits only in isolated feature branch; no push/merge",
+      "Codex does not edit owned paths until explicit return and ownership release"
+    ]
+  }
 }
