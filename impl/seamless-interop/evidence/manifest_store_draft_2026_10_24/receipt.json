@@ -1,0 +1,13 @@
+{
+  "draft_source": "impl/seamless-interop/resume_proposals/manifest_store_draft.zig",
+  "source_sha256": "e9b195d996c1ed138fc2f7701d7224839ea9ae0a4531bb152f2fa923c0426a22",
+  "tests": {
+    "command": "zig test src/interop/manifest_store.zig -lc -O Debug -femit-bin=/tmp/seamless_manifest_store_draft_tests --cache-dir /tmp/seamless_manifest_store_draft_cache --global-cache-dir /tmp/seamless_manifest_store_draft_global",
+    "exit_code": 0,
+    "tests_passed": 33,
+    "log": "impl/seamless-interop/evidence/manifest_store_draft_2026_10_24/tests.log",
+    "log_sha256": "1395a0aa4d68b7aa675b474a1d2d2773e6c7322bf429d9dd03bf8f9d4da693e4"
+  },
+  "progress_credit": 0,
+  "status": "unaccepted draft; leaf mutation race, syscall-fault proof and production branch coverage unresolved"
+}

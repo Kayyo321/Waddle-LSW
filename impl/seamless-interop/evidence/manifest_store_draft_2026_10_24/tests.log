@@ -1,0 +1,34 @@
+1/33 manifest_store.test.commit publishes artifact before the manifest and verifies exact hashes...OK
+2/33 manifest_store.test.first install can create a new recorded artifact from an absent manifest...OK
+3/33 manifest_store.test.preflight conflict and unsupported paths leave the artifact unchanged...OK
+4/33 manifest_store.test.record transitions require explicit actions and unchanged records must match installed bytes...OK
+5/33 manifest_store.test.manifest lock is nonblocking and released by close...OK
+6/33 manifest_store.test.force preserves exact modified artifact bytes in private retained backup...OK
+7/33 manifest_store.test.incomplete retained backup pair is preserved and blocks recovery...OK
+8/33 manifest_store.test.retained backup metadata-only malformed and mismatched pairs block recovery...OK
+9/33 manifest_store.test.crashes at durable boundaries recover to a complete old or new generation...OK
+10/33 manifest_store.test.injected durable I/O errors recover idempotently...OK
+11/33 manifest_store.test.journal decoding and complete commits survive allocator failure sweeps...OK
+12/33 manifest_store.test.journal decoder rejects unknown keys and noncanonical phase and root names...OK
+13/33 manifest_store.test.target root replacement is detected before publication through the held parent...OK
+14/33 manifest_store.test.target parent replacement is detected independently of an unchanged root...OK
+15/33 manifest_store.test.state directory replacement is detected against the held state descriptor...OK
+16/33 manifest_store.test.state publication race remains on held descriptor and detects the swapped name...OK
+17/33 manifest_store.test.state temp cleanup remains on held descriptor after named path replacement...OK
+18/33 manifest_store.test.menu commits publish both merged menu and desktop directory roots...OK
+19/33 manifest_store.test.remove commit removes the recorded artifact and publishes its manifest transition...OK
+20/33 manifest_store.test.prepared remove crash rolls the artifact back to the recorded generation...OK
+21/33 manifest_store.test.committed recovery preserves a journal and reports externally changed artifact...OK
+22/33 manifest.test.schema one parses all host and guest record kinds with owned borrowed views...OK
+23/33 manifest.test.all frozen schema one kinds parse with their kind-specific fields...OK
+24/33 manifest.test.rejects malformed schema duplicate keys and duplicate record ids...OK
+25/33 manifest.test.rejects root type omissions and malformed JSON paths...OK
+26/33 manifest.test.rejects each required record field when missing or mistyped...OK
+27/33 manifest.test.validates prior variants and optional record values...OK
+28/33 manifest.test.rejects record kind field prior hash UTF8 and string bound violations...OK
+29/33 manifest.test.enforces input record string and nesting bounds...OK
+30/33 manifest.test.valid parse releases every arena allocation...OK
+31/33 manifest.test.document owns strings independently of input and deinit is idempotent...OK
+32/33 manifest.test.invalid parse frees partial allocations under allocation failure...OK
+33/33 manifest.test.allocation failures cover record and duplicate-index growth...OK
+All 33 tests passed.

@@ -581,11 +581,20 @@ its uncompiled draft earns no credit until current acceptance passes.
     session integration remain open. [Qualification](mapping_init_qualification_2026_10_24.json).
     Source commitacd2011 contains this implementation.
 
-- **Commit `HEAD`**: `docs(interop): specify bounded session stream framing`
+- **Commit `ef56078`**: `docs(interop): specify bounded session stream framing`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Defines fixed-buffer codec-backed incremental framing,
     coalesced-frame consumption, alias/output lifetimes, error/EOF behavior and
     exact tests before session transport implementation. Reserves an independent
     Luna parser lane and read-only handshake contract investigation. Frozen
-    codec/wire and Claude graph ownership remain unchanged. HEAD identifies
-    this containing design/ownership commit.
+    codec/wire and Claude graph ownership remain unchanged. Source commitef56078 contains this design/ownership.
+
+- **Commit `HEAD`**: `docs(interop): preserve rejected manifest store draft and review`
+  - **Task Impact**: +0% to TODO #33/#34 (+0% overall; total14.40%).
+  - **Summary**: Archives the33-test journal proposal outside production source
+    with exact test evidence and unresolved leaf mutation/cleanup races, actual
+    syscall-fault requirements and failed earlier branch coverage. Preserves
+    partial review fixes and an unapproved atomic-retention redesign proposal;
+    no build/command consumer or engine credit is claimed. Resume instructions
+    are in[the review](resume_proposals/manifest_store_review.md). HEAD identifies
+    this containing draft/evidence commit.
