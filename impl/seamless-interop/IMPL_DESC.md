@@ -2694,7 +2694,13 @@ subset of the guest offer. The guest cannot recompute the exact intersection:
 HelloAck contains no separate host offer. A valid Ack commits staged epoch and
 returned subset and enters Ready; violations ErrorAndDrain as above.
 
-Wire Hello/Ack received in the wrong role/phase is fatal ProtocolViolation.
+Wire Hello/Ack received in the wrong role/phase is fatal ProtocolViolation,
+except terminal Closed: after validating token/time, reject with local
+WrongPhase and preserve every byte of state. A stale wire callback must never
+reopen Closed as Draining. Tick, begin_drain and transport_lost on Closed return
+Closed without updating time or any other field; invalid token/backwards time
+still report their local errors first. Other local callbacks on Closed retain
+their WrongPhase behavior.
 Transport send confirmations with wrong local ID/phase are local errors with no
 mutation. ErrorAndDrain clears uncommitted staged negotiation, preserves no
 facility readiness, and asks the owner to send the given frozen Error code best
@@ -2747,7 +2753,12 @@ allocate an ID or pretend a queued frame was sent. The owner obtains an unused
 nonzero ID from its shared per-direction request allocator, calls register_ping
 before enqueuing, then queues the Ping; a required enqueue failure closes the
 session. Registration requires Host, PingDue, no matching pending ID and a free
-record. It records issued_at_ms=now and updates last_registered_ping=now.
+record. A matching ID still present in any record is a duplicate even when its
+deadline elapsed. The owner must first receive that record's explicit release
+through another event before reusing the ID. Thus a successful registration
+never returns its newly registered ID in the released-ID vector. Failed duplicate
+registration preserves state and does not consume the pending expiry notification.
+Registration records issued_at_ms=now and updates last_registered_ping=now.
 There is no catch-up burst after missed ticks: one registration resets cadence.
 Repeated ticks can report the same due advice until registration succeeds.
 

@@ -118,7 +118,7 @@
       "owned_files": [
         "src/interop/session_liveness.zig"
       ],
-      "task": "Implement pure Ready-session liveness against IMPL_DESC8.15 with four expiring Ping records and caller-owned IDs",
+      "task": "Prevent expired-ID release/reuse collision; add out-of-order and public guard liveness regressions against IMPL_DESC8.15",
       "acceptance": [
         "isolated Zig exact-time/traffic/ownership tests",
         "lead unchanged90% production line/branch and nativeWindowsCI"
@@ -136,7 +136,7 @@
       "owned_files": [
         "src/interop/session_handshake.zig"
       ],
-      "task": "Implement precise pure pre-Ready host/guest state machine against IMPL_DESC8.14; no liveness or OS scope",
+      "task": "Fix terminal Closed callbacks and qualify every handshake callback guard against IMPL_DESC8.14",
       "acceptance": [
         "isolated Zig tests for both roles and exact guards/actions",
         "lead unchanged90% production line/branch and nativeWindowsCI"
@@ -199,5 +199,5 @@
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
   },
-  "lead_current_work": "Qualify metadata/C API actual WindowsCI, retain unaccepted journal evidence, define nextsession framing; no dependency on Claude"
+  "lead_current_work": "Review session cores, qualify send queue and wire shared CI; no dependency on Claude window graph"
 }

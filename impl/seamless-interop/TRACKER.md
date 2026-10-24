@@ -627,7 +627,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     signed-driver and compositor acceptance remain open; no extra task credit.
     Source commit2407048 contains this qualification.
 
-- **Commit `HEAD`**: `feat(interop): frame bounded fragmented session input`
+- **Commit `9f921d9`**: `feat(interop): frame bounded fragmented session input`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Adds a fixed64KiB codec-backed reader with exact coalesced-frame
     consumption, sticky header failure, explicit payload-validation results and
@@ -636,5 +636,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     twelve tests,100% production lines and94.44% branches pass. Normal codec
     object links without a symbol workaround. Windows cross-build joins native
     CI; framing5% per endpoint remains uncredited pending that run.
-    [Qualification](stream_reader_qualification_2026_10_24.json). HEAD identifies
-    this containing implementation commit.
+    [Qualification](stream_reader_qualification_2026_10_24.json). Source commit9f921d9 contains this implementation.
+
+- **Commit `HEAD`**: `docs(interop): clarify terminal callbacks and request ID retirement`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Freezes Closed as terminal for delayed handshake callbacks and
+    requires explicit expiry release before reusing a tracked Ping ID. This
+    prevents a returned retirement action from naming a newly registered request.
+    Assigns both review fixes and boundary regressions to independent Luna workers
+    while the lead integrates queue/CI outside Claude's reserved window files.
+    HEAD identifies this containing specification commit.
