@@ -82,7 +82,7 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     post-review qualification and native Windows execution remain pending.
     HEAD identifies this containing conformance commit.
 
-- **Commit `HEAD`**: `docs(interop): qualify reviewed graph source before incarnation correction`
+- **Commit `e7e7e6a`**: `docs(interop): qualify reviewed graph source before incarnation correction`
   - **Task Impact**: +0% to local #1/#2/#3/#4; +0% global TODO #10 (local92.25%).
   - **Summary**: Lead reproduces full gates at exact1a179b0 with detect_leaks1:
     graph136/ABI150 in Debug and ReleaseSafe, C27/observer65, exact21 exports,
@@ -90,3 +90,10 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     hashes and log. O5 delivered-destroy loss and O25 stale deferred descendants
     remain open; this is provisional evidence, not final integration acceptance.
     HEAD identifies this containing evidence commit.
+
+- **Commit `HEAD`**: `docs(interop): require cached descendant invalidation on parent discontinuity`
+  - **Task Impact**: +0% to local #1/#3/#4; +0% global TODO #10 (local92.25%).
+  - **Summary**: Freezes the staged bounded deletion-mask correction across
+    identity replacement, accepted destroy, exclusion and refresh. Roots include
+    all Active cascade members; QueueFull remains transactional and same-object
+    Reclassified keeps its flush. O5 remains unresolved. HEAD is this contract.

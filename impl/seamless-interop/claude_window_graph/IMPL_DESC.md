@@ -1376,3 +1376,48 @@ satisfy the repository type naming rule. External module properties, including
 an identifier-only transformation: `namespace_review_receipt.json` records the
 exact two source hashes and token proof. It grants no behavioral or native
 qualification credit.
+
+### 9.6 Codex required correction: invalidate cached descendants on discontinuity
+
+This section supersedes the stale-deferred-child residual in O25/m5 and the
+old plan/apply steps that allow it. Implementation is pending at this contract
+commit. No classification or native lifetime proof is added.
+
+A deferred record has no parent incarnation proof. On accepted destruction,
+exclusion or identity replacement, it must not be promoted using only a recycled
+numeric parent HWND. Before mutation, form a fixed64-slot deletion mask: seed
+all used deferred records whose parent_window names any invalidated root, then
+select their transitive deferred descendants. Each selected slot is visited at
+most once; no allocation, native calls or unbounded recursion. Include every
+HWND in a retiring Active cascade among the roots, not just the primary HWND:
+otherwise a deferred descendant of an Active child could escape invalidation.
+Dropping the primary deferred record remains explicit and counted once.
+
+Apply this mask on Active IncarnationChanged replacement, identity replacement
+of an existing Deferred record, accepted note_destroyed (Active or Deferred),
+NotExported observation of a known Active/Deferred parent, and every doomed
+Active entry in refresh_commit. A seen deferred child of a doomed parent is
+also invalidated. An unknown NotExported parent is conservative evidence that
+it cannot serve cached descendants; invalidate those descendants too. Suppress
+replacement flush for invalidated descendants, including multi-level chains.
+Ordinary first admission and same-incarnation Reclassified keep their existing
+parent-first flush and re-deferral behavior. Rejected stale destroy hints,
+Suspended, failed queries, refresh_keep, Unchanged and Update do not invalidate.
+
+Plan the complete deletion mask and event count read-only. QueueFull preserves
+entries, deferred arrays, generations and events apart from the established
+rejection diagnostic. Apply deletion only after ring-room preflight and lookup
+outcome. An accepted identity change still retires the old cascade and drops
+its invalidated cached descendants if replacement lookup/capacity/generation
+fails, as the existing retire-only outcome requires. No drop emits a fabricated
+Announce/RetireIntent. Use existing deferred-drop accounting, count each slot
+once and preserve surviving records' seen/age/order.
+
+Tests must cover Active and Deferred replacement, direct/chained descendants,
+accepted versus stale destroy, exclusion, seen-child/unseen-parent refresh,
+QueueFull retry and lookup failure. Freshly reobserved children may be admitted
+against the replacement; stored facts from the invalidated subtree may not.
+Same-incarnation Reclassified regressions must continue to pass. The independent
+review is archived in incarnation_review.md. O5 delivered-destroy loss remains
+open separately; no full-refresh continuity proof is accepted for identical
+identity tuples after discarded destroy evidence.
