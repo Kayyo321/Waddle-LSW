@@ -1442,3 +1442,16 @@ semantics on failure. Restore the original thread DPI context. No graph, capture
 transport, driver, UAC, secure desktop or foreign-process behavior is qualified
 by this fixture. No disk/VM/desktop configuration is changed. Root will wire the
 cross-built executable into Windows CI after portable review integration.
+
+### 9.8 Native query scan ownership
+
+A raw query through the public native API table now creates and closes a
+standalone process-snapshot scope if it is outside an enclosing pump/refresh.
+Previously a fallback Toolhelp handle could remain open until a later observer
+call. The outer call owns the scope for composed queries; the standalone wrapper
+owns it across every inner return, including Failed/Gone. No pointer or handle
+escapes. Only the owner thread of the Started native observer calls table entries;
+obtaining the immutable table pointer is thread-safe. This preserves at most two
+snapshot attempts per enclosing call or standalone query. No native behavior is
+inferred from portable doubles. Strict native SDK cross-compilation and portable
+observer regression are required before commit; Windows execution remains pending.

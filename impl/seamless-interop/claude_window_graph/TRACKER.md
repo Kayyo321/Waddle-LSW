@@ -106,10 +106,19 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     desktop is a failure. Strict Windows cross-build passes. No Windows execution
     or foreign-process/UAC/capture result is claimed. HEAD is this fixture commit.
 
-- **Commit `HEAD`**: `ci(interop): execute isolated graph and native observer Windows gates`
+- **Commit `5aff081`**: `ci(interop): execute isolated graph and native observer Windows gates`
   - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local92.25%).
   - **Summary**: Runs standalone Linux test/leak/coverage and Windows cross-build
     gates, then executes graph C ABI, observer doubles and real Win32 smoke on
     Windows2022. Branch triggers cover isolated review and parent feature. No PR
     or standard merge is opened; native results remain pending until CI finishes.
     HEAD identifies this workflow commit.
+
+- **Commit `HEAD`**: `fix(interop): close standalone native query snapshot scopes`
+  - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local92.25%).
+  - **Summary**: Direct calls through the native query table now own one scan
+    scope across all return paths; pump/refresh keep their existing shared scope.
+    This prevents a fallback Toolhelp handle waiting for a future observer call
+    to close. Documents owner-thread serialization. Strict Windows fixture link
+    and portable65-case lifecycle regression pass; native execution pending.
+    HEAD identifies this containing ownership correction.

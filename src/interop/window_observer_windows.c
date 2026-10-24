@@ -1587,6 +1587,8 @@ typedef struct native_scan_t {
 } native_scan_t;
 
 static native_scan_t g_native_scan = {INVALID_HANDLE_VALUE, 0u};
+/** @brief One owner-thread pump/refresh or standalone native-query scope is active. */
+static uint32_t g_native_scope_active = 0u;
 
 /* Close the snapshot (if any) and reset the per-call state. */
 static void native_call_end(void) {
@@ -1595,11 +1597,13 @@ static void native_call_end(void) {
     }
     g_native_scan.snapshot = INVALID_HANDLE_VALUE;
     g_native_scan.created = 0u;
+    g_native_scope_active = 0u;
 }
 
 /* Start a call scope: no snapshot yet. A leftover handle (a call that never ended) is closed first. */
 static void native_call_begin(void) {
     native_call_end();
+    g_native_scope_active = 1u;
 }
 
 /* Create the next snapshot of the call; INVALID_HANDLE_VALUE when the per-call budget is spent or the OS refuses. */
@@ -1830,7 +1834,7 @@ static int native_fill_styles(HWND window, interop_window_facts_t *facts) {
 }
 
 /* api.query_facts: read every fact of one window without sending it a message. */
-static window_observer_query_result_t native_query_facts(void *context, uint64_t window,
+static window_observer_query_result_t native_query_facts_inner(void *context, uint64_t window,
                                                          interop_window_facts_t *facts) {
     (void)context;
     HWND handle = u64_to_hwnd(window);
@@ -1924,6 +1928,24 @@ static window_observer_query_result_t native_query_facts(void *context, uint64_t
         return native_gone_probe(handle); /* vanished mid-read: the partial facts are discarded */
     }
     return WindowObserverQueryExists;
+}
+
+/**
+ * @brief Query with a deterministic scan lifetime, including direct native-table calls.
+ * @param[in,out] context Borrowed native context; NULL.
+ * @param[in] window HWND value; no native ownership transfers.
+ * @param[out] facts Caller-owned snapshot, meaningful only on Exists.
+ * @return Exists, Gone or Failed; every standalone scan handle is closed on return.
+ * @note Owner thread of the Started native observer only. Pump/refresh share their
+ *       existing scope; a direct query owns one temporary scope across all returns.
+ */
+static window_observer_query_result_t native_query_facts(void *context, uint64_t window,
+                                                         interop_window_facts_t *facts) {
+    const int standalone = g_native_scope_active == 0u;
+    if (standalone) native_call_begin();
+    const window_observer_query_result_t result = native_query_facts_inner(context, window, facts);
+    if (standalone) native_call_end();
+    return result;
 }
 
 /** Immutable native api table; context is NULL. */

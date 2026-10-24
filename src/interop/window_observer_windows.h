@@ -312,7 +312,7 @@ typedef struct window_observer_api_t {
      *       buffer and allocates at most one 64 KiB heap buffer per call, only when that is too small
      *       (a long image path of a visible window); the buffer is freed on every path before the call
      *       returns. A Toolhelp snapshot handle (not heap memory of this module) is scoped per pump or
-     *       refresh call.
+     *       refresh call. A direct native-table query creates and closes its own scan scope.
      */
     window_observer_query_result_t (*query_facts)(void *context, uint64_t window,
                                                   interop_window_facts_t *facts);
@@ -755,7 +755,8 @@ void window_observer_note_hint(uint32_t event, uint64_t window, int32_t object_i
  *         window_observer_note_hint and does nothing else. The table is runnable only on a thread that
  *         passed window_observer_create's native checks (Unsupported otherwise); it sends no message to
  *         any window of the current process and never reads their titles.
- * @note Thread-safe (immutable).
+ * @note Obtaining the immutable table is thread-safe. Calling its entries is restricted to
+ *       the owner thread of the Started native observer; the shared scan is serialized.
  */
 const window_observer_api_t *window_observer_native_api(void);
 #endif
