@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "qualification": "isolated Windows lock-screen boot only",
+  "progress_delta": 0,
+  "test_count": 24,
+  "source_sha256": {
+    "tests/interop/native_guest_runner.py": "59a7643d09c436205f6d0832255c1fd0c0476daf129864f95caf0d52e9e62c75",
+    "tests/interop/native_guest_runner_test.py": "6fcdc8e98f01226d069adc3ecf225682f443e205f1e80979155ce9f6d04a11d3",
+    "impl/seamless-interop/native_runner.md": "914e0409d2ef46e1010801d13acab4943770b1d22665e6b7cbc1729c5d4671a1"
+  },
+  "run_root": "/tmp/waddle-native-guest-5gwbb6t4",
+  "overlay_retained": true,
+  "base_disk_modified": false,
+  "credentials_read": false,
+  "vm_command": [
+    "python3",
+    "tests/interop/native_guest_runner.py",
+    "--run-seconds",
+    "180",
+    "--startup-seconds",
+    "45",
+    "--shutdown-seconds",
+    "20"
+  ],
+  "guest_test_payload": null,
+  "production_vsock": false,
+  "installed_session_acceptance": false,
+  "notes": [
+    "TCG QMP running and visual Windows lock screen observed.",
+    "ACPI shutdown completed without forced child termination; not interop producer-release proof.",
+    "/proc visibility is diagnostic; kernel read lease excluded base writers.",
+    "Two earlier preflight attempts refused opaque process proof/firmware alias before VM launch.",
+    "No registered profile, kernel module, device ACL, or credential was changed."
+  ],
+  "artifacts": {
+    "swtpm.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "qemu.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "final-screen.png": "c5736a477b11a500895640768b9feca2968750250f0f9c443958d669d0ec0ff5",
+    "qemu-console.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "run-manifest.json": "6f144b1634572c5df9d0038eb3f834b0afbe211ea7748ce9c027d879fa94990d"
+  }
+}

@@ -36,3 +36,32 @@ Automated harness tests must cover base-path/refusal guards, missing capability,
 partial child startup, timeout/cancel, result bounds/correlation and exact-child
 cleanup. They may use fakes for orchestration; real guest output remains a
 separate labelled evidence artifact. Root reviews harness before its first boot.
+
+## Kernel-backed base writer exclusion amendment
+
+The host hides descriptors even for some current-UID processes, so `/proc`
+scanning cannot establish absence of writable holders here. Acquire an owned
+O_RDONLY|O_CLOEXEC fd for the canonical regular base disk and a Linux
+F_SETLEASE/F_RDLCK read lease before snapshot/overlay work. Failure (including
+EAGAIN, unsupported filesystem or permission failure) refuses launch. Retain
+that lease through all qemu-img operations and until the exact QEMU child is
+reaped. This uses kernel conflict detection; `/proc` scans become explicitly
+incomplete diagnostic observations and cannot bypass a failed lease.
+
+Run on the main thread. Refuse an existing non-default SIGIO handler; install a
+temporary handler that only records a break flag, set F_SETOWN to the runner PID,
+and acquire/query the lease. Check the flag and F_GETLEASE==F_RDLCK immediately
+before launch and every≤100ms during observation/startup. Read the kernel lease
+break-time and require enough margin for the bounded preparation commands and
+forced child cleanup; never change that system setting. On a break, skip ACPI
+waiting, TERM/KILL/reap only exact owned QEMU, then swtpm, before releasing the
+lease. Interrupted/failed startup must follow the same ownership order. Record
+all acquired/broken/released lease facts and the diagnostic proc visibility
+limit in the manifest. Never report an unreaped child or lost lease as success.
+Restore signal handling only after local lease ownership is relinquished.
+
+Test acquisition/query/release and rejection with an existing writer on private
+temporary regular files; test break notification and run() cleanup with bounded
+fault fixtures. The preserved base is only opened read-only; no real VM launch
+until root reviews the amended source. Reference: Linux man-pages
+[F_SETLEASE](https://www.man7.org/linux/man-pages/man2/F_SETLEASE.2const.html).

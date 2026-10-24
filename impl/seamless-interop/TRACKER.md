@@ -1096,7 +1096,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     limits. Assigns disjoint Luna implementation lanes; source and native gates
     remain required before any new credit. HEAD identifies this contract commit.
 
-- **Commit `HEAD`**: `feat(daemon): add bounded guest readiness codec and probe owner`
+- **Commit `7a00f82`**: `feat(daemon): add bounded guest readiness codec and probe owner`
   - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
   - **Summary**: Implements additive GuestReady wire values, bounds-checked Zig
     decoding and an allocation-free configured-port VSOCK probe state machine.
@@ -1104,3 +1104,15 @@ its uncompiled draft earns no credit until current acceptance passes.
     and52/52 branches pass with deterministic syscall faults. Leak-enabled
     ASan/LSan/UBSan passes. The daemon event loop/client and actual host entry
     remain unintegrated; no native or runtime credit. HEAD identifies this commit.
+
+- **Commit `HEAD`**: `test(interop): supervise isolated Windows native guest runs`
+  - **Task Impact**: +0% to TODO #6/#7/#10/#34 (+0% overall; total18.00%).
+  - **Summary**: Adds reviewed bounded TCG runner with exact-child cleanup,
+    private QCOW2/UEFI/TPM state, pinned QEMU/firmware hashes, kernel read lease
+    excluding base writers, bounded QMP/results and24 passing fault tests.
+    Real private run reaches Windows lock screen and exits via ACPI without
+    forced termination; base/UEFI/TPM fingerprints unchanged, lease released.
+    Retains overlay and [evidence](native_runner_evidence_2026_10_24/qualification.json).
+    No guest test payload or installed interop session ran; no native capability
+    credit, producer-release proof or mapping/reconnect permission is claimed.
+    HEAD identifies this harness/boot evidence commit.
