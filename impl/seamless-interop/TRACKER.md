@@ -638,11 +638,23 @@ its uncompiled draft earns no credit until current acceptance passes.
     CI; framing5% per endpoint remains uncredited pending that run.
     [Qualification](stream_reader_qualification_2026_10_24.json). Source commit9f921d9 contains this implementation.
 
-- **Commit `HEAD`**: `docs(interop): clarify terminal callbacks and request ID retirement`
+- **Commit `7840c82`**: `docs(interop): clarify terminal callbacks and request ID retirement`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Freezes Closed as terminal for delayed handshake callbacks and
     requires explicit expiry release before reusing a tracked Ping ID. This
     prevents a returned retirement action from naming a newly registered request.
     Assigns both review fixes and boundary regressions to independent Luna workers
     while the lead integrates queue/CI outside Claude's reserved window files.
-    HEAD identifies this containing specification commit.
+    Source commit7840c82 contains this specification.
+
+- **Commit `HEAD`**: `feat(interop): own bounded queued frames across partial writes`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Adds a codec-validated owning512-record FIFO, eight reserved
+    control admission slots, exact partial-write accounting and deterministic
+    freeing on success, OOM and cancellation. Independent review finds no defect;
+    lead adds a full64KiB optional-extension copy/last-byte regression. Ten tests
+    pass with testing allocator and exhaustive allocation failure,100% production
+    lines/90.24% branches. Gates and Windows cross-build are wired; queue5% per
+    endpoint remains uncredited until native Windows execution.
+    [Qualification](stream_send_queue_qualification_2026_10_24.json). HEAD identifies
+    this containing implementation commit.

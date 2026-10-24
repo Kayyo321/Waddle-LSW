@@ -1,0 +1,13 @@
+zig test src/interop/stream_send_queue.zig -Iinclude build/interop_codec.o -lc
+1/10 stream_send_queue.test.enqueue owns copied frame and partial acknowledgements preserve exact FIFO bytes...OK
+2/10 stream_send_queue.test.data reservation control admission full capacity and ring wrap preserve FIFO...OK
+3/10 stream_send_queue.test.codec rejects malformed maximum-size and wrong-direction frames before allocation...OK
+4/10 stream_send_queue.test.maximum valid optional extension frame is copied and acknowledged without truncation...OK
+5/10 stream_send_queue.test.enqueue requires one exact frame and rejects invalid header lengths...OK
+6/10 stream_send_queue.test.allocation failure leaves existing frames offsets and counters unchanged...OK
+7/10 stream_send_queue.test.single frame allocation is covered by an allocator failure sweep...OK
+8/10 stream_send_queue.test.deinit frees partial frames idempotently and closes future operations...OK
+9/10 stream_send_queue.test.enqueue may borrow an already queued frame while copying another record...OK
+10/10 stream_send_queue.test.deterministic queue stress preserves acknowledgement byte totals...OK
+All 10 tests passed.
+zig test src/interop/stream_send_queue.zig -Iinclude build/interop_codec_windows.lib -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=build/interop_stream_send_queue_test.exe

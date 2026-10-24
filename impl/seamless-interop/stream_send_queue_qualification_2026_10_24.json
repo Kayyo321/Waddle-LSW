@@ -1,0 +1,41 @@
+{
+  "source": "src/interop/stream_send_queue.zig",
+  "source_sha256": "315684d91e340431c2f654061aae051007fe5f96895bc5ce0074b117eb2df458",
+  "recorded_utc": "2026-10-24T16:54:12.234279+00:00",
+  "commands": [
+    {
+      "command": "make interop-stream-send-queue-test build/interop_stream_send_queue_test.exe",
+      "exit_code": 0,
+      "tests_passed": 10
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py stream_send_queue",
+      "exit_code": 0,
+      "line": [
+        49,
+        49
+      ],
+      "branch": [
+        37,
+        41
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/stream_send_queue_2026_10_24/seamless_send_queue_build.log",
+      "sha256": "4aabaff6d614dfbc39e22eddb87f2ce6dcfd61d146f317ab5839dc8276dfff4f"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/stream_send_queue_2026_10_24/seamless_send_queue_review_coverage.log",
+      "sha256": "5092b4893cda34cd4a1dfe53bc7060b5c844c023b10fdd1250c14f32d262a3f9"
+    }
+  ],
+  "limits": [
+    "Owns copied validated frames only; no socket, request correlation or Ready-state ownership.",
+    "Control admission reserves eight of 512 frame records without reordering FIFO.",
+    "Testing allocator and exhaustive allocation-failure sweep pass; pure Zig is not claimed as a C ASan consumer.",
+    "Windows cross-build passes; native execution pending next CI."
+  ],
+  "progress_credit": 0
+}

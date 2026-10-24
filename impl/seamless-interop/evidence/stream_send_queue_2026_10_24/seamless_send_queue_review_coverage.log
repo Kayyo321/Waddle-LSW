@@ -1,0 +1,26 @@
+preserved stream_send_queue coverage: /home/dev/Waddle-LSW/build/coverage/interop/stream_send_queue/run-20261024T165319824576Z-310869
+stream_send_queue instrumentation: 167 exact metadata-bound sites; 3/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 836/524288 bytes; 167 sites
+1/10 stream_send_queue.test.enqueue owns copied frame and partial acknowledgements preserve exact FIFO bytes...OK
+2/10 stream_send_queue.test.data reservation control admission full capacity and ring wrap preserve FIFO...OK
+3/10 stream_send_queue.test.codec rejects malformed maximum-size and wrong-direction frames before allocation...OK
+4/10 stream_send_queue.test.maximum valid optional extension frame is copied and acknowledged without truncation...OK
+5/10 stream_send_queue.test.enqueue requires one exact frame and rejects invalid header lengths...OK
+6/10 stream_send_queue.test.allocation failure leaves existing frames offsets and counters unchanged...OK
+7/10 stream_send_queue.test.single frame allocation is covered by an allocator failure sweep...OK
+8/10 stream_send_queue.test.deinit frees partial frames idempotently and closes future operations...OK
+9/10 stream_send_queue.test.enqueue may borrow an already queued frame while copying another record...OK
+10/10 stream_send_queue.test.deterministic queue stress preserves acknowledgement byte totals...OK
+All 10 tests passed.
+stream_send_queue production branch coverage: 90.24% (37/41); 20 compiler panic/stack-canary guards excluded
+stream_send_queue production line coverage: 100.00% (49/49); 20 compiler panic/stack-canary guards excluded
