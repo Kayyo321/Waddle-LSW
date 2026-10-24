@@ -36,7 +36,7 @@ acceptance remain pending.
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 50% | Config, CLI, persistence and device argv accepted; QEMU build/native gates and audio routing remain open |
-| #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 10% | Phantom root mapping removed; canonical/symlink checks and all-mount lifecycle/guest binding pending |
+| #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 20% | Root fallback removal and bounded QEMU many-mount API accepted; lifecycle, guest binding and canonical/symlink gates pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `12.85%`
+**Total Feature Completion**: `12.95%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -74,7 +74,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot primitives 20%; first-fit reservations 20%; focused coverage gates pass |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config 25%; typed CLI get/set/reset 5%; persistence 5%; QEMU argv 15%; focused normal/sanitizer gates pass |
-| #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal 10%; export-boundary fixtures pass |
+| #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal10%; QEMU many-mount API10%; argument/QMP and leak-enabled fault fixtures pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
 Execution resumed at the user's request from checkpoint4079560. Current
@@ -371,7 +371,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     the native Windows gate passes; no live atomic/pin/runtime claim is made.
     Source commit ef39989 remains pending native execution.
 
-- **Commit `HEAD`**: `feat(interop): add native descriptor ownership and heartbeat atomics`
+- **Commit `6f1ce16`**: `feat(interop): add native descriptor ownership and heartbeat atomics`
   - **Task Impact**: +0% to TODO #5 pending native Windows execution
     (+0% overall; total12.85%).
   - **Summary**: Adds checked x86_64 C11 state transitions and single-writer
@@ -382,4 +382,15 @@ its uncompiled draft earns no credit until current acceptance passes.
     atomic gcov counters. Windows cross-link passes; hosted execution remains
     blocked by the separate wide-switch recorder defect. Native atomic5% earns
     no credit yet; mapping initialization, pins/growth and runtime stay open.
-    HEAD identifies this containing atomic adapter commit.
+    Source commit6f1ce16 awaits the Windows execution gate.
+
+- **Commit `HEAD`**: `feat(interop): add bounded drive-tagged QEMU mount arrays`
+  - **Task Impact**: +10% to TODO #9 (+0.10% overall; total12.95%).
+  - **Summary**: Adds zero-to-eight mount builder/spawn APIs with exact ordered
+    drive tags, duplicate/path validation and transactional argv cleanup.
+    Legacy single-mount identity remains compatible. Lead review hardens
+    kill/reap/cleanup so transient failures preserve process, QMP and descriptor
+    ownership for retry. Full-capacity argument, QMP, EPERM/EIO/EINTR fixtures
+    pass normally and under ASan/LSan/UBSan with leak detection enabled.
+    Supervisor ownership, guest tag binding and native qualification stay open.
+    HEAD identifies this containing QEMU mount-array commit.

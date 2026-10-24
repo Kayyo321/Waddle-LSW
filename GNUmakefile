@@ -116,7 +116,7 @@ build/test_daemon_protocol: tests/daemon/test_daemon_protocol.c src/daemon/daemo
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_protocol.c src/daemon/daemon_protocol.c $(LDFLAGS) -o $@
 
 build/test_daemon_qemu: tests/daemon/test_daemon_qemu.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c build/daemon_config.o src/daemon/daemon_qemu.h src/daemon/daemon_qmp.h src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_qemu.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c build/daemon_config.o $(LDFLAGS) -Wl,--wrap=lstat -lpthread -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_qemu.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c build/daemon_config.o $(LDFLAGS) -Wl,--wrap=lstat,--wrap=kill,--wrap=waitpid -lpthread -o $@
 
 build/test_daemon_fs: tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c build/daemon_config.o build/path_rules.o src/daemon/daemon_fs.h src/daemon/daemon_config.h src/common/path_rules.h include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c build/daemon_config.o build/path_rules.o $(LDFLAGS) -o $@

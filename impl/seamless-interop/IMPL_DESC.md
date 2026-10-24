@@ -2289,3 +2289,10 @@ ASan/LSan/UBSan and separate production-only gcov line/branch gates are required
 concurrent gcov counters use atomic profile updates. Native Windows execution
 is also required before this adapter receives tracker credit. Neither CPU proof
 nor a cross-linked executable establishes integrated IVSHMEM/guest acceptance.
+
+QEMU process teardown preserves the PID, live-state flag, QMP connection and log
+ownership when kill or waitpid fails unexpectedly. EINTR retries; ESRCH permits
+reaping, and ECHILD confirms no owned child remains. Only confirmed termination
+allows clearing the PID and closing QMP. Generic cleanup first polls and refuses
+to clear a running or unconfirmed process; callers request kill explicitly.
+Mount-array callers retain all backend ownership until QEMU is confirmed dead.

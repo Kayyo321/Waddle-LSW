@@ -51,6 +51,17 @@ static int qemu_path_valid(const char *path, int required) {
         (!required || (length != 0 && path[0] == '/'));
 }
 
+/** @brief Check whether a bounded path is safe as an unescaped QEMU keyval value. */
+static int qemu_keyval_path_valid(const char *path, int required) {
+    if (!qemu_path_valid(path, required)) return 0;
+    if (path == NULL) return !required;
+    for (size_t index = 0; path[index] != '\0'; ++index) {
+        unsigned char character = (unsigned char)path[index];
+        if (character == ',' || character < 0x20 || character == 0x7f) return 0;
+    }
+    return 1;
+}
+
 int qemu_build_args(const daemon_config_t *config,
                     const char *qmp_sock_path,
                     const char *virtiofsd_sock_path,
@@ -61,6 +72,16 @@ int qemu_build_args(const daemon_config_t *config,
                                       virtiofsd_sock_path, pid_file_path,
                                       argv, max_args);
 }
+
+static int qemu_build_args_internal(const daemon_config_t *config,
+                                    const char *device_name,
+                                    const char *qmp_sock_path,
+                                    const char *virtiofsd_sock_path,
+                                    const qemu_virtiofs_mount_t *mounts,
+                                    size_t mount_count,
+                                    const char *pid_file_path,
+                                    char **argv,
+                                    size_t max_args);
 
 /** @brief Validate the same bounded ASCII device identifier as daemon registry. */
 static int qemu_device_name_valid(const char *device_name) {
@@ -84,10 +105,97 @@ int qemu_build_args_for_device(const daemon_config_t *config,
                                const char *pid_file_path,
                                char **argv,
                                size_t max_args) {
+    return qemu_build_args_internal(config, device_name, qmp_sock_path,
+                                    virtiofsd_sock_path, NULL, 0,
+                                    pid_file_path, argv, max_args);
+}
+
+/** @brief Validate and normalize the drive identity in one multi-mount entry. */
+static int qemu_mount_drive_letter(const qemu_virtiofs_mount_t *mount,
+                                   char *drive_letter) {
+    if (mount == NULL || drive_letter == NULL) return 0;
+    if (mount->guest_drive[1] != ':' ||
+        (mount->guest_drive[2] != '\\' && mount->guest_drive[2] != '/') ||
+        mount->guest_drive[3] != '\0') return 0;
+    unsigned char drive = (unsigned char)mount->guest_drive[0];
+    if (drive >= 'A' && drive <= 'Z') drive = (unsigned char)(drive - 'A' + 'a');
+    if (drive < 'a' || drive > 'z') return 0;
+    *drive_letter = (char)drive;
+    return 1;
+}
+
+/** @brief Validate all multi-mount inputs before the builder allocates argv. */
+static int qemu_mounts_valid(const qemu_virtiofs_mount_t *mounts,
+                             size_t mount_count) {
+    if (mount_count > WaddleMaxMounts ||
+        ((mount_count == 0) != (mounts == NULL))) return 0;
+    for (size_t index = 0; index < mount_count; ++index) {
+        char drive_letter;
+        if (!qemu_mount_drive_letter(&mounts[index], &drive_letter) ||
+            !qemu_keyval_path_valid(mounts[index].socket_path, 1) ||
+            mounts[index].socket_path[0] != '/') return 0;
+        for (size_t prior = 0; prior < index; ++prior) {
+            char prior_drive_letter;
+            if (!qemu_mount_drive_letter(&mounts[prior], &prior_drive_letter) ||
+                drive_letter == prior_drive_letter ||
+                strcmp(mounts[index].socket_path,
+                       mounts[prior].socket_path) == 0) return 0;
+        }
+    }
+    return 1;
+}
+
+/** @brief Append one drive-derived QEMU chardev/device argument group. */
+static int qemu_append_mount_args(char **argv, size_t *argc, size_t max_args,
+                                  const qemu_virtiofs_mount_t *mount) {
+    char drive_letter;
+    if (!qemu_mount_drive_letter(mount, &drive_letter)) {
+        errno = EINVAL;
+        return -1;
+    }
+    char chardev_id[32];
+    char device_id[32];
+    char chardev_buf[WaddleMaxPathLen + 64];
+    char device_buf[160];
+    int id_length = snprintf(chardev_id, sizeof(chardev_id),
+                             "waddle_fs_char_%c", drive_letter);
+    int device_id_length = snprintf(device_id, sizeof(device_id),
+                                    "waddle_fs_dev_%c", drive_letter);
+    int chardev_length = snprintf(chardev_buf, sizeof(chardev_buf),
+                                  "socket,id=%s,path=%s", chardev_id,
+                                  mount->socket_path);
+    int device_length = snprintf(device_buf, sizeof(device_buf),
+        "vhost-user-fs-pci,id=%s,queue-size=1024,chardev=%s,tag=waddle_fs_%c",
+        device_id, chardev_id, drive_letter);
+    if (id_length < 0 || (size_t)id_length >= sizeof(chardev_id) ||
+        device_id_length < 0 || (size_t)device_id_length >= sizeof(device_id) ||
+        chardev_length < 0 || (size_t)chardev_length >= sizeof(chardev_buf) ||
+        device_length < 0 || (size_t)device_length >= sizeof(device_buf)) {
+        errno = E2BIG;
+        return -1;
+    }
+    if (append_arg(argv, argc, max_args, "-chardev") != 0 ||
+        append_arg(argv, argc, max_args, chardev_buf) != 0 ||
+        append_arg(argv, argc, max_args, "-device") != 0 ||
+        append_arg(argv, argc, max_args, device_buf) != 0) return -1;
+    return 0;
+}
+
+static int qemu_build_args_internal(const daemon_config_t *config,
+                                    const char *device_name,
+                                    const char *qmp_sock_path,
+                                    const char *virtiofsd_sock_path,
+                                    const qemu_virtiofs_mount_t *mounts,
+                                    size_t mount_count,
+                                    const char *pid_file_path,
+                                    char **argv,
+                                    size_t max_args) {
     if (argv != NULL && max_args != 0) argv[0] = NULL;
     if (config == NULL || !qemu_device_name_valid(device_name) ||
         qmp_sock_path == NULL || argv == NULL || max_args < 32 ||
-        !qemu_path_valid(qmp_sock_path, 1) || !qemu_path_valid(virtiofsd_sock_path, 0) ||
+        !qemu_keyval_path_valid(qmp_sock_path, 1) ||
+        !qemu_keyval_path_valid(virtiofsd_sock_path, 0) ||
+        !qemu_mounts_valid(mounts, mount_count) ||
         !qemu_path_valid(pid_file_path, 0) || daemon_config_validate(config) != 0) {
         errno = EINVAL;
         return -1;
@@ -173,12 +281,20 @@ int qemu_build_args_for_device(const daemon_config_t *config,
     /* VirtIO-FS vhost-user socket backend */
     if (virtiofsd_sock_path != NULL && virtiofsd_sock_path[0] != '\0') {
         char chardev_buf[WaddleMaxPathLen + 64];
-        snprintf(chardev_buf, sizeof(chardev_buf),
-                 "socket,id=char0,path=%s", virtiofsd_sock_path);
+        int chardev_length = snprintf(chardev_buf, sizeof(chardev_buf),
+                                      "socket,id=char0,path=%s", virtiofsd_sock_path);
+        if (chardev_length < 0 || (size_t)chardev_length >= sizeof(chardev_buf)) {
+            errno = E2BIG;
+            goto fail;
+        }
         if (append_arg(argv, &argc, max_args, "-chardev") != 0 ||
             append_arg(argv, &argc, max_args, chardev_buf) != 0 ||
             append_arg(argv, &argc, max_args, "-device") != 0 ||
             append_arg(argv, &argc, max_args, "vhost-user-fs-pci,queue-size=1024,chardev=char0,tag=waddle_fs") != 0) goto fail;
+    }
+    for (size_t mount_index = 0; mount_index < mount_count; ++mount_index) {
+        if (qemu_append_mount_args(argv, &argc, max_args, &mounts[mount_index]) != 0)
+            goto fail;
     }
 
     /* VSOCK device */
@@ -326,6 +442,19 @@ fail:
     return -1;
 }
 
+int qemu_build_args_for_device_mounts(const daemon_config_t *config,
+                                      const char *device_name,
+                                      const char *qmp_sock_path,
+                                      const qemu_virtiofs_mount_t *mounts,
+                                      size_t mount_count,
+                                      const char *pid_file_path,
+                                      char **argv,
+                                      size_t max_args) {
+    return qemu_build_args_internal(config, device_name, qmp_sock_path,
+                                    NULL, mounts, mount_count, pid_file_path,
+                                    argv, max_args);
+}
+
 void qemu_free_args(char **argv, size_t argc) {
     if (argv == NULL) return;
     for (size_t i = 0; i < argc; i++) {
@@ -419,6 +548,16 @@ int qemu_find_binary(char *out_path, size_t path_cap) {
     return -1;
 }
 
+static int qemu_spawn_internal(qemu_process_t *proc,
+                               const daemon_config_t *config,
+                               const char *device_name,
+                               const char *qmp_sock_path,
+                               const char *virtiofsd_sock_path,
+                               const qemu_virtiofs_mount_t *mounts,
+                               size_t mount_count,
+                               const char *log_path,
+                               const char *qemu_binary);
+
 int qemu_spawn(qemu_process_t *proc,
                const daemon_config_t *config,
                const char *qmp_sock_path,
@@ -436,6 +575,33 @@ int qemu_spawn_for_device(qemu_process_t *proc,
                           const char *virtiofsd_sock_path,
                           const char *log_path,
                           const char *qemu_binary) {
+    return qemu_spawn_internal(proc, config, device_name, qmp_sock_path,
+                               virtiofsd_sock_path, NULL, 0, log_path,
+                               qemu_binary);
+}
+
+int qemu_spawn_for_device_mounts(qemu_process_t *proc,
+                                 const daemon_config_t *config,
+                                 const char *device_name,
+                                 const char *qmp_sock_path,
+                                 const qemu_virtiofs_mount_t *mounts,
+                                 size_t mount_count,
+                                 const char *log_path,
+                                 const char *qemu_binary) {
+    return qemu_spawn_internal(proc, config, device_name, qmp_sock_path,
+                               NULL, mounts, mount_count, log_path,
+                               qemu_binary);
+}
+
+static int qemu_spawn_internal(qemu_process_t *proc,
+                               const daemon_config_t *config,
+                               const char *device_name,
+                               const char *qmp_sock_path,
+                               const char *virtiofsd_sock_path,
+                               const qemu_virtiofs_mount_t *mounts,
+                               size_t mount_count,
+                               const char *log_path,
+                               const char *qemu_binary) {
     if (proc == NULL || config == NULL || qmp_sock_path == NULL || log_path == NULL) {
         errno = EINVAL;
         return -1;
@@ -454,9 +620,9 @@ int qemu_spawn_for_device(qemu_process_t *proc,
     char *argv[QemuMaxArgs];
     memset(argv, 0, sizeof(argv));
 
-    int argc = qemu_build_args_for_device(config, device_name, qmp_sock_path,
-                                          virtiofsd_sock_path, NULL, argv,
-                                          QemuMaxArgs);
+    int argc = qemu_build_args_internal(config, device_name, qmp_sock_path,
+                                        virtiofsd_sock_path, mounts, mount_count,
+                                        NULL, argv, QemuMaxArgs);
     if (argc < 0) {
         return -1;
     }
@@ -551,15 +717,18 @@ int qemu_shutdown_graceful(qemu_process_t *proc) {
 }
 
 int qemu_kill(qemu_process_t *proc) {
-    if (proc == NULL) return -1;
-
+    if (proc == NULL) { errno = EINVAL; return -1; }
     if (proc->pid > 0) {
-        kill(proc->pid, SIGKILL);
-        waitpid(proc->pid, NULL, 0);
+        int signal_result;
+        do { signal_result = kill(proc->pid, SIGKILL); } while (signal_result < 0 && errno == EINTR);
+        if (signal_result < 0 && errno != ESRCH) return -1;
+        pid_t waited;
+        do { waited = waitpid(proc->pid, NULL, 0); } while (waited < 0 && errno == EINTR);
+        if (waited < 0 && errno != ECHILD) return -1;
+        if (waited == 0) { errno = EBUSY; return -1; }
         proc->pid = 0;
         proc->is_running = 0;
     }
-
     qmp_close(&proc->qmp);
     return 0;
 }
@@ -567,15 +736,16 @@ int qemu_kill(qemu_process_t *proc) {
 void qemu_cleanup(qemu_process_t *proc) {
     if (proc == NULL) return;
 
+    /* Cleanup may not detach a child whose liveness is still unknown. */
+    if (proc->pid > 0) {
+        int status = qemu_poll_status(proc);
+        if (status != 0) { if (status > 0) errno = EBUSY; return; }
+    }
     qmp_close(&proc->qmp);
 
     if (proc->log_fd >= 0) {
         close(proc->log_fd);
         proc->log_fd = -1;
-    }
-
-    if (proc->pid > 0) {
-        waitpid(proc->pid, NULL, WNOHANG);
     }
 
     proc->is_running = 0;

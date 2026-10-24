@@ -10,6 +10,9 @@
 #include <assert.h>
 #include <errno.h>
 #include <poll.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +21,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+static int find_arg(char *const argv[], int argc, const char *needle);
 
 /** @brief Test-only CUPS lstat result; -1 delegates to the real filesystem. */
 static int cups_test_mode = -1;
@@ -34,6 +39,52 @@ int __wrap_lstat(const char *path, struct stat *status) {
         return 0;
     }
     return __real_lstat(path, status);
+}
+
+/** @brief Fault injection is active only during the synthetic child test. */
+static int process_fault_active;
+static int process_kill_error;
+static int process_wait_error;
+static int process_wait_interrupt;
+int __real_kill(pid_t pid, int signal_number);
+pid_t __real_waitpid(pid_t pid, int *status, int options);
+int __wrap_kill(pid_t pid, int signal_number) {
+    if (!process_fault_active) return __real_kill(pid, signal_number);
+    if (process_kill_error) { errno = process_kill_error; return -1; }
+    return 0;
+}
+pid_t __wrap_waitpid(pid_t pid, int *status, int options) {
+    if (!process_fault_active) return __real_waitpid(pid, status, options);
+    if (process_wait_interrupt) { process_wait_interrupt = 0; errno = EINTR; return -1; }
+    if (process_wait_error) { errno = process_wait_error; return -1; }
+    return pid;
+}
+
+static void test_qemu_process_failure_ownership(void) {
+    qemu_process_t process;
+    memset(&process, 0, sizeof(process));
+    process.pid = 424242;
+    process.is_running = 1;
+    process.qmp.socket_fd = -1;
+    process.log_fd = dup(STDERR_FILENO);
+    assert(process.log_fd >= 0);
+    const int log_descriptor = process.log_fd;
+    process_fault_active = 1;
+    process_kill_error = EPERM;
+    assert(qemu_kill(&process) == -1 && errno == EPERM);
+    assert(process.pid == 424242 && process.is_running && process.log_fd == log_descriptor);
+    process_kill_error = 0;
+    process_wait_error = EIO;
+    assert(qemu_kill(&process) == -1 && errno == EIO);
+    assert(process.pid == 424242 && process.is_running && fcntl(log_descriptor, F_GETFD) >= 0);
+    qemu_cleanup(&process);
+    assert(errno == EIO && process.pid == 424242 && process.log_fd == log_descriptor);
+    process_wait_error = 0;
+    process_wait_interrupt = 1;
+    assert(qemu_kill(&process) == 0 && process.pid == 0 && !process.is_running);
+    qemu_cleanup(&process);
+    assert(process.log_fd == -1 && fcntl(log_descriptor, F_GETFD) < 0 && errno == EBADF);
+    process_fault_active = 0;
 }
 
 static void test_qemu_build_args(void) {
@@ -86,6 +137,16 @@ static void test_qemu_build_args(void) {
     assert(found_fs == 1);
     assert(found_drive == 1);
 
+    qemu_free_args(argv, (size_t)argc);
+
+    argc = qemu_build_args(&cfg, "/run/qmp.sock", "/run/virtiofsd.sock",
+                           NULL, argv, QemuMaxArgs);
+    assert(argc > 0);
+    int legacy_chardev = find_arg(argv, argc,
+                                  "socket,id=char0,path=/run/virtiofsd.sock");
+    int legacy_device = find_arg(argv, argc,
+        "vhost-user-fs-pci,queue-size=1024,chardev=char0,tag=waddle_fs");
+    assert(legacy_chardev >= 0 && legacy_device >= 0);
     qemu_free_args(argv, (size_t)argc);
 }
 
@@ -259,6 +320,179 @@ static void test_qemu_argument_failure_cleanup_and_path_bounds(void) {
     qemu_free_args(argv, (size_t)count);
 }
 
+static void test_qemu_multi_mount_args(void) {
+    daemon_config_t config;
+    daemon_config_init_defaults(&config);
+    config.network_cups_forward = 0;
+    char *argv[QemuMaxArgs];
+    memset(argv, 0, sizeof(argv));
+
+    int count = qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", NULL, 0, NULL, argv, QemuMaxArgs);
+    assert(count > 0 && argv[count] == NULL);
+    assert(find_arg(argv, count, "tag=waddle_fs") < 0);
+    qemu_free_args(argv, (size_t)count);
+
+    qemu_virtiofs_mount_t mounts[WaddleMaxMounts];
+    memset(mounts, 0, sizeof(mounts));
+    const char drives[WaddleMaxMounts] = { 'Z', 'X', 'W', 'V', 'U', 'T', 'S', 'R' };
+    for (size_t index = 0; index < WaddleMaxMounts; ++index) {
+        snprintf(mounts[index].socket_path, sizeof(mounts[index].socket_path),
+                 "/tmp/virtiofs-%c.sock", drives[index]);
+        snprintf(mounts[index].guest_drive, sizeof(mounts[index].guest_drive),
+                 "%c:\\", drives[index]);
+    }
+    count = qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", mounts, WaddleMaxMounts, NULL, argv, QemuMaxArgs);
+    assert(count > 0 && argv[count] == NULL);
+    int previous_group = -1;
+    for (size_t index = 0; index < WaddleMaxMounts; ++index) {
+        char chardev[WaddleMaxPathLen + 64];
+        char device[160];
+        char drive_letter = (char)(drives[index] - 'A' + 'a');
+        snprintf(chardev, sizeof(chardev),
+                 "socket,id=waddle_fs_char_%c,path=%.*s", drive_letter,
+                 (int)sizeof(mounts[index].socket_path) - 1,
+                 mounts[index].socket_path);
+        snprintf(device, sizeof(device),
+            "vhost-user-fs-pci,id=waddle_fs_dev_%c,queue-size=1024,chardev=waddle_fs_char_%c,tag=waddle_fs_%c",
+            drive_letter, drive_letter, drive_letter);
+        int chardev_index = find_arg(argv, count, chardev);
+        int device_index = find_arg(argv, count, device);
+        assert(chardev_index >= 0 && device_index == chardev_index + 2);
+        assert(strcmp(argv[chardev_index - 1], "-chardev") == 0);
+        assert(strcmp(argv[chardev_index + 1], "-device") == 0);
+        assert(chardev_index > previous_group);
+        previous_group = chardev_index;
+    }
+    assert((size_t)count + 1U <= QemuMaxArgs);
+    qemu_free_args(argv, (size_t)count);
+
+    daemon_config_t worst_config;
+    daemon_config_init_defaults(&worst_config);
+    worst_config.av_enabled = 1;
+    worst_config.av_uefi = 1;
+    strcpy(worst_config.av_shm_path, "/dev/shm/waddle-multimount-max");
+    strcpy(worst_config.av_gpu_mdev_uuid,
+           "12345678-1234-5678-9abc-123456789abc");
+    worst_config.network_mode = NetworkModeUser;
+    worst_config.network_cups_forward = 1;
+    worst_config.usb_controller = 1;
+    worst_config.audio_backend = AudioBackendPipewire;
+    worst_config.audio_microphone = 0;
+    cups_test_mode = S_IFSOCK | 0600;
+    count = qemu_build_args_for_device_mounts(&worst_config, "mount-capacity",
+        "/tmp/qmp-capacity.sock", mounts, WaddleMaxMounts,
+        "/tmp/qemu-capacity.pid", argv, QemuMaxArgs);
+    assert(count > 0 && argv[count] == NULL);
+    assert((size_t)count + 1U <= QemuMaxArgs);
+    for (size_t index = 0; index < WaddleMaxMounts; ++index) {
+        char drive_letter = (char)(drives[index] - 'A' + 'a');
+        char device[160];
+        snprintf(device, sizeof(device),
+            "vhost-user-fs-pci,id=waddle_fs_dev_%c,queue-size=1024,chardev=waddle_fs_char_%c,tag=waddle_fs_%c",
+            drive_letter, drive_letter, drive_letter);
+        assert(count_arg(argv, count, device) == 1);
+    }
+    qemu_free_args(argv, (size_t)count);
+
+    /* A vector with no trailing-NULL capacity must fail and free every arg. */
+    memset(argv, 0, sizeof(argv));
+    assert(qemu_build_args_for_device_mounts(&worst_config, "mount-capacity",
+        "/tmp/qmp-capacity.sock", mounts, WaddleMaxMounts,
+        "/tmp/qemu-capacity.pid", argv, (size_t)count) == -1);
+    assert(errno == E2BIG && argv[0] == NULL);
+    for (size_t index = 0; index < QemuMaxArgs; ++index) assert(argv[index] == NULL);
+    cups_test_mode = -1;
+
+    /* Lowercase drive identity remains stable and exact duplicate paths fail. */
+    strcpy(mounts[0].guest_drive, "z:/");
+    count = qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", mounts, 1, NULL, argv, QemuMaxArgs);
+    assert(count > 0 && find_arg(argv, count,
+        "vhost-user-fs-pci,id=waddle_fs_dev_z,queue-size=1024,chardev=waddle_fs_char_z,tag=waddle_fs_z") >= 0);
+    qemu_free_args(argv, (size_t)count);
+
+    qemu_virtiofs_mount_t invalid_mounts[2];
+    memset(invalid_mounts, 0, sizeof(invalid_mounts));
+    strcpy(invalid_mounts[0].socket_path, "/tmp/duplicate.sock");
+    strcpy(invalid_mounts[0].guest_drive, "Z:\\");
+    strcpy(invalid_mounts[1].socket_path, "/tmp/duplicate.sock");
+    strcpy(invalid_mounts[1].guest_drive, "X:\\");
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 2, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    strcpy(invalid_mounts[1].socket_path, "/tmp/unique.sock");
+    strcpy(invalid_mounts[1].guest_drive, "z:/");
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 2, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+
+    strcpy(invalid_mounts[0].socket_path, "/tmp/comma,path.sock");
+    strcpy(invalid_mounts[0].guest_drive, "Z:\\");
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 1, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    strcpy(invalid_mounts[0].socket_path, "/tmp/control\npath.sock");
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 1, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    strcpy(invalid_mounts[0].guest_drive, "1:\\");
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 1, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    memset(invalid_mounts[0].socket_path, 'x', sizeof(invalid_mounts[0].socket_path));
+    strcpy(invalid_mounts[0].guest_drive, "Z:\\");
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 1, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    strcpy(invalid_mounts[0].socket_path, "relative.sock");
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 1, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    strcpy(invalid_mounts[0].socket_path, "/tmp/valid.sock");
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/comma,qmp.sock", invalid_mounts, 1, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    assert(qemu_build_args(&config, "/tmp/control\tqmp.sock", NULL, NULL,
+                           argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    assert(qemu_build_args(&config, "/tmp/qmp.sock", "/tmp/comma,socket.sock",
+                           NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", NULL, 1, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 0, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, WaddleMaxMounts + 1U, NULL,
+        argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    assert(qemu_build_args_for_device_mounts(&config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 1, NULL, argv, 32) == -1);
+    assert(errno == E2BIG && argv[0] == NULL);
+    for (size_t index = 0; index < QemuMaxArgs; ++index) assert(argv[index] == NULL);
+
+    qemu_process_t proc;
+    assert(qemu_spawn_for_device_mounts(&proc, &config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 2, "/tmp/no-spawn.log", "/bin/false") == -1);
+    assert(errno == EINVAL && proc.pid == 0 && proc.virtiofsd_sock_path[0] == '\0');
+
+    /* Exercise the spawn wrapper with a harmless executable standing in for QEMU. */
+    char spawn_log[128];
+    snprintf(spawn_log, sizeof(spawn_log), "/tmp/waddle_qemu_mount_%d.log", (int)getpid());
+    unlink(spawn_log);
+    assert(qemu_spawn_for_device_mounts(&proc, &config, "mount-test",
+        "/tmp/qmp.sock", invalid_mounts, 1, spawn_log, "/bin/true") == 0);
+    assert(proc.pid > 0 && proc.virtiofsd_sock_path[0] == '\0');
+    if (qemu_poll_status(&proc) == 1) assert(qemu_kill(&proc) == 0);
+    qemu_cleanup(&proc);
+    unlink(spawn_log);
+}
+
 typedef struct mock_qmp_server_t {
     int listen_fd;
     char sock_path[108];
@@ -411,8 +645,10 @@ int main(void) {
     test_av_args();
     test_seamless_qemu_args();
     test_qemu_argument_failure_cleanup_and_path_bounds();
+    test_qemu_multi_mount_args();
     test_qmp_client();
     test_qemu_process_lifecycle();
+    test_qemu_process_failure_ownership();
     printf("test_daemon_qemu: all QEMU argument builder, process lifecycle, and QMP client tests passed\n");
     return 0;
 }
