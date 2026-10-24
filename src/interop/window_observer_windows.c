@@ -1774,7 +1774,7 @@ static int native_fill_rect(HWND window, int iconic, interop_window_facts_t *fac
     return 1;
 }
 
-/* Compute the Fullscreen flag: not iconic, rect covers its monitor, title bar absent. */
+/* Compute the Fullscreen flag: -1 indeterminate, 0 false, 1 true. */
 static int native_is_fullscreen(HWND window, int iconic, uint32_t style, const RECT *rect) {
     if (iconic || (style & WS_CAPTION) == WS_CAPTION) {
         return 0;
@@ -1783,9 +1783,10 @@ static int native_is_fullscreen(HWND window, int iconic, uint32_t style, const R
     MONITORINFO info;
     memset(&info, 0, sizeof(info));
     info.cbSize = (DWORD)sizeof(info);
-    if (monitor == NULL || !GetMonitorInfoW(monitor, &info)) {
+    if (monitor == NULL) {
         return 0;
     }
+    if (!GetMonitorInfoW(monitor, &info)) return -1;
     return rect->left <= info.rcMonitor.left && rect->top <= info.rcMonitor.top &&
            rect->right >= info.rcMonitor.right && rect->bottom >= info.rcMonitor.bottom;
 }
@@ -1848,13 +1849,13 @@ static window_observer_query_result_t native_query_facts_inner(void *context, ui
     if (get_dpi == NULL) {
         return WindowObserverQueryFailed;
     }
-    facts->window = window;
-    if (!native_fill_relations(handle, facts) || !native_fill_styles(handle, facts)) {
-        return native_read_failed(handle);
-    }
     DWORD process_id = 0;
     const DWORD thread_id = GetWindowThreadProcessId(handle, &process_id);
     if (thread_id == 0u || process_id == 0u) {
+        return native_read_failed(handle);
+    }
+    facts->window = window;
+    if (!native_fill_relations(handle, facts) || !native_fill_styles(handle, facts)) {
         return native_read_failed(handle);
     }
     facts->process_id = (uint32_t)process_id;
@@ -1905,7 +1906,11 @@ static window_observer_query_result_t native_query_facts_inner(void *context, ui
         if (!native_fill_rect(handle, iconic, facts, &rect)) {
             return native_read_failed(handle);
         }
-        if (native_is_fullscreen(handle, iconic, facts->style, &rect)) {
+        const int fullscreen = native_is_fullscreen(handle, iconic, facts->style, &rect);
+        if (fullscreen < 0) {
+            return native_read_failed(handle);
+        }
+        if (fullscreen != 0) {
             facts->flags |= (uint32_t)InteropWindowFactFullscreen;
         }
     }
@@ -1926,6 +1931,12 @@ static window_observer_query_result_t native_query_facts_inner(void *context, ui
     }
     if (!IsWindow(handle)) {
         return native_gone_probe(handle); /* vanished mid-read: the partial facts are discarded */
+    }
+    DWORD final_process_id = 0;
+    const DWORD final_thread_id = GetWindowThreadProcessId(handle, &final_process_id);
+    if (final_thread_id == 0u || final_process_id == 0u || final_thread_id != thread_id ||
+        final_process_id != process_id) {
+        return native_read_failed(handle);
     }
     return WindowObserverQueryExists;
 }

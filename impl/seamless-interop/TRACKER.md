@@ -935,10 +935,21 @@ its uncompiled draft earns no credit until current acceptance passes.
     Implementation/native CI and O5 acceptance remain open.
     HEAD identifies this contract commit.
 
-- **Commit `HEAD`**: `docs(interop): freeze callback-free tracked window snapshot`
+- **Commit `1e49547`**: `docs(interop): freeze callback-free tracked window snapshot`
   - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
   - **Summary**: Specifies a read-only sorted/deduplicated Active+Retiring HWND
     snapshot with exact Free-slot count, complete C span validation and unchanged
     outputs/counters on failure. Adds no wire or layout changes. This is only
     the bounded O5 capacity prerequisite; observer preservation stays open.
     HEAD identifies this contract commit.
+
+- **Commit `HEAD`**: `fix(interop): reject inconsistent native window fact snapshots`
+  - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
+  - **Summary**: Captures identity before properties and rejects changed/zero
+    final PID/TID; monitor-info failure is indeterminate instead of false. Adds
+    a separate synthetic native fault fixture using real HWNDs and owner-thread
+    Started observer cleanup. Lead strict Zig link and MinGW compile pass;
+    six-executable Windows graph CI now includes it. Native execution is pending
+    for this source; O5 and observer/native acceptance remain open.
+    [Qualification](claude_window_graph/native_fact_guards_qualification_2026_10_24.json).
+    HEAD identifies this native correction commit.

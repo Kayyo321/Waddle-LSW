@@ -37,6 +37,7 @@ jobs:
             build/window_graph/window_graph_c_test.exe
             build/window_graph/window_observer_test.exe
             build/window_graph/window_observer_native_test.exe
+            build/window_graph/window_observer_native_failures_test.exe
             build/window_graph/window_graph_unit_test.exe
             build/window_graph/window_graph_abi_unit_test.exe
           if-no-files-found: error
@@ -48,11 +49,11 @@ jobs:
         with:
           name: interop-window-graph-windows
           path: build
-      - name: Execute graph C ABI, observer doubles and real Win32 adapter smoke
+      - name: Execute graph C ABI, observer doubles and real Win32 adapter smoke and synthetic failure guards
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($test_name in @('window_graph_c_test.exe', 'window_observer_test.exe', 'window_observer_native_test.exe', 'window_graph_unit_test.exe', 'window_graph_abi_unit_test.exe')) {
+          foreach ($test_name in @('window_graph_c_test.exe', 'window_observer_test.exe', 'window_observer_native_test.exe', 'window_observer_native_failures_test.exe', 'window_graph_unit_test.exe', 'window_graph_abi_unit_test.exe')) {
             & ".\build\$test_name"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

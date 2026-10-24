@@ -1,0 +1,24 @@
+{
+  "qualification_utc": "2026-10-24T20:07:48.565244+00:00",
+  "source_revision": "containing native guard commit; exact hashes below",
+  "sources_sha256": {
+    "src/interop/window_observer_windows.c": "a1d88fc7036903a922935f2d988664fddb556b0839b1cabb0950b2b3a24328fe",
+    "tests/interop/window_observer_native_failures_windows.c": "da0ee61a8a2c2108ca1ac730f003c0449889b9f515ea8b64a6afd57c6b3b16c5",
+    "scripts/interop_window_graph.mk": "c7e005c176c39f68e530f4677febb94f4507ed27b522bf0167e31cab79e441c0",
+    ".github/workflows/interop_window_graph.yml": "fcbf294fb349d9806a9386ac0da95f47364dc50a35e269824d4426458b445853"
+  },
+  "commands": [
+    {
+      "command": "zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -U_WIN32_WINNT -D_WIN32_WINNT=0x0A00 -UWINVER -DWINVER=0x0A00 -DUNICODE -D_UNICODE -Isrc/interop -Iinclude tests/interop/window_observer_native_failures_windows.c /tmp/seamless_main_graph_20261024/window_graph_abi_windows.lib -ldwmapi -o /tmp/seamless_native_guard_lead/window_observer_native_failures_test.exe",
+      "exit_code": 0
+    },
+    {
+      "command": "x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -U_WIN32_WINNT -D_WIN32_WINNT=0x0A00 -UWINVER -DWINVER=0x0A00 -DUNICODE -D_UNICODE -Isrc/interop -Iinclude -c tests/interop/window_observer_native_failures_windows.c -o /tmp/seamless_native_guard_lead/native_failures_mingw.o",
+      "exit_code": 0
+    }
+  ],
+  "source_review": "Lead verified initial identity precedes property reads, all final identity changes fail conservatively and helper -1 cannot become a true/fullscreen bit. Fixture now owns a Started native observer as required by its query contract and always attempts HWND/hook/DPI cleanup.",
+  "execution": "Cross-build only. Synthetic faults and unchanged real native smoke must execute in Windows CI. No native runtime success or native-branch coverage inferred.",
+  "boundaries": "Only _WIN32 production code changes; O5 remains open; no atomic HWND snapshot, same-tuple ABA or native-session proof.",
+  "progress_impact": 0
+}
