@@ -943,7 +943,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     the bounded O5 capacity prerequisite; observer preservation stays open.
     HEAD identifies this contract commit.
 
-- **Commit `HEAD`**: `fix(interop): reject inconsistent native window fact snapshots`
+- **Commit `5ed706d`**: `fix(interop): reject inconsistent native window fact snapshots`
   - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
   - **Summary**: Captures identity before properties and rejects changed/zero
     final PID/TID; monitor-info failure is indeterminate instead of false. Adds
@@ -953,3 +953,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     for this source; O5 and observer/native acceptance remain open.
     [Qualification](claude_window_graph/native_fact_guards_qualification_2026_10_24.json).
     HEAD identifies this native correction commit.
+
+- **Commit `HEAD`**: `docs(interop): freeze bounded Linux connected socket owner`
+  - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total17.80%).
+  - **Summary**: Freezes descriptor transfer, bounded copied RX/TX, exact positive
+    send ACKs, single-use poll guidance, mapping-wait timers, finite nonextending
+    drain and one-shot close. Guest initialization and Host failed-validation
+    behavior preserve the accepted peer boundary. Refines #7 transport25% into
+    byte owner5%/VSOCK-singleton10%/daemon-local-control10% before any credit.
+    Source, socketpair fault/stress/coverage/leak qualification remain pending.
+    HEAD identifies this contract commit.

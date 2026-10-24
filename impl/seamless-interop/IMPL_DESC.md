@@ -3429,3 +3429,29 @@ remain90%, sanitizer/testing-allocator checks remain leak-free, and the exact
 export allowlist grows from21 to22. This snapshot alone fixes no delivered-
 destroy loss and earns no new #10 progress. Observer binding/mailbox/lifecycle
 proposal remains advisory until separately frozen and implemented.
+
+
+### 8.23 Bounded Linux connected socket owner
+
+Implement the exact public local-C interface in include/waddle/interop_linux_socket.h
+and the normative ownership, polling, timing, buffering, ACK, error and cleanup
+contract in [linux_socket_owner.md](linux_socket_owner.md). The lead-correction
+section of that document supersedes its general statements. This is a C OS
+adapter around the accepted Zig peer/parser boundary: it never parses untrusted
+wire headers in C. All protocol validation remains in the Zig peer.
+
+Source files are src/interop/linux_socket_owner.c and
+tests/interop/linux_socket_owner.c. One already-connected nonblocking CLOEXEC
+stream fd transfers only on successful create. Fixed8KiB RX carry and64KiB TX
+copy, bounded syscalls/helper steps, immediate mandatory ACK of positive sends,
+single-use poll cookies, copied one-event results, mapping-wait ticks, finite
+nonextending drain deadline, and one-shot Linux close govern every path.
+Creation/destroy are symmetric; no caller pointer/callback is retained.
+Host starts Active; Guest starts MappingWait and requires explicit initialization.
+EOF/stop/destroy/Goodbye never proves mapping release or epoch reuse.
+
+The existing #7 host-transport25% allocation is refined before credit into
+connected-byte-owner5%, connection/VSOCK/singleton10%, daemon/local-control10%.
+The portable owner earns no credit until real socketpair, adversarial coverage,
+zero-leak sanitizers and full shared regression gates pass. Other #7 allocations
+and all Windows/native session qualification stay separate.
