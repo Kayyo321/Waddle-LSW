@@ -2547,3 +2547,49 @@ check every required byte/atomic and an untouched sentinel beyond0x4000, and
 assert invalid calls leave storage unchanged. Linux ASan/LSan/UBSan and Windows
 CPU execution qualify only this memory primitive; signed-driver access,
 exclusive ownership, agent startup and real mapping integration remain open.
+
+### 8.12 Bounded protocol stream framing for the session endpoints
+
+New stream_reader.zig is an allocation-free, caller-owned ingress accumulator
+for both future session transports. It calls the frozen codec C ABI (linked
+separately) for header decoding and complete-payload validation; it implements
+no second TLV/header parser. One serialized event-loop thread owns a reader.
+Initialization accepts only producer directions1/2/3 and clears state. The
+reader owns a fixed65536-byte frame buffer and private decoded header, with no
+retained input pointer, OS handle, outbound queue or session policy.
+
+feed borrows an accessible input byte slice and returns consumed bytes and a
+frame-ready flag. It accepts at most one frame per call. Gather exactly16 header
+bytes, decode/validate them before trusting payload length, then gather exactly
+the declared payload. Stop at that frame boundary even when input contains
+coalesced frames; the caller feeds the unconsumed suffix after consume. An empty
+slice makes no progress. Feeding a complete unconsumed frame returns zero
+consumed and ready=true. Reject input overlapping any reader storage before
+mutation; no buffer alias permits input to overwrite reader metadata. A header
+codec failure makes the reader failed/closed; later feed/peek/consume cannot
+resume it. Save the exact codec error for diagnostics. Reconnect creates a
+fresh reader; it does not clear old framing errors mid-connection.
+
+peek succeeds only for one complete frame and returns a copied decoded header,
+borrowed complete-frame/payload slices and the codec payload-validation result.
+No consumer may interpret fields unless validation is InteropErrorNone.
+UnsupportedType/UnsupportedField results remain visible for the caller's frozen
+Error/close policy; framing alone does not negotiate capabilities, correlate
+request IDs, authorize a message or decide connection lifetime. Malformed
+payload bytes are never described as a validated application message.
+
+consume invalidates every borrowed view and resets only the current frame
+accumulator. Calling it before a complete frame is an error without mutation.
+finish_input records a clean closed stream only when no partial bytes remain;
+a partial frame returns TruncatedFrame and fails closed. If a complete frame
+is still pending, return FramePending without mutation so the caller can process
+it first. EOF never implies producer stop, slot release or compositor drain.
+
+Tests use the real codec C ABI: bytewise/every-split/max-size input, coalesced
+frames and exact consumed counts, zero-length payloads, malformed headers,
+oversize/unaligned lengths, schema and direction errors, alias rejection,
+truncated header/body, pending-frame EOF and fresh-reader recovery. A deterministic
+mutation/stress corpus must keep all accesses bounded. Testing allocator checks
+apply to fixtures; the production reader allocates nothing. Linux coverage must
+retain the unchanged90% line/branch thresholds; actual Windows CPU execution
+qualifies parsing only, with host/guest transport integration separately open.

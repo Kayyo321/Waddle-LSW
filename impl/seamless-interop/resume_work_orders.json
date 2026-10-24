@@ -111,44 +111,37 @@
   "checkpoint_status": "active",
   "active_workers": [
     {
-      "agent": "luna_layout",
-      "owned_files": [
-        "src/interop/interop_slot_runtime_abi.zig",
-        "src/interop/interop_slot_runtime.h",
-        "tests/interop/slot_runtime_abi.c"
-      ],
-      "task": "Complete public error-path regressions for >=90% unchanged line and branch gates; no production coverage hacks",
+      "agent": "luna_qemu_build",
       "model": "gpt-6-luna",
       "effort": "high",
       "allocation_source": "user_override",
+      "owned_files": [
+        "src/interop/stream_reader.zig"
+      ],
+      "task": "Implement bounded allocation-free codec-backed ingress framing against IMPL_DESC8.12; builtin tests; no duplicated wireparser",
       "acceptance": [
-        "isolated Debug/ReleaseSafe+C fixture",
-        "lead unchanged production coverage >=90%, leak-enabled C sanitizers and WindowsCI"
+        "isolated codec object + Zig reader tests linked through frozen C ABI",
+        "lead unchanged90% line/branch and WindowsCI"
       ],
       "constraints": [
-        "No Git/sharedbuild/VM/Claude/nestedagents; underlying runtime lead-owned"
+        "No Git/sharedbuild/VM/Claude/recursiveagents; frozen codec/headers unchanged"
       ],
       "runner_ownership": "isolated/tmp CPU only"
     },
     {
-      "agent": "luna_mounts",
-      "owned_files": [
-        "src/interop/interop_mapping_init.c",
-        "src/interop/interop_mapping_init.h",
-        "tests/interop/mapping_init.c"
-      ],
-      "task": "Implement minute IMPL_DESC8.11 quiescent metadata initializer; no OS mapping or peer ownership claims",
+      "agent": "luna_layout",
       "model": "gpt-6-luna",
       "effort": "high",
       "allocation_source": "user_override",
+      "owned_files": [],
+      "task": "Read-only precise protocol handshake/heartbeat state machine proposal for6/7 from frozenHello/HelloAck schemas; avoid Claude graph and current streamreader lane",
       "acceptance": [
-        "isolated strict-C metadata and guard fixture",
-        "lead C sanitizers, coverage and native WindowsCI"
+        "Exact schemas, states, timeout/order/error boundaries in/tmp proposal; no source edits"
       ],
       "constraints": [
-        "No Git/sharedbuild/VM/GPU/Claude/nestedagents; frozenheadersandnativeatomic untouched"
+        "No source edits/build/Git/VM/Claude/recursiveagents"
       ],
-      "runner_ownership": "isolated/tmp CPU only"
+      "runner_ownership": "none"
     }
   ],
   "completed_followups": [
@@ -203,5 +196,5 @@
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
   },
-  "lead_current_work": "Qualify slot C ABI and native fixture; manifest remains unaccepted due leaf race and failed branch threshold; independent of Claude"
+  "lead_current_work": "Qualify metadata/C API actual WindowsCI, retain unaccepted journal evidence, define nextsession framing; no dependency on Claude"
 }

@@ -571,7 +571,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     [Qualification](slot_runtime_abi_qualification_2026_10_24.json). No live
     integration credit. Source commit279a3c4 contains this implementation.
 
-- **Commit `HEAD`**: `feat(interop): initialize quiescent guest mapping metadata`
+- **Commit `acd2011`**: `feat(interop): initialize quiescent guest mapping metadata`
   - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total14.40%).
   - **Summary**: Adds checked layout-v3 header/descriptor initialization before
     Hello, with explicit ownership proof precondition and no writes beyond the
@@ -579,4 +579,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     fixture, leak-enabled sanitizers and96.88% line/94.44% branch coverage pass;
     Windows fixture cross-builds and joins native CI. Signed-driver access and
     session integration remain open. [Qualification](mapping_init_qualification_2026_10_24.json).
-    HEAD identifies this containing implementation commit.
+    Source commitacd2011 contains this implementation.
+
+- **Commit `HEAD`**: `docs(interop): specify bounded session stream framing`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Defines fixed-buffer codec-backed incremental framing,
+    coalesced-frame consumption, alias/output lifetimes, error/EOF behavior and
+    exact tests before session transport implementation. Reserves an independent
+    Luna parser lane and read-only handshake contract investigation. Frozen
+    codec/wire and Claude graph ownership remain unchanged. HEAD identifies
+    this containing design/ownership commit.
