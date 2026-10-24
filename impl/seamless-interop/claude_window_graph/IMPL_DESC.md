@@ -460,7 +460,7 @@ Invariants used throughout.
 ### 4.1 Create (graph, then observer)
 
 Graph: `interop_window_graph_create(config, out_graph)`.
-1. `out_graph == NULL` returns InvalidArgument (nothing to null). Otherwise `*out_graph = NULL` immediately.
+1. A NULL, misaligned or wrapping output slot returns InvalidArgument unchanged. Before any write, reject overlap with the raw nonwrapping config extent (even if config is misaligned), leaving both regions unchanged. Only after establishing a valid disjoint slot write `*out_graph = NULL`; later configuration/allocation failures leave it NULL.
 2. `config == NULL`, `session_epoch == 0`, `uac_mode > InteropWindowUacNative`, `reserved0 != 0` or `app_key_lookup == NULL` returns InvalidArgument. `now_ms == NULL` selects the default monotonic clock: a `std.time.Timer` started at create, read in milliseconds. If the timer cannot be started the clock reads 0 forever, which counts as zero elapsed time everywhere (no tick estimate drift, and the capacity diagnostic samples once and is then rate-limited by the frozen clock).
 3. `owner_thread = std.Thread.getCurrentId()`.
 4. `allocator.create(graph_t)` (the module-level `abi_allocator`, `std.heap.c_allocator` by default) is the only allocation. Failure returns NoMemory with `*out_graph == NULL`; nothing else was allocated, so nothing leaks.
@@ -1342,3 +1342,16 @@ Identifiers are stable across drafts: the first item of the earlier draft (owned
 - **O25. Design-review m1 and m5 residuals (documented, not narrowed).** m1: there is no post-query tick sample, so the equal-tick and sample-to-read churn of 4.8 and decision 24 remain declared, not narrowed; acceptance is Codex's. m5: an IncarnationChanged admission still runs the flush over deferred records that wait on that HWND; those records may belong to children of the previous incarnation whose destroy hint was lost, and can be flushed as ghost Announce/RetireIntent pairs, bounded by the next commit (the refresh drops unseen deferred records). The engine was not changed for either.
 - **O26. `GetWindow(GW_OWNER)` last-error assumption.** `native_fill_relations` treats a NULL owner with a nonzero `GetLastError()` as a failed read (after `SetLastError(0)`). If any Windows build leaves a nonzero last error for an unowned window, every unowned window would become Failed and nothing would be exported. Needs native confirmation (8.6 item 13).
 6. The earlier committed text of this document (and the design note) listed 18 graph functions, a 13th observer status that aborted a refresh on any failed query, a pair of hooks (0x8000..0x800C and 0x0016..0x0017), a 12-bit fact mask, a 32-bit `time_before` destroy comparison, "mark seen on Ok only", a `reserved0` field in `window_observer_config_t`, and descendants that were always re-deferred. The amended headers have 21 functions (adds `classify`, `refresh_keep`, `refresh_unseen`), no failed-query status (StampExhausted 13, Reentrant 14, Unsupported 15), three hooks, a 13-bit mask with OwnerHidden, 64-bit unwrapped ticks, the offer-marks-every-outcome seen rule, `uac_mode` at config offset 36, and re-deferral only for same-incarnation Reclassified. Sections 1 to 9 above follow the amended headers.
+
+
+### 9.3 Codex review correction: create output precedence (2026-10-24)
+
+Review of returned3714cf2 found create clearing its output through a config alias
+before rejecting the overlap. The corrected C boundary checks raw config/output
+extent overlap before forming or writing the typed output slot. Aliased regions,
+including a misaligned config extent overlapping a valid aligned slot, return
+InvalidArgument with all caller bytes unchanged. A valid disjoint slot keeps the
+existing NULL-on-later-failure rule. Runtime C and Zig regressions verify both
+aligned callback-context overlap and misaligned overlap. Debug/ReleaseSafe150
+Zig tests and27 real C ABI tests pass in private /tmp outputs; native Windows
+execution and leak-enabled lead qualification remain separate pending gates.

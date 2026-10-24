@@ -740,9 +740,11 @@ _Static_assert(offsetof(interop_window_graph_config_t, now_ms_context) == 40, "c
  *
  * @param[in] config Non-NULL borrowed config (copied). session_epoch nonzero, uac_mode a defined
  *                   interop_window_uac_mode_t, reserved0 zero, app_key_lookup non-NULL.
- * @param[out] out_graph Non-NULL caller slot. On Ok it receives the new handle (owned by the
- *                       caller until destroy). On every failure it is set to NULL once the slot
- *                       itself was valid, so no stale handle can survive.
+ * @param[out] out_graph Non-NULL caller slot, disjoint from `config`. On Ok it receives the new
+ *                       handle (owned by the caller until destroy). On failure it is set to NULL
+ *                       once the slot is valid and disjoint from `config`, so no stale handle can
+ *                       survive. If the ranges overlap, the call returns InvalidArgument before
+ *                       either range is read or written; both caller regions remain unchanged.
  * @return Ok; InvalidArgument for a NULL slot, NULL config, or invalid config field; NoMemory when
  *         the single graph allocation fails (nothing is leaked).
  * @note The owner thread is the calling thread. Allocates exactly once; never retains config.

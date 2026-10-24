@@ -12,6 +12,8 @@
 //!    says write them (Ok everywhere; Ok, None and SinkFailed for the `delivered` count of drain).
 //!    Array outputs (`windows`, `entries`) are written by the engine, but only after its last
 //!    failure point, so they too are untouched on every non-Ok status.
+//!    `create` clears a valid, disjoint output slot on failure; config/output overlap is rejected
+//!    before either region is read or written.
 //!  * The header's common call rules keep their order: a NULL (or misaligned) graph is
 //!    InvalidArgument; then wrong thread, re-entrancy and a stale epoch are decided by the engine
 //!    guards even when a pointer argument is also bad; only then does a bad pointer produce
@@ -193,9 +195,11 @@ fn fault_reading(graph_pointer: *const graph.graph_t) c_int {
 ///
 /// @param[in] config Non-NULL, naturally aligned, borrowed; copied by value once, never
 ///                   retained. Must not overlap `out_graph`. Field rules are the engine's.
-/// @param[out] out_graph Non-NULL, 8-byte aligned caller slot. Set to NULL first; receives the
-///                       new handle on Ok. On every failure after the slot itself was valid it
-///                       is NULL. A NULL or misaligned slot is never written.
+/// @param[out] out_graph Non-NULL, 8-byte aligned caller slot, disjoint from `config`. It is set
+///                       to NULL before other config validation and receives the new handle on
+///                       Ok. On other failures it remains NULL. A NULL/misaligned slot is never
+///                       written; overlapping config/output ranges are rejected before either
+///                       range is read or written, so both remain unchanged.
 /// @return Ok; InvalidArgument for a bad slot or config pointer, an overlap, or a bad config
 ///         field; NoMemory when the single allocation fails (nothing leaks).
 /// @note Ownership: on Ok the caller owns the handle until `interop_window_graph_destroy`. The
@@ -206,6 +210,14 @@ export fn interop_window_graph_create(
     out_graph: ?*align(1) ?*graph_handle_t,
 ) c_int {
     const slot_span = span_of(?*graph_handle_t, out_graph) orelse return StatusInvalidArgument;
+    // Establish non-overlap from the raw config extent before writing the output slot. This
+    // deliberately does not require natural config alignment: even a misaligned aliased input
+    // must remain untouched. An unrepresentable extent is rejected conservatively.
+    if (config) |config_pointer| {
+        const config_start = @intFromPtr(config_pointer);
+        const config_end = std.math.add(usize, config_start, @sizeOf(config_t)) catch return StatusInvalidArgument;
+        if (slot_span.start < config_end and config_start < slot_span.end) return StatusInvalidArgument;
+    }
     const slot = aligned_mut(?*graph_handle_t, out_graph);
     slot.* = null;
     if (!spans_valid(&.{ slot_span, span_of(config_t, config) })) return StatusInvalidArgument;
@@ -1006,14 +1018,23 @@ test "create rejects bad slot and config pointers and nulls every valid slot" {
     try expect_status(.InvalidArgument, call_create(misaligned_config, &slot));
     try testing.expect(slot == null);
 
-    // The config overlaps the slot: rejected, slot nulled.
+    // An aliased output is rejected before either caller region is changed.
     var shared: [64]u8 align(8) = [_]u8{0} ** 64;
     const shared_config: *align(8) config_t = @ptrCast(&shared);
     shared_config.* = config;
     const shared_slot: *align(8) ?*graph_handle_t = @ptrCast(&shared[8]);
     shared_slot.* = stale;
+    const shared_before = shared;
     try expect_status(.InvalidArgument, call_create(shared_config, shared_slot));
-    try testing.expect(shared_slot.* == null);
+    try testing.expectEqualSlices(u8, &shared_before, &shared);
+
+    // Raw extent overlap is detected before config alignment is required.
+    var misaligned_shared: [128]u8 align(8) = [_]u8{0x5A} ** 128;
+    const misaligned_shared_config: ?*align(1) const config_t = @ptrCast(&misaligned_shared[1]);
+    const misaligned_shared_slot: *align(8) ?*graph_handle_t = @ptrCast(&misaligned_shared[16]);
+    const misaligned_shared_before = misaligned_shared;
+    try expect_status(.InvalidArgument, call_create(misaligned_shared_config, misaligned_shared_slot));
+    try testing.expectEqualSlices(u8, &misaligned_shared_before, &misaligned_shared);
 
     var bad = config;
     bad.session_epoch = 0;

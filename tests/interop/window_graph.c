@@ -660,6 +660,36 @@ static int test_create_destroy(void) {
     return 0;
 }
 
+/* ---- Test: create rejects config/output aliases without writing either range ---------------- */
+
+static int test_create_alias_preserves_inputs(void) {
+    union alias_storage_t {
+        max_align_t alignment;
+        uint8_t bytes[sizeof(interop_window_graph_config_t) + 16u];
+    } storage;
+    uint8_t before[sizeof storage.bytes];
+    interop_window_graph_status_t status;
+
+    /* Aligned config; output aliases callback-context bytes. */
+    memset(&storage, 0xA5, sizeof storage.bytes);
+    memcpy(before, storage.bytes, sizeof before);
+    status = interop_window_graph_create(
+        (const interop_window_graph_config_t *)(const void *)storage.bytes,
+        (interop_window_graph_t **)(void *)(storage.bytes + offsetof(interop_window_graph_config_t, app_key_context)));
+    Check(status == StInvalidArgument);
+    Check(memcmp(storage.bytes, before, sizeof before) == 0);
+
+    /* Misaligned config still overlaps the aligned output slot; reject before any write. */
+    memset(&storage, 0x5A, sizeof storage.bytes);
+    memcpy(before, storage.bytes, sizeof before);
+    status = interop_window_graph_create(
+        (const interop_window_graph_config_t *)(const void *)(storage.bytes + 1u),
+        (interop_window_graph_t **)(void *)(storage.bytes + 16u));
+    Check(status == StInvalidArgument);
+    Check(memcmp(storage.bytes, before, sizeof before) == 0);
+    return 0;
+}
+
 /* ---- Test: invalid arguments ---------------------------------------------------------------- */
 
 static int test_invalid_arguments(void) {
@@ -2777,6 +2807,7 @@ int main(void) {
     static const test_case_t tests[] = {
         {"runtime_sizes", test_runtime_sizes},
         {"create_destroy", test_create_destroy},
+        {"create_alias_preserves_inputs", test_create_alias_preserves_inputs},
         {"invalid_arguments", test_invalid_arguments},
         {"lifecycle", test_lifecycle},
         {"update_coalescing", test_update_coalescing},
