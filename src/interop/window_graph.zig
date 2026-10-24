@@ -15,32 +15,32 @@
 //! blocks live below the `Test-only` delimiter line at the end of the production area, which is
 //! the split point of the coverage tool.
 
-const std = @import("std");
+const std_t = @import("std");
 
 /// The committed public C header, imported verbatim. The engine uses these C
 /// structs directly: there are no hand-written mirrors that could drift.
-pub const c = @cImport({
+pub const c_t = @cImport({
     @cInclude("waddle/interop_window_graph.h");
 });
 
 /// One native window snapshot supplied by the observer (`interop_window_facts_t`).
-pub const facts_t = c.interop_window_facts_t;
+pub const facts_t = c_t.interop_window_facts_t;
 /// One queued event (`interop_window_event_t`); a value copy with no pointers.
-pub const event_t = c.interop_window_event_t;
+pub const event_t = c_t.interop_window_event_t;
 /// Result summary of observe, refresh_offer and note_destroyed.
-pub const observation_t = c.interop_window_observation_t;
+pub const observation_t = c_t.interop_window_observation_t;
 /// Description of the Active entry for one window.
-pub const live_t = c.interop_window_live_t;
+pub const live_t = c_t.interop_window_live_t;
 /// One quarantined entry as listed by list_retiring.
-pub const retiring_entry_t = c.interop_window_retiring_entry_t;
+pub const retiring_entry_t = c_t.interop_window_retiring_entry_t;
 /// Coordinator proof that ends a quarantine.
-pub const proof_t = c.interop_window_retire_proof_t;
+pub const proof_t = c_t.interop_window_retire_proof_t;
 /// Cumulative counters and gauges of one graph.
-pub const stats_t = c.interop_window_graph_stats_t;
+pub const stats_t = c_t.interop_window_graph_stats_t;
 /// Rate-limited capacity diagnostic.
-pub const diagnostic_t = c.interop_window_capacity_diagnostic_t;
+pub const diagnostic_t = c_t.interop_window_capacity_diagnostic_t;
 /// Graph creation parameters (callbacks, epoch, UAC mode).
-pub const config_t = c.interop_window_graph_config_t;
+pub const config_t = c_t.interop_window_graph_config_t;
 
 /// Exported-entry bound (Active plus Retiring); comptime_int, equals `InteropMaxWindows`.
 pub const MaxEntries = 64;
@@ -296,119 +296,119 @@ pub const status_t = enum(c_int) {
 comptime {
     // Hard guards: the Zig constants and the committed C header must never drift.
     const pairs = .{
-        .{ MaxEntries, c.InteropMaxWindows },
-        .{ MaxDeferred, c.InteropWindowGraphMaxDeferred },
-        .{ EventCapacity, c.InteropWindowGraphEventCapacity },
-        .{ MaxCallEvents, c.InteropWindowGraphMaxCallEvents },
-        .{ RefreshIntervalMs, c.InteropWindowGraphRefreshIntervalMs },
-        .{ DiagnosticIntervalMs, c.InteropWindowGraphDiagnosticIntervalMs },
-        .{ MaxClassBytes, c.InteropWindowGraphMaxClassBytes },
-        .{ MaxImageBytes, c.InteropWindowGraphMaxImageBytes },
-        .{ MaxTitleBytes, c.InteropWindowGraphMaxTitleBytes },
-        .{ MaxTitleBytes, c.InteropMaxTitleBytes },
-        .{ MaxAppKeyBytes, c.InteropWindowGraphMaxAppKeyBytes },
-        .{ MaxAppKeyBytes, c.InteropMaxAppKeyBytes },
-        .{ MinDpi, c.InteropWindowGraphMinDpi },
-        .{ MaxDpi, c.InteropWindowGraphMaxDpi },
-        .{ MaxExtent, c.InteropWindowGraphMaxExtent },
-        .{ FactVisible, c.InteropWindowFactVisible },
-        .{ FactEnabled, c.InteropWindowFactEnabled },
-        .{ FactIconic, c.InteropWindowFactIconic },
-        .{ FactZoomed, c.InteropWindowFactZoomed },
-        .{ FactLayered, c.InteropWindowFactLayered },
-        .{ FactLayeredAlphaKnown, c.InteropWindowFactLayeredAlphaKnown },
-        .{ FactFullscreen, c.InteropWindowFactFullscreen },
-        .{ FactAgentOwned, c.InteropWindowFactAgentOwned },
-        .{ FactAgentPreedit, c.InteropWindowFactAgentPreedit },
-        .{ FactOnInputDesktop, c.InteropWindowFactOnInputDesktop },
-        .{ FactClassTruncated, c.InteropWindowFactClassTruncated },
-        .{ FactImageUnknown, c.InteropWindowFactImageUnknown },
-        .{ FactOwnerHidden, c.InteropWindowFactOwnerHidden },
-        .{ FactMask, c.InteropWindowFactMask },
-        .{ ChangeRect, c.InteropWindowChangeRect },
-        .{ ChangeState, c.InteropWindowChangeState },
-        .{ ChangeDpi, c.InteropWindowChangeDpi },
-        .{ ChangeTitle, c.InteropWindowChangeTitle },
-        .{ ChangeMinSize, c.InteropWindowChangeMinSize },
-        .{ ChangeMask, c.InteropWindowChangeMask },
-        .{ EventAnnounce, c.InteropWindowEventAnnounce },
-        .{ EventUpdate, c.InteropWindowEventUpdate },
-        .{ EventRetireIntent, c.InteropWindowEventRetireIntent },
-        .{ @intFromEnum(verdict_kind_t.Eligible), c.InteropWindowVerdictEligible },
-        .{ @intFromEnum(verdict_kind_t.NotExported), c.InteropWindowVerdictNotExported },
-        .{ @intFromEnum(verdict_kind_t.Suspended), c.InteropWindowVerdictSuspended },
-        .{ UacWindow, c.InteropWindowUacWindow },
-        .{ UacAuto, c.InteropWindowUacAuto },
-        .{ UacNative, c.InteropWindowUacNative },
-        .{ DispositionUnchanged, c.InteropWindowDispositionUnchanged },
-        .{ DispositionAdmitted, c.InteropWindowDispositionAdmitted },
-        .{ DispositionUpdated, c.InteropWindowDispositionUpdated },
-        .{ DispositionDeferred, c.InteropWindowDispositionDeferred },
-        .{ DispositionRetired, c.InteropWindowDispositionRetired },
-        .{ DispositionReclassified, c.InteropWindowDispositionReclassified },
-        .{ DispositionExcluded, c.InteropWindowDispositionExcluded },
-        .{ DispositionSuspended, c.InteropWindowDispositionSuspended },
-        .{ ReasonNone, c.InteropWindowReasonNone },
-        .{ ReasonNotVisible, c.InteropWindowReasonNotVisible },
-        .{ ReasonExcludedClass, c.InteropWindowReasonExcludedClass },
-        .{ ReasonExcludedCoreWindow, c.InteropWindowReasonExcludedCoreWindow },
-        .{ ReasonExcludedAgent, c.InteropWindowReasonExcludedAgent },
-        .{ ReasonExcludedUacDummy, c.InteropWindowReasonExcludedUacDummy },
-        .{ ReasonUacNativeHidden, c.InteropWindowReasonUacNativeHidden },
-        .{ ReasonChild, c.InteropWindowReasonChild },
-        .{ ReasonZeroArea, c.InteropWindowReasonZeroArea },
-        .{ ReasonTransparent, c.InteropWindowReasonTransparent },
-        .{ ReasonParentPending, c.InteropWindowReasonParentPending },
-        .{ ReasonDestroyed, c.InteropWindowReasonDestroyed },
-        .{ ReasonIncarnationChanged, c.InteropWindowReasonIncarnationChanged },
-        .{ ReasonReclassified, c.InteropWindowReasonReclassified },
-        .{ ReasonParentRetired, c.InteropWindowReasonParentRetired },
-        .{ ReasonRefreshUnseen, c.InteropWindowReasonRefreshUnseen },
-        .{ ReasonInvalidated, c.InteropWindowReasonInvalidated },
-        .{ RoleToplevel, c.InteropRoleToplevel },
-        .{ RoleDialog, c.InteropRoleDialog },
-        .{ RoleMenu, c.InteropRoleMenu },
-        .{ RoleTooltip, c.InteropRoleTooltip },
-        .{ RoleUacConsent, c.InteropRoleUacConsent },
-        .{ RoleImePreedit, c.InteropRoleImePreedit },
-        .{ StateMinimized, c.InteropStateMinimized },
-        .{ StateMaximized, c.InteropStateMaximized },
-        .{ StateFullscreen, c.InteropStateFullscreen },
-        .{ StateActivated, c.InteropStateActivated },
-        .{ StateResizable, c.InteropStateResizable },
-        .{ StateMaximizable, c.InteropStateMaximizable },
-        .{ StateMinimizable, c.InteropStateMinimizable },
-        .{ StateMask, c.InteropStateMask },
-        .{ StylePopup, c.InteropWindowStylePopup },
-        .{ StyleCaption, c.InteropWindowStyleCaption },
-        .{ StyleThickFrame, c.InteropWindowStyleThickFrame },
-        .{ StyleMaximizeBox, c.InteropWindowStyleMaximizeBox },
-        .{ StyleMinimizeBox, c.InteropWindowStyleMinimizeBox },
-        .{ ExStyleToolWindow, c.InteropWindowExStyleToolWindow },
-        .{ ExStyleAppWindow, c.InteropWindowExStyleAppWindow },
-        .{ ExStyleLayered, c.InteropWindowExStyleLayered },
-        .{ ExStyleNoActivate, c.InteropWindowExStyleNoActivate },
-        .{ @intFromEnum(status_t.Ok), c.InteropWindowGraphStatusOk },
-        .{ @intFromEnum(status_t.None), c.InteropWindowGraphStatusNone },
-        .{ @intFromEnum(status_t.InvalidArgument), c.InteropWindowGraphStatusInvalidArgument },
-        .{ @intFromEnum(status_t.InvalidFacts), c.InteropWindowGraphStatusInvalidFacts },
-        .{ @intFromEnum(status_t.WrongThread), c.InteropWindowGraphStatusWrongThread },
-        .{ @intFromEnum(status_t.Reentrant), c.InteropWindowGraphStatusReentrant },
-        .{ @intFromEnum(status_t.NoMemory), c.InteropWindowGraphStatusNoMemory },
-        .{ @intFromEnum(status_t.StaleEpoch), c.InteropWindowGraphStatusStaleEpoch },
-        .{ @intFromEnum(status_t.Stale), c.InteropWindowGraphStatusStale },
-        .{ @intFromEnum(status_t.StaleFacts), c.InteropWindowGraphStatusStaleFacts },
-        .{ @intFromEnum(status_t.QueueFull), c.InteropWindowGraphStatusQueueFull },
-        .{ @intFromEnum(status_t.AtCapacity), c.InteropWindowGraphStatusAtCapacity },
-        .{ @intFromEnum(status_t.Cycle), c.InteropWindowGraphStatusCycle },
-        .{ @intFromEnum(status_t.LookupFailed), c.InteropWindowGraphStatusLookupFailed },
-        .{ @intFromEnum(status_t.AppKeyInvalid), c.InteropWindowGraphStatusAppKeyInvalid },
-        .{ @intFromEnum(status_t.GenerationExhausted), c.InteropWindowGraphStatusGenerationExhausted },
-        .{ @intFromEnum(status_t.RefreshActive), c.InteropWindowGraphStatusRefreshActive },
-        .{ @intFromEnum(status_t.NoRefresh), c.InteropWindowGraphStatusNoRefresh },
-        .{ @intFromEnum(status_t.ProofIncomplete), c.InteropWindowGraphStatusProofIncomplete },
-        .{ @intFromEnum(status_t.NotRetiring), c.InteropWindowGraphStatusNotRetiring },
-        .{ @intFromEnum(status_t.SinkFailed), c.InteropWindowGraphStatusSinkFailed },
+        .{ MaxEntries, c_t.InteropMaxWindows },
+        .{ MaxDeferred, c_t.InteropWindowGraphMaxDeferred },
+        .{ EventCapacity, c_t.InteropWindowGraphEventCapacity },
+        .{ MaxCallEvents, c_t.InteropWindowGraphMaxCallEvents },
+        .{ RefreshIntervalMs, c_t.InteropWindowGraphRefreshIntervalMs },
+        .{ DiagnosticIntervalMs, c_t.InteropWindowGraphDiagnosticIntervalMs },
+        .{ MaxClassBytes, c_t.InteropWindowGraphMaxClassBytes },
+        .{ MaxImageBytes, c_t.InteropWindowGraphMaxImageBytes },
+        .{ MaxTitleBytes, c_t.InteropWindowGraphMaxTitleBytes },
+        .{ MaxTitleBytes, c_t.InteropMaxTitleBytes },
+        .{ MaxAppKeyBytes, c_t.InteropWindowGraphMaxAppKeyBytes },
+        .{ MaxAppKeyBytes, c_t.InteropMaxAppKeyBytes },
+        .{ MinDpi, c_t.InteropWindowGraphMinDpi },
+        .{ MaxDpi, c_t.InteropWindowGraphMaxDpi },
+        .{ MaxExtent, c_t.InteropWindowGraphMaxExtent },
+        .{ FactVisible, c_t.InteropWindowFactVisible },
+        .{ FactEnabled, c_t.InteropWindowFactEnabled },
+        .{ FactIconic, c_t.InteropWindowFactIconic },
+        .{ FactZoomed, c_t.InteropWindowFactZoomed },
+        .{ FactLayered, c_t.InteropWindowFactLayered },
+        .{ FactLayeredAlphaKnown, c_t.InteropWindowFactLayeredAlphaKnown },
+        .{ FactFullscreen, c_t.InteropWindowFactFullscreen },
+        .{ FactAgentOwned, c_t.InteropWindowFactAgentOwned },
+        .{ FactAgentPreedit, c_t.InteropWindowFactAgentPreedit },
+        .{ FactOnInputDesktop, c_t.InteropWindowFactOnInputDesktop },
+        .{ FactClassTruncated, c_t.InteropWindowFactClassTruncated },
+        .{ FactImageUnknown, c_t.InteropWindowFactImageUnknown },
+        .{ FactOwnerHidden, c_t.InteropWindowFactOwnerHidden },
+        .{ FactMask, c_t.InteropWindowFactMask },
+        .{ ChangeRect, c_t.InteropWindowChangeRect },
+        .{ ChangeState, c_t.InteropWindowChangeState },
+        .{ ChangeDpi, c_t.InteropWindowChangeDpi },
+        .{ ChangeTitle, c_t.InteropWindowChangeTitle },
+        .{ ChangeMinSize, c_t.InteropWindowChangeMinSize },
+        .{ ChangeMask, c_t.InteropWindowChangeMask },
+        .{ EventAnnounce, c_t.InteropWindowEventAnnounce },
+        .{ EventUpdate, c_t.InteropWindowEventUpdate },
+        .{ EventRetireIntent, c_t.InteropWindowEventRetireIntent },
+        .{ @intFromEnum(verdict_kind_t.Eligible), c_t.InteropWindowVerdictEligible },
+        .{ @intFromEnum(verdict_kind_t.NotExported), c_t.InteropWindowVerdictNotExported },
+        .{ @intFromEnum(verdict_kind_t.Suspended), c_t.InteropWindowVerdictSuspended },
+        .{ UacWindow, c_t.InteropWindowUacWindow },
+        .{ UacAuto, c_t.InteropWindowUacAuto },
+        .{ UacNative, c_t.InteropWindowUacNative },
+        .{ DispositionUnchanged, c_t.InteropWindowDispositionUnchanged },
+        .{ DispositionAdmitted, c_t.InteropWindowDispositionAdmitted },
+        .{ DispositionUpdated, c_t.InteropWindowDispositionUpdated },
+        .{ DispositionDeferred, c_t.InteropWindowDispositionDeferred },
+        .{ DispositionRetired, c_t.InteropWindowDispositionRetired },
+        .{ DispositionReclassified, c_t.InteropWindowDispositionReclassified },
+        .{ DispositionExcluded, c_t.InteropWindowDispositionExcluded },
+        .{ DispositionSuspended, c_t.InteropWindowDispositionSuspended },
+        .{ ReasonNone, c_t.InteropWindowReasonNone },
+        .{ ReasonNotVisible, c_t.InteropWindowReasonNotVisible },
+        .{ ReasonExcludedClass, c_t.InteropWindowReasonExcludedClass },
+        .{ ReasonExcludedCoreWindow, c_t.InteropWindowReasonExcludedCoreWindow },
+        .{ ReasonExcludedAgent, c_t.InteropWindowReasonExcludedAgent },
+        .{ ReasonExcludedUacDummy, c_t.InteropWindowReasonExcludedUacDummy },
+        .{ ReasonUacNativeHidden, c_t.InteropWindowReasonUacNativeHidden },
+        .{ ReasonChild, c_t.InteropWindowReasonChild },
+        .{ ReasonZeroArea, c_t.InteropWindowReasonZeroArea },
+        .{ ReasonTransparent, c_t.InteropWindowReasonTransparent },
+        .{ ReasonParentPending, c_t.InteropWindowReasonParentPending },
+        .{ ReasonDestroyed, c_t.InteropWindowReasonDestroyed },
+        .{ ReasonIncarnationChanged, c_t.InteropWindowReasonIncarnationChanged },
+        .{ ReasonReclassified, c_t.InteropWindowReasonReclassified },
+        .{ ReasonParentRetired, c_t.InteropWindowReasonParentRetired },
+        .{ ReasonRefreshUnseen, c_t.InteropWindowReasonRefreshUnseen },
+        .{ ReasonInvalidated, c_t.InteropWindowReasonInvalidated },
+        .{ RoleToplevel, c_t.InteropRoleToplevel },
+        .{ RoleDialog, c_t.InteropRoleDialog },
+        .{ RoleMenu, c_t.InteropRoleMenu },
+        .{ RoleTooltip, c_t.InteropRoleTooltip },
+        .{ RoleUacConsent, c_t.InteropRoleUacConsent },
+        .{ RoleImePreedit, c_t.InteropRoleImePreedit },
+        .{ StateMinimized, c_t.InteropStateMinimized },
+        .{ StateMaximized, c_t.InteropStateMaximized },
+        .{ StateFullscreen, c_t.InteropStateFullscreen },
+        .{ StateActivated, c_t.InteropStateActivated },
+        .{ StateResizable, c_t.InteropStateResizable },
+        .{ StateMaximizable, c_t.InteropStateMaximizable },
+        .{ StateMinimizable, c_t.InteropStateMinimizable },
+        .{ StateMask, c_t.InteropStateMask },
+        .{ StylePopup, c_t.InteropWindowStylePopup },
+        .{ StyleCaption, c_t.InteropWindowStyleCaption },
+        .{ StyleThickFrame, c_t.InteropWindowStyleThickFrame },
+        .{ StyleMaximizeBox, c_t.InteropWindowStyleMaximizeBox },
+        .{ StyleMinimizeBox, c_t.InteropWindowStyleMinimizeBox },
+        .{ ExStyleToolWindow, c_t.InteropWindowExStyleToolWindow },
+        .{ ExStyleAppWindow, c_t.InteropWindowExStyleAppWindow },
+        .{ ExStyleLayered, c_t.InteropWindowExStyleLayered },
+        .{ ExStyleNoActivate, c_t.InteropWindowExStyleNoActivate },
+        .{ @intFromEnum(status_t.Ok), c_t.InteropWindowGraphStatusOk },
+        .{ @intFromEnum(status_t.None), c_t.InteropWindowGraphStatusNone },
+        .{ @intFromEnum(status_t.InvalidArgument), c_t.InteropWindowGraphStatusInvalidArgument },
+        .{ @intFromEnum(status_t.InvalidFacts), c_t.InteropWindowGraphStatusInvalidFacts },
+        .{ @intFromEnum(status_t.WrongThread), c_t.InteropWindowGraphStatusWrongThread },
+        .{ @intFromEnum(status_t.Reentrant), c_t.InteropWindowGraphStatusReentrant },
+        .{ @intFromEnum(status_t.NoMemory), c_t.InteropWindowGraphStatusNoMemory },
+        .{ @intFromEnum(status_t.StaleEpoch), c_t.InteropWindowGraphStatusStaleEpoch },
+        .{ @intFromEnum(status_t.Stale), c_t.InteropWindowGraphStatusStale },
+        .{ @intFromEnum(status_t.StaleFacts), c_t.InteropWindowGraphStatusStaleFacts },
+        .{ @intFromEnum(status_t.QueueFull), c_t.InteropWindowGraphStatusQueueFull },
+        .{ @intFromEnum(status_t.AtCapacity), c_t.InteropWindowGraphStatusAtCapacity },
+        .{ @intFromEnum(status_t.Cycle), c_t.InteropWindowGraphStatusCycle },
+        .{ @intFromEnum(status_t.LookupFailed), c_t.InteropWindowGraphStatusLookupFailed },
+        .{ @intFromEnum(status_t.AppKeyInvalid), c_t.InteropWindowGraphStatusAppKeyInvalid },
+        .{ @intFromEnum(status_t.GenerationExhausted), c_t.InteropWindowGraphStatusGenerationExhausted },
+        .{ @intFromEnum(status_t.RefreshActive), c_t.InteropWindowGraphStatusRefreshActive },
+        .{ @intFromEnum(status_t.NoRefresh), c_t.InteropWindowGraphStatusNoRefresh },
+        .{ @intFromEnum(status_t.ProofIncomplete), c_t.InteropWindowGraphStatusProofIncomplete },
+        .{ @intFromEnum(status_t.NotRetiring), c_t.InteropWindowGraphStatusNotRetiring },
+        .{ @intFromEnum(status_t.SinkFailed), c_t.InteropWindowGraphStatusSinkFailed },
     };
     @setEvalBranchQuota(100_000);
     for (pairs) |pair| {
@@ -487,7 +487,7 @@ pub const record_t = struct {
 /// @return A record whose every field, including both byte arrays, is zero.
 /// @note Pure; thread-safe. The record is a value owned by the caller.
 pub fn record_init() record_t {
-    return std.mem.zeroes(record_t);
+    return std_t.mem.zeroes(record_t);
 }
 
 /// Borrow the stated class-name bytes of a facts snapshot.
@@ -530,8 +530,8 @@ pub fn title_bytes(facts: *const facts_t) []const u8 {
 /// @return true when the whole slice is valid UTF-8 without NUL.
 /// @note Pure; thread-safe. `std.unicode` alone accepts NUL, so it is checked here.
 pub fn utf8_valid_no_nul(bytes: []const u8) bool {
-    if (std.mem.indexOfScalar(u8, bytes, 0) != null) return false;
-    return std.unicode.utf8ValidateSlice(bytes);
+    if (std_t.mem.indexOfScalar(u8, bytes, 0) != null) return false;
+    return std_t.unicode.utf8ValidateSlice(bytes);
 }
 
 /// Check a protocol-v2 application key.
@@ -580,7 +580,7 @@ pub fn class_hash_of(bytes: []const u8) u64 {
 pub fn ascii_eql_ignore_case(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |left, right| {
-        if (std.ascii.toLower(left) != std.ascii.toLower(right)) return false;
+        if (std_t.ascii.toLower(left) != std_t.ascii.toLower(right)) return false;
     }
     return true;
 }
@@ -818,10 +818,10 @@ pub fn classify(facts: *const facts_t, uac_mode: u32) verdict_t {
 ///             `reserved0` zero), unchanged on every other status.
 /// @return Ok; InvalidArgument for `uac_mode` above 2; InvalidFacts when `validate_facts` fails.
 /// @note Pure and thread-safe: touches no graph, counter or callback; no allocation.
-pub fn classify_public(facts: *const facts_t, uac_mode: u32, out: *c.interop_window_verdict_t) status_t {
+pub fn classify_public(facts: *const facts_t, uac_mode: u32, out: *c_t.interop_window_verdict_t) status_t {
     if (uac_mode > UacNative) return .InvalidArgument;
     if (!validate_facts(facts)) return .InvalidFacts;
-    var verdict = std.mem.zeroes(c.interop_window_verdict_t);
+    var verdict = std_t.mem.zeroes(c_t.interop_window_verdict_t);
     switch (classify(facts, uac_mode)) {
         .Eligible => |eligible_verdict| {
             verdict.kind = @intFromEnum(verdict_kind_t.Eligible);
@@ -871,11 +871,11 @@ pub fn bump_by(counter: *u64, amount: u64) void {
 }
 
 /// Application-key lookup callback type (`interop_window_app_key_lookup_t`); optional C function pointer.
-pub const app_key_lookup_t = c.interop_window_app_key_lookup_t;
+pub const app_key_lookup_t = c_t.interop_window_app_key_lookup_t;
 /// Millisecond clock callback type (`interop_window_now_ms_t`); optional C function pointer.
-pub const now_ms_t = c.interop_window_now_ms_t;
+pub const now_ms_t = c_t.interop_window_now_ms_t;
 /// Drain sink callback type (`interop_window_event_sink_t`); optional C function pointer.
-pub const event_sink_t = c.interop_window_event_sink_t;
+pub const event_sink_t = c_t.interop_window_event_sink_t;
 
 /// Upper bound in bytes for the single heap allocation of one graph; asserted at compile time.
 pub const MaxGraphBytes = 524288;
@@ -921,11 +921,11 @@ pub const deferred_t = struct {
 /// stored: they are recomputed from the arrays when read.
 pub const graph_t = struct {
     /// Allocator that produced this graph; used by `destroy`.
-    allocator: std.mem.Allocator,
+    allocator: std_t.mem.Allocator,
     /// Copy of the creation parameters (the pointers inside are borrowed from the caller).
     config: config_t,
     /// Thread that created the graph; the only thread allowed to call it.
-    owner_thread: std.Thread.Id,
+    owner_thread: std_t.Thread.Id,
     /// True between a successful `enter` and `leave`; rejects re-entry.
     busy: bool,
     /// True while a refresh is open.
@@ -933,7 +933,7 @@ pub const graph_t = struct {
     /// True after the first successful capacity diagnostic.
     have_diag: bool,
     /// Monotonic timer of the default clock; null when the platform has none (clock reads 0).
-    timer: ?std.time.Timer,
+    timer: ?std_t.time.Timer,
     /// Last generation handed out; 0 before the first admission.
     generations_issued: u64,
     /// Largest stamp accepted by an Ok call.
@@ -990,15 +990,15 @@ comptime {
 /// @retval error.InvalidArgument A configuration field is invalid; nothing was allocated.
 /// @retval error.OutOfMemory The allocation failed; no graph exists and nothing leaked.
 /// @note Thread-safe by itself (touches no shared state); the result is bound to the calling thread.
-pub fn create(allocator: std.mem.Allocator, config: *const config_t) error{ OutOfMemory, InvalidArgument }!*graph_t {
+pub fn create(allocator: std_t.mem.Allocator, config: *const config_t) error{ OutOfMemory, InvalidArgument }!*graph_t {
     if (config.session_epoch == 0 or config.reserved0 != 0) return error.InvalidArgument;
     if (config.uac_mode > UacNative or config.app_key_lookup == null) return error.InvalidArgument;
     const graph = try allocator.create(graph_t);
-    @memset(std.mem.asBytes(graph), 0);
+    @memset(std_t.mem.asBytes(graph), 0);
     graph.allocator = allocator;
     graph.config = config.*;
-    graph.owner_thread = std.Thread.getCurrentId();
-    graph.timer = std.time.Timer.start() catch null;
+    graph.owner_thread = std_t.Thread.getCurrentId();
+    graph.timer = std_t.time.Timer.start() catch null;
     graph.next_seq = 1;
     graph.tick_base = TickBaseStart;
     graph.tick_clock_at_base = 0;
@@ -1016,7 +1016,7 @@ pub fn destroy(graph: *graph_t) void {
 }
 
 fn guard_status(graph: *const graph_t) ?status_t {
-    if (graph.owner_thread != std.Thread.getCurrentId()) return .WrongThread;
+    if (graph.owner_thread != std_t.Thread.getCurrentId()) return .WrongThread;
     if (graph.busy) return .Reentrant;
     return null;
 }
@@ -1436,7 +1436,7 @@ pub fn stamp_high_water(graph: *const graph_t, out: *u64) status_t {
 
 fn clock_now_ms(graph: *graph_t) u64 {
     if (graph.config.now_ms) |callback| return callback(graph.config.now_ms_context);
-    if (graph.timer) |*timer| return timer.read() / std.time.ns_per_ms;
+    if (graph.timer) |*timer| return timer.read() / std_t.time.ns_per_ms;
     return 0;
 }
 
@@ -1597,7 +1597,7 @@ pub fn cascade_has_window(graph: *const graph_t, cascade: *const cascade_t, wind
 /// @return A fully initialised event value (reserved0 zero).
 /// @note Pure; thread-safe for distinct graphs; no allocation.
 pub fn event_from_record(graph: *const graph_t, rec: *const record_t, kind: u32, mask: u32, reason: u32) event_t {
-    var ev = std.mem.zeroes(event_t);
+    var ev = std_t.mem.zeroes(event_t);
     ev.session_epoch = graph.config.session_epoch;
     ev.window = rec.window;
     ev.generation = rec.generation;
@@ -2079,7 +2079,7 @@ fn diff_mask(rec: *const record_t, facts: *const facts_t, state: u32) u32 {
     if (rec.x != facts.x or rec.y != facts.y or rec.width != facts.width or rec.height != facts.height) mask |= ChangeRect;
     if (rec.state != state) mask |= ChangeState;
     if (rec.dpi != facts.dpi) mask |= ChangeDpi;
-    if (!std.mem.eql(u8, rec.title[0..rec.title_length], title_bytes(facts))) mask |= ChangeTitle;
+    if (!std_t.mem.eql(u8, rec.title[0..rec.title_length], title_bytes(facts))) mask |= ChangeTitle;
     if (rec.min_width != facts.min_width or rec.min_height != facts.min_height) mask |= ChangeMinSize;
     return mask;
 }
@@ -2213,7 +2213,7 @@ fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) sta
 
     // Stage 5b: capacity and generations for the primary admission.
     const free: u32 = MaxEntries - exported_count(graph);
-    const generations_left: u64 = std.math.maxInt(u64) - graph.generations_issued;
+    const generations_left: u64 = std_t.math.maxInt(u64) - graph.generations_issued;
     if (plan.want == .Admit and (free == 0 or generations_left == 0)) {
         const by_slots = free == 0;
         if (!plan.retire) {
@@ -2729,7 +2729,7 @@ pub fn invalidate_all(graph: *graph_t, epoch: u64, retired_out: ?*u32) status_t 
 // Exported surface: see window_graph_abi.zig.
 // Test-only fixtures.
 
-const testing = std.testing;
+const testing_t = std_t.testing;
 
 const OwnerWindow: u64 = 0x20002;
 const OwnerRootWindow: u64 = 0x20001;
@@ -2816,7 +2816,7 @@ fn set_title(facts: *facts_t, text: []const u8) void {
 
 /// Zeroed, valid top-level notepad window on the input desktop.
 fn fixture_facts() facts_t {
-    var facts = std.mem.zeroes(facts_t);
+    var facts = std_t.mem.zeroes(facts_t);
     facts.window = 0x10001;
     facts.root = 0x10001;
     facts.stamp = 1;
@@ -3032,13 +3032,13 @@ const Matrix = [_]row_t{
 test "classification matrix covers every step of the header table" {
     for (Matrix) |row| {
         var facts = row_facts(row);
-        testing.expect(call_validate(&facts)) catch |err| {
-            std.debug.print("matrix row has invalid facts: {s}\n", .{row.name});
+        testing_t.expect(call_validate(&facts)) catch |err| {
+            std_t.debug.print("matrix row has invalid facts: {s}\n", .{row.name});
             return err;
         };
         const got = call_classify(&facts, row.uac);
-        testing.expectEqual(row.expect, got) catch |err| {
-            std.debug.print("matrix row failed: {s}\n", .{row.name});
+        testing_t.expectEqual(row.expect, got) catch |err| {
+            std_t.debug.print("matrix row failed: {s}\n", .{row.name});
             return err;
         };
     }
@@ -3058,22 +3058,22 @@ test "every excluded class matches exactly, case-insensitively and nothing else"
     for (names) |name| {
         var facts = fixture_facts();
         set_class(&facts, name);
-        try testing.expectEqual(excluded(ReasonExcludedClass), call_classify(&facts, UacWindow));
+        try testing_t.expectEqual(excluded(ReasonExcludedClass), call_classify(&facts, UacWindow));
         var mangled: [64]u8 = undefined;
         for (name, 0..) |byte, index| {
-            mangled[index] = if (index % 2 == 0) std.ascii.toUpper(byte) else std.ascii.toLower(byte);
+            mangled[index] = if (index % 2 == 0) std_t.ascii.toUpper(byte) else std_t.ascii.toLower(byte);
         }
         set_class(&facts, mangled[0..name.len]);
-        try testing.expectEqual(excluded(ReasonExcludedClass), call_classify(&facts, UacNative));
+        try testing_t.expectEqual(excluded(ReasonExcludedClass), call_classify(&facts, UacNative));
         set_class(&facts, name[0 .. name.len - 1]);
-        try testing.expectEqual(eligible(RoleToplevel, 0), call_classify(&facts, UacWindow));
+        try testing_t.expectEqual(eligible(RoleToplevel, 0), call_classify(&facts, UacWindow));
         @memcpy(mangled[0..name.len], name);
         mangled[name.len] = 'x';
         set_class(&facts, mangled[0 .. name.len + 1]);
-        try testing.expectEqual(eligible(RoleToplevel, 0), call_classify(&facts, UacWindow));
+        try testing_t.expectEqual(eligible(RoleToplevel, 0), call_classify(&facts, UacWindow));
         set_class(&facts, name);
         facts.flags |= FactClassTruncated;
-        try testing.expectEqual(eligible(RoleToplevel, 0), call_classify(&facts, UacWindow));
+        try testing_t.expectEqual(eligible(RoleToplevel, 0), call_classify(&facts, UacWindow));
     }
 }
 
@@ -3081,14 +3081,14 @@ test "classification parents follow owner_root, never the raw owner" {
     var facts = fixture_facts();
     facts.owner = OwnerWindow;
     facts.owner_root = OwnerRootWindow;
-    try testing.expectEqual(eligible(RoleDialog, OwnerRootWindow), call_classify(&facts, UacWindow));
+    try testing_t.expectEqual(eligible(RoleDialog, OwnerRootWindow), call_classify(&facts, UacWindow));
     facts.ex_style = ExStyleNoActivate;
-    try testing.expectEqual(eligible(RoleTooltip, OwnerRootWindow), call_classify(&facts, UacWindow));
+    try testing_t.expectEqual(eligible(RoleTooltip, OwnerRootWindow), call_classify(&facts, UacWindow));
     set_class(&facts, "#32768");
-    try testing.expectEqual(eligible(RoleMenu, OwnerRootWindow), call_classify(&facts, UacWindow));
+    try testing_t.expectEqual(eligible(RoleMenu, OwnerRootWindow), call_classify(&facts, UacWindow));
     // Self ownership is the graph's Cycle case: the classifier still reports the parent as given.
     facts.owner_root = facts.window;
-    try testing.expectEqual(eligible(RoleMenu, facts.window), call_classify(&facts, UacWindow));
+    try testing_t.expectEqual(eligible(RoleMenu, facts.window), call_classify(&facts, UacWindow));
 }
 
 test "classification never reads past an unvalidated class or image length" {
@@ -3096,35 +3096,35 @@ test "classification never reads past an unvalidated class or image length" {
     facts.class_length = 0xFFFF_FFFF;
     facts.image_length = 0xFFFF_FFFF;
     facts.title_length = 0xFFFF_FFFF;
-    try testing.expectEqual(@as(usize, MaxClassBytes), call_class_bytes(&facts).len);
-    try testing.expectEqual(@as(usize, MaxImageBytes), call_image_bytes(&facts).len);
-    try testing.expectEqual(@as(usize, MaxTitleBytes), call_title_bytes(&facts).len);
-    try testing.expectEqual(eligible(RoleToplevel, 0), call_classify(&facts, UacWindow));
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expectEqual(@as(usize, MaxClassBytes), call_class_bytes(&facts).len);
+    try testing_t.expectEqual(@as(usize, MaxImageBytes), call_image_bytes(&facts).len);
+    try testing_t.expectEqual(@as(usize, MaxTitleBytes), call_title_bytes(&facts).len);
+    try testing_t.expectEqual(eligible(RoleToplevel, 0), call_classify(&facts, UacWindow));
+    try testing_t.expect(!call_validate(&facts));
     facts.class_length = 0;
     facts.image_length = 0;
     facts.title_length = 0;
-    try testing.expectEqual(@as(usize, 0), call_class_bytes(&facts).len);
-    try testing.expectEqual(@as(usize, 0), call_image_bytes(&facts).len);
-    try testing.expectEqual(@as(usize, 0), call_title_bytes(&facts).len);
+    try testing_t.expectEqual(@as(usize, 0), call_class_bytes(&facts).len);
+    try testing_t.expectEqual(@as(usize, 0), call_image_bytes(&facts).len);
+    try testing_t.expectEqual(@as(usize, 0), call_title_bytes(&facts).len);
     set_class(&facts, "Notepad");
     set_image(&facts, "notepad.exe");
     set_title(&facts, "Untitled");
-    try testing.expectEqualStrings("Notepad", call_class_bytes(&facts));
-    try testing.expectEqualStrings("notepad.exe", call_image_bytes(&facts));
-    try testing.expectEqualStrings("Untitled", call_title_bytes(&facts));
+    try testing_t.expectEqualStrings("Notepad", call_class_bytes(&facts));
+    try testing_t.expectEqualStrings("notepad.exe", call_image_bytes(&facts));
+    try testing_t.expectEqualStrings("Untitled", call_title_bytes(&facts));
 }
 
 test "valid facts: defaults, maxima and boundaries" {
     var facts = fixture_facts();
-    try testing.expect(call_validate(&facts));
-    facts.window = std.math.maxInt(u64);
-    facts.root = std.math.maxInt(u64);
-    facts.stamp = std.math.maxInt(u64);
+    try testing_t.expect(call_validate(&facts));
+    facts.window = std_t.math.maxInt(u64);
+    facts.root = std_t.math.maxInt(u64);
+    facts.stamp = std_t.math.maxInt(u64);
     facts.owner = 1;
-    facts.owner_root = std.math.maxInt(u64);
+    facts.owner_root = std_t.math.maxInt(u64);
     facts.dpi = MinDpi;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
     facts.dpi = MaxDpi;
     facts.width = MaxExtent;
     facts.height = MaxExtent;
@@ -3132,11 +3132,11 @@ test "valid facts: defaults, maxima and boundaries" {
     facts.min_height = MaxExtent;
     facts.alpha = 0;
     facts.flags = FactMask & ~(FactAgentPreedit | FactLayeredAlphaKnown | FactImageUnknown);
-    facts.style = std.math.maxInt(u32);
-    facts.ex_style = std.math.maxInt(u32);
-    facts.x = std.math.minInt(i32);
-    facts.y = std.math.maxInt(i32);
-    try testing.expect(call_validate(&facts));
+    facts.style = std_t.math.maxInt(u32);
+    facts.ex_style = std_t.math.maxInt(u32);
+    facts.x = std_t.math.minInt(i32);
+    facts.y = std_t.math.maxInt(i32);
+    try testing_t.expect(call_validate(&facts));
     // Maximal strings of non-ASCII text: 128 two-byte characters fill the class array.
     const two_byte = "\xC3\xA9" ** 128;
     @memcpy(facts.class_name[0..two_byte.len], two_byte);
@@ -3146,107 +3146,107 @@ test "valid facts: defaults, maxima and boundaries" {
     facts.flags &= ~FactImageUnknown;
     @memset(&facts.title, 't');
     facts.title_length = MaxTitleBytes;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
     // Preedit with agent ownership and layered with known alpha are valid combinations.
     facts.flags |= FactAgentOwned | FactAgentPreedit | FactLayered | FactLayeredAlphaKnown;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
     // Empty title and unknown image are valid.
     facts = fixture_facts();
     set_title(&facts, "");
     set_image(&facts, "");
-    try testing.expect(call_validate(&facts));
-    try testing.expect(facts.flags & FactImageUnknown != 0);
+    try testing_t.expect(call_validate(&facts));
+    try testing_t.expect(facts.flags & FactImageUnknown != 0);
 }
 
 test "validate_facts rejects each violated rule and nothing else" {
     const base = fixture_facts();
-    try testing.expect(call_validate(&base));
+    try testing_t.expect(call_validate(&base));
 
     var facts = base;
     facts.window = 0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.root = 0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.stamp = 0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
 
     facts = base;
     facts.owner = 5;
     facts.owner_root = 0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.owner = 0;
     facts.owner_root = 5;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.owner = 5;
     facts.owner_root = 6;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
 
     var bit: u5 = 13;
     while (true) : (bit += 1) {
         facts = base;
         facts.flags |= @as(u32, 1) << bit;
-        try testing.expect(!call_validate(&facts));
+        try testing_t.expect(!call_validate(&facts));
         if (bit == 31) break;
     }
 
     facts = base;
     facts.flags |= FactAgentPreedit;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts.flags |= FactAgentOwned;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
     facts = base;
     facts.flags |= FactLayeredAlphaKnown;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts.flags |= FactLayered;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
 
     facts = base;
     facts.flags |= FactImageUnknown;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.image_length = 0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts.flags |= FactImageUnknown;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
 
-    for ([_]u32{ 0, 1, MinDpi - 1, MaxDpi + 1, std.math.maxInt(u32) }) |dpi| {
+    for ([_]u32{ 0, 1, MinDpi - 1, MaxDpi + 1, std_t.math.maxInt(u32) }) |dpi| {
         facts = base;
         facts.dpi = dpi;
-        try testing.expect(!call_validate(&facts));
+        try testing_t.expect(!call_validate(&facts));
     }
     facts = base;
     facts.width = MaxExtent + 1;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.height = MaxExtent + 1;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.min_width = MaxExtent + 1;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
-    facts.min_height = std.math.maxInt(u32);
-    try testing.expect(!call_validate(&facts));
+    facts.min_height = std_t.math.maxInt(u32);
+    try testing_t.expect(!call_validate(&facts));
 
     facts = base;
     facts.class_length = 0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts.class_length = MaxClassBytes + 1;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.image_length = MaxImageBytes + 1;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.title_length = MaxTitleBytes + 1;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
 
     for (0..3) |index| {
         facts = base;
         facts.reserved0[index] = 1;
-        try testing.expect(!call_validate(&facts));
+        try testing_t.expect(!call_validate(&facts));
     }
 }
 
@@ -3254,32 +3254,32 @@ test "validate_facts checks text only over the stated length" {
     const base = fixture_facts();
     var facts = base;
     facts.class_name[3] = 0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.image_name[0] = 0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.title[2] = 0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
 
     facts = base;
     facts.class_name[1] = 0xFF;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.image_name[4] = 0xC0;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts = base;
     facts.title[5] = 0xED;
     facts.title[6] = 0xA0;
     facts.title[7] = 0x80;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     // A multi-byte sequence cut by the stated length is invalid.
     facts = base;
     set_title(&facts, "ab\xC3\xA9");
     facts.title_length = 3;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts.title_length = 4;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
 
     // Garbage after every stated length is ignored.
     facts = base;
@@ -3288,10 +3288,10 @@ test "validate_facts checks text only over the stated length" {
     facts.image_name[facts.image_length] = 0xC0;
     facts.title[facts.title_length] = 0;
     facts.title[MaxTitleBytes - 1] = 0xFF;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
     set_title(&facts, "");
     facts.title[0] = 0xFF;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
 }
 
 test "utf8_valid_no_nul accepts well-formed text and rejects every malformed class" {
@@ -3313,7 +3313,7 @@ test "utf8_valid_no_nul accepts well-formed text and rejects every malformed cla
         "\xF4\x8F\xBF\xBF",
         "mixed \xC3\xA9 \xE2\x82\xAC \xF0\x9F\x98\x80 text",
     };
-    for (valid) |bytes| try testing.expect(call_utf8(bytes));
+    for (valid) |bytes| try testing_t.expect(call_utf8(bytes));
     const invalid = [_][]const u8{
         "\x00",
         "a\x00b",
@@ -3345,16 +3345,16 @@ test "utf8_valid_no_nul accepts well-formed text and rejects every malformed cla
         "\xF0\x9F\x28\x80",
         "ok then \xFF",
     };
-    for (invalid) |bytes| try testing.expect(!call_utf8(bytes));
+    for (invalid) |bytes| try testing_t.expect(!call_utf8(bytes));
 }
 
 test "app_key_valid matches the frozen codec rule and the 3..200 length rule" {
-    try testing.expect(call_app_key("a-x"));
-    try testing.expect(call_app_key("p-x"));
-    try testing.expect(call_app_key("a-Notepad_Plus-Plus-1234abcd"));
-    try testing.expect(call_app_key("p-0123456789_-ABCxyz"));
-    try testing.expect(call_app_key("a--"));
-    try testing.expect(call_app_key("a-_"));
+    try testing_t.expect(call_app_key("a-x"));
+    try testing_t.expect(call_app_key("p-x"));
+    try testing_t.expect(call_app_key("a-Notepad_Plus-Plus-1234abcd"));
+    try testing_t.expect(call_app_key("p-0123456789_-ABCxyz"));
+    try testing_t.expect(call_app_key("a--"));
+    try testing_t.expect(call_app_key("a-_"));
     const invalid = [_][]const u8{
         "",
         "a",
@@ -3380,17 +3380,17 @@ test "app_key_valid matches the frozen codec rule and the 3..200 length rule" {
         "a-[",
         "a-`",
     };
-    for (invalid) |bytes| try testing.expect(!call_app_key(bytes));
+    for (invalid) |bytes| try testing_t.expect(!call_app_key(bytes));
 
     var key: [MaxAppKeyBytes + 1]u8 = undefined;
     @memset(&key, 'k');
     key[0] = 'a';
     key[1] = '-';
-    try testing.expect(call_app_key(key[0 .. 2 + 1]));
-    try testing.expect(call_app_key(key[0 .. MaxAppKeyBytes - 1]));
-    try testing.expect(call_app_key(key[0..MaxAppKeyBytes]));
-    try testing.expect(!call_app_key(key[0 .. MaxAppKeyBytes + 1]));
-    try testing.expect(!call_app_key(key[0..2]));
+    try testing_t.expect(call_app_key(key[0 .. 2 + 1]));
+    try testing_t.expect(call_app_key(key[0 .. MaxAppKeyBytes - 1]));
+    try testing_t.expect(call_app_key(key[0..MaxAppKeyBytes]));
+    try testing_t.expect(!call_app_key(key[0 .. MaxAppKeyBytes + 1]));
+    try testing_t.expect(!call_app_key(key[0..2]));
 
     // Every single byte value at every position of a short key.
     var byte: usize = 0;
@@ -3401,94 +3401,94 @@ test "app_key_valid matches the frozen codec rule and the 3..200 length rule" {
         for (2..4) |position| {
             probe = [_]u8{ 'a', '-', 'k', 'k' };
             probe[position] = @intCast(byte);
-            try testing.expectEqual(expected, call_app_key(&probe));
+            try testing_t.expectEqual(expected, call_app_key(&probe));
         }
         probe = .{ 'a', '-', 'k', 'k' };
         probe[0] = @intCast(byte);
-        try testing.expectEqual(byte == 'a' or byte == 'p', call_app_key(&probe));
+        try testing_t.expectEqual(byte == 'a' or byte == 'p', call_app_key(&probe));
         probe = .{ 'a', '-', 'k', 'k' };
         probe[1] = @intCast(byte);
-        try testing.expectEqual(byte == '-', call_app_key(&probe));
+        try testing_t.expectEqual(byte == '-', call_app_key(&probe));
     }
 }
 
 test "class_hash_of follows FNV-1a 64 and distinguishes case" {
-    try testing.expectEqual(FnvOffsetBasis, call_hash(""));
-    try testing.expectEqual(@as(u64, 0xcbf29ce484222325), call_hash(""));
-    try testing.expectEqual(@as(u64, 0xaf63dc4c8601ec8c), call_hash("a"));
-    try testing.expectEqual(@as(u64, 0x85944171f73967e8), call_hash("foobar"));
-    try testing.expectEqual(@as(u64, 0x8842b206a7bfc712), call_hash("Notepad"));
-    try testing.expectEqual(@as(u64, 0x62bde74ad4d13eb2), call_hash("notepad"));
-    try testing.expectEqual(@as(u64, 0xdebead0ba0919302), call_hash("#32768"));
-    try testing.expect(call_hash("Notepad") != call_hash("notepad"));
+    try testing_t.expectEqual(FnvOffsetBasis, call_hash(""));
+    try testing_t.expectEqual(@as(u64, 0xcbf29ce484222325), call_hash(""));
+    try testing_t.expectEqual(@as(u64, 0xaf63dc4c8601ec8c), call_hash("a"));
+    try testing_t.expectEqual(@as(u64, 0x85944171f73967e8), call_hash("foobar"));
+    try testing_t.expectEqual(@as(u64, 0x8842b206a7bfc712), call_hash("Notepad"));
+    try testing_t.expectEqual(@as(u64, 0x62bde74ad4d13eb2), call_hash("notepad"));
+    try testing_t.expectEqual(@as(u64, 0xdebead0ba0919302), call_hash("#32768"));
+    try testing_t.expect(call_hash("Notepad") != call_hash("notepad"));
     // The hash covers the exact stated bytes: a trailing byte changes it.
-    try testing.expect(call_hash("Notepad") != call_hash("Notepad\x00"));
+    try testing_t.expect(call_hash("Notepad") != call_hash("Notepad\x00"));
 }
 
 test "ascii_eql_ignore_case folds only ASCII letters over the full length" {
-    try testing.expect(call_eql_fold("", ""));
-    try testing.expect(call_eql_fold("Shell_TrayWnd", "SHELL_TRAYWND"));
-    try testing.expect(call_eql_fold("abcXYZ019_-", "ABCxyz019_-"));
-    try testing.expect(!call_eql_fold("abc", "abcd"));
-    try testing.expect(!call_eql_fold("abcd", "abc"));
-    try testing.expect(!call_eql_fold("", "a"));
-    try testing.expect(!call_eql_fold("a", "b"));
+    try testing_t.expect(call_eql_fold("", ""));
+    try testing_t.expect(call_eql_fold("Shell_TrayWnd", "SHELL_TRAYWND"));
+    try testing_t.expect(call_eql_fold("abcXYZ019_-", "ABCxyz019_-"));
+    try testing_t.expect(!call_eql_fold("abc", "abcd"));
+    try testing_t.expect(!call_eql_fold("abcd", "abc"));
+    try testing_t.expect(!call_eql_fold("", "a"));
+    try testing_t.expect(!call_eql_fold("a", "b"));
     // '@' (0x40) and '`' (0x60) differ by 0x20 but are not letters.
-    try testing.expect(!call_eql_fold("@", "`"));
-    try testing.expect(!call_eql_fold("[", "{"));
+    try testing_t.expect(!call_eql_fold("@", "`"));
+    try testing_t.expect(!call_eql_fold("[", "{"));
     // Non-ASCII bytes compare exactly.
-    try testing.expect(call_eql_fold("\xC3\xA9", "\xC3\xA9"));
-    try testing.expect(!call_eql_fold("\xC3\x89", "\xC3\xA9"));
+    try testing_t.expect(call_eql_fold("\xC3\xA9", "\xC3\xA9"));
+    try testing_t.expect(!call_eql_fold("\xC3\x89", "\xC3\xA9"));
     var byte: usize = 0;
     while (byte < 256) : (byte += 1) {
         const left = [_]u8{@intCast(byte)};
         const right = [_]u8{@intCast(byte ^ 0x20)};
         const letter = (byte >= 'A' and byte <= 'Z') or (byte >= 'a' and byte <= 'z');
-        try testing.expectEqual(letter, call_eql_fold(&left, &right));
+        try testing_t.expectEqual(letter, call_eql_fold(&left, &right));
     }
 }
 
 test "unwrap_tick resolves a raw tick to the 64-bit value nearest the base" {
     const base: u64 = TickBaseStart + 1000;
-    try testing.expectEqual(TickBaseStart + 1000, call_unwrap(base, 1000));
-    try testing.expectEqual(TickBaseStart + 1005, call_unwrap(base, 1005));
-    try testing.expectEqual(TickBaseStart + 990, call_unwrap(base, 990));
+    try testing_t.expectEqual(TickBaseStart + 1000, call_unwrap(base, 1000));
+    try testing_t.expectEqual(TickBaseStart + 1005, call_unwrap(base, 1005));
+    try testing_t.expectEqual(TickBaseStart + 990, call_unwrap(base, 990));
     // Across the 32-bit wrap: base just below 2^33, raw tick just past the wrap.
     const high: u64 = 2 * TickBaseStart - 16;
-    try testing.expectEqual(2 * TickBaseStart + 16, call_unwrap(high, 16));
-    try testing.expectEqual(2 * TickBaseStart - 32, call_unwrap(high, 0xFFFF_FFE0));
+    try testing_t.expectEqual(2 * TickBaseStart + 16, call_unwrap(high, 16));
+    try testing_t.expectEqual(2 * TickBaseStart - 32, call_unwrap(high, 0xFFFF_FFE0));
     // Plus and minus 2^31 - 1 are exact; exactly 2^31 aliases to the earlier value.
-    try testing.expectEqual(base + 0x7FFF_FFFF, call_unwrap(base, @truncate(base +% 0x7FFF_FFFF)));
-    try testing.expectEqual(base - 0x7FFF_FFFF, call_unwrap(base, @truncate(base -% 0x7FFF_FFFF)));
-    try testing.expectEqual(base - 0x8000_0000, call_unwrap(base, @truncate(base +% 0x8000_0000)));
+    try testing_t.expectEqual(base + 0x7FFF_FFFF, call_unwrap(base, @truncate(base +% 0x7FFF_FFFF)));
+    try testing_t.expectEqual(base - 0x7FFF_FFFF, call_unwrap(base, @truncate(base -% 0x7FFF_FFFF)));
+    try testing_t.expectEqual(base - 0x8000_0000, call_unwrap(base, @truncate(base +% 0x8000_0000)));
     // The smallest legal base never underflows.
-    try testing.expectEqual(TickBaseStart - 0x8000_0000 + 0, call_unwrap(TickBaseStart, 0x8000_0000));
+    try testing_t.expectEqual(TickBaseStart - 0x8000_0000 + 0, call_unwrap(TickBaseStart, 0x8000_0000));
 }
 
 test "derive_state maps facts to protocol bits and never sets Activated" {
     var facts = fixture_facts();
     facts.style = 0;
-    try testing.expectEqual(@as(u32, 0), call_state(&facts));
+    try testing_t.expectEqual(@as(u32, 0), call_state(&facts));
     facts.flags |= FactIconic;
-    try testing.expectEqual(StateMinimized, call_state(&facts));
+    try testing_t.expectEqual(StateMinimized, call_state(&facts));
     facts.flags = FactVisible | FactOnInputDesktop | FactZoomed;
-    try testing.expectEqual(StateMaximized, call_state(&facts));
+    try testing_t.expectEqual(StateMaximized, call_state(&facts));
     facts.flags = FactVisible | FactOnInputDesktop | FactFullscreen;
-    try testing.expectEqual(StateFullscreen, call_state(&facts));
+    try testing_t.expectEqual(StateFullscreen, call_state(&facts));
     facts.flags = FactVisible | FactOnInputDesktop;
     facts.style = StyleThickFrame;
-    try testing.expectEqual(StateResizable, call_state(&facts));
+    try testing_t.expectEqual(StateResizable, call_state(&facts));
     facts.style = StyleMaximizeBox;
-    try testing.expectEqual(StateMaximizable, call_state(&facts));
+    try testing_t.expectEqual(StateMaximizable, call_state(&facts));
     facts.style = StyleMinimizeBox;
-    try testing.expectEqual(StateMinimizable, call_state(&facts));
+    try testing_t.expectEqual(StateMinimizable, call_state(&facts));
     facts.style = DefaultStyle;
-    try testing.expectEqual(StateResizable | StateMaximizable | StateMinimizable, call_state(&facts));
+    try testing_t.expectEqual(StateResizable | StateMaximizable | StateMinimizable, call_state(&facts));
     facts.flags = FactMask;
-    facts.style = std.math.maxInt(u32);
-    facts.ex_style = std.math.maxInt(u32);
-    try testing.expectEqual(StateMask & ~StateActivated, call_state(&facts));
-    try testing.expectEqual(@as(u32, 0), call_state(&facts) & StateActivated);
+    facts.style = std_t.math.maxInt(u32);
+    facts.ex_style = std_t.math.maxInt(u32);
+    try testing_t.expectEqual(StateMask & ~StateActivated, call_state(&facts));
+    try testing_t.expectEqual(@as(u32, 0), call_state(&facts) & StateActivated);
 }
 
 test "identity_equal compares process, thread, start time and class hash" {
@@ -3498,102 +3498,102 @@ test "identity_equal compares process, thread, start time and class hash" {
     rec.thread_id = facts.thread_id;
     rec.process_start_time = facts.process_start_time;
     rec.class_hash = call_hash(call_class_bytes(&facts));
-    try testing.expect(call_identity(&rec, &facts));
+    try testing_t.expect(call_identity(&rec, &facts));
     // Title, rect, style and stamps are not part of the identity.
     facts.x += 100;
     facts.width += 1;
     facts.stamp += 9;
     facts.style = 0;
     set_title(&facts, "another title");
-    try testing.expect(call_identity(&rec, &facts));
+    try testing_t.expect(call_identity(&rec, &facts));
     // Class bytes past the stated length are not part of it either.
     facts.class_name[facts.class_length] = 'Z';
-    try testing.expect(call_identity(&rec, &facts));
+    try testing_t.expect(call_identity(&rec, &facts));
 
     var other = facts;
     other.process_id += 1;
-    try testing.expect(!call_identity(&rec, &other));
+    try testing_t.expect(!call_identity(&rec, &other));
     other = facts;
     other.thread_id += 1;
-    try testing.expect(!call_identity(&rec, &other));
+    try testing_t.expect(!call_identity(&rec, &other));
     other = facts;
     other.process_start_time += 1;
-    try testing.expect(!call_identity(&rec, &other));
+    try testing_t.expect(!call_identity(&rec, &other));
     other = facts;
     other.process_start_time = 0;
-    try testing.expect(!call_identity(&rec, &other));
+    try testing_t.expect(!call_identity(&rec, &other));
     other = facts;
     set_class(&other, "notepad");
-    try testing.expect(!call_identity(&rec, &other));
+    try testing_t.expect(!call_identity(&rec, &other));
     set_class(&other, "Notepad2");
-    try testing.expect(!call_identity(&rec, &other));
+    try testing_t.expect(!call_identity(&rec, &other));
     set_class(&other, "Notepad");
-    try testing.expect(call_identity(&rec, &other));
+    try testing_t.expect(call_identity(&rec, &other));
 }
 
 test "record_init returns an all-zero record" {
     const rec = call_record_init();
-    try testing.expectEqual(@as(u64, 0), rec.window);
-    try testing.expectEqual(@as(u64, 0), rec.generation);
-    try testing.expectEqual(@as(u64, 0), rec.parent_window);
-    try testing.expectEqual(@as(u64, 0), rec.parent_generation);
-    try testing.expectEqual(@as(u64, 0), rec.process_start_time);
-    try testing.expectEqual(@as(u64, 0), rec.class_hash);
-    try testing.expectEqual(@as(u64, 0), rec.admit_stamp);
-    try testing.expectEqual(@as(u64, 0), rec.last_stamp);
-    try testing.expectEqual(@as(u64, 0), rec.seq);
-    try testing.expectEqual(@as(i32, 0), rec.x);
-    try testing.expectEqual(@as(i32, 0), rec.y);
-    try testing.expectEqual(@as(u32, 0), rec.width);
-    try testing.expectEqual(@as(u32, 0), rec.height);
-    try testing.expectEqual(@as(u32, 0), rec.role);
-    try testing.expectEqual(@as(u32, 0), rec.state);
-    try testing.expectEqual(@as(u32, 0), rec.dpi);
-    try testing.expectEqual(@as(u32, 0), rec.min_width);
-    try testing.expectEqual(@as(u32, 0), rec.min_height);
-    try testing.expectEqual(@as(u32, 0), rec.process_id);
-    try testing.expectEqual(@as(u32, 0), rec.thread_id);
-    try testing.expectEqual(@as(u64, 0), rec.admit_captured_ms);
-    try testing.expectEqual(@as(u64, 0), rec.last_captured_ms);
-    try testing.expectEqual(@as(u32, 0), rec.retire_reason);
-    try testing.expectEqual(@as(u32, 0), rec.title_length);
-    try testing.expectEqual(@as(u32, 0), rec.app_key_length);
-    try testing.expect(std.mem.allEqual(u8, &rec.title, 0));
-    try testing.expect(std.mem.allEqual(u8, &rec.app_key, 0));
-    try testing.expectEqual(@as(usize, MaxTitleBytes), rec.title.len);
-    try testing.expectEqual(@as(usize, MaxAppKeyBytes), rec.app_key.len);
+    try testing_t.expectEqual(@as(u64, 0), rec.window);
+    try testing_t.expectEqual(@as(u64, 0), rec.generation);
+    try testing_t.expectEqual(@as(u64, 0), rec.parent_window);
+    try testing_t.expectEqual(@as(u64, 0), rec.parent_generation);
+    try testing_t.expectEqual(@as(u64, 0), rec.process_start_time);
+    try testing_t.expectEqual(@as(u64, 0), rec.class_hash);
+    try testing_t.expectEqual(@as(u64, 0), rec.admit_stamp);
+    try testing_t.expectEqual(@as(u64, 0), rec.last_stamp);
+    try testing_t.expectEqual(@as(u64, 0), rec.seq);
+    try testing_t.expectEqual(@as(i32, 0), rec.x);
+    try testing_t.expectEqual(@as(i32, 0), rec.y);
+    try testing_t.expectEqual(@as(u32, 0), rec.width);
+    try testing_t.expectEqual(@as(u32, 0), rec.height);
+    try testing_t.expectEqual(@as(u32, 0), rec.role);
+    try testing_t.expectEqual(@as(u32, 0), rec.state);
+    try testing_t.expectEqual(@as(u32, 0), rec.dpi);
+    try testing_t.expectEqual(@as(u32, 0), rec.min_width);
+    try testing_t.expectEqual(@as(u32, 0), rec.min_height);
+    try testing_t.expectEqual(@as(u32, 0), rec.process_id);
+    try testing_t.expectEqual(@as(u32, 0), rec.thread_id);
+    try testing_t.expectEqual(@as(u64, 0), rec.admit_captured_ms);
+    try testing_t.expectEqual(@as(u64, 0), rec.last_captured_ms);
+    try testing_t.expectEqual(@as(u32, 0), rec.retire_reason);
+    try testing_t.expectEqual(@as(u32, 0), rec.title_length);
+    try testing_t.expectEqual(@as(u32, 0), rec.app_key_length);
+    try testing_t.expect(std_t.mem.allEqual(u8, &rec.title, 0));
+    try testing_t.expect(std_t.mem.allEqual(u8, &rec.app_key, 0));
+    try testing_t.expectEqual(@as(usize, MaxTitleBytes), rec.title.len);
+    try testing_t.expectEqual(@as(usize, MaxAppKeyBytes), rec.app_key.len);
 }
 
 test "bump increments and saturates without wrapping" {
     var counter: u64 = 0;
     call_bump(&counter);
-    try testing.expectEqual(@as(u64, 1), counter);
+    try testing_t.expectEqual(@as(u64, 1), counter);
     call_bump(&counter);
-    try testing.expectEqual(@as(u64, 2), counter);
-    counter = std.math.maxInt(u64) - 1;
+    try testing_t.expectEqual(@as(u64, 2), counter);
+    counter = std_t.math.maxInt(u64) - 1;
     call_bump(&counter);
-    try testing.expectEqual(std.math.maxInt(u64), counter);
+    try testing_t.expectEqual(std_t.math.maxInt(u64), counter);
     call_bump(&counter);
-    try testing.expectEqual(std.math.maxInt(u64), counter);
+    try testing_t.expectEqual(std_t.math.maxInt(u64), counter);
 }
 
 test "status values and constants equal the committed header" {
-    try testing.expectEqual(@as(c_int, 0), @intFromEnum(status_t.Ok));
-    try testing.expectEqual(@as(c_int, 1), @intFromEnum(status_t.None));
-    try testing.expectEqual(@as(c_int, 20), @intFromEnum(status_t.SinkFailed));
-    try testing.expectEqual(@as(usize, 21), @typeInfo(status_t).Enum.fields.len);
-    try testing.expectEqual(@as(usize, 64), MaxEntries);
-    try testing.expectEqual(@as(usize, 192), MaxCallEvents);
-    try testing.expectEqual(@sizeOf(c.interop_window_facts_t), @sizeOf(facts_t));
-    try testing.expectEqual(@as(usize, 1656), @sizeOf(facts_t));
-    try testing.expectEqual(@as(usize, 1328), @sizeOf(event_t));
-    try testing.expectEqual(@as(usize, 56), @sizeOf(observation_t));
-    try testing.expectEqual(@as(usize, 48), @sizeOf(live_t));
-    try testing.expectEqual(@as(usize, 24), @sizeOf(retiring_entry_t));
-    try testing.expectEqual(@as(usize, 8), @sizeOf(proof_t));
-    try testing.expectEqual(@as(usize, 256), @sizeOf(stats_t));
-    try testing.expectEqual(@as(usize, 56), @sizeOf(diagnostic_t));
-    try testing.expectEqual(@as(usize, 48), @sizeOf(config_t));
+    try testing_t.expectEqual(@as(c_int, 0), @intFromEnum(status_t.Ok));
+    try testing_t.expectEqual(@as(c_int, 1), @intFromEnum(status_t.None));
+    try testing_t.expectEqual(@as(c_int, 20), @intFromEnum(status_t.SinkFailed));
+    try testing_t.expectEqual(@as(usize, 21), @typeInfo(status_t).Enum.fields.len);
+    try testing_t.expectEqual(@as(usize, 64), MaxEntries);
+    try testing_t.expectEqual(@as(usize, 192), MaxCallEvents);
+    try testing_t.expectEqual(@sizeOf(c_t.interop_window_facts_t), @sizeOf(facts_t));
+    try testing_t.expectEqual(@as(usize, 1656), @sizeOf(facts_t));
+    try testing_t.expectEqual(@as(usize, 1328), @sizeOf(event_t));
+    try testing_t.expectEqual(@as(usize, 56), @sizeOf(observation_t));
+    try testing_t.expectEqual(@as(usize, 48), @sizeOf(live_t));
+    try testing_t.expectEqual(@as(usize, 24), @sizeOf(retiring_entry_t));
+    try testing_t.expectEqual(@as(usize, 8), @sizeOf(proof_t));
+    try testing_t.expectEqual(@as(usize, 256), @sizeOf(stats_t));
+    try testing_t.expectEqual(@as(usize, 56), @sizeOf(diagnostic_t));
+    try testing_t.expectEqual(@as(usize, 48), @sizeOf(config_t));
 }
 
 /// Verbatim copy of the private `app_key_valid` in interop_codec.zig (the frozen wire rule).
@@ -3608,7 +3608,7 @@ fn codec_app_key_oracle(value: []const u8) bool {
 }
 
 test "app_key_valid agrees with the codec rule on random keys up to 200 bytes" {
-    var prng = std.Random.DefaultPrng.init(0x57AD_D1E0);
+    var prng = std_t.Random.DefaultPrng.init(0x57AD_D1E0);
     const random = prng.random();
     const alphabet = "ap-_09AZaz!. ~\x00\xC3\xA9";
     var buffer: [MaxAppKeyBytes]u8 = undefined;
@@ -3621,7 +3621,7 @@ test "app_key_valid agrees with the codec rule on random keys up to 200 bytes" {
             buffer[1] = '-';
         }
         const key = buffer[0..length];
-        try testing.expectEqual(codec_app_key_oracle(key), call_app_key(key));
+        try testing_t.expectEqual(codec_app_key_oracle(key), call_app_key(key));
     }
 }
 
@@ -3658,7 +3658,7 @@ fn stub_lookup(context: ?*anyopaque, facts: [*c]const facts_t, key: [*c]u8, capa
 }
 
 fn test_config(epoch: u64) config_t {
-    var config = std.mem.zeroes(config_t);
+    var config = std_t.mem.zeroes(config_t);
     config.session_epoch = epoch;
     config.uac_mode = UacWindow;
     config.app_key_lookup = stub_lookup;
@@ -3668,13 +3668,13 @@ fn test_config(epoch: u64) config_t {
 }
 
 /// Create a graph with the stub lookup and the settable fake clock (reset to 0).
-fn test_graph(allocator: std.mem.Allocator, epoch: u64) !*graph_t {
+fn test_graph(allocator: std_t.mem.Allocator, epoch: u64) !*graph_t {
     test_clock = .{};
     const config = test_config(epoch);
     return call_create(allocator, &config);
 }
 
-fn call_create(allocator: std.mem.Allocator, config: *const config_t) error{ OutOfMemory, InvalidArgument }!*graph_t {
+fn call_create(allocator: std_t.mem.Allocator, config: *const config_t) error{ OutOfMemory, InvalidArgument }!*graph_t {
     return @call(.never_inline, create, .{ allocator, config });
 }
 
@@ -3782,7 +3782,7 @@ fn inject_deferred(graph: *graph_t, slot: usize, window: u64) void {
 }
 
 fn make_event(kind: u32, window: u64, generation: u64) event_t {
-    var ev = std.mem.zeroes(event_t);
+    var ev = std_t.mem.zeroes(event_t);
     ev.session_epoch = TestEpoch;
     ev.window = window;
     ev.generation = generation;
@@ -3806,7 +3806,7 @@ fn queue_raw(graph: *graph_t, ev: event_t) void {
 }
 
 fn stats_bytes(graph: *const graph_t) []const u8 {
-    return std.mem.asBytes(&graph.stats);
+    return std_t.mem.asBytes(&graph.stats);
 }
 
 test "create validates every configuration field and builds a zeroed graph" {
@@ -3816,120 +3816,120 @@ test "create validates every configuration field and builds a zeroed graph" {
         bad.session_epoch = 0;
         break :blk bad;
     };
-    try testing.expectError(error.InvalidArgument, call_create(testing.allocator, &bad_epoch));
+    try testing_t.expectError(error.InvalidArgument, call_create(testing_t.allocator, &bad_epoch));
     var bad = config;
     bad.reserved0 = 1;
-    try testing.expectError(error.InvalidArgument, call_create(testing.allocator, &bad));
+    try testing_t.expectError(error.InvalidArgument, call_create(testing_t.allocator, &bad));
     bad = config;
     bad.uac_mode = UacNative + 1;
-    try testing.expectError(error.InvalidArgument, call_create(testing.allocator, &bad));
+    try testing_t.expectError(error.InvalidArgument, call_create(testing_t.allocator, &bad));
     bad.uac_mode = 0xFFFF_FFFF;
-    try testing.expectError(error.InvalidArgument, call_create(testing.allocator, &bad));
+    try testing_t.expectError(error.InvalidArgument, call_create(testing_t.allocator, &bad));
     bad = config;
     bad.app_key_lookup = null;
-    try testing.expectError(error.InvalidArgument, call_create(testing.allocator, &bad));
+    try testing_t.expectError(error.InvalidArgument, call_create(testing_t.allocator, &bad));
 
     for ([_]u32{ UacWindow, UacAuto, UacNative }) |mode| {
         config.uac_mode = mode;
-        const accepted = try call_create(testing.allocator, &config);
-        try testing.expectEqual(mode, accepted.config.uac_mode);
+        const accepted = try call_create(testing_t.allocator, &config);
+        try testing_t.expectEqual(mode, accepted.config.uac_mode);
         call_destroy(accepted);
     }
 
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
-    try testing.expectEqual(TestEpoch, graph.config.session_epoch);
-    try testing.expectEqual(std.Thread.getCurrentId(), graph.owner_thread);
-    try testing.expect(!graph.busy and !graph.refresh_open and !graph.have_diag);
-    try testing.expectEqual(@as(u64, 1), graph.next_seq);
-    try testing.expectEqual(TickBaseStart, graph.tick_base);
-    try testing.expectEqual(@as(u64, 0), graph.generations_issued);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
-    try testing.expectEqual(@as(u32, MaxEntries), call_count_state(graph, .Free));
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-    try testing.expect(std.mem.allEqual(u8, stats_bytes(graph), 0));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&graph.ring[EventCapacity - 1]), 0));
-    try testing.expect(@sizeOf(graph_t) <= MaxGraphBytes);
+    try testing_t.expectEqual(TestEpoch, graph.config.session_epoch);
+    try testing_t.expectEqual(std_t.Thread.getCurrentId(), graph.owner_thread);
+    try testing_t.expect(!graph.busy and !graph.refresh_open and !graph.have_diag);
+    try testing_t.expectEqual(@as(u64, 1), graph.next_seq);
+    try testing_t.expectEqual(TickBaseStart, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 0), graph.generations_issued);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, MaxEntries), call_count_state(graph, .Free));
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expect(std_t.mem.allEqual(u8, stats_bytes(graph), 0));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&graph.ring[EventCapacity - 1]), 0));
+    try testing_t.expect(@sizeOf(graph_t) <= MaxGraphBytes);
 }
 
 test "create copies the configuration by value" {
     var config = test_config(TestEpoch);
-    const graph = try call_create(testing.allocator, &config);
+    const graph = try call_create(testing_t.allocator, &config);
     defer call_destroy(graph);
     config.session_epoch = 99;
     config.uac_mode = UacNative;
-    try testing.expectEqual(TestEpoch, graph.config.session_epoch);
-    try testing.expectEqual(UacWindow, graph.config.uac_mode);
+    try testing_t.expectEqual(TestEpoch, graph.config.session_epoch);
+    try testing_t.expectEqual(UacWindow, graph.config.uac_mode);
 }
 
 test "create under allocator failure leaves no graph and leaks nothing" {
     const config = test_config(TestEpoch);
     var fail_index: usize = 0;
     while (true) : (fail_index += 1) {
-        try testing.expect(fail_index < 4);
-        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        try testing_t.expect(fail_index < 4);
+        var failing = std_t.testing.FailingAllocator.init(testing_t.allocator, .{ .fail_index = fail_index });
         if (call_create(failing.allocator(), &config)) |graph| {
-            try testing.expectEqual(@as(usize, 1), failing.allocations);
+            try testing_t.expectEqual(@as(usize, 1), failing.allocations);
             call_destroy(graph);
-            try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+            try testing_t.expectEqual(failing.allocated_bytes, failing.freed_bytes);
             break;
         } else |err| {
-            try testing.expectEqual(error.OutOfMemory, err);
-            try testing.expectEqual(@as(usize, 0), failing.allocated_bytes);
-            try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+            try testing_t.expectEqual(error.OutOfMemory, err);
+            try testing_t.expectEqual(@as(usize, 0), failing.allocated_bytes);
+            try testing_t.expectEqual(failing.allocated_bytes, failing.freed_bytes);
         }
     }
     // The graph needs exactly one allocation: index 0 fails, index 1 succeeds.
-    try testing.expectEqual(@as(usize, 1), fail_index);
+    try testing_t.expectEqual(@as(usize, 1), fail_index);
 }
 
 test "create takes the default monotonic clock when no now_ms is given" {
     var config = test_config(TestEpoch);
     config.now_ms = null;
     config.now_ms_context = null;
-    const graph = try call_create(testing.allocator, &config);
+    const graph = try call_create(testing_t.allocator, &config);
     defer call_destroy(graph);
     graph.diag_queue_full = 2;
-    var diag = std.mem.zeroes(diagnostic_t);
-    try testing.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
-    try testing.expectEqual(@as(u64, 2), diag.queue_full);
+    var diag = std_t.mem.zeroes(diagnostic_t);
+    try testing_t.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(@as(u64, 2), diag.queue_full);
     graph.diag_queue_full = 1;
-    try testing.expectEqual(status_t.None, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(status_t.None, call_take_diag(graph, &diag));
     graph.timer = null;
     graph.have_diag = false;
-    try testing.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
-    try testing.expectEqual(@as(u64, 0), graph.last_diag_ms);
+    try testing_t.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(@as(u64, 0), graph.last_diag_ms);
 }
 
 test "enter applies thread, busy and epoch rules in order" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
 
-    try testing.expectEqual(@as(?status_t, null), call_enter(graph, null));
-    try testing.expect(graph.busy);
-    try testing.expectEqual(@as(?status_t, status_t.Reentrant), call_enter(graph, null));
+    try testing_t.expectEqual(@as(?status_t, null), call_enter(graph, null));
+    try testing_t.expect(graph.busy);
+    try testing_t.expectEqual(@as(?status_t, status_t.Reentrant), call_enter(graph, null));
     // Reentrant outranks a stale epoch and bumps nothing.
-    try testing.expectEqual(@as(?status_t, status_t.Reentrant), call_enter(graph, 0));
-    try testing.expectEqual(@as(u64, 0), graph.stats.rejected_stale_epoch);
-    try testing.expectEqual(@as(?status_t, status_t.Reentrant), call_enter_read(graph));
-    try testing.expect(graph.busy);
+    try testing_t.expectEqual(@as(?status_t, status_t.Reentrant), call_enter(graph, 0));
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.rejected_stale_epoch);
+    try testing_t.expectEqual(@as(?status_t, status_t.Reentrant), call_enter_read(graph));
+    try testing_t.expect(graph.busy);
     call_leave(graph);
-    try testing.expect(!graph.busy);
+    try testing_t.expect(!graph.busy);
 
-    try testing.expectEqual(@as(?status_t, null), call_enter(graph, TestEpoch));
-    try testing.expect(graph.busy);
+    try testing_t.expectEqual(@as(?status_t, null), call_enter(graph, TestEpoch));
+    try testing_t.expect(graph.busy);
     call_leave(graph);
 
-    try testing.expectEqual(@as(?status_t, status_t.StaleEpoch), call_enter(graph, TestEpoch + 1));
-    try testing.expectEqual(@as(?status_t, status_t.StaleEpoch), call_enter(graph, 0));
-    try testing.expect(!graph.busy);
-    try testing.expectEqual(@as(u64, 2), graph.stats.rejected_stale_epoch);
-    var expected = std.mem.zeroes(stats_t);
+    try testing_t.expectEqual(@as(?status_t, status_t.StaleEpoch), call_enter(graph, TestEpoch + 1));
+    try testing_t.expectEqual(@as(?status_t, status_t.StaleEpoch), call_enter(graph, 0));
+    try testing_t.expect(!graph.busy);
+    try testing_t.expectEqual(@as(u64, 2), graph.stats.rejected_stale_epoch);
+    var expected = std_t.mem.zeroes(stats_t);
     expected.rejected_stale_epoch = 2;
-    try testing.expectEqualSlices(u8, std.mem.asBytes(&expected), stats_bytes(graph));
+    try testing_t.expectEqualSlices(u8, std_t.mem.asBytes(&expected), stats_bytes(graph));
 
-    try testing.expectEqual(@as(?status_t, null), call_enter_read(graph));
-    try testing.expect(!graph.busy);
+    try testing_t.expectEqual(@as(?status_t, null), call_enter_read(graph));
+    try testing_t.expect(!graph.busy);
 }
 
 const thread_probe_t = struct {
@@ -3943,9 +3943,9 @@ const thread_probe_t = struct {
 };
 
 fn thread_body(probe: *thread_probe_t) void {
-    var ev = std.mem.zeroes(event_t);
-    var stats = std.mem.zeroes(stats_t);
-    var diag = std.mem.zeroes(diagnostic_t);
+    var ev = std_t.mem.zeroes(event_t);
+    var stats = std_t.mem.zeroes(stats_t);
+    var diag = std_t.mem.zeroes(diagnostic_t);
     probe.enter_status = call_enter(probe.graph, 0);
     probe.enter_null_status = call_enter(probe.graph, null);
     probe.read_status = call_enter_read(probe.graph);
@@ -3955,7 +3955,7 @@ fn thread_body(probe: *thread_probe_t) void {
 }
 
 test "a foreign thread gets WrongThread and touches nothing" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     queue_raw(graph, make_event(EventAnnounce, 1, 1));
     graph.diag_at_capacity = 5;
@@ -3963,88 +3963,88 @@ test "a foreign thread gets WrongThread and touches nothing" {
     graph.busy = true;
     const before = graph.stats;
     var probe = thread_probe_t{ .graph = graph };
-    const thread = try std.Thread.spawn(.{}, thread_body, .{&probe});
+    const thread = try std_t.Thread.spawn(.{}, thread_body, .{&probe});
     thread.join();
-    try testing.expectEqual(@as(?status_t, status_t.WrongThread), probe.enter_status);
-    try testing.expectEqual(@as(?status_t, status_t.WrongThread), probe.enter_null_status);
-    try testing.expectEqual(@as(?status_t, status_t.WrongThread), probe.read_status);
-    try testing.expectEqual(status_t.WrongThread, probe.next_status);
-    try testing.expectEqual(status_t.WrongThread, probe.stats_status);
-    try testing.expectEqual(status_t.WrongThread, probe.diag_status);
-    try testing.expectEqualSlices(u8, std.mem.asBytes(&before), stats_bytes(graph));
-    try testing.expectEqual(@as(u32, 1), graph.ring_len);
-    try testing.expectEqual(@as(u64, 5), graph.diag_at_capacity);
-    try testing.expect(graph.busy);
+    try testing_t.expectEqual(@as(?status_t, status_t.WrongThread), probe.enter_status);
+    try testing_t.expectEqual(@as(?status_t, status_t.WrongThread), probe.enter_null_status);
+    try testing_t.expectEqual(@as(?status_t, status_t.WrongThread), probe.read_status);
+    try testing_t.expectEqual(status_t.WrongThread, probe.next_status);
+    try testing_t.expectEqual(status_t.WrongThread, probe.stats_status);
+    try testing_t.expectEqual(status_t.WrongThread, probe.diag_status);
+    try testing_t.expectEqualSlices(u8, std_t.mem.asBytes(&before), stats_bytes(graph));
+    try testing_t.expectEqual(@as(u32, 1), graph.ring_len);
+    try testing_t.expectEqual(@as(u64, 5), graph.diag_at_capacity);
+    try testing_t.expect(graph.busy);
     graph.busy = false;
 }
 
 test "ring wraps around over many more pushes than its capacity" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     const total: u64 = 3 * EventCapacity + 11;
     const backlog: u64 = 100;
-    var out = std.mem.zeroes(event_t);
+    var out = std_t.mem.zeroes(event_t);
     var sequence: u64 = 0;
     while (sequence < total) : (sequence += 1) {
         const ev = make_event(EventAnnounce, sequence + 1, 1);
-        try testing.expect(call_push(graph, &ev));
+        try testing_t.expect(call_push(graph, &ev));
         if (sequence >= backlog) {
-            try testing.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &out));
-            try testing.expectEqual(sequence - backlog + 1, out.window);
+            try testing_t.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &out));
+            try testing_t.expectEqual(sequence - backlog + 1, out.window);
         }
     }
-    try testing.expectEqual(@as(u32, backlog), graph.ring_len);
-    try testing.expect(graph.ring_head < EventCapacity);
+    try testing_t.expectEqual(@as(u32, backlog), graph.ring_len);
+    try testing_t.expect(graph.ring_head < EventCapacity);
     var expected_window = total - backlog + 1;
     while (graph.ring_len > 0) : (expected_window += 1) {
-        try testing.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &out));
-        try testing.expectEqual(expected_window, out.window);
+        try testing_t.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &out));
+        try testing_t.expectEqual(expected_window, out.window);
     }
-    try testing.expectEqual(total + 1, expected_window);
-    try testing.expectEqual(total, graph.stats.events_queued);
-    try testing.expectEqual(total, graph.stats.events_drained);
+    try testing_t.expectEqual(total + 1, expected_window);
+    try testing_t.expectEqual(total, graph.stats.events_queued);
+    try testing_t.expectEqual(total, graph.stats.events_drained);
 }
 
 test "a full ring refuses a new event and changes nothing" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     var index: u64 = 0;
     while (index < EventCapacity) : (index += 1) {
         const ev = make_event(EventAnnounce, index + 1, 1);
-        try testing.expect(call_push(graph, &ev));
+        try testing_t.expect(call_push(graph, &ev));
     }
-    try testing.expectEqual(@as(u32, 0), call_ring_room(graph));
+    try testing_t.expectEqual(@as(u32, 0), call_ring_room(graph));
     const before = graph.stats;
     const extra = make_event(EventAnnounce, 9999, 1);
-    try testing.expect(!call_push(graph, &extra));
-    try testing.expectEqual(@as(u32, EventCapacity), graph.ring_len);
-    try testing.expectEqualSlices(u8, std.mem.asBytes(&before), stats_bytes(graph));
+    try testing_t.expect(!call_push(graph, &extra));
+    try testing_t.expectEqual(@as(u32, EventCapacity), graph.ring_len);
+    try testing_t.expectEqualSlices(u8, std_t.mem.asBytes(&before), stats_bytes(graph));
     // A merge still works on a full ring.
     var update = make_event(EventUpdate, EventCapacity, 1);
     update.x = 77;
     update.changed_mask = ChangeRect;
-    try testing.expect(!call_push(graph, &update));
-    try testing.expectEqual(@as(u32, EventCapacity), graph.ring_len);
-    try testing.expectEqual(@as(u64, 1), graph.stats.events_coalesced);
-    var out = std.mem.zeroes(event_t);
-    try testing.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &out));
-    try testing.expectEqual(@as(u32, 1), call_ring_room(graph));
-    try testing.expect(call_push(graph, &extra));
-    try testing.expectEqual(@as(u32, 0), call_ring_room(graph));
+    try testing_t.expect(!call_push(graph, &update));
+    try testing_t.expectEqual(@as(u32, EventCapacity), graph.ring_len);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.events_coalesced);
+    var out = std_t.mem.zeroes(event_t);
+    try testing_t.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &out));
+    try testing_t.expectEqual(@as(u32, 1), call_ring_room(graph));
+    try testing_t.expect(call_push(graph, &extra));
+    try testing_t.expectEqual(@as(u32, 0), call_ring_room(graph));
 }
 
 fn pop_all(graph: *graph_t, events: []event_t) !usize {
     var count: usize = 0;
-    var out = std.mem.zeroes(event_t);
+    var out = std_t.mem.zeroes(event_t);
     while (call_next_event(graph, TestEpoch, &out) == .Ok) : (count += 1) events[count] = out;
     return count;
 }
 
 test "announce and update merge keep the announce kind and OR the change mask" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     const announce = make_event(EventAnnounce, 10, 3);
-    try testing.expect(call_push(graph, &announce));
+    try testing_t.expect(call_push(graph, &announce));
     var update = make_event(EventUpdate, 10, 3);
     update.x = -5;
     update.y = 6;
@@ -4061,36 +4061,36 @@ test "announce and update merge keep the announce kind and OR the change mask" {
     const title = "merged title";
     @memcpy(update.title[0..title.len], title);
     update.title_length = title.len;
-    try testing.expect(!call_push(graph, &update));
-    try testing.expectEqual(@as(u32, 1), graph.ring_len);
-    try testing.expectEqual(@as(u64, 1), graph.stats.events_queued);
-    try testing.expectEqual(@as(u64, 1), graph.stats.events_coalesced);
-    try testing.expectEqual(@as(u64, 0), graph.stats.updates_queued);
+    try testing_t.expect(!call_push(graph, &update));
+    try testing_t.expectEqual(@as(u32, 1), graph.ring_len);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.events_queued);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.events_coalesced);
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.updates_queued);
 
     var events: [4]event_t = undefined;
-    try testing.expectEqual(@as(usize, 1), try pop_all(graph, &events));
+    try testing_t.expectEqual(@as(usize, 1), try pop_all(graph, &events));
     const merged = events[0];
-    try testing.expectEqual(EventAnnounce, merged.kind);
-    try testing.expectEqual(ChangeMask, merged.changed_mask);
-    try testing.expectEqual(@as(i32, -5), merged.x);
-    try testing.expectEqual(@as(i32, 6), merged.y);
-    try testing.expectEqual(@as(u32, 321), merged.width);
-    try testing.expectEqual(@as(u32, 123), merged.height);
-    try testing.expectEqual(StateMaximized, merged.state);
-    try testing.expectEqual(@as(u32, 144), merged.dpi);
-    try testing.expectEqual(@as(u32, 50), merged.min_width);
-    try testing.expectEqual(@as(u32, 40), merged.min_height);
-    try testing.expectEqual(@as(u32, title.len), merged.title_length);
-    try testing.expectEqualSlices(u8, title, merged.title[0..title.len]);
+    try testing_t.expectEqual(EventAnnounce, merged.kind);
+    try testing_t.expectEqual(ChangeMask, merged.changed_mask);
+    try testing_t.expectEqual(@as(i32, -5), merged.x);
+    try testing_t.expectEqual(@as(i32, 6), merged.y);
+    try testing_t.expectEqual(@as(u32, 321), merged.width);
+    try testing_t.expectEqual(@as(u32, 123), merged.height);
+    try testing_t.expectEqual(StateMaximized, merged.state);
+    try testing_t.expectEqual(@as(u32, 144), merged.dpi);
+    try testing_t.expectEqual(@as(u32, 50), merged.min_width);
+    try testing_t.expectEqual(@as(u32, 40), merged.min_height);
+    try testing_t.expectEqual(@as(u32, title.len), merged.title_length);
+    try testing_t.expectEqualSlices(u8, title, merged.title[0..title.len]);
     // Identity-bound fields are not rewritten.
-    try testing.expectEqual(@as(u32, 77), merged.process_id);
-    try testing.expectEqual(RoleToplevel, merged.role);
-    try testing.expectEqual(@as(u64, 0), merged.parent_window);
-    try testing.expectEqual(@as(u32, 6), merged.app_key_length);
+    try testing_t.expectEqual(@as(u32, 77), merged.process_id);
+    try testing_t.expectEqual(RoleToplevel, merged.role);
+    try testing_t.expectEqual(@as(u64, 0), merged.parent_window);
+    try testing_t.expectEqual(@as(u32, 6), merged.app_key_length);
 }
 
 test "update and update merge OR their masks and count only appended updates" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     var first = make_event(EventUpdate, 10, 3);
     first.changed_mask = ChangeRect;
@@ -4098,103 +4098,103 @@ test "update and update merge OR their masks and count only appended updates" {
     var second = make_event(EventUpdate, 10, 3);
     second.changed_mask = ChangeTitle | ChangeDpi;
     second.x = 2;
-    try testing.expect(call_push(graph, &first));
-    try testing.expect(!call_push(graph, &second));
+    try testing_t.expect(call_push(graph, &first));
+    try testing_t.expect(!call_push(graph, &second));
     var events: [4]event_t = undefined;
-    try testing.expectEqual(@as(usize, 1), try pop_all(graph, &events));
-    try testing.expectEqual(EventUpdate, events[0].kind);
-    try testing.expectEqual(ChangeRect | ChangeTitle | ChangeDpi, events[0].changed_mask);
-    try testing.expectEqual(@as(i32, 2), events[0].x);
-    try testing.expectEqual(@as(u64, 1), graph.stats.updates_queued);
-    try testing.expectEqual(@as(u64, 1), graph.stats.events_queued);
-    try testing.expectEqual(@as(u64, 1), graph.stats.events_coalesced);
+    try testing_t.expectEqual(@as(usize, 1), try pop_all(graph, &events));
+    try testing_t.expectEqual(EventUpdate, events[0].kind);
+    try testing_t.expectEqual(ChangeRect | ChangeTitle | ChangeDpi, events[0].changed_mask);
+    try testing_t.expectEqual(@as(i32, 2), events[0].x);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.updates_queued);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.events_queued);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.events_coalesced);
 }
 
 test "events never merge across a retire intent" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     const announce = make_event(EventAnnounce, 10, 3);
     var retire = make_event(EventRetireIntent, 10, 3);
     retire.reason = ReasonDestroyed;
     var update = make_event(EventUpdate, 10, 3);
     update.changed_mask = ChangeRect;
-    try testing.expect(call_push(graph, &announce));
-    try testing.expect(call_push(graph, &retire));
-    try testing.expect(call_push(graph, &update));
+    try testing_t.expect(call_push(graph, &announce));
+    try testing_t.expect(call_push(graph, &retire));
+    try testing_t.expect(call_push(graph, &update));
     // A second update merges into the newest one (after the retire), never into the announce.
     var again = make_event(EventUpdate, 10, 3);
     again.changed_mask = ChangeState;
-    try testing.expect(!call_push(graph, &again));
+    try testing_t.expect(!call_push(graph, &again));
     var events: [8]event_t = undefined;
-    try testing.expectEqual(@as(usize, 3), try pop_all(graph, &events));
-    try testing.expectEqual(EventAnnounce, events[0].kind);
-    try testing.expectEqual(ChangeMask, events[0].changed_mask);
-    try testing.expectEqual(EventRetireIntent, events[1].kind);
-    try testing.expectEqual(@as(u32, 0), events[1].changed_mask);
-    try testing.expectEqual(ReasonDestroyed, events[1].reason);
-    try testing.expectEqual(EventUpdate, events[2].kind);
-    try testing.expectEqual(ChangeRect | ChangeState, events[2].changed_mask);
-    try testing.expectEqual(@as(u64, 1), graph.stats.events_coalesced);
+    try testing_t.expectEqual(@as(usize, 3), try pop_all(graph, &events));
+    try testing_t.expectEqual(EventAnnounce, events[0].kind);
+    try testing_t.expectEqual(ChangeMask, events[0].changed_mask);
+    try testing_t.expectEqual(EventRetireIntent, events[1].kind);
+    try testing_t.expectEqual(@as(u32, 0), events[1].changed_mask);
+    try testing_t.expectEqual(ReasonDestroyed, events[1].reason);
+    try testing_t.expectEqual(EventUpdate, events[2].kind);
+    try testing_t.expectEqual(ChangeRect | ChangeState, events[2].changed_mask);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.events_coalesced);
 }
 
 test "retire intents are always appended and an older update stays unmerged" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     var update = make_event(EventUpdate, 10, 3);
     update.changed_mask = ChangeRect;
     const retire = make_event(EventRetireIntent, 10, 3);
-    try testing.expect(call_push(graph, &update));
-    try testing.expect(call_push(graph, &retire));
+    try testing_t.expect(call_push(graph, &update));
+    try testing_t.expect(call_push(graph, &retire));
     // After the retire, an Announce for the same identity (defensive) starts a new event.
     const later = make_event(EventAnnounce, 10, 3);
-    try testing.expect(call_push(graph, &later));
-    try testing.expectEqual(@as(u32, 3), graph.ring_len);
-    try testing.expectEqual(@as(u64, 0), graph.stats.events_coalesced);
-    try testing.expectEqual(@as(u64, 3), graph.stats.events_queued);
+    try testing_t.expect(call_push(graph, &later));
+    try testing_t.expectEqual(@as(u32, 3), graph.ring_len);
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.events_coalesced);
+    try testing_t.expectEqual(@as(u64, 3), graph.stats.events_queued);
 }
 
 test "events of another generation or window do not merge" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     const announce = make_event(EventAnnounce, 10, 3);
     const other_generation = make_event(EventUpdate, 10, 4);
     const other_window = make_event(EventUpdate, 11, 3);
-    try testing.expect(call_push(graph, &announce));
-    try testing.expect(call_push(graph, &other_generation));
-    try testing.expect(call_push(graph, &other_window));
-    try testing.expectEqual(@as(u32, 3), graph.ring_len);
-    try testing.expectEqual(@as(u64, 0), graph.stats.events_coalesced);
+    try testing_t.expect(call_push(graph, &announce));
+    try testing_t.expect(call_push(graph, &other_generation));
+    try testing_t.expect(call_push(graph, &other_window));
+    try testing_t.expectEqual(@as(u32, 3), graph.ring_len);
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.events_coalesced);
     // The newest event of the same identity wins even when other identities were queued after it.
     var update = make_event(EventUpdate, 10, 3);
     update.changed_mask = ChangeMinSize;
     update.min_width = 12;
-    try testing.expect(!call_push(graph, &update));
-    try testing.expectEqual(@as(u32, 3), graph.ring_len);
+    try testing_t.expect(!call_push(graph, &update));
+    try testing_t.expectEqual(@as(u32, 3), graph.ring_len);
     var events: [4]event_t = undefined;
-    try testing.expectEqual(@as(usize, 3), try pop_all(graph, &events));
-    try testing.expectEqual(@as(u32, 12), events[0].min_width);
-    try testing.expectEqual(EventAnnounce, events[0].kind);
-    try testing.expectEqual(@as(u32, 0), events[1].min_width);
+    try testing_t.expectEqual(@as(usize, 3), try pop_all(graph, &events));
+    try testing_t.expectEqual(@as(u32, 12), events[0].min_width);
+    try testing_t.expectEqual(EventAnnounce, events[0].kind);
+    try testing_t.expectEqual(@as(u32, 0), events[1].min_width);
 }
 
 test "next_event reports None on an empty queue and leaves the output alone" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
-    var out = std.mem.zeroes(event_t);
+    var out = std_t.mem.zeroes(event_t);
     out.window = Unset;
-    try testing.expectEqual(status_t.None, call_next_event(graph, TestEpoch, &out));
-    try testing.expectEqual(Unset, out.window);
-    try testing.expectEqual(@as(u64, 0), graph.stats.events_drained);
-    try testing.expect(!graph.busy);
+    try testing_t.expectEqual(status_t.None, call_next_event(graph, TestEpoch, &out));
+    try testing_t.expectEqual(Unset, out.window);
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.events_drained);
+    try testing_t.expect(!graph.busy);
     // Wrong epoch (including zero) is rejected before the queue is looked at.
     queue_raw(graph, make_event(EventAnnounce, 5, 1));
-    try testing.expectEqual(status_t.StaleEpoch, call_next_event(graph, 0, &out));
-    try testing.expectEqual(status_t.StaleEpoch, call_next_event(graph, TestEpoch + 1, &out));
-    try testing.expectEqual(@as(u32, 1), graph.ring_len);
-    try testing.expectEqual(@as(u64, 2), graph.stats.rejected_stale_epoch);
-    try testing.expectEqual(Unset, out.window);
-    try testing.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &out));
-    try testing.expectEqual(@as(u64, 5), out.window);
+    try testing_t.expectEqual(status_t.StaleEpoch, call_next_event(graph, 0, &out));
+    try testing_t.expectEqual(status_t.StaleEpoch, call_next_event(graph, TestEpoch + 1, &out));
+    try testing_t.expectEqual(@as(u32, 1), graph.ring_len);
+    try testing_t.expectEqual(@as(u64, 2), graph.stats.rejected_stale_epoch);
+    try testing_t.expectEqual(Unset, out.window);
+    try testing_t.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &out));
+    try testing_t.expectEqual(@as(u64, 5), out.window);
 }
 
 const sink_probe_t = struct {
@@ -4219,7 +4219,7 @@ fn probe_sink(context: ?*anyopaque, ev: [*c]const event_t) callconv(.C) c_int {
 
 fn reentrant_sink(context: ?*anyopaque, ev: [*c]const event_t) callconv(.C) c_int {
     const probe: *sink_probe_t = @ptrCast(@alignCast(context.?));
-    var scratch = std.mem.zeroes(event_t);
+    var scratch = std_t.mem.zeroes(event_t);
     var delivered: u32 = Unset & 0xFFFF;
     probe.reentry_read = call_enter_read(probe.graph) orelse .Ok;
     probe.reentry_next = call_next_event(probe.graph, TestEpoch, &scratch);
@@ -4235,144 +4235,144 @@ fn fill_ring(graph: *graph_t, count: u64) void {
 }
 
 test "drain delivers events oldest first up to max_events" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     fill_ring(graph, 5);
     var probe = sink_probe_t{ .graph = graph };
     var delivered: u32 = 99;
-    try testing.expectEqual(status_t.Ok, call_drain(graph, TestEpoch, probe_sink, &probe, 3, &delivered));
-    try testing.expectEqual(@as(u32, 3), delivered);
-    try testing.expectEqualSlices(u64, &[_]u64{ 1, 2, 3 }, probe.seen[0..3]);
-    try testing.expect(probe.busy_inside);
-    try testing.expect(!graph.busy);
-    try testing.expectEqual(@as(u32, 2), graph.ring_len);
-    try testing.expectEqual(status_t.Ok, call_drain(graph, TestEpoch, probe_sink, &probe, 10, &delivered));
-    try testing.expectEqual(@as(u32, 2), delivered);
-    try testing.expectEqualSlices(u64, &[_]u64{ 4, 5 }, probe.seen[3..5]);
-    try testing.expectEqual(@as(u64, 5), graph.stats.events_drained);
-    try testing.expectEqual(@as(u64, 0), graph.stats.sink_failures);
+    try testing_t.expectEqual(status_t.Ok, call_drain(graph, TestEpoch, probe_sink, &probe, 3, &delivered));
+    try testing_t.expectEqual(@as(u32, 3), delivered);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 1, 2, 3 }, probe.seen[0..3]);
+    try testing_t.expect(probe.busy_inside);
+    try testing_t.expect(!graph.busy);
+    try testing_t.expectEqual(@as(u32, 2), graph.ring_len);
+    try testing_t.expectEqual(status_t.Ok, call_drain(graph, TestEpoch, probe_sink, &probe, 10, &delivered));
+    try testing_t.expectEqual(@as(u32, 2), delivered);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 4, 5 }, probe.seen[3..5]);
+    try testing_t.expectEqual(@as(u64, 5), graph.stats.events_drained);
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.sink_failures);
 }
 
 test "drain on an empty queue reports None and delivered 0" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     var probe = sink_probe_t{ .graph = graph };
     var delivered: u32 = 99;
-    try testing.expectEqual(status_t.None, call_drain(graph, TestEpoch, probe_sink, &probe, 4, &delivered));
-    try testing.expectEqual(@as(u32, 0), delivered);
-    try testing.expectEqual(@as(u32, 0), probe.calls);
-    try testing.expect(!graph.busy);
+    try testing_t.expectEqual(status_t.None, call_drain(graph, TestEpoch, probe_sink, &probe, 4, &delivered));
+    try testing_t.expectEqual(@as(u32, 0), delivered);
+    try testing_t.expectEqual(@as(u32, 0), probe.calls);
+    try testing_t.expect(!graph.busy);
 }
 
 test "drain stops at a refused event and redelivers it first next time" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     fill_ring(graph, 5);
     var probe = sink_probe_t{ .graph = graph, .fail_on_call = 3 };
     var delivered: u32 = 99;
-    try testing.expectEqual(status_t.SinkFailed, call_drain(graph, TestEpoch, probe_sink, &probe, 10, &delivered));
-    try testing.expectEqual(@as(u32, 2), delivered);
-    try testing.expectEqual(@as(u32, 3), probe.calls);
-    try testing.expectEqual(@as(u32, 3), graph.ring_len);
-    try testing.expectEqual(@as(u64, 2), graph.stats.events_drained);
-    try testing.expectEqual(@as(u64, 1), graph.stats.sink_failures);
-    try testing.expect(!graph.busy);
+    try testing_t.expectEqual(status_t.SinkFailed, call_drain(graph, TestEpoch, probe_sink, &probe, 10, &delivered));
+    try testing_t.expectEqual(@as(u32, 2), delivered);
+    try testing_t.expectEqual(@as(u32, 3), probe.calls);
+    try testing_t.expectEqual(@as(u32, 3), graph.ring_len);
+    try testing_t.expectEqual(@as(u64, 2), graph.stats.events_drained);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.sink_failures);
+    try testing_t.expect(!graph.busy);
     // The refused event is the first one of the next drain (here refused again at once).
     probe.fail_on_call = probe.calls + 1;
-    try testing.expectEqual(status_t.SinkFailed, call_drain(graph, TestEpoch, probe_sink, &probe, 10, &delivered));
-    try testing.expectEqual(@as(u32, 0), delivered);
-    try testing.expectEqual(@as(u64, 3), probe.seen[probe.calls - 1]);
-    try testing.expectEqual(@as(u32, 3), graph.ring_len);
-    try testing.expectEqual(@as(u64, 2), graph.stats.sink_failures);
+    try testing_t.expectEqual(status_t.SinkFailed, call_drain(graph, TestEpoch, probe_sink, &probe, 10, &delivered));
+    try testing_t.expectEqual(@as(u32, 0), delivered);
+    try testing_t.expectEqual(@as(u64, 3), probe.seen[probe.calls - 1]);
+    try testing_t.expectEqual(@as(u32, 3), graph.ring_len);
+    try testing_t.expectEqual(@as(u64, 2), graph.stats.sink_failures);
     probe.fail_on_call = 0;
-    try testing.expectEqual(status_t.Ok, call_drain(graph, TestEpoch, probe_sink, &probe, 10, &delivered));
-    try testing.expectEqual(@as(u32, 3), delivered);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(status_t.Ok, call_drain(graph, TestEpoch, probe_sink, &probe, 10, &delivered));
+    try testing_t.expectEqual(@as(u32, 3), delivered);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
 }
 
 test "drain rejects bad arguments after the common rules and changes nothing" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     fill_ring(graph, 2);
     var probe = sink_probe_t{ .graph = graph };
     var delivered: u32 = 99;
-    try testing.expectEqual(status_t.InvalidArgument, call_drain(graph, TestEpoch, probe_sink, &probe, 0, &delivered));
-    try testing.expectEqual(status_t.InvalidArgument, call_drain(graph, TestEpoch, null, &probe, 1, &delivered));
-    try testing.expectEqual(status_t.StaleEpoch, call_drain(graph, 0, null, &probe, 0, &delivered));
-    try testing.expectEqual(@as(u32, 99), delivered);
-    try testing.expectEqual(@as(u32, 2), graph.ring_len);
-    try testing.expectEqual(@as(u32, 0), probe.calls);
-    try testing.expectEqual(@as(u64, 1), graph.stats.rejected_stale_epoch);
-    try testing.expect(!graph.busy);
+    try testing_t.expectEqual(status_t.InvalidArgument, call_drain(graph, TestEpoch, probe_sink, &probe, 0, &delivered));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_drain(graph, TestEpoch, null, &probe, 1, &delivered));
+    try testing_t.expectEqual(status_t.StaleEpoch, call_drain(graph, 0, null, &probe, 0, &delivered));
+    try testing_t.expectEqual(@as(u32, 99), delivered);
+    try testing_t.expectEqual(@as(u32, 2), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, 0), probe.calls);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.rejected_stale_epoch);
+    try testing_t.expect(!graph.busy);
 }
 
 test "graph calls made from inside the sink are Reentrant and nothing is delivered twice" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     fill_ring(graph, 3);
     var probe = sink_probe_t{ .graph = graph };
     var delivered: u32 = 99;
-    try testing.expectEqual(status_t.Ok, call_drain(graph, TestEpoch, reentrant_sink, &probe, 10, &delivered));
-    try testing.expectEqual(@as(u32, 3), delivered);
-    try testing.expectEqual(@as(?status_t, status_t.Reentrant), probe.reentry_read);
-    try testing.expectEqual(@as(?status_t, status_t.Reentrant), probe.reentry_next);
-    try testing.expectEqual(@as(?status_t, status_t.Reentrant), probe.reentry_drain);
-    try testing.expectEqualSlices(u64, &[_]u64{ 1, 2, 3 }, probe.seen[0..3]);
-    try testing.expectEqual(@as(u64, 3), graph.stats.events_drained);
-    try testing.expect(!graph.busy);
+    try testing_t.expectEqual(status_t.Ok, call_drain(graph, TestEpoch, reentrant_sink, &probe, 10, &delivered));
+    try testing_t.expectEqual(@as(u32, 3), delivered);
+    try testing_t.expectEqual(@as(?status_t, status_t.Reentrant), probe.reentry_read);
+    try testing_t.expectEqual(@as(?status_t, status_t.Reentrant), probe.reentry_next);
+    try testing_t.expectEqual(@as(?status_t, status_t.Reentrant), probe.reentry_drain);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 1, 2, 3 }, probe.seen[0..3]);
+    try testing_t.expectEqual(@as(u64, 3), graph.stats.events_drained);
+    try testing_t.expect(!graph.busy);
 }
 
 test "check_action is Ok only for the exact Active pair" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     _ = inject_entry(graph, 0, .Active, 500, 10);
     _ = inject_entry(graph, 1, .Retiring, 500, 9);
     _ = inject_entry(graph, 2, .Retiring, 600, 4);
-    try testing.expectEqual(status_t.Ok, call_check_action(graph, TestEpoch, 500, 10));
-    try testing.expectEqual(@as(u64, 0), graph.stats.rejected_stale);
+    try testing_t.expectEqual(status_t.Ok, call_check_action(graph, TestEpoch, 500, 10));
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.rejected_stale);
     // Retiring, older generation, newer generation, unknown window: all Stale.
-    try testing.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 500, 9));
-    try testing.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 600, 4));
-    try testing.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 500, 11));
-    try testing.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 700, 1));
-    try testing.expectEqual(@as(u64, 4), graph.stats.rejected_stale);
+    try testing_t.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 500, 9));
+    try testing_t.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 600, 4));
+    try testing_t.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 500, 11));
+    try testing_t.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 700, 1));
+    try testing_t.expectEqual(@as(u64, 4), graph.stats.rejected_stale);
     // Zero arguments are InvalidArgument and bump nothing; a stale epoch outranks them.
-    try testing.expectEqual(status_t.InvalidArgument, call_check_action(graph, TestEpoch, 0, 10));
-    try testing.expectEqual(status_t.InvalidArgument, call_check_action(graph, TestEpoch, 500, 0));
-    try testing.expectEqual(@as(u64, 4), graph.stats.rejected_stale);
-    try testing.expectEqual(status_t.StaleEpoch, call_check_action(graph, 0, 0, 0));
-    try testing.expectEqual(status_t.StaleEpoch, call_check_action(graph, TestEpoch + 1, 500, 10));
-    try testing.expectEqual(@as(u64, 2), graph.stats.rejected_stale_epoch);
-    try testing.expect(!graph.busy);
-    try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_check_action(graph, TestEpoch, 0, 10));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_check_action(graph, TestEpoch, 500, 0));
+    try testing_t.expectEqual(@as(u64, 4), graph.stats.rejected_stale);
+    try testing_t.expectEqual(status_t.StaleEpoch, call_check_action(graph, 0, 0, 0));
+    try testing_t.expectEqual(status_t.StaleEpoch, call_check_action(graph, TestEpoch + 1, 500, 10));
+    try testing_t.expectEqual(@as(u64, 2), graph.stats.rejected_stale_epoch);
+    try testing_t.expect(!graph.busy);
+    try testing_t.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
 }
 
 test "lookup helpers distinguish Active, Retiring and deferred records" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     _ = inject_entry(graph, 3, .Active, 500, 10);
     _ = inject_entry(graph, 4, .Retiring, 500, 9);
     _ = inject_entry(graph, 5, .Retiring, 600, 3);
     inject_deferred(graph, 7, 800);
-    try testing.expectEqual(@as(?usize, 3), call_find_active(graph, 500));
-    try testing.expectEqual(@as(?usize, null), call_find_active(graph, 600));
-    try testing.expectEqual(@as(?usize, null), call_find_active(graph, 800));
-    try testing.expectEqual(@as(?usize, 3), call_find_exact(graph, 500, 10));
-    try testing.expectEqual(@as(?usize, 4), call_find_exact(graph, 500, 9));
-    try testing.expectEqual(@as(?usize, 5), call_find_exact(graph, 600, 3));
-    try testing.expectEqual(@as(?usize, null), call_find_exact(graph, 500, 8));
-    try testing.expectEqual(@as(?usize, null), call_find_exact(graph, 0, 0));
-    try testing.expectEqual(@as(?usize, 7), call_find_deferred(graph, 800));
-    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 500));
+    try testing_t.expectEqual(@as(?usize, 3), call_find_active(graph, 500));
+    try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 600));
+    try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 800));
+    try testing_t.expectEqual(@as(?usize, 3), call_find_exact(graph, 500, 10));
+    try testing_t.expectEqual(@as(?usize, 4), call_find_exact(graph, 500, 9));
+    try testing_t.expectEqual(@as(?usize, 5), call_find_exact(graph, 600, 3));
+    try testing_t.expectEqual(@as(?usize, null), call_find_exact(graph, 500, 8));
+    try testing_t.expectEqual(@as(?usize, null), call_find_exact(graph, 0, 0));
+    try testing_t.expectEqual(@as(?usize, 7), call_find_deferred(graph, 800));
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 500));
     graph.deferred[7].used = false;
-    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 800));
-    try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
-    try testing.expectEqual(@as(u32, 2), call_count_state(graph, .Retiring));
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 800));
+    try testing_t.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, 2), call_count_state(graph, .Retiring));
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
 }
 
 test "find_live describes only Active entries" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     const record = inject_entry(graph, 0, .Active, 500, 10);
     record.parent_window = 400;
@@ -4382,32 +4382,32 @@ test "find_live describes only Active entries" {
     record.process_id = 31337;
     _ = inject_entry(graph, 1, .Retiring, 600, 3);
 
-    var live = std.mem.zeroes(live_t);
+    var live = std_t.mem.zeroes(live_t);
     live.reserved0 = 0xFFFF;
-    try testing.expectEqual(status_t.Ok, call_find_live(graph, 500, &live));
-    try testing.expectEqual(@as(u64, 500), live.window);
-    try testing.expectEqual(@as(u64, 10), live.generation);
-    try testing.expectEqual(@as(u64, 400), live.parent_window);
-    try testing.expectEqual(@as(u64, 7), live.parent_generation);
-    try testing.expectEqual(RoleDialog, live.role);
-    try testing.expectEqual(StateMinimized | StateResizable, live.state);
-    try testing.expectEqual(@as(u32, 31337), live.process_id);
-    try testing.expectEqual(@as(u32, 0), live.reserved0);
+    try testing_t.expectEqual(status_t.Ok, call_find_live(graph, 500, &live));
+    try testing_t.expectEqual(@as(u64, 500), live.window);
+    try testing_t.expectEqual(@as(u64, 10), live.generation);
+    try testing_t.expectEqual(@as(u64, 400), live.parent_window);
+    try testing_t.expectEqual(@as(u64, 7), live.parent_generation);
+    try testing_t.expectEqual(RoleDialog, live.role);
+    try testing_t.expectEqual(StateMinimized | StateResizable, live.state);
+    try testing_t.expectEqual(@as(u32, 31337), live.process_id);
+    try testing_t.expectEqual(@as(u32, 0), live.reserved0);
 
-    live = std.mem.zeroes(live_t);
+    live = std_t.mem.zeroes(live_t);
     live.window = Unset;
-    try testing.expectEqual(status_t.None, call_find_live(graph, 600, &live));
-    try testing.expectEqual(status_t.None, call_find_live(graph, 12345, &live));
-    try testing.expectEqual(status_t.InvalidArgument, call_find_live(graph, 0, &live));
-    try testing.expectEqual(Unset, live.window);
+    try testing_t.expectEqual(status_t.None, call_find_live(graph, 600, &live));
+    try testing_t.expectEqual(status_t.None, call_find_live(graph, 12345, &live));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_find_live(graph, 0, &live));
+    try testing_t.expectEqual(Unset, live.window);
     graph.busy = true;
-    try testing.expectEqual(status_t.Reentrant, call_find_live(graph, 500, &live));
+    try testing_t.expectEqual(status_t.Reentrant, call_find_live(graph, 500, &live));
     graph.busy = false;
-    try testing.expect(std.mem.allEqual(u8, stats_bytes(graph), 0));
+    try testing_t.expect(std_t.mem.allEqual(u8, stats_bytes(graph), 0));
 }
 
 test "list_retiring orders by generation, reports the total and truncates" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     inject_entry(graph, 5, .Retiring, 300, 30).retire_reason = ReasonReclassified;
     _ = inject_entry(graph, 2, .Retiring, 100, 10);
@@ -4416,59 +4416,59 @@ test "list_retiring orders by generation, reports the total and truncates" {
 
     var entries: [MaxEntries]retiring_entry_t = undefined;
     var count: u32 = Unset & 0xFFFF;
-    try testing.expectEqual(status_t.Ok, call_list_retiring(graph, &entries, MaxEntries, &count));
-    try testing.expectEqual(@as(u32, 3), count);
-    try testing.expectEqual(@as(u64, 100), entries[0].window);
-    try testing.expectEqual(@as(u64, 10), entries[0].generation);
-    try testing.expectEqual(ReasonDestroyed, entries[0].reason);
-    try testing.expectEqual(@as(u64, 20), entries[1].generation);
-    try testing.expectEqual(RoleMenu, entries[1].role);
-    try testing.expectEqual(@as(u64, 30), entries[2].generation);
-    try testing.expectEqual(ReasonReclassified, entries[2].reason);
+    try testing_t.expectEqual(status_t.Ok, call_list_retiring(graph, &entries, MaxEntries, &count));
+    try testing_t.expectEqual(@as(u32, 3), count);
+    try testing_t.expectEqual(@as(u64, 100), entries[0].window);
+    try testing_t.expectEqual(@as(u64, 10), entries[0].generation);
+    try testing_t.expectEqual(ReasonDestroyed, entries[0].reason);
+    try testing_t.expectEqual(@as(u64, 20), entries[1].generation);
+    try testing_t.expectEqual(RoleMenu, entries[1].role);
+    try testing_t.expectEqual(@as(u64, 30), entries[2].generation);
+    try testing_t.expectEqual(ReasonReclassified, entries[2].reason);
 
     var small: [2]retiring_entry_t = undefined;
     small[1] = .{ .window = Unset, .generation = Unset, .reason = 0, .role = 0 };
     count = 0;
-    try testing.expectEqual(status_t.Ok, call_list_retiring(graph, &small, 1, &count));
-    try testing.expectEqual(@as(u32, 3), count);
-    try testing.expectEqual(@as(u64, 10), small[0].generation);
-    try testing.expectEqual(Unset, small[1].window);
+    try testing_t.expectEqual(status_t.Ok, call_list_retiring(graph, &small, 1, &count));
+    try testing_t.expectEqual(@as(u32, 3), count);
+    try testing_t.expectEqual(@as(u64, 10), small[0].generation);
+    try testing_t.expectEqual(Unset, small[1].window);
 
     count = 0;
-    try testing.expectEqual(status_t.Ok, call_list_retiring(graph, null, 0, &count));
-    try testing.expectEqual(@as(u32, 3), count);
+    try testing_t.expectEqual(status_t.Ok, call_list_retiring(graph, null, 0, &count));
+    try testing_t.expectEqual(@as(u32, 3), count);
 
     count = 77;
-    try testing.expectEqual(status_t.InvalidArgument, call_list_retiring(graph, null, 4, &count));
-    try testing.expectEqual(@as(u32, 77), count);
+    try testing_t.expectEqual(status_t.InvalidArgument, call_list_retiring(graph, null, 4, &count));
+    try testing_t.expectEqual(@as(u32, 77), count);
     graph.busy = true;
-    try testing.expectEqual(status_t.Reentrant, call_list_retiring(graph, &entries, MaxEntries, &count));
+    try testing_t.expectEqual(status_t.Reentrant, call_list_retiring(graph, &entries, MaxEntries, &count));
     graph.busy = false;
-    try testing.expectEqual(@as(u32, 77), count);
+    try testing_t.expectEqual(@as(u32, 77), count);
 
     for (&graph.entries) |*entry| entry.state = .Free;
-    try testing.expectEqual(status_t.Ok, call_list_retiring(graph, &entries, MaxEntries, &count));
-    try testing.expectEqual(@as(u32, 0), count);
+    try testing_t.expectEqual(status_t.Ok, call_list_retiring(graph, &entries, MaxEntries, &count));
+    try testing_t.expectEqual(@as(u32, 0), count);
 }
 
 const ProofOk = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
 
 test "complete_retire releases only the exact Retiring generation" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     _ = inject_entry(graph, 0, .Retiring, 500, 9);
     _ = inject_entry(graph, 1, .Active, 500, 10);
     _ = inject_entry(graph, 2, .Retiring, 600, 4);
 
     // Wrong epoch (even with zero ids) first; counters other than the epoch stay put.
-    try testing.expectEqual(status_t.StaleEpoch, call_complete_retire(graph, TestEpoch + 1, 500, 9, &ProofOk));
-    try testing.expectEqual(status_t.StaleEpoch, call_complete_retire(graph, 0, 0, 0, &ProofOk));
-    try testing.expectEqual(@as(u64, 2), graph.stats.rejected_stale_epoch);
-    try testing.expectEqual(@as(u32, 2), call_count_state(graph, .Retiring));
+    try testing_t.expectEqual(status_t.StaleEpoch, call_complete_retire(graph, TestEpoch + 1, 500, 9, &ProofOk));
+    try testing_t.expectEqual(status_t.StaleEpoch, call_complete_retire(graph, 0, 0, 0, &ProofOk));
+    try testing_t.expectEqual(@as(u64, 2), graph.stats.rejected_stale_epoch);
+    try testing_t.expectEqual(@as(u32, 2), call_count_state(graph, .Retiring));
 
     // Zero window or generation.
-    try testing.expectEqual(status_t.InvalidArgument, call_complete_retire(graph, TestEpoch, 0, 9, &ProofOk));
-    try testing.expectEqual(status_t.InvalidArgument, call_complete_retire(graph, TestEpoch, 500, 0, &ProofOk));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_complete_retire(graph, TestEpoch, 0, 9, &ProofOk));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_complete_retire(graph, TestEpoch, 500, 0, &ProofOk));
 
     // Proof flags: only exactly 1 and 1 counts; the entry stays quarantined.
     const incomplete = [_]proof_t{
@@ -4480,46 +4480,46 @@ test "complete_retire releases only the exact Retiring generation" {
         .{ .capture_stopped = 0xFFFF_FFFF, .pins_drained = 0xFFFF_FFFF },
     };
     for (incomplete, 1..) |proof, round| {
-        try testing.expectEqual(status_t.ProofIncomplete, call_complete_retire(graph, TestEpoch, 500, 9, &proof));
-        try testing.expectEqual(@as(u64, round), graph.stats.proof_incomplete);
-        try testing.expectEqual(slot_state_t.Retiring, graph.entries[0].state);
-        try testing.expectEqual(@as(u64, 9), graph.entries[0].record.generation);
+        try testing_t.expectEqual(status_t.ProofIncomplete, call_complete_retire(graph, TestEpoch, 500, 9, &proof));
+        try testing_t.expectEqual(@as(u64, round), graph.stats.proof_incomplete);
+        try testing_t.expectEqual(slot_state_t.Retiring, graph.entries[0].state);
+        try testing_t.expectEqual(@as(u64, 9), graph.entries[0].record.generation);
     }
-    try testing.expectEqual(@as(u64, 0), graph.stats.retire_completed);
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.retire_completed);
 
     // Stale outranks ProofIncomplete; NotRetiring outranks it too and bumps nothing.
     const bad_proof = proof_t{ .capture_stopped = 0, .pins_drained = 0 };
-    try testing.expectEqual(status_t.Stale, call_complete_retire(graph, TestEpoch, 500, 8, &bad_proof));
-    try testing.expectEqual(@as(u64, 1), graph.stats.rejected_stale);
-    try testing.expectEqual(status_t.NotRetiring, call_complete_retire(graph, TestEpoch, 500, 10, &bad_proof));
-    try testing.expectEqual(status_t.NotRetiring, call_complete_retire(graph, TestEpoch, 500, 10, &ProofOk));
-    try testing.expectEqual(@as(u64, 1), graph.stats.rejected_stale);
-    try testing.expectEqual(@as(u64, 6), graph.stats.proof_incomplete);
-    try testing.expectEqual(slot_state_t.Active, graph.entries[1].state);
+    try testing_t.expectEqual(status_t.Stale, call_complete_retire(graph, TestEpoch, 500, 8, &bad_proof));
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.rejected_stale);
+    try testing_t.expectEqual(status_t.NotRetiring, call_complete_retire(graph, TestEpoch, 500, 10, &bad_proof));
+    try testing_t.expectEqual(status_t.NotRetiring, call_complete_retire(graph, TestEpoch, 500, 10, &ProofOk));
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.rejected_stale);
+    try testing_t.expectEqual(@as(u64, 6), graph.stats.proof_incomplete);
+    try testing_t.expectEqual(slot_state_t.Active, graph.entries[1].state);
 
     // Success scrubs and frees exactly that slot; the newer Active generation is untouched.
-    try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 500, 9, &ProofOk));
-    try testing.expectEqual(slot_state_t.Free, graph.entries[0].state);
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&graph.entries[0].record), 0));
-    try testing.expectEqual(@as(u64, 1), graph.stats.retire_completed);
-    try testing.expectEqual(@as(?usize, 1), call_find_active(graph, 500));
-    try testing.expectEqual(@as(u64, 10), graph.entries[1].record.generation);
-    try testing.expectEqual(slot_state_t.Retiring, graph.entries[2].state);
+    try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 500, 9, &ProofOk));
+    try testing_t.expectEqual(slot_state_t.Free, graph.entries[0].state);
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&graph.entries[0].record), 0));
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.retire_completed);
+    try testing_t.expectEqual(@as(?usize, 1), call_find_active(graph, 500));
+    try testing_t.expectEqual(@as(u64, 10), graph.entries[1].record.generation);
+    try testing_t.expectEqual(slot_state_t.Retiring, graph.entries[2].state);
 
     // Duplicate completion and a late stale one while a newer Active entry exists are Stale.
-    try testing.expectEqual(status_t.Stale, call_complete_retire(graph, TestEpoch, 500, 9, &ProofOk));
-    try testing.expectEqual(@as(u64, 2), graph.stats.rejected_stale);
-    try testing.expectEqual(@as(u64, 1), graph.stats.retire_completed);
-    try testing.expectEqual(slot_state_t.Active, graph.entries[1].state);
-    try testing.expect(!graph.busy);
+    try testing_t.expectEqual(status_t.Stale, call_complete_retire(graph, TestEpoch, 500, 9, &ProofOk));
+    try testing_t.expectEqual(@as(u64, 2), graph.stats.rejected_stale);
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.retire_completed);
+    try testing_t.expectEqual(slot_state_t.Active, graph.entries[1].state);
+    try testing_t.expect(!graph.busy);
 
     // A freed slot no longer counts as exported.
-    try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Retiring));
-    try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, 1), call_count_state(graph, .Retiring));
+    try testing_t.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
 }
 
 test "get_stats fills counters and recomputed gauges" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     _ = inject_entry(graph, 0, .Active, 1, 1);
     _ = inject_entry(graph, 7, .Active, 2, 2);
@@ -4535,75 +4535,75 @@ test "get_stats fills counters and recomputed gauges" {
     graph.stats.suspended = 2;
     graph.stats.rejected_stale_epoch = 3;
 
-    var stats = std.mem.zeroes(stats_t);
+    var stats = std_t.mem.zeroes(stats_t);
     stats.reserved0 = 0xFFFF;
-    try testing.expectEqual(status_t.Ok, call_get_stats(graph, &stats));
-    try testing.expectEqual(TestEpoch, stats.session_epoch);
-    try testing.expectEqual(@as(u64, 17), stats.generations_issued);
-    try testing.expectEqual(@as(u64, 4242), stats.stamp_high_water);
-    try testing.expectEqual(@as(u32, 2), stats.active_count);
-    try testing.expectEqual(@as(u32, 1), stats.retiring_count);
-    try testing.expectEqual(@as(u32, 3), stats.deferred_count);
-    try testing.expectEqual(@as(u32, 4), stats.events_pending);
-    try testing.expectEqual(@as(u32, 1), stats.refresh_active);
-    try testing.expectEqual(@as(u32, 0), stats.reserved0);
-    try testing.expectEqual(@as(u64, 6), stats.admitted);
-    try testing.expectEqual(@as(u64, 2), stats.suspended);
-    try testing.expectEqual(@as(u64, 3), stats.rejected_stale_epoch);
+    try testing_t.expectEqual(status_t.Ok, call_get_stats(graph, &stats));
+    try testing_t.expectEqual(TestEpoch, stats.session_epoch);
+    try testing_t.expectEqual(@as(u64, 17), stats.generations_issued);
+    try testing_t.expectEqual(@as(u64, 4242), stats.stamp_high_water);
+    try testing_t.expectEqual(@as(u32, 2), stats.active_count);
+    try testing_t.expectEqual(@as(u32, 1), stats.retiring_count);
+    try testing_t.expectEqual(@as(u32, 3), stats.deferred_count);
+    try testing_t.expectEqual(@as(u32, 4), stats.events_pending);
+    try testing_t.expectEqual(@as(u32, 1), stats.refresh_active);
+    try testing_t.expectEqual(@as(u32, 0), stats.reserved0);
+    try testing_t.expectEqual(@as(u64, 6), stats.admitted);
+    try testing_t.expectEqual(@as(u64, 2), stats.suspended);
+    try testing_t.expectEqual(@as(u64, 3), stats.rejected_stale_epoch);
     // The stored counters never receive the gauges.
-    try testing.expectEqual(@as(u32, 0), graph.stats.active_count);
-    try testing.expectEqual(@as(u64, 0), graph.stats.session_epoch);
+    try testing_t.expectEqual(@as(u32, 0), graph.stats.active_count);
+    try testing_t.expectEqual(@as(u64, 0), graph.stats.session_epoch);
 
     graph.refresh_open = false;
-    try testing.expectEqual(status_t.Ok, call_get_stats(graph, &stats));
-    try testing.expectEqual(@as(u32, 0), stats.refresh_active);
+    try testing_t.expectEqual(status_t.Ok, call_get_stats(graph, &stats));
+    try testing_t.expectEqual(@as(u32, 0), stats.refresh_active);
 
-    var untouched = std.mem.zeroes(stats_t);
+    var untouched = std_t.mem.zeroes(stats_t);
     untouched.admitted = Unset;
     graph.busy = true;
-    try testing.expectEqual(status_t.Reentrant, call_get_stats(graph, &untouched));
+    try testing_t.expectEqual(status_t.Reentrant, call_get_stats(graph, &untouched));
     graph.busy = false;
-    try testing.expectEqual(Unset, untouched.admitted);
+    try testing_t.expectEqual(Unset, untouched.admitted);
 }
 
 test "stamp high water is read through the guard and the plain getter" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     var value: u64 = Unset;
-    try testing.expectEqual(status_t.Ok, call_stamp_high_water(graph, &value));
-    try testing.expectEqual(@as(u64, 0), value);
+    try testing_t.expectEqual(status_t.Ok, call_stamp_high_water(graph, &value));
+    try testing_t.expectEqual(@as(u64, 0), value);
     graph.stamp_high_water = 777;
-    try testing.expectEqual(@as(u64, 777), call_stamp_high_water_of(graph));
-    try testing.expectEqual(status_t.Ok, call_stamp_high_water(graph, &value));
-    try testing.expectEqual(@as(u64, 777), value);
+    try testing_t.expectEqual(@as(u64, 777), call_stamp_high_water_of(graph));
+    try testing_t.expectEqual(status_t.Ok, call_stamp_high_water(graph, &value));
+    try testing_t.expectEqual(@as(u64, 777), value);
     value = Unset;
     graph.busy = true;
-    try testing.expectEqual(status_t.Reentrant, call_stamp_high_water(graph, &value));
+    try testing_t.expectEqual(status_t.Reentrant, call_stamp_high_water(graph, &value));
     graph.busy = false;
-    try testing.expectEqual(Unset, value);
+    try testing_t.expectEqual(Unset, value);
 }
 
 test "capacity diagnostic is None without reading the clock when every counter is zero" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     test_clock.now = 5_000_000;
-    var diag = std.mem.zeroes(diagnostic_t);
+    var diag = std_t.mem.zeroes(diagnostic_t);
     diag.at_capacity = Unset;
-    try testing.expectEqual(status_t.None, call_take_diag(graph, &diag));
-    try testing.expectEqual(@as(u32, 0), test_clock.reads);
-    try testing.expectEqual(Unset, diag.at_capacity);
-    try testing.expect(!graph.have_diag);
-    try testing.expect(!graph.busy);
+    try testing_t.expectEqual(status_t.None, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(@as(u32, 0), test_clock.reads);
+    try testing_t.expectEqual(Unset, diag.at_capacity);
+    try testing_t.expect(!graph.have_diag);
+    try testing_t.expect(!graph.busy);
 }
 
 test "capacity diagnostic follows the sixty second rate limit" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     _ = inject_entry(graph, 0, .Active, 1, 1);
     _ = inject_entry(graph, 1, .Retiring, 2, 2);
     inject_deferred(graph, 0, 9);
     fill_ring(graph, 2);
-    var diag = std.mem.zeroes(diagnostic_t);
+    var diag = std_t.mem.zeroes(diagnostic_t);
 
     // First take is immediate, elapsed 0, counters reset, gauges filled.
     test_clock.now = 1000;
@@ -4611,80 +4611,80 @@ test "capacity diagnostic follows the sixty second rate limit" {
     graph.diag_deferred_evicted = 4;
     graph.diag_queue_full = 5;
     graph.diag_generation_exhausted = 6;
-    try testing.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
-    try testing.expectEqual(@as(u64, 3), diag.at_capacity);
-    try testing.expectEqual(@as(u64, 4), diag.deferred_evicted);
-    try testing.expectEqual(@as(u64, 5), diag.queue_full);
-    try testing.expectEqual(@as(u64, 6), diag.generation_exhausted);
-    try testing.expectEqual(@as(u64, 0), diag.elapsed_ms);
-    try testing.expectEqual(@as(u32, 1), diag.active_count);
-    try testing.expectEqual(@as(u32, 1), diag.retiring_count);
-    try testing.expectEqual(@as(u32, 1), diag.deferred_count);
-    try testing.expectEqual(@as(u32, 2), diag.events_pending);
-    try testing.expect(graph.have_diag);
-    try testing.expectEqual(@as(u64, 1000), graph.last_diag_ms);
-    try testing.expectEqual(@as(u64, 0), graph.diag_at_capacity | graph.diag_deferred_evicted | graph.diag_queue_full | graph.diag_generation_exhausted);
+    try testing_t.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(@as(u64, 3), diag.at_capacity);
+    try testing_t.expectEqual(@as(u64, 4), diag.deferred_evicted);
+    try testing_t.expectEqual(@as(u64, 5), diag.queue_full);
+    try testing_t.expectEqual(@as(u64, 6), diag.generation_exhausted);
+    try testing_t.expectEqual(@as(u64, 0), diag.elapsed_ms);
+    try testing_t.expectEqual(@as(u32, 1), diag.active_count);
+    try testing_t.expectEqual(@as(u32, 1), diag.retiring_count);
+    try testing_t.expectEqual(@as(u32, 1), diag.deferred_count);
+    try testing_t.expectEqual(@as(u32, 2), diag.events_pending);
+    try testing_t.expect(graph.have_diag);
+    try testing_t.expectEqual(@as(u64, 1000), graph.last_diag_ms);
+    try testing_t.expectEqual(@as(u64, 0), graph.diag_at_capacity | graph.diag_deferred_evicted | graph.diag_queue_full | graph.diag_generation_exhausted);
 
     // Counters all zero again: None without a clock read.
     const reads = test_clock.reads;
-    try testing.expectEqual(status_t.None, call_take_diag(graph, &diag));
-    try testing.expectEqual(reads, test_clock.reads);
+    try testing_t.expectEqual(status_t.None, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(reads, test_clock.reads);
 
     // Within the interval: None, counters and baseline kept.
     graph.diag_at_capacity = 2;
     test_clock.now = 30000;
-    try testing.expectEqual(status_t.None, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(status_t.None, call_take_diag(graph, &diag));
     test_clock.now = 1000 + DiagnosticIntervalMs - 1;
-    try testing.expectEqual(status_t.None, call_take_diag(graph, &diag));
-    try testing.expectEqual(@as(u64, 2), graph.diag_at_capacity);
-    try testing.expectEqual(@as(u64, 1000), graph.last_diag_ms);
+    try testing_t.expectEqual(status_t.None, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(@as(u64, 2), graph.diag_at_capacity);
+    try testing_t.expectEqual(@as(u64, 1000), graph.last_diag_ms);
 
     // Backwards clock counts as zero elapsed time and moves nothing.
     test_clock.now = 10;
-    try testing.expectEqual(status_t.None, call_take_diag(graph, &diag));
-    try testing.expectEqual(@as(u64, 1000), graph.last_diag_ms);
-    try testing.expectEqual(@as(u64, 2), graph.diag_at_capacity);
+    try testing_t.expectEqual(status_t.None, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(@as(u64, 1000), graph.last_diag_ms);
+    try testing_t.expectEqual(@as(u64, 2), graph.diag_at_capacity);
 
     // Exactly the interval is enough; gauges follow the current state.
     graph.entries[1].state = .Free;
     test_clock.now = 1000 + DiagnosticIntervalMs;
-    try testing.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
-    try testing.expectEqual(@as(u64, DiagnosticIntervalMs), diag.elapsed_ms);
-    try testing.expectEqual(@as(u64, 2), diag.at_capacity);
-    try testing.expectEqual(@as(u64, 0), diag.queue_full);
-    try testing.expectEqual(@as(u32, 0), diag.retiring_count);
-    try testing.expectEqual(@as(u64, 1000 + DiagnosticIntervalMs), graph.last_diag_ms);
-    try testing.expectEqual(@as(u64, 0), graph.diag_at_capacity);
+    try testing_t.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(@as(u64, DiagnosticIntervalMs), diag.elapsed_ms);
+    try testing_t.expectEqual(@as(u64, 2), diag.at_capacity);
+    try testing_t.expectEqual(@as(u64, 0), diag.queue_full);
+    try testing_t.expectEqual(@as(u32, 0), diag.retiring_count);
+    try testing_t.expectEqual(@as(u64, 1000 + DiagnosticIntervalMs), graph.last_diag_ms);
+    try testing_t.expectEqual(@as(u64, 0), graph.diag_at_capacity);
 
     // Each counter alone makes the diagnostic due once the interval passes again.
     const fields = [_][]const u8{ "diag_at_capacity", "diag_deferred_evicted", "diag_queue_full", "diag_generation_exhausted" };
     inline for (fields) |name| {
         test_clock.now += DiagnosticIntervalMs;
         @field(graph, name) = 1;
-        try testing.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
-        try testing.expectEqual(@as(u64, 0), @field(graph, name));
+        try testing_t.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
+        try testing_t.expectEqual(@as(u64, 0), @field(graph, name));
     }
 }
 
 test "capacity diagnostic takes its first sample even at clock zero and guards the clock callback" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     graph.diag_generation_exhausted = 1;
     test_clock.probe = graph;
-    var diag = std.mem.zeroes(diagnostic_t);
-    try testing.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
-    try testing.expectEqual(@as(u32, 1), test_clock.reads);
-    try testing.expectEqual(@as(?status_t, status_t.Reentrant), test_clock.probe_status);
-    try testing.expectEqual(@as(u64, 1), diag.generation_exhausted);
-    try testing.expectEqual(@as(u64, 0), diag.elapsed_ms);
-    try testing.expect(graph.have_diag);
-    try testing.expect(!graph.busy);
+    var diag = std_t.mem.zeroes(diagnostic_t);
+    try testing_t.expectEqual(status_t.Ok, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(@as(u32, 1), test_clock.reads);
+    try testing_t.expectEqual(@as(?status_t, status_t.Reentrant), test_clock.probe_status);
+    try testing_t.expectEqual(@as(u64, 1), diag.generation_exhausted);
+    try testing_t.expectEqual(@as(u64, 0), diag.elapsed_ms);
+    try testing_t.expect(graph.have_diag);
+    try testing_t.expect(!graph.busy);
     test_clock.probe = null;
     graph.busy = true;
     graph.diag_queue_full = 1;
-    try testing.expectEqual(status_t.Reentrant, call_take_diag(graph, &diag));
+    try testing_t.expectEqual(status_t.Reentrant, call_take_diag(graph, &diag));
     graph.busy = false;
-    try testing.expectEqual(@as(u64, 1), graph.diag_queue_full);
+    try testing_t.expectEqual(@as(u64, 1), graph.diag_queue_full);
 }
 
 // Planning engine fixtures and tests (layer 2b1).
@@ -4733,8 +4733,8 @@ fn probe_lookup(context: ?*anyopaque, facts: [*c]const facts_t, key: [*c]u8, cap
         .Reenter => {
             const graph = lookup_probe.graph.?;
             var other = fixture_facts();
-            var obs = std.mem.zeroes(observation_t);
-            var ev = std.mem.zeroes(event_t);
+            var obs = std_t.mem.zeroes(observation_t);
+            var ev = std_t.mem.zeroes(event_t);
             lookup_probe.reenter_observe = call_observe(graph, TestEpoch, &other, &obs);
             lookup_probe.reenter_check = call_check_action(graph, TestEpoch, 1, 1);
             lookup_probe.reenter_note = call_note_destroyed(graph, TestEpoch, 1, 1, 1, &obs);
@@ -4748,12 +4748,12 @@ fn probe_lookup(context: ?*anyopaque, facts: [*c]const facts_t, key: [*c]u8, cap
         },
         .Ok => {},
     }
-    const written = std.fmt.bufPrint(key[0..capacity], "a-{x}-{d}", .{ facts.*.window, lookup_probe.calls }) catch return 1;
+    const written = std_t.fmt.bufPrint(key[0..capacity], "a-{x}-{d}", .{ facts.*.window, lookup_probe.calls }) catch return 1;
     length.* = @intCast(written.len);
     return 0;
 }
 
-fn probe_graph(allocator: std.mem.Allocator) !*graph_t {
+fn probe_graph(allocator: std_t.mem.Allocator) !*graph_t {
     lookup_probe = .{};
     test_clock = .{};
     var config = test_config(TestEpoch);
@@ -4764,7 +4764,7 @@ fn probe_graph(allocator: std.mem.Allocator) !*graph_t {
 }
 
 fn expected_key(buffer: []u8, window: u64, call_number: u32) []const u8 {
-    return std.fmt.bufPrint(buffer, "a-{x}-{d}", .{ window, call_number }) catch unreachable;
+    return std_t.fmt.bufPrint(buffer, "a-{x}-{d}", .{ window, call_number }) catch unreachable;
 }
 
 fn call_observe(graph: *graph_t, epoch: u64, facts: *const facts_t, out: *observation_t) status_t {
@@ -4819,7 +4819,7 @@ fn call_record_from_facts(facts: *const facts_t, t64: u64, role: u32, parent_win
     return @call(.never_inline, record_from_facts, .{ facts, t64, role, parent_window });
 }
 
-fn call_classify_public(facts: *const facts_t, uac_mode: u32, out: *c.interop_window_verdict_t) status_t {
+fn call_classify_public(facts: *const facts_t, uac_mode: u32, out: *c_t.interop_window_verdict_t) status_t {
     return @call(.never_inline, classify_public, .{ facts, uac_mode, out });
 }
 
@@ -4849,22 +4849,22 @@ fn owned_facts(window: u64, owner: u64, stamp: u64) facts_t {
 
 fn sentinel_observation() observation_t {
     var obs: observation_t = undefined;
-    @memset(std.mem.asBytes(&obs), 0xA5);
+    @memset(std_t.mem.asBytes(&obs), 0xA5);
     return obs;
 }
 
 fn state_digest(graph: *const graph_t) u64 {
-    var hasher = std.hash.Wyhash.init(0);
-    hasher.update(std.mem.asBytes(&graph.entries));
-    hasher.update(std.mem.asBytes(&graph.deferred));
-    hasher.update(std.mem.asBytes(&graph.ring));
-    hasher.update(std.mem.asBytes(&graph.ring_head));
-    hasher.update(std.mem.asBytes(&graph.ring_len));
-    hasher.update(std.mem.asBytes(&graph.generations_issued));
-    hasher.update(std.mem.asBytes(&graph.next_seq));
-    hasher.update(std.mem.asBytes(&graph.stamp_high_water));
-    hasher.update(std.mem.asBytes(&graph.tick_base));
-    hasher.update(std.mem.asBytes(&graph.tick_clock_at_base));
+    var hasher = std_t.hash.Wyhash.init(0);
+    hasher.update(std_t.mem.asBytes(&graph.entries));
+    hasher.update(std_t.mem.asBytes(&graph.deferred));
+    hasher.update(std_t.mem.asBytes(&graph.ring));
+    hasher.update(std_t.mem.asBytes(&graph.ring_head));
+    hasher.update(std_t.mem.asBytes(&graph.ring_len));
+    hasher.update(std_t.mem.asBytes(&graph.generations_issued));
+    hasher.update(std_t.mem.asBytes(&graph.next_seq));
+    hasher.update(std_t.mem.asBytes(&graph.stamp_high_water));
+    hasher.update(std_t.mem.asBytes(&graph.tick_base));
+    hasher.update(std_t.mem.asBytes(&graph.tick_clock_at_base));
     return hasher.final();
 }
 
@@ -4875,68 +4875,68 @@ fn check_invariants(graph: *const graph_t) !void {
         if (entry.state == .Free) continue;
         exported += 1;
         const rec = &entry.record;
-        try testing.expect(rec.window != 0);
-        try testing.expect(rec.generation != 0 and rec.generation <= graph.generations_issued);
-        try testing.expectEqual(@as(u64, 0), rec.seq);
+        try testing_t.expect(rec.window != 0);
+        try testing_t.expect(rec.generation != 0 and rec.generation <= graph.generations_issued);
+        try testing_t.expectEqual(@as(u64, 0), rec.seq);
         for (graph.entries[index + 1 ..]) |*other| {
             if (other.state == .Free) continue;
-            try testing.expect(other.record.generation != rec.generation);
-            if (entry.state == .Active and other.state == .Active) try testing.expect(other.record.window != rec.window);
+            try testing_t.expect(other.record.generation != rec.generation);
+            if (entry.state == .Active and other.state == .Active) try testing_t.expect(other.record.window != rec.window);
         }
         if (entry.state == .Retiring) {
-            try testing.expect(rec.retire_reason != 0);
+            try testing_t.expect(rec.retire_reason != 0);
             continue;
         }
-        try testing.expectEqual(@as(u32, 0), rec.retire_reason);
-        try testing.expect(rec.app_key_length >= MinAppKeyBytes and rec.app_key_length <= MaxAppKeyBytes);
+        try testing_t.expectEqual(@as(u32, 0), rec.retire_reason);
+        try testing_t.expect(rec.app_key_length >= MinAppKeyBytes and rec.app_key_length <= MaxAppKeyBytes);
         if (rec.parent_window == 0) {
-            try testing.expectEqual(@as(u64, 0), rec.parent_generation);
+            try testing_t.expectEqual(@as(u64, 0), rec.parent_generation);
             continue;
         }
         var found = false;
         for (&graph.entries) |*parent| {
             if (parent.state != .Active or parent.record.window != rec.parent_window) continue;
             found = true;
-            try testing.expectEqual(parent.record.generation, rec.parent_generation);
-            try testing.expect(parent.record.generation < rec.generation);
+            try testing_t.expectEqual(parent.record.generation, rec.parent_generation);
+            try testing_t.expect(parent.record.generation < rec.generation);
         }
-        try testing.expect(found);
+        try testing_t.expect(found);
     }
-    try testing.expect(exported <= MaxEntries);
+    try testing_t.expect(exported <= MaxEntries);
     for (&graph.deferred, 0..) |*slot, index| {
         if (!slot.used) continue;
         const rec = &slot.record;
-        try testing.expect(rec.window != 0 and rec.seq != 0);
-        try testing.expectEqual(@as(u64, 0), rec.generation);
-        try testing.expect(rec.parent_window != 0 and rec.parent_window != rec.window);
-        try testing.expect(rec.app_key_length >= MinAppKeyBytes);
+        try testing_t.expect(rec.window != 0 and rec.seq != 0);
+        try testing_t.expectEqual(@as(u64, 0), rec.generation);
+        try testing_t.expect(rec.parent_window != 0 and rec.parent_window != rec.window);
+        try testing_t.expect(rec.app_key_length >= MinAppKeyBytes);
         for (&graph.entries) |*entry| {
-            if (entry.state == .Active) try testing.expect(entry.record.window != rec.window);
+            if (entry.state == .Active) try testing_t.expect(entry.record.window != rec.window);
         }
         for (graph.deferred[index + 1 ..]) |*other| {
             if (!other.used) continue;
-            try testing.expect(other.record.seq != rec.seq);
-            try testing.expect(other.record.window != rec.window);
+            try testing_t.expect(other.record.seq != rec.seq);
+            try testing_t.expect(other.record.window != rec.window);
         }
         var cursor = rec.parent_window;
         var steps: u32 = 0;
         while (true) : (steps += 1) {
-            try testing.expect(steps <= MaxDeferred);
+            try testing_t.expect(steps <= MaxDeferred);
             var next: ?u64 = null;
             for (&graph.deferred) |*hop| {
                 if (hop.used and hop.record.window == cursor) next = hop.record.parent_window;
             }
             cursor = next orelse break;
-            try testing.expect(cursor != rec.window);
+            try testing_t.expect(cursor != rec.window);
         }
     }
-    try testing.expect(graph.ring_len <= EventCapacity and graph.ring_head < EventCapacity);
+    try testing_t.expect(graph.ring_len <= EventCapacity and graph.ring_head < EventCapacity);
 }
 
 /// Offer facts, expect Ok and valid invariants.
 fn offer(graph: *graph_t, facts: *const facts_t) !observation_t {
     var obs = sentinel_observation();
-    try testing.expectEqual(status_t.Ok, call_observe(graph, TestEpoch, facts, &obs));
+    try testing_t.expectEqual(status_t.Ok, call_observe(graph, TestEpoch, facts, &obs));
     try check_invariants(graph);
     return obs;
 }
@@ -4945,22 +4945,22 @@ fn offer(graph: *graph_t, facts: *const facts_t) !observation_t {
 fn offer_fails(graph: *graph_t, facts: *const facts_t, want: status_t) !void {
     var obs = sentinel_observation();
     const before = state_digest(graph);
-    try testing.expectEqual(want, call_observe(graph, TestEpoch, facts, &obs));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-    try testing.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(want, call_observe(graph, TestEpoch, facts, &obs));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(before, state_digest(graph));
     try check_invariants(graph);
 }
 
 fn destroy_hint(graph: *graph_t, window: u64, stamp: u64, tick: u32) !observation_t {
     var obs = sentinel_observation();
-    try testing.expectEqual(status_t.Ok, call_note_destroyed(graph, TestEpoch, window, stamp, tick, &obs));
+    try testing_t.expectEqual(status_t.Ok, call_note_destroyed(graph, TestEpoch, window, stamp, tick, &obs));
     try check_invariants(graph);
     return obs;
 }
 
 fn next_ev(graph: *graph_t) !event_t {
-    var ev = std.mem.zeroes(event_t);
-    try testing.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &ev));
+    var ev = std_t.mem.zeroes(event_t);
+    try testing_t.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &ev));
     return ev;
 }
 
@@ -4969,46 +4969,46 @@ fn drain_events(graph: *graph_t, events: []event_t) !usize {
 }
 
 fn expect_ev(ev: event_t, kind: u32, window: u64, generation: u64, parent_window: u64, parent_generation: u64, reason: u32) !void {
-    try testing.expectEqual(kind, ev.kind);
-    try testing.expectEqual(window, ev.window);
-    try testing.expectEqual(generation, ev.generation);
-    try testing.expectEqual(parent_window, ev.parent_window);
-    try testing.expectEqual(parent_generation, ev.parent_generation);
-    try testing.expectEqual(reason, ev.reason);
-    try testing.expectEqual(TestEpoch, ev.session_epoch);
-    try testing.expectEqual(@as(u32, 0), ev.reserved0);
+    try testing_t.expectEqual(kind, ev.kind);
+    try testing_t.expectEqual(window, ev.window);
+    try testing_t.expectEqual(generation, ev.generation);
+    try testing_t.expectEqual(parent_window, ev.parent_window);
+    try testing_t.expectEqual(parent_generation, ev.parent_generation);
+    try testing_t.expectEqual(reason, ev.reason);
+    try testing_t.expectEqual(TestEpoch, ev.session_epoch);
+    try testing_t.expectEqual(@as(u32, 0), ev.reserved0);
 }
 
 fn expect_obs(obs: observation_t, disposition: u32, role: u32, generation: u64, retired_generation: u64, reason: u32) !void {
-    try testing.expectEqual(disposition, obs.disposition);
-    try testing.expectEqual(role, obs.role);
-    try testing.expectEqual(generation, obs.generation);
-    try testing.expectEqual(retired_generation, obs.retired_generation);
-    try testing.expectEqual(reason, obs.reason);
-    try testing.expectEqual(@as(u32, 0), obs.reserved0);
+    try testing_t.expectEqual(disposition, obs.disposition);
+    try testing_t.expectEqual(role, obs.role);
+    try testing_t.expectEqual(generation, obs.generation);
+    try testing_t.expectEqual(retired_generation, obs.retired_generation);
+    try testing_t.expectEqual(reason, obs.reason);
+    try testing_t.expectEqual(@as(u32, 0), obs.reserved0);
 }
 
 fn expect_counts(obs: observation_t, events: u32, admitted: u32, retired: u32, dropped: u32) !void {
-    try testing.expectEqual(events, obs.events_queued);
-    try testing.expectEqual(admitted, obs.entries_admitted);
-    try testing.expectEqual(retired, obs.entries_retired);
-    try testing.expectEqual(dropped, obs.deferred_dropped);
+    try testing_t.expectEqual(events, obs.events_queued);
+    try testing_t.expectEqual(admitted, obs.entries_admitted);
+    try testing_t.expectEqual(retired, obs.entries_retired);
+    try testing_t.expectEqual(dropped, obs.deferred_dropped);
 }
 
 fn live_generation(graph: *const graph_t, window: u64) u64 {
-    var live = std.mem.zeroes(live_t);
+    var live = std_t.mem.zeroes(live_t);
     if (call_find_live(graph, window, &live) != .Ok) return 0;
     return live.generation;
 }
 
 fn current_stats(graph: *const graph_t) stats_t {
-    var stats = std.mem.zeroes(stats_t);
-    std.debug.assert(call_get_stats(graph, &stats) == .Ok);
+    var stats = std_t.mem.zeroes(stats_t);
+    std_t.debug.assert(call_get_stats(graph, &stats) == .Ok);
     return stats;
 }
 
 test "first admission announces the full payload with the looked-up key" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = window_facts(0x1000, 10);
     facts.captured_ms = 5000;
@@ -5021,51 +5021,51 @@ test "first admission announces the full payload with the looked-up key" {
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
     try expect_counts(obs, 1, 1, 0, 0);
-    try testing.expectEqual(@as(u64, 0x1000), obs.window);
-    try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
-    try testing.expect(lookup_probe.last_pointer != @intFromPtr(&facts));
-    try testing.expectEqual(@as(u64, 0x1000), lookup_probe.last_window);
+    try testing_t.expectEqual(@as(u64, 0x1000), obs.window);
+    try testing_t.expectEqual(@as(u32, 1), lookup_probe.calls);
+    try testing_t.expect(lookup_probe.last_pointer != @intFromPtr(&facts));
+    try testing_t.expectEqual(@as(u64, 0x1000), lookup_probe.last_window);
 
     const ev = try next_ev(graph);
     try expect_ev(ev, EventAnnounce, 0x1000, 1, 0, 0, 0);
-    try testing.expectEqual(@as(i32, 5), ev.x);
-    try testing.expectEqual(@as(i32, -7), ev.y);
-    try testing.expectEqual(@as(u32, 640), ev.width);
-    try testing.expectEqual(@as(u32, 480), ev.height);
-    try testing.expectEqual(RoleToplevel, ev.role);
-    try testing.expectEqual(StateResizable | StateMaximizable | StateMinimizable, ev.state);
-    try testing.expectEqual(@as(u32, 144), ev.dpi);
-    try testing.expectEqual(@as(u32, 100), ev.min_width);
-    try testing.expectEqual(@as(u32, 50), ev.min_height);
-    try testing.expectEqual(@as(u32, 4242), ev.process_id);
-    try testing.expectEqual(ChangeMask, ev.changed_mask);
-    try testing.expectEqual(@as(u32, 3), ev.title_length);
-    try testing.expectEqualStrings("Doc", ev.title[0..3]);
-    try testing.expect(std.mem.allEqual(u8, ev.title[3..], 0));
+    try testing_t.expectEqual(@as(i32, 5), ev.x);
+    try testing_t.expectEqual(@as(i32, -7), ev.y);
+    try testing_t.expectEqual(@as(u32, 640), ev.width);
+    try testing_t.expectEqual(@as(u32, 480), ev.height);
+    try testing_t.expectEqual(RoleToplevel, ev.role);
+    try testing_t.expectEqual(StateResizable | StateMaximizable | StateMinimizable, ev.state);
+    try testing_t.expectEqual(@as(u32, 144), ev.dpi);
+    try testing_t.expectEqual(@as(u32, 100), ev.min_width);
+    try testing_t.expectEqual(@as(u32, 50), ev.min_height);
+    try testing_t.expectEqual(@as(u32, 4242), ev.process_id);
+    try testing_t.expectEqual(ChangeMask, ev.changed_mask);
+    try testing_t.expectEqual(@as(u32, 3), ev.title_length);
+    try testing_t.expectEqualStrings("Doc", ev.title[0..3]);
+    try testing_t.expect(std_t.mem.allEqual(u8, ev.title[3..], 0));
     var key_buffer: [64]u8 = undefined;
     const key = expected_key(&key_buffer, 0x1000, 1);
-    try testing.expectEqual(@as(u32, @intCast(key.len)), ev.app_key_length);
-    try testing.expectEqualStrings(key, ev.app_key[0..key.len]);
-    try testing.expect(std.mem.allEqual(u8, ev.app_key[key.len..], 0));
+    try testing_t.expectEqual(@as(u32, @intCast(key.len)), ev.app_key_length);
+    try testing_t.expectEqualStrings(key, ev.app_key[0..key.len]);
+    try testing_t.expect(std_t.mem.allEqual(u8, ev.app_key[key.len..], 0));
 
     const slot = call_find_active(graph, 0x1000).?;
     const rec = &graph.entries[slot].record;
-    try testing.expectEqual(@as(u64, 10), rec.admit_stamp);
-    try testing.expectEqual(@as(u64, 10), rec.last_stamp);
-    try testing.expectEqual(TickBaseStart + 5000, rec.admit_captured_ms);
-    try testing.expectEqual(TickBaseStart + 5000, rec.last_captured_ms);
-    try testing.expectEqual(TickBaseStart + 5000, graph.tick_base);
-    try testing.expectEqual(@as(u64, 10), graph.stamp_high_water);
-    try testing.expectEqual(@as(u64, 1), graph.generations_issued);
+    try testing_t.expectEqual(@as(u64, 10), rec.admit_stamp);
+    try testing_t.expectEqual(@as(u64, 10), rec.last_stamp);
+    try testing_t.expectEqual(TickBaseStart + 5000, rec.admit_captured_ms);
+    try testing_t.expectEqual(TickBaseStart + 5000, rec.last_captured_ms);
+    try testing_t.expectEqual(TickBaseStart + 5000, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 10), graph.stamp_high_water);
+    try testing_t.expectEqual(@as(u64, 1), graph.generations_issued);
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.admitted);
-    try testing.expectEqual(@as(u64, 1), stats.events_queued);
-    try testing.expectEqual(@as(u64, 0), stats.events_coalesced);
-    try testing.expectEqual(@as(u64, 1), live_generation(graph, 0x1000));
+    try testing_t.expectEqual(@as(u64, 1), stats.admitted);
+    try testing_t.expectEqual(@as(u64, 1), stats.events_queued);
+    try testing_t.expectEqual(@as(u64, 0), stats.events_coalesced);
+    try testing_t.expectEqual(@as(u64, 1), live_generation(graph, 0x1000));
 }
 
 test "the lookup receives a stack copy of the facts, never the caller's struct" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = window_facts(0x1000, 10);
     lookup_probe.mode = .MutateCaller;
@@ -5073,19 +5073,19 @@ test "the lookup receives a stack copy of the facts, never the caller's struct" 
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
     // The callback corrupted the caller's struct; the copy that was validated and stored is intact.
-    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), facts.title_length);
-    try testing.expectEqual(@as(u32, 7), lookup_probe.last_class_length);
+    try testing_t.expectEqual(@as(u32, 0xFFFF_FFFF), facts.title_length);
+    try testing_t.expectEqual(@as(u32, 7), lookup_probe.last_class_length);
     const ev = try next_ev(graph);
-    try testing.expectEqual(@as(u32, 18), ev.title_length);
-    try testing.expectEqualStrings("Untitled - Notepad", ev.title[0..18]);
-    try testing.expectEqual(@as(u32, 640), ev.width);
-    try testing.expectEqual(@as(u32, 640), graph.entries[call_find_active(graph, 0x1000).?].record.width);
+    try testing_t.expectEqual(@as(u32, 18), ev.title_length);
+    try testing_t.expectEqualStrings("Untitled - Notepad", ev.title[0..18]);
+    try testing_t.expectEqual(@as(u32, 640), ev.width);
+    try testing_t.expectEqual(@as(u32, 640), graph.entries[call_find_active(graph, 0x1000).?].record.width);
 }
 
 fn admit_top(graph: *graph_t, window: u64, stamp: u64) !observation_t {
     var facts = window_facts(window, stamp);
     const obs = try offer(graph, &facts);
-    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    try testing_t.expectEqual(DispositionAdmitted, obs.disposition);
     return obs;
 }
 
@@ -5166,7 +5166,7 @@ const Mutations = [_]mutation_t{
 
 test "each fact group maps to its change bit in a queued Update" {
     for (Mutations) |mutation| {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x1000, 10);
         _ = try next_ev(graph);
@@ -5174,43 +5174,43 @@ test "each fact group maps to its change bit in a queued Update" {
         facts.captured_ms = 1100;
         mutation.apply(&facts);
         const obs = try offer(graph, &facts);
-        testing.expectEqual(DispositionUpdated, obs.disposition) catch |err| {
-            std.debug.print("mutation failed: {s}\n", .{mutation.name});
+        testing_t.expectEqual(DispositionUpdated, obs.disposition) catch |err| {
+            std_t.debug.print("mutation failed: {s}\n", .{mutation.name});
             return err;
         };
         try expect_obs(obs, DispositionUpdated, RoleToplevel, 1, 0, ReasonNone);
         try expect_counts(obs, 1, 0, 0, 0);
         const ev = try next_ev(graph);
         try expect_ev(ev, EventUpdate, 0x1000, 1, 0, 0, 0);
-        testing.expectEqual(mutation.mask, ev.changed_mask) catch |err| {
-            std.debug.print("mutation mask failed: {s}\n", .{mutation.name});
+        testing_t.expectEqual(mutation.mask, ev.changed_mask) catch |err| {
+            std_t.debug.print("mutation mask failed: {s}\n", .{mutation.name});
             return err;
         };
         // The update carries the full new payload, not just the changed group.
-        try testing.expectEqual(facts.x, ev.x);
-        try testing.expectEqual(facts.y, ev.y);
-        try testing.expectEqual(facts.width, ev.width);
-        try testing.expectEqual(facts.height, ev.height);
-        try testing.expectEqual(derive_state(&facts), ev.state);
-        try testing.expectEqual(facts.dpi, ev.dpi);
-        try testing.expectEqual(facts.min_width, ev.min_width);
-        try testing.expectEqual(facts.min_height, ev.min_height);
-        try testing.expectEqual(facts.title_length, ev.title_length);
-        try testing.expectEqualSlices(u8, title_bytes(&facts), ev.title[0..ev.title_length]);
-        try testing.expect(ev.app_key_length >= MinAppKeyBytes);
+        try testing_t.expectEqual(facts.x, ev.x);
+        try testing_t.expectEqual(facts.y, ev.y);
+        try testing_t.expectEqual(facts.width, ev.width);
+        try testing_t.expectEqual(facts.height, ev.height);
+        try testing_t.expectEqual(derive_state(&facts), ev.state);
+        try testing_t.expectEqual(facts.dpi, ev.dpi);
+        try testing_t.expectEqual(facts.min_width, ev.min_width);
+        try testing_t.expectEqual(facts.min_height, ev.min_height);
+        try testing_t.expectEqual(facts.title_length, ev.title_length);
+        try testing_t.expectEqualSlices(u8, title_bytes(&facts), ev.title[0..ev.title_length]);
+        try testing_t.expect(ev.app_key_length >= MinAppKeyBytes);
         const stats = current_stats(graph);
-        try testing.expectEqual(@as(u64, 1), stats.updates_queued);
-        try testing.expectEqual(@as(u64, 11), stats.stamp_high_water);
+        try testing_t.expectEqual(@as(u64, 1), stats.updates_queued);
+        try testing_t.expectEqual(@as(u64, 11), stats.stamp_high_water);
         const record = &graph.entries[call_find_active(graph, 0x1000).?].record;
-        try testing.expectEqual(@as(u64, 10), record.admit_stamp);
-        try testing.expectEqual(@as(u64, 11), record.last_stamp);
-        try testing.expectEqual(TickBaseStart + 1100, record.last_captured_ms);
-        try testing.expectEqual(derive_state(&facts), record.state);
+        try testing_t.expectEqual(@as(u64, 10), record.admit_stamp);
+        try testing_t.expectEqual(@as(u64, 11), record.last_stamp);
+        try testing_t.expectEqual(TickBaseStart + 1100, record.last_captured_ms);
+        try testing_t.expectEqual(derive_state(&facts), record.state);
     }
 }
 
 test "updates coalesce into a pending Announce or Update and OR their masks" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x1000, 10);
     // First change merges into the unconsumed Announce.
@@ -5219,13 +5219,13 @@ test "updates coalesce into a pending Announce or Update and OR their masks" {
     var obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionUpdated, RoleToplevel, 1, 0, ReasonNone);
     try expect_counts(obs, 0, 0, 0, 0);
-    try testing.expectEqual(@as(u32, 1), graph.ring_len);
-    try testing.expectEqual(@as(i32, 99), graph.ring[graph.ring_head].x);
-    try testing.expectEqual(EventAnnounce, graph.ring[graph.ring_head].kind);
-    try testing.expectEqual(ChangeMask, graph.ring[graph.ring_head].changed_mask);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).events_coalesced);
+    try testing_t.expectEqual(@as(u32, 1), graph.ring_len);
+    try testing_t.expectEqual(@as(i32, 99), graph.ring[graph.ring_head].x);
+    try testing_t.expectEqual(EventAnnounce, graph.ring[graph.ring_head].kind);
+    try testing_t.expectEqual(ChangeMask, graph.ring[graph.ring_head].changed_mask);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).events_coalesced);
     var ev = try next_ev(graph);
-    try testing.expectEqual(@as(i32, 99), ev.x);
+    try testing_t.expectEqual(@as(i32, 99), ev.x);
     // After the drain a new change appends an Update; the next one merges into it.
     facts = window_facts(0x1000, 12);
     facts.x = 99;
@@ -5239,19 +5239,19 @@ test "updates coalesce into a pending Announce or Update and OR their masks" {
     obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionUpdated, RoleToplevel, 1, 0, ReasonNone);
     try expect_counts(obs, 0, 0, 0, 0);
-    try testing.expectEqual(@as(u32, 1), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, 1), graph.ring_len);
     ev = try next_ev(graph);
     try expect_ev(ev, EventUpdate, 0x1000, 1, 0, 0, 0);
-    try testing.expectEqual(ChangeDpi | ChangeTitle, ev.changed_mask);
-    try testing.expectEqual(@as(u32, 1), ev.title_length);
+    try testing_t.expectEqual(ChangeDpi | ChangeTitle, ev.changed_mask);
+    try testing_t.expectEqual(@as(u32, 1), ev.title_length);
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 2), stats.events_coalesced);
-    try testing.expectEqual(@as(u64, 2), stats.events_queued);
-    try testing.expectEqual(@as(u64, 1), stats.updates_queued);
+    try testing_t.expectEqual(@as(u64, 2), stats.events_coalesced);
+    try testing_t.expectEqual(@as(u64, 2), stats.events_queued);
+    try testing_t.expectEqual(@as(u64, 1), stats.updates_queued);
 }
 
 test "an identical offer is Unchanged, queues nothing and still advances stamp and tick" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x1000, 10);
     _ = try next_ev(graph);
@@ -5267,41 +5267,41 @@ test "an identical offer is Unchanged, queues nothing and still advances stamp a
     facts.flags &= ~FactEnabled;
     obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
     const record = &graph.entries[call_find_active(graph, 0x1000).?].record;
-    try testing.expectEqual(@as(u64, 20), record.last_stamp);
-    try testing.expectEqual(TickBaseStart + 7000, record.last_captured_ms);
-    try testing.expectEqual(@as(u64, 10), record.admit_stamp);
-    try testing.expectEqual(@as(u64, 20), graph.stamp_high_water);
-    try testing.expectEqual(TickBaseStart + 7000, graph.tick_base);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).admitted);
-    try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u64, 20), record.last_stamp);
+    try testing_t.expectEqual(TickBaseStart + 7000, record.last_captured_ms);
+    try testing_t.expectEqual(@as(u64, 10), record.admit_stamp);
+    try testing_t.expectEqual(@as(u64, 20), graph.stamp_high_water);
+    try testing_t.expectEqual(TickBaseStart + 7000, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).admitted);
+    try testing_t.expectEqual(@as(u32, 1), lookup_probe.calls);
 }
 
 test "an older tick advances the record but never moves the tick base backwards" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = window_facts(0x1000, 10);
     facts.captured_ms = 9000;
     _ = try offer(graph, &facts);
-    try testing.expectEqual(TickBaseStart + 9000, graph.tick_base);
+    try testing_t.expectEqual(TickBaseStart + 9000, graph.tick_base);
     facts.stamp = 11;
     facts.captured_ms = 8500;
     _ = try offer(graph, &facts);
-    try testing.expectEqual(TickBaseStart + 9000, graph.tick_base);
+    try testing_t.expectEqual(TickBaseStart + 9000, graph.tick_base);
     const record = &graph.entries[call_find_active(graph, 0x1000).?].record;
-    try testing.expectEqual(TickBaseStart + 8500, record.last_captured_ms);
-    try testing.expectEqual(TickBaseStart + 9000, record.admit_captured_ms);
+    try testing_t.expectEqual(TickBaseStart + 8500, record.last_captured_ms);
+    try testing_t.expectEqual(TickBaseStart + 9000, record.admit_captured_ms);
     // A failing call (StaleFacts) never moves the base either.
     facts.stamp = 5;
     facts.captured_ms = 60_000;
     try offer_fails(graph, &facts, .StaleFacts);
-    try testing.expectEqual(TickBaseStart + 9000, graph.tick_base);
-    try testing.expectEqual(@as(u64, 11), graph.stamp_high_water);
+    try testing_t.expectEqual(TickBaseStart + 9000, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 11), graph.stamp_high_water);
 }
 
 test "an Update that cannot be queued returns QueueFull unless a pending event absorbs it" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x1000, 10);
     _ = try next_ev(graph);
@@ -5309,22 +5309,22 @@ test "an Update that cannot be queued returns QueueFull unless a pending event a
     var facts = window_facts(0x1000, 11);
     facts.x = 3;
     try offer_fails(graph, &facts, .QueueFull);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
-    try testing.expectEqual(@as(u64, 1), graph.diag_queue_full);
-    try testing.expectEqual(@as(i32, 10), graph.entries[call_find_active(graph, 0x1000).?].record.x);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
+    try testing_t.expectEqual(@as(u64, 1), graph.diag_queue_full);
+    try testing_t.expectEqual(@as(i32, 10), graph.entries[call_find_active(graph, 0x1000).?].record.x);
     // Pending Update for this window absorbs the next change even though the ring is full.
     _ = try next_ev(graph);
     var obs = try offer(graph, &facts);
     try expect_counts(obs, 1, 0, 0, 0);
-    try testing.expectEqual(@as(u32, EventCapacity), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, EventCapacity), graph.ring_len);
     facts.stamp = 12;
     facts.y = 8;
     obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionUpdated, RoleToplevel, 1, 0, ReasonNone);
     try expect_counts(obs, 0, 0, 0, 0);
     const ev = graph.ring[(graph.ring_head + graph.ring_len - 1) & (EventCapacity - 1)];
-    try testing.expectEqual(ChangeRect, ev.changed_mask);
-    try testing.expectEqual(@as(i32, 8), ev.y);
+    try testing_t.expectEqual(ChangeRect, ev.changed_mask);
+    try testing_t.expectEqual(@as(i32, 8), ev.y);
     // An unchanged offer needs no room at all.
     facts.stamp = 13;
     obs = try offer(graph, &facts);
@@ -5332,52 +5332,52 @@ test "an Update that cannot be queued returns QueueFull unless a pending event a
 }
 
 test "a child whose parent is absent is deferred, then flushed in age order behind its parent" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var obs = try admit_dialog(graph, 0x200, 0x100, 10);
     try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
     try expect_counts(obs, 0, 0, 0, 0);
     obs = try admit_dialog(graph, 0x300, 0x100, 11);
     try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
-    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
-    try testing.expectEqual(@as(u32, 2), lookup_probe.calls);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 2), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
     const first = &graph.deferred[call_find_deferred(graph, 0x200).?];
-    try testing.expectEqual(@as(u64, 1), first.record.seq);
-    try testing.expectEqual(@as(u64, 0), first.record.generation);
-    try testing.expectEqual(@as(u64, 0x100), first.record.parent_window);
-    try testing.expect(first.seen);
-    try testing.expectEqual(@as(u64, 2), graph.deferred[call_find_deferred(graph, 0x300).?].record.seq);
+    try testing_t.expectEqual(@as(u64, 1), first.record.seq);
+    try testing_t.expectEqual(@as(u64, 0), first.record.generation);
+    try testing_t.expectEqual(@as(u64, 0x100), first.record.parent_window);
+    try testing_t.expect(first.seen);
+    try testing_t.expectEqual(@as(u64, 2), graph.deferred[call_find_deferred(graph, 0x300).?].record.seq);
     var stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 2), stats.deferred_added);
-    try testing.expectEqual(@as(u64, 0), stats.admitted);
-    try testing.expectEqual(@as(u32, 2), stats.deferred_count);
+    try testing_t.expectEqual(@as(u64, 2), stats.deferred_added);
+    try testing_t.expectEqual(@as(u64, 0), stats.admitted);
+    try testing_t.expectEqual(@as(u32, 2), stats.deferred_count);
 
     obs = try admit_top(graph, 0x100, 12);
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
     try expect_counts(obs, 3, 3, 0, 0);
-    try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 3), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
     var events: [8]event_t = undefined;
-    try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 3), try drain_events(graph, &events));
     try expect_ev(events[0], EventAnnounce, 0x100, 1, 0, 0, 0);
     try expect_ev(events[1], EventAnnounce, 0x200, 2, 0x100, 1, 0);
     try expect_ev(events[2], EventAnnounce, 0x300, 3, 0x100, 1, 0);
-    try testing.expectEqual(RoleDialog, events[1].role);
+    try testing_t.expectEqual(RoleDialog, events[1].role);
     var key_buffer: [64]u8 = undefined;
     const kept = expected_key(&key_buffer, 0x200, 1);
-    try testing.expectEqualStrings(kept, events[1].app_key[0..events[1].app_key_length]);
-    try testing.expectEqual(ChangeMask, events[1].changed_mask);
+    try testing_t.expectEqualStrings(kept, events[1].app_key[0..events[1].app_key_length]);
+    try testing_t.expectEqual(ChangeMask, events[1].changed_mask);
     stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 3), stats.admitted);
-    try testing.expectEqual(@as(u64, 3), stats.events_queued);
+    try testing_t.expectEqual(@as(u64, 3), stats.admitted);
+    try testing_t.expectEqual(@as(u64, 3), stats.events_queued);
     // Flushed children keep the stamp of their last accepted facts as the admission stamp.
-    try testing.expectEqual(@as(u64, 10), graph.entries[call_find_active(graph, 0x200).?].record.admit_stamp);
-    try testing.expectEqual(@as(u64, 12), graph.stamp_high_water);
+    try testing_t.expectEqual(@as(u64, 10), graph.entries[call_find_active(graph, 0x200).?].record.admit_stamp);
+    try testing_t.expectEqual(@as(u64, 12), graph.stamp_high_water);
 }
 
 test "re-offering a deferred window updates its record in place without a new lookup" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = owned_facts(0x200, 0x100, 10);
     _ = try offer(graph, &facts);
@@ -5387,27 +5387,27 @@ test "re-offering a deferred window updates its record in place without a new lo
     set_title(&facts, "second");
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
-    try testing.expectEqual(@as(u32, 2), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 2), lookup_probe.calls);
     const record = &graph.deferred[call_find_deferred(graph, 0x200).?].record;
-    try testing.expectEqual(@as(u64, 1), record.seq);
-    try testing.expectEqual(@as(u64, 12), record.last_stamp);
-    try testing.expectEqual(TickBaseStart + 4000, record.last_captured_ms);
-    try testing.expectEqual(@as(u64, 0), record.admit_stamp);
-    try testing.expectEqual(@as(u32, 6), record.title_length);
-    try testing.expectEqual(@as(u64, 2), current_stats(graph).deferred_added);
+    try testing_t.expectEqual(@as(u64, 1), record.seq);
+    try testing_t.expectEqual(@as(u64, 12), record.last_stamp);
+    try testing_t.expectEqual(TickBaseStart + 4000, record.last_captured_ms);
+    try testing_t.expectEqual(@as(u64, 0), record.admit_stamp);
+    try testing_t.expectEqual(@as(u32, 6), record.title_length);
+    try testing_t.expectEqual(@as(u64, 2), current_stats(graph).deferred_added);
     // Older stamps are stale for a deferred record too.
     facts.stamp = 11;
     try offer_fails(graph, &facts, .StaleFacts);
     // When the parent becomes Active the deferred window is admitted from its record's key.
     _ = try admit_top(graph, 0x100, 13);
     var events: [8]event_t = undefined;
-    try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 3), try drain_events(graph, &events));
     try expect_ev(events[1], EventAnnounce, 0x200, 2, 0x100, 1, 0);
-    try testing.expectEqualStrings("second", events[1].title[0..events[1].title_length]);
+    try testing_t.expectEqualStrings("second", events[1].title[0..events[1].title_length]);
 }
 
 test "a deferred window offered with an Active parent is admitted from the stored key" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = owned_facts(0x200, 0x100, 10);
     _ = try offer(graph, &facts);
@@ -5418,16 +5418,16 @@ test "a deferred window offered with an Active parent is admitted from the store
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionAdmitted, RoleDialog, 2, 0, ReasonNone);
     try expect_counts(obs, 1, 1, 0, 0);
-    try testing.expectEqual(@as(u32, 2), lookup_probe.calls);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 2), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
     const ev = try next_ev(graph);
     try expect_ev(ev, EventAnnounce, 0x200, 2, 0x50, 1, 0);
     var key_buffer: [64]u8 = undefined;
-    try testing.expectEqualStrings(expected_key(&key_buffer, 0x200, 1), ev.app_key[0..ev.app_key_length]);
+    try testing_t.expectEqualStrings(expected_key(&key_buffer, 0x200, 1), ev.app_key[0..ev.app_key_length]);
 }
 
 fn discard_events(graph: *graph_t) u32 {
-    var ev = std.mem.zeroes(event_t);
+    var ev = std_t.mem.zeroes(event_t);
     var count: u32 = 0;
     while (call_next_event(graph, TestEpoch, &ev) == .Ok) count += 1;
     return count;
@@ -5449,8 +5449,8 @@ fn set_generations_issued(graph: *graph_t, value: u64) void {
 /// Like `offer_fails` for statuses that may legitimately change the graph (the Cycle drop).
 fn offer_status(graph: *graph_t, facts: *const facts_t, want: status_t) !void {
     var obs = sentinel_observation();
-    try testing.expectEqual(want, call_observe(graph, TestEpoch, facts, &obs));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(want, call_observe(graph, TestEpoch, facts, &obs));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
     try check_invariants(graph);
 }
 
@@ -5460,7 +5460,7 @@ const Permutations = [_][3]usize{
 
 test "a three-deep chain is announced root first whatever the arrival order" {
     for (Permutations) |order| {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         const chain = [3]facts_t{
             window_facts(0x100, 0),
@@ -5474,19 +5474,19 @@ test "a three-deep chain is announced root first whatever the arrival order" {
             stamp += 1;
             _ = try offer(graph, &facts);
         }
-        try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
-        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u32, 3), lookup_probe.calls);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
         var events: [8]event_t = undefined;
-        try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+        try testing_t.expectEqual(@as(usize, 3), try drain_events(graph, &events));
         try expect_ev(events[0], EventAnnounce, 0x100, 1, 0, 0, 0);
         try expect_ev(events[1], EventAnnounce, 0x200, 2, 0x100, 1, 0);
         try expect_ev(events[2], EventAnnounce, 0x300, 3, 0x200, 2, 0);
-        try testing.expectEqual(@as(u64, 3), graph.generations_issued);
+        try testing_t.expectEqual(@as(u64, 3), graph.generations_issued);
     }
 }
 
 test "flushed children are admitted breadth first in deferral age order" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     const arrivals = [_]facts_t{
         owned_facts(0x302, 0x202, 10),
@@ -5496,12 +5496,12 @@ test "flushed children are admitted breadth first in deferral age order" {
     };
     for (arrivals) |facts| {
         const obs = try offer(graph, &facts);
-        try testing.expectEqual(DispositionDeferred, obs.disposition);
+        try testing_t.expectEqual(DispositionDeferred, obs.disposition);
     }
     const obs = try admit_top(graph, 0x100, 14);
     try expect_counts(obs, 5, 5, 0, 0);
     var events: [8]event_t = undefined;
-    try testing.expectEqual(@as(usize, 5), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 5), try drain_events(graph, &events));
     try expect_ev(events[0], EventAnnounce, 0x100, 1, 0, 0, 0);
     try expect_ev(events[1], EventAnnounce, 0x202, 2, 0x100, 1, 0);
     try expect_ev(events[2], EventAnnounce, 0x201, 3, 0x100, 1, 0);
@@ -5510,51 +5510,51 @@ test "flushed children are admitted breadth first in deferral age order" {
 }
 
 test "owner cycles through deferred records return Cycle and drop only the offered window's record" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     // Self ownership.
     var facts = owned_facts(0x100, 0x100, 10);
     try offer_fails(graph, &facts, .Cycle);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
-    try testing.expectEqual(@as(u32, 0), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
+    try testing_t.expectEqual(@as(u32, 0), lookup_probe.calls);
     // Two-window cycle A -> B -> A.
     facts = owned_facts(0x100, 0x200, 11);
     var obs = try offer(graph, &facts);
-    try testing.expectEqual(DispositionDeferred, obs.disposition);
+    try testing_t.expectEqual(DispositionDeferred, obs.disposition);
     facts = owned_facts(0x200, 0x100, 12);
     try offer_fails(graph, &facts, .Cycle);
-    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
     // Three-window cycle A -> B -> C -> A.
     facts = owned_facts(0x200, 0x300, 13);
     obs = try offer(graph, &facts);
-    try testing.expectEqual(DispositionDeferred, obs.disposition);
+    try testing_t.expectEqual(DispositionDeferred, obs.disposition);
     facts = owned_facts(0x300, 0x100, 14);
     try offer_fails(graph, &facts, .Cycle);
-    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
-    try testing.expectEqual(@as(u64, 3), current_stats(graph).rejected_cycle);
+    try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u64, 3), current_stats(graph).rejected_cycle);
     // A window with its own deferred record: Cycle drops that record (the documented mutation).
     facts = owned_facts(0x400, 0x900, 15);
     _ = try offer(graph, &facts);
-    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 3), call_count_deferred(graph));
     facts = owned_facts(0x400, 0x400, 16);
     try offer_status(graph, &facts, .Cycle);
-    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x400));
-    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x400));
+    try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
     var stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 4), stats.rejected_cycle);
-    try testing.expectEqual(@as(u64, 1), stats.deferred_dropped);
-    try testing.expectEqual(@as(u64, 0), stats.deferred_evicted);
+    try testing_t.expectEqual(@as(u64, 4), stats.rejected_cycle);
+    try testing_t.expectEqual(@as(u64, 1), stats.deferred_dropped);
+    try testing_t.expectEqual(@as(u64, 0), stats.deferred_evicted);
     // A self-owned window that classification excludes is reported as excluded, not as a cycle.
     facts = owned_facts(0x500, 0x500, 17);
     facts.root = 0x501;
     obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionExcluded, 0, 0, 0, ReasonChild);
     stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 4), stats.rejected_cycle);
+    try testing_t.expectEqual(@as(u64, 4), stats.rejected_cycle);
 }
 
 test "a live window offered with an owner cycle stays unchanged" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = discard_events(graph);
@@ -5563,7 +5563,7 @@ test "a live window offered with an owner cycle stays unchanged" {
     // Via a deferred chain: 0x300 waits for 0x100; 0x100 is made to depend on 0x300.
     facts = owned_facts(0x300, 0x100, 12);
     const obs = try offer(graph, &facts);
-    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    try testing_t.expectEqual(DispositionAdmitted, obs.disposition);
     _ = discard_events(graph);
     // 0x500 waits for 0x600 which waits for 0x700 (absent): 0x700 owned by 0x500 would close the loop.
     facts = owned_facts(0x500, 0x600, 13);
@@ -5577,13 +5577,13 @@ test "a live window offered with an owner cycle stays unchanged" {
     inject_deferred(graph, 41, 0xB00);
     graph.deferred[40].record.parent_window = 0xB00;
     graph.deferred[41].record.parent_window = 0xA00;
-    try testing.expect(call_chain_cycle(graph, 0xC00, 0xA00));
-    try testing.expect(!call_chain_cycle(graph, 0xC00, 0x100));
-    try testing.expect(call_chain_cycle(graph, 0x100, 0x100));
+    try testing_t.expect(call_chain_cycle(graph, 0xC00, 0xA00));
+    try testing_t.expect(!call_chain_cycle(graph, 0xC00, 0x100));
+    try testing_t.expect(call_chain_cycle(graph, 0x100, 0x100));
 }
 
 test "identity change retires the old generation and its descendants and admits a fresh generation" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = try admit_dialog(graph, 0x200, 0x100, 11);
@@ -5594,21 +5594,21 @@ test "identity change retires the old generation and its descendants and admits 
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 3, 1, ReasonIncarnationChanged);
     try expect_counts(obs, 3, 1, 2, 0);
     var events: [8]event_t = undefined;
-    try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 3), try drain_events(graph, &events));
     try expect_ev(events[0], EventRetireIntent, 0x200, 2, 0x100, 1, ReasonParentRetired);
     try expect_ev(events[1], EventRetireIntent, 0x100, 1, 0, 0, ReasonIncarnationChanged);
     try expect_ev(events[2], EventAnnounce, 0x100, 3, 0, 0, 0);
-    try testing.expectEqual(@as(u32, 0), events[0].changed_mask);
-    try testing.expectEqual(@as(u32, 4242), events[1].process_id);
-    try testing.expectEqual(@as(u32, 9999), events[2].process_id);
-    try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-    try testing.expectEqual(@as(u32, 2), call_count_state(graph, .Retiring));
-    try testing.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 0x100, 1));
-    try testing.expectEqual(status_t.Ok, call_check_action(graph, TestEpoch, 0x100, 3));
+    try testing_t.expectEqual(@as(u32, 0), events[0].changed_mask);
+    try testing_t.expectEqual(@as(u32, 4242), events[1].process_id);
+    try testing_t.expectEqual(@as(u32, 9999), events[2].process_id);
+    try testing_t.expectEqual(@as(u32, 3), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 2), call_count_state(graph, .Retiring));
+    try testing_t.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 0x100, 1));
+    try testing_t.expectEqual(status_t.Ok, call_check_action(graph, TestEpoch, 0x100, 3));
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 2), stats.retire_intents);
-    try testing.expectEqual(@as(u64, 0), stats.reclassified);
+    try testing_t.expectEqual(@as(u64, 2), stats.retire_intents);
+    try testing_t.expectEqual(@as(u64, 0), stats.reclassified);
     // The child is not re-deferred: its next offer admits it under the new parent generation.
     facts = owned_facts(0x200, 0x100, 13);
     const child = try offer(graph, &facts);
@@ -5620,7 +5620,7 @@ test "identity change retires the old generation and its descendants and admits 
 test "identity change of a thread, start time or class also forces a replacement" {
     const mutators = [_]*const fn (*facts_t) void{ mutate_thread, mutate_start_time, mutate_class, mutate_start_unknown };
     for (mutators) |mutator| {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x100, 10);
         _ = discard_events(graph);
@@ -5647,7 +5647,7 @@ fn mutate_start_unknown(facts: *facts_t) void {
 test "identity change keeps the retirement when the replacement cannot be admitted" {
     // Lookup failure.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x100, 10);
         _ = discard_events(graph);
@@ -5657,9 +5657,9 @@ test "identity change keeps the retirement when the replacement cannot be admitt
         var obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
         try expect_counts(obs, 1, 0, 1, 0);
-        try testing.expectEqual(@as(u64, 1), current_stats(graph).lookup_failures);
-        try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Retiring));
-        try testing.expectEqual(@as(?usize, null), call_find_active(graph, 0x100));
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).lookup_failures);
+        try testing_t.expectEqual(@as(u32, 1), call_count_state(graph, .Retiring));
+        try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x100));
         // The next offer retries and now admits.
         lookup_probe.mode = .Ok;
         facts.stamp = 12;
@@ -5668,7 +5668,7 @@ test "identity change keeps the retirement when the replacement cannot be admitt
     }
     // Invalid key.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x100, 10);
         _ = discard_events(graph);
@@ -5677,11 +5677,11 @@ test "identity change keeps the retirement when the replacement cannot be admitt
         facts.thread_id = 1;
         const obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
-        try testing.expectEqual(@as(u64, 1), current_stats(graph).app_key_invalid);
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).app_key_invalid);
     }
     // No free slot: the retiring entry keeps its slot.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         try fill_graph(graph, 63);
         _ = try admit_top(graph, 0x100, 10);
@@ -5691,35 +5691,35 @@ test "identity change keeps the retirement when the replacement cannot be admitt
         var obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionRetired, 0, 0, 64, ReasonIncarnationChanged);
         const stats = current_stats(graph);
-        try testing.expectEqual(@as(u64, 1), stats.rejected_at_capacity);
-        try testing.expectEqual(@as(u64, 1), graph.diag_at_capacity);
-        try testing.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
+        try testing_t.expectEqual(@as(u64, 1), stats.rejected_at_capacity);
+        try testing_t.expectEqual(@as(u64, 1), graph.diag_at_capacity);
+        try testing_t.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
         facts.stamp = 12;
         try offer_fails(graph, &facts, .AtCapacity);
         const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
-        try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, 64, &proof));
+        try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, 64, &proof));
         obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionAdmitted, RoleToplevel, 65, 0, ReasonNone);
     }
     // No generation left.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x100, 10);
         _ = discard_events(graph);
-        set_generations_issued(graph, std.math.maxInt(u64));
+        set_generations_issued(graph, std_t.math.maxInt(u64));
         var facts = window_facts(0x100, 11);
         facts.process_id = 9999;
         const obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
         const stats = current_stats(graph);
-        try testing.expectEqual(@as(u64, 1), stats.rejected_generation_exhausted);
-        try testing.expectEqual(@as(u64, 1), graph.diag_generation_exhausted);
-        try testing.expectEqual(@as(u64, 0), stats.rejected_at_capacity);
+        try testing_t.expectEqual(@as(u64, 1), stats.rejected_generation_exhausted);
+        try testing_t.expectEqual(@as(u64, 1), graph.diag_generation_exhausted);
+        try testing_t.expectEqual(@as(u64, 0), stats.rejected_at_capacity);
     }
     // Self ownership of the replacement.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x100, 10);
         _ = discard_events(graph);
@@ -5727,12 +5727,12 @@ test "identity change keeps the retirement when the replacement cannot be admitt
         facts.process_id = 9999;
         const obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
-        try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
-        try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
+        try testing_t.expectEqual(@as(u32, 1), lookup_probe.calls);
     }
     // The replacement's new owner is one of the retired descendants.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x100, 10);
         _ = try admit_dialog(graph, 0x200, 0x100, 11);
@@ -5742,12 +5742,12 @@ test "identity change keeps the retirement when the replacement cannot be admitt
         const obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
         try expect_counts(obs, 2, 0, 2, 0);
-        try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
-        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
     }
     // The replacement's new owner leads back to the window through a deferred record.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x100, 10);
         _ = discard_events(graph);
@@ -5760,13 +5760,13 @@ test "identity change keeps the retirement when the replacement cannot be admitt
         facts.process_id = 9999;
         const obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
-        try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
-        try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
+        try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
     }
 }
 
 test "identity change whose replacement must wait for its parent is deferred with a fresh key" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = discard_events(graph);
@@ -5775,10 +5775,10 @@ test "identity change whose replacement must wait for its parent is deferred wit
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 1, ReasonIncarnationChanged);
     try expect_counts(obs, 1, 0, 1, 0);
-    try testing.expectEqual(@as(u32, 2), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 2), lookup_probe.calls);
     const record = &graph.deferred[call_find_deferred(graph, 0x100).?].record;
     var key_buffer: [64]u8 = undefined;
-    try testing.expectEqualStrings(expected_key(&key_buffer, 0x100, 2), record.app_key[0..record.app_key_length]);
+    try testing_t.expectEqualStrings(expected_key(&key_buffer, 0x100, 2), record.app_key[0..record.app_key_length]);
     const ev = try next_ev(graph);
     try expect_ev(ev, EventRetireIntent, 0x100, 1, 0, 0, ReasonIncarnationChanged);
 }
@@ -5790,7 +5790,7 @@ fn build_family(graph: *graph_t) !void {
     _ = try admit_dialog(graph, 0x200, 0x100, 12);
     _ = try admit_dialog(graph, 0x300, 0x100, 13);
     _ = try admit_dialog(graph, 0x400, 0x200, 14);
-    try testing.expectEqual(@as(u32, 5), discard_events(graph));
+    try testing_t.expectEqual(@as(u32, 5), discard_events(graph));
 }
 
 /// P gains the owner Q and loses nothing else: role Dialog, parent Q.
@@ -5799,7 +5799,7 @@ fn reclassify_facts(stamp: u64) facts_t {
 }
 
 test "reclassification retires the cascade descending and re-announces it behind the new parent" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     try build_family(graph);
     const lookups = lookup_probe.calls;
@@ -5807,9 +5807,9 @@ test "reclassification retires the cascade descending and re-announces it behind
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionReclassified, RoleDialog, 6, 2, ReasonReclassified);
     try expect_counts(obs, 8, 4, 4, 0);
-    try testing.expectEqual(lookups, lookup_probe.calls);
+    try testing_t.expectEqual(lookups, lookup_probe.calls);
     var events: [12]event_t = undefined;
-    try testing.expectEqual(@as(usize, 8), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 8), try drain_events(graph, &events));
     try expect_ev(events[0], EventRetireIntent, 0x400, 5, 0x200, 3, ReasonParentRetired);
     try expect_ev(events[1], EventRetireIntent, 0x300, 4, 0x100, 2, ReasonParentRetired);
     try expect_ev(events[2], EventRetireIntent, 0x200, 3, 0x100, 2, ReasonParentRetired);
@@ -5818,33 +5818,33 @@ test "reclassification retires the cascade descending and re-announces it behind
     try expect_ev(events[5], EventAnnounce, 0x200, 7, 0x100, 6, 0);
     try expect_ev(events[6], EventAnnounce, 0x300, 8, 0x100, 6, 0);
     try expect_ev(events[7], EventAnnounce, 0x400, 9, 0x200, 7, 0);
-    try testing.expectEqual(RoleToplevel, events[3].role);
-    try testing.expectEqual(RoleDialog, events[4].role);
+    try testing_t.expectEqual(RoleToplevel, events[3].role);
+    try testing_t.expectEqual(RoleDialog, events[4].role);
     // Keys are reused: neither the new parent nor its descendants triggered a lookup.
     var key_buffer: [64]u8 = undefined;
-    try testing.expectEqualStrings(expected_key(&key_buffer, 0x100, 2), events[4].app_key[0..events[4].app_key_length]);
-    try testing.expectEqualStrings(expected_key(&key_buffer, 0x200, 3), events[5].app_key[0..events[5].app_key_length]);
-    try testing.expectEqualStrings(expected_key(&key_buffer, 0x400, 5), events[7].app_key[0..events[7].app_key_length]);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqualStrings(expected_key(&key_buffer, 0x100, 2), events[4].app_key[0..events[4].app_key_length]);
+    try testing_t.expectEqualStrings(expected_key(&key_buffer, 0x200, 3), events[5].app_key[0..events[5].app_key_length]);
+    try testing_t.expectEqualStrings(expected_key(&key_buffer, 0x400, 5), events[7].app_key[0..events[7].app_key_length]);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
     var retiring: [8]retiring_entry_t = undefined;
     var total: u32 = 0;
-    try testing.expectEqual(status_t.Ok, call_list_retiring(graph, &retiring, 8, &total));
-    try testing.expectEqual(@as(u32, 4), total);
-    try testing.expectEqual(@as(u64, 2), retiring[0].generation);
-    try testing.expectEqual(ReasonReclassified, retiring[0].reason);
-    try testing.expectEqual(ReasonParentRetired, retiring[3].reason);
+    try testing_t.expectEqual(status_t.Ok, call_list_retiring(graph, &retiring, 8, &total));
+    try testing_t.expectEqual(@as(u32, 4), total);
+    try testing_t.expectEqual(@as(u64, 2), retiring[0].generation);
+    try testing_t.expectEqual(ReasonReclassified, retiring[0].reason);
+    try testing_t.expectEqual(ReasonParentRetired, retiring[3].reason);
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.reclassified);
-    try testing.expectEqual(@as(u64, 4), stats.retire_intents);
-    try testing.expectEqual(@as(u64, 9), stats.admitted);
-    try testing.expectEqual(@as(u64, 13), stats.events_queued);
+    try testing_t.expectEqual(@as(u64, 1), stats.reclassified);
+    try testing_t.expectEqual(@as(u64, 4), stats.retire_intents);
+    try testing_t.expectEqual(@as(u64, 9), stats.admitted);
+    try testing_t.expectEqual(@as(u64, 13), stats.events_queued);
     // Admission stamps of re-announced descendants are their last accepted facts.
-    try testing.expectEqual(@as(u64, 12), graph.entries[call_find_active(graph, 0x200).?].record.admit_stamp);
-    try testing.expectEqual(@as(u64, 20), graph.entries[call_find_active(graph, 0x100).?].record.admit_stamp);
+    try testing_t.expectEqual(@as(u64, 12), graph.entries[call_find_active(graph, 0x200).?].record.admit_stamp);
+    try testing_t.expectEqual(@as(u64, 20), graph.entries[call_find_active(graph, 0x100).?].record.admit_stamp);
 }
 
 test "reclassifying a window under its own descendant retires the cascade and defers nothing" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = try admit_dialog(graph, 0x200, 0x100, 11);
@@ -5854,13 +5854,13 @@ test "reclassifying a window under its own descendant retires the cascade and de
     try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonReclassified);
     try expect_counts(obs, 2, 0, 2, 0);
     var events: [4]event_t = undefined;
-    try testing.expectEqual(@as(usize, 2), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 2), try drain_events(graph, &events));
     try expect_ev(events[0], EventRetireIntent, 0x200, 2, 0x100, 1, ReasonParentRetired);
     try expect_ev(events[1], EventRetireIntent, 0x100, 1, 0, 0, ReasonReclassified);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.rejected_cycle);
-    try testing.expectEqual(@as(u64, 1), stats.reclassified);
+    try testing_t.expectEqual(@as(u64, 1), stats.rejected_cycle);
+    try testing_t.expectEqual(@as(u64, 1), stats.reclassified);
     // A plain deferred-chain cycle on a live window is a Cycle status, not a forced retirement.
     _ = try admit_top(graph, 0x700, 13);
     _ = discard_events(graph);
@@ -5870,11 +5870,11 @@ test "reclassifying a window under its own descendant retires the cascade and de
     @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
     facts = owned_facts(0x700, 0x800, 14);
     try offer_fails(graph, &facts, .Cycle);
-    try testing.expect(call_find_active(graph, 0x700) != null);
+    try testing_t.expect(call_find_active(graph, 0x700) != null);
 }
 
 test "reclassification toward an unannounced parent defers the window and re-defers its descendants" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = try admit_dialog(graph, 0x200, 0x100, 11);
@@ -5884,30 +5884,30 @@ test "reclassification toward an unannounced parent defers the window and re-def
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 1, ReasonReclassified);
     try expect_counts(obs, 3, 0, 3, 0);
-    try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
-    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 3), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 3), call_count_deferred(graph));
     const seq_p = graph.deferred[call_find_deferred(graph, 0x100).?].record.seq;
     const seq_c1 = graph.deferred[call_find_deferred(graph, 0x200).?].record.seq;
     const seq_c2 = graph.deferred[call_find_deferred(graph, 0x300).?].record.seq;
-    try testing.expect(seq_p < seq_c1 and seq_c1 < seq_c2);
-    try testing.expectEqual(@as(u64, 0x900), graph.deferred[call_find_deferred(graph, 0x100).?].record.parent_window);
-    try testing.expectEqual(@as(u64, 0x100), graph.deferred[call_find_deferred(graph, 0x200).?].record.parent_window);
-    try testing.expectEqual(@as(u64, 3), discard_events(graph));
+    try testing_t.expect(seq_p < seq_c1 and seq_c1 < seq_c2);
+    try testing_t.expectEqual(@as(u64, 0x900), graph.deferred[call_find_deferred(graph, 0x100).?].record.parent_window);
+    try testing_t.expectEqual(@as(u64, 0x100), graph.deferred[call_find_deferred(graph, 0x200).?].record.parent_window);
+    try testing_t.expectEqual(@as(u64, 3), discard_events(graph));
     // The missing owner arrives: owner, window, then its children, each after its parent.
     const root = try admit_top(graph, 0x900, 21);
     try expect_counts(root, 4, 4, 0, 0);
     var events: [6]event_t = undefined;
-    try testing.expectEqual(@as(usize, 4), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 4), try drain_events(graph, &events));
     try expect_ev(events[0], EventAnnounce, 0x900, 4, 0, 0, 0);
     try expect_ev(events[1], EventAnnounce, 0x100, 5, 0x900, 4, 0);
     try expect_ev(events[2], EventAnnounce, 0x200, 6, 0x100, 5, 0);
     try expect_ev(events[3], EventAnnounce, 0x300, 7, 0x100, 5, 0);
     var key_buffer: [64]u8 = undefined;
-    try testing.expectEqualStrings(expected_key(&key_buffer, 0x100, 1), events[1].app_key[0..events[1].app_key_length]);
+    try testing_t.expectEqualStrings(expected_key(&key_buffer, 0x100, 1), events[1].app_key[0..events[1].app_key_length]);
 }
 
 test "reclassification with one free slot admits the window and leaves its descendants deferred" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x50, 9);
     _ = try admit_top(graph, 0x100, 10);
@@ -5919,27 +5919,27 @@ test "reclassification with one free slot admits the window and leaves its desce
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionReclassified, RoleDialog, 64, 2, ReasonReclassified);
     try expect_counts(obs, 4, 1, 3, 0);
-    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 2), stats.rejected_at_capacity);
-    try testing.expectEqual(@as(u64, 2), graph.diag_at_capacity);
-    try testing.expect(graph.deferred[call_find_deferred(graph, 0x200).?].record.seq < graph.deferred[call_find_deferred(graph, 0x300).?].record.seq);
+    try testing_t.expectEqual(@as(u64, 2), stats.rejected_at_capacity);
+    try testing_t.expectEqual(@as(u64, 2), graph.diag_at_capacity);
+    try testing_t.expect(graph.deferred[call_find_deferred(graph, 0x200).?].record.seq < graph.deferred[call_find_deferred(graph, 0x300).?].record.seq);
     // Slots return when the coordinator completes the three retirements; the deferred children come back.
     const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
     const lookups = lookup_probe.calls;
     for ([_]u64{ 2, 3, 4 }, [_]u64{ 0x100, 0x200, 0x300 }) |generation, window| {
-        try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, window, generation, &proof));
+        try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, window, generation, &proof));
     }
     facts = owned_facts(0x200, 0x100, 21);
     const child = try offer(graph, &facts);
     try expect_obs(child, DispositionAdmitted, RoleDialog, 65, 0, ReasonNone);
-    try testing.expectEqual(lookups, lookup_probe.calls);
+    try testing_t.expectEqual(lookups, lookup_probe.calls);
     const ev = try next_ev(graph);
     try expect_ev(ev, EventRetireIntent, 0x300, 4, 0x100, 2, ReasonParentRetired);
 }
 
 test "reclassification with a cut flush keeps the unadmitted descendant deferred" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x50, 9);
     _ = try admit_top(graph, 0x100, 10);
@@ -5951,14 +5951,14 @@ test "reclassification with a cut flush keeps the unadmitted descendant deferred
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionReclassified, RoleDialog, 63, 2, ReasonReclassified);
     try expect_counts(obs, 5, 2, 3, 0);
-    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
-    try testing.expect(call_find_deferred(graph, 0x300) != null);
-    try testing.expect(call_find_active(graph, 0x200) != null);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_at_capacity);
+    try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing_t.expect(call_find_deferred(graph, 0x300) != null);
+    try testing_t.expect(call_find_active(graph, 0x200) != null);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_at_capacity);
 }
 
 test "reclassification with no free slot degrades to retire-only and retries on the next offer" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x50, 9);
     _ = try admit_top(graph, 0x100, 10);
@@ -5966,32 +5966,32 @@ test "reclassification with no free slot degrades to retire-only and retries on 
     _ = try admit_dialog(graph, 0x300, 0x100, 12);
     try fill_graph(graph, 60);
     _ = discard_events(graph);
-    try testing.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
+    try testing_t.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
     var facts = reclassify_facts(20);
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionRetired, 0, 0, 2, ReasonReclassified);
     try expect_counts(obs, 3, 0, 3, 0);
-    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_at_capacity);
-    try testing.expectEqual(@as(u32, 3), discard_events(graph));
+    try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_at_capacity);
+    try testing_t.expectEqual(@as(u32, 3), discard_events(graph));
     facts.stamp = 21;
     try offer_fails(graph, &facts, .AtCapacity);
     const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
     for ([_]u64{ 2, 3, 4 }, [_]u64{ 0x100, 0x200, 0x300 }) |generation, window| {
-        try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, window, generation, &proof));
+        try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, window, generation, &proof));
     }
     const retry = try offer(graph, &facts);
     try expect_obs(retry, DispositionAdmitted, RoleDialog, 65, 0, ReasonNone);
     try expect_counts(retry, 3, 3, 0, 0);
     var events: [4]event_t = undefined;
-    try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 3), try drain_events(graph, &events));
     try expect_ev(events[0], EventAnnounce, 0x100, 65, 0x50, 1, 0);
     try expect_ev(events[1], EventAnnounce, 0x200, 66, 0x100, 65, 0);
     try expect_ev(events[2], EventAnnounce, 0x300, 67, 0x100, 65, 0);
 }
 
 test "a role change without a parent change also reclassifies" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = discard_events(graph);
@@ -6011,7 +6011,7 @@ test "a role change without a parent change also reclassifies" {
 test "retirement for every non-reclassify cause leaves the descendants retired and not deferred" {
     // Classified as not exported.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x100, 10);
         _ = try admit_dialog(graph, 0x200, 0x100, 11);
@@ -6023,19 +6023,19 @@ test "retirement for every non-reclassify cause leaves the descendants retired a
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonNotVisible);
         try expect_counts(obs, 3, 0, 3, 0);
         var events: [4]event_t = undefined;
-        try testing.expectEqual(@as(usize, 3), try drain_events(graph, &events));
+        try testing_t.expectEqual(@as(usize, 3), try drain_events(graph, &events));
         try expect_ev(events[0], EventRetireIntent, 0x300, 3, 0x100, 1, ReasonParentRetired);
         try expect_ev(events[1], EventRetireIntent, 0x200, 2, 0x100, 1, ReasonParentRetired);
         try expect_ev(events[2], EventRetireIntent, 0x100, 1, 0, 0, ReasonNotVisible);
-        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-        try testing.expectEqual(@as(u64, 0), current_stats(graph).reclassified);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u64, 0), current_stats(graph).reclassified);
         // The child returns through its own next offer, deferred behind the vanished parent.
         const child = try admit_dialog(graph, 0x200, 0x100, 14);
         try expect_obs(child, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
     }
     // Destroy hint.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_top(graph, 0x100, 10);
         _ = try admit_dialog(graph, 0x200, 0x100, 11);
@@ -6044,37 +6044,37 @@ test "retirement for every non-reclassify cause leaves the descendants retired a
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
         try expect_counts(obs, 2, 0, 2, 0);
         var events: [4]event_t = undefined;
-        try testing.expectEqual(@as(usize, 2), try drain_events(graph, &events));
+        try testing_t.expectEqual(@as(usize, 2), try drain_events(graph, &events));
         try expect_ev(events[0], EventRetireIntent, 0x200, 2, 0x100, 1, ReasonParentRetired);
         try expect_ev(events[1], EventRetireIntent, 0x100, 1, 0, 0, ReasonDestroyed);
-        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
     }
 }
 
 test "a window that is not exported is Excluded and drops its deferred record" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = window_facts(0x100, 10);
     set_class(&facts, "Progman");
     var obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionExcluded, 0, 0, 0, ReasonExcludedClass);
     try expect_counts(obs, 0, 0, 0, 0);
-    try testing.expectEqual(@as(u32, 0), lookup_probe.calls);
-    try testing.expectEqual(@as(u64, 10), graph.stamp_high_water);
+    try testing_t.expectEqual(@as(u32, 0), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u64, 10), graph.stamp_high_water);
     facts = owned_facts(0x200, 0x900, 11);
     _ = try offer(graph, &facts);
-    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
     facts = owned_facts(0x200, 0x900, 12);
     facts.width = 0;
     obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionExcluded, 0, 0, 0, ReasonZeroArea);
     try expect_counts(obs, 0, 0, 0, 1);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
 }
 
 test "an off-desktop offer is Suspended and changes no entry, record or event" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = try admit_dialog(graph, 0x200, 0x900, 11);
@@ -6087,52 +6087,52 @@ test "an off-desktop offer is Suspended and changes no entry, record or event" {
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionSuspended, 0, 0, 0, ReasonNone);
     try expect_counts(obs, 0, 0, 0, 0);
-    try testing.expectEqual(@as(u64, 0x100), obs.window);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).suspended);
+    try testing_t.expectEqual(@as(u64, 0x100), obs.window);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).suspended);
     // Only the stamp high-water mark and the tick base advance (an Ok call).
-    try testing.expect(before != state_digest(graph));
-    try testing.expectEqual(@as(u64, 20), graph.stamp_high_water);
-    try testing.expectEqual(TickBaseStart + 3000, graph.tick_base);
-    try testing.expectEqual(@as(u64, 10), graph.entries[call_find_active(graph, 0x100).?].record.last_stamp);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
-    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing_t.expect(before != state_digest(graph));
+    try testing_t.expectEqual(@as(u64, 20), graph.stamp_high_water);
+    try testing_t.expectEqual(TickBaseStart + 3000, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 10), graph.entries[call_find_active(graph, 0x100).?].record.last_stamp);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
     // A stale Suspended offer is rejected before classification.
     facts.stamp = 9;
     try offer_fails(graph, &facts, .StaleFacts);
 }
 
 test "64 exported entries refuse a 65th window, evict nothing and free a slot only after completion" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     try fill_graph(graph, 64);
-    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
     var facts = window_facts(0x100, 500);
     try offer_fails(graph, &facts, .AtCapacity);
     var stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.rejected_at_capacity);
-    try testing.expectEqual(@as(u64, 1), graph.diag_at_capacity);
-    try testing.expectEqual(@as(u32, 64), lookup_probe.calls);
-    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u64, 1), stats.rejected_at_capacity);
+    try testing_t.expectEqual(@as(u64, 1), graph.diag_at_capacity);
+    try testing_t.expectEqual(@as(u32, 64), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
     // Deferral consumes no exported capacity.
     var dialog = owned_facts(0x200, 0x900, 501);
     const deferred = try offer(graph, &dialog);
-    try testing.expectEqual(DispositionDeferred, deferred.disposition);
+    try testing_t.expectEqual(DispositionDeferred, deferred.disposition);
     // A destroyed window keeps its slot while quarantined.
     const retired = try destroy_hint(graph, 0x8000, 1000, 5000);
     try expect_obs(retired, DispositionRetired, 0, 0, 1, ReasonDestroyed);
     facts.stamp = 502;
     try offer_fails(graph, &facts, .AtCapacity);
     stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 2), stats.rejected_at_capacity);
+    try testing_t.expectEqual(@as(u64, 2), stats.rejected_at_capacity);
     const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
-    try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x8000, 1, &proof));
+    try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x8000, 1, &proof));
     const admitted = try offer(graph, &facts);
     try expect_obs(admitted, DispositionAdmitted, RoleToplevel, 65, 0, ReasonNone);
-    try testing.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
+    try testing_t.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
 }
 
 test "a flush cut by capacity leaves the youngest children deferred and counts them" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = owned_facts(0x201, 0x100, 10);
     _ = try offer(graph, &facts);
@@ -6147,17 +6147,17 @@ test "a flush cut by capacity leaves the youngest children deferred and counts t
     const obs = try admit_top(graph, 0x100, 20);
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 63, 0, ReasonNone);
     try expect_counts(obs, 2, 2, 0, 0);
-    try testing.expect(call_find_active(graph, 0x201) != null);
-    try testing.expect(call_find_active(graph, 0x202) == null);
-    try testing.expect(call_find_active(graph, 0x301) == null);
-    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    try testing_t.expect(call_find_active(graph, 0x201) != null);
+    try testing_t.expect(call_find_active(graph, 0x202) == null);
+    try testing_t.expect(call_find_active(graph, 0x301) == null);
+    try testing_t.expectEqual(@as(u32, 3), call_count_deferred(graph));
     // Two candidates were in the worklist when the budget ran out (the sibling and the grandchild).
-    try testing.expectEqual(@as(u64, 2), current_stats(graph).rejected_at_capacity);
-    try testing.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
+    try testing_t.expectEqual(@as(u64, 2), current_stats(graph).rejected_at_capacity);
+    try testing_t.expectEqual(@as(u32, 64), MaxEntries - call_count_state(graph, .Free));
 }
 
 test "a 65th deferred record evicts the oldest deferral" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var index: u64 = 0;
     while (index < MaxDeferred) : (index += 1) {
@@ -6166,72 +6166,72 @@ test "a 65th deferred record evicts the oldest deferral" {
         try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
         try expect_counts(obs, 0, 0, 0, 0);
     }
-    try testing.expectEqual(@as(u32, 64), call_count_deferred(graph));
-    try testing.expectEqual(@as(u64, 1), graph.deferred[call_find_deferred(graph, 0x1000).?].record.seq);
+    try testing_t.expectEqual(@as(u32, 64), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u64, 1), graph.deferred[call_find_deferred(graph, 0x1000).?].record.seq);
     var facts = owned_facts(0x2000, 0x9000, 100);
     var obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
     try expect_counts(obs, 0, 0, 0, 1);
-    try testing.expectEqual(@as(u32, 64), call_count_deferred(graph));
-    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x1000));
-    try testing.expectEqual(@as(u64, 65), graph.deferred[call_find_deferred(graph, 0x2000).?].record.seq);
+    try testing_t.expectEqual(@as(u32, 64), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x1000));
+    try testing_t.expectEqual(@as(u64, 65), graph.deferred[call_find_deferred(graph, 0x2000).?].record.seq);
     var stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.deferred_evicted);
-    try testing.expectEqual(@as(u64, 0), stats.deferred_dropped);
-    try testing.expectEqual(@as(u64, 65), stats.deferred_added);
-    try testing.expectEqual(@as(u64, 1), graph.diag_deferred_evicted);
+    try testing_t.expectEqual(@as(u64, 1), stats.deferred_evicted);
+    try testing_t.expectEqual(@as(u64, 0), stats.deferred_dropped);
+    try testing_t.expectEqual(@as(u64, 65), stats.deferred_added);
+    try testing_t.expectEqual(@as(u64, 1), graph.diag_deferred_evicted);
     // The evicted window comes back through its next offer and evicts the then-oldest record.
     facts = owned_facts(0x1000, 0x9000, 101);
     obs = try offer(graph, &facts);
     try expect_counts(obs, 0, 0, 0, 1);
-    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x1001));
-    try testing.expectEqual(@as(u64, 66), graph.deferred[call_find_deferred(graph, 0x1000).?].record.seq);
-    try testing.expectEqual(@as(u32, 66), lookup_probe.calls);
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x1001));
+    try testing_t.expectEqual(@as(u64, 66), graph.deferred[call_find_deferred(graph, 0x1000).?].record.seq);
+    try testing_t.expectEqual(@as(u32, 66), lookup_probe.calls);
     stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 2), stats.deferred_evicted);
+    try testing_t.expectEqual(@as(u64, 2), stats.deferred_evicted);
 }
 
 test "lookup failure, invalid keys and re-entry publish nothing" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = window_facts(0x100, 10);
     lookup_probe.mode = .Fail;
     try offer_fails(graph, &facts, .LookupFailed);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).lookup_failures);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).lookup_failures);
     // The failing lookup also guards deferral.
     var dialog = owned_facts(0x200, 0x900, 11);
     try offer_fails(graph, &dialog, .LookupFailed);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
     for ([_]lookup_mode_t{ .Invalid, .Empty, .TooLong }) |mode| {
         lookup_probe.mode = mode;
         try offer_fails(graph, &facts, .AppKeyInvalid);
     }
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 2), stats.lookup_failures);
-    try testing.expectEqual(@as(u64, 3), stats.app_key_invalid);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(@as(u64, 2), stats.lookup_failures);
+    try testing_t.expectEqual(@as(u64, 3), stats.app_key_invalid);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
     // A callback that calls back into the graph sees Reentrant for every entry point.
     lookup_probe.mode = .Reenter;
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
-    try testing.expectEqual(status_t.Reentrant, lookup_probe.reenter_observe);
-    try testing.expectEqual(status_t.Reentrant, lookup_probe.reenter_check);
-    try testing.expectEqual(status_t.Reentrant, lookup_probe.reenter_note);
-    try testing.expectEqual(status_t.Reentrant, lookup_probe.reenter_next);
-    try testing.expect(!graph.busy);
-    try testing.expectEqual(@as(u32, 1), graph.ring_len);
+    try testing_t.expectEqual(status_t.Reentrant, lookup_probe.reenter_observe);
+    try testing_t.expectEqual(status_t.Reentrant, lookup_probe.reenter_check);
+    try testing_t.expectEqual(status_t.Reentrant, lookup_probe.reenter_note);
+    try testing_t.expectEqual(status_t.Reentrant, lookup_probe.reenter_next);
+    try testing_t.expect(!graph.busy);
+    try testing_t.expectEqual(@as(u32, 1), graph.ring_len);
 }
 
 test "QueueFull changes nothing and the same offer succeeds after a drain" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     fill_ring(graph, EventCapacity);
     var facts = window_facts(0x100, 10);
     try offer_fails(graph, &facts, .QueueFull);
-    try testing.expectEqual(@as(u32, 0), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 0), lookup_probe.calls);
     var stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.rejected_queue_full);
-    try testing.expectEqual(@as(u64, 1), graph.diag_queue_full);
+    try testing_t.expectEqual(@as(u64, 1), stats.rejected_queue_full);
+    try testing_t.expectEqual(@as(u64, 1), graph.diag_queue_full);
     _ = try next_ev(graph);
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
@@ -6247,7 +6247,7 @@ test "QueueFull changes nothing and the same offer succeeds after a drain" {
     fill_ring(graph, EventCapacity - 3);
     var parent = window_facts(0x300, 14);
     try offer_fails(graph, &parent, .QueueFull);
-    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 3), call_count_deferred(graph));
     _ = try next_ev(graph);
     const flushed = try offer(graph, &parent);
     try expect_counts(flushed, 4, 4, 0, 0);
@@ -6260,20 +6260,20 @@ test "QueueFull changes nothing and the same offer succeeds after a drain" {
     try offer_fails(graph, &hidden, .QueueFull);
     var hint = sentinel_observation();
     const before = state_digest(graph);
-    try testing.expectEqual(status_t.QueueFull, call_note_destroyed(graph, TestEpoch, 0x300, 50, 9000, &hint));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&hint), 0xA5));
-    try testing.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(status_t.QueueFull, call_note_destroyed(graph, TestEpoch, 0x300, 50, 9000, &hint));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&hint), 0xA5));
+    try testing_t.expectEqual(before, state_digest(graph));
     _ = try next_ev(graph);
     const retired = try offer(graph, &hidden);
     try expect_obs(retired, DispositionRetired, 0, 0, 2, ReasonNotVisible);
     try expect_counts(retired, 4, 0, 4, 0);
     stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 4), stats.rejected_queue_full);
-    try testing.expectEqual(@as(u64, 4), graph.diag_queue_full);
+    try testing_t.expectEqual(@as(u64, 4), stats.rejected_queue_full);
+    try testing_t.expectEqual(@as(u64, 4), graph.diag_queue_full);
 }
 
 test "QueueFull on a forced retirement counts nothing else and keeps the entry live" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = discard_events(graph);
@@ -6281,67 +6281,67 @@ test "QueueFull on a forced retirement counts nothing else and keeps the entry l
     var facts = owned_facts(0x100, 0x100, 11);
     facts.process_id = 9999;
     try offer_fails(graph, &facts, .QueueFull);
-    try testing.expectEqual(@as(u64, 0), current_stats(graph).rejected_cycle);
-    try testing.expect(call_find_active(graph, 0x100) != null);
+    try testing_t.expectEqual(@as(u64, 0), current_stats(graph).rejected_cycle);
+    try testing_t.expect(call_find_active(graph, 0x100) != null);
     var obs = sentinel_observation();
     const before = state_digest(graph);
-    try testing.expectEqual(status_t.QueueFull, call_note_destroyed(graph, TestEpoch, 0x100, 50, 9000, &obs));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-    try testing.expectEqual(before, state_digest(graph));
-    try testing.expectEqual(@as(u64, 2), current_stats(graph).rejected_queue_full);
-    try testing.expectEqual(@as(u64, 2), graph.diag_queue_full);
+    try testing_t.expectEqual(status_t.QueueFull, call_note_destroyed(graph, TestEpoch, 0x100, 50, 9000, &obs));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(@as(u64, 2), current_stats(graph).rejected_queue_full);
+    try testing_t.expectEqual(@as(u64, 2), graph.diag_queue_full);
 }
 
 test "generations grow by one, run out cleanly and leave existing entries working" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
-    set_generations_issued(graph, std.math.maxInt(u64) - 2);
+    set_generations_issued(graph, std_t.math.maxInt(u64) - 2);
     var obs = try admit_top(graph, 0x100, 10);
-    try testing.expectEqual(std.math.maxInt(u64) - 1, obs.generation);
+    try testing_t.expectEqual(std_t.math.maxInt(u64) - 1, obs.generation);
     obs = try admit_top(graph, 0x200, 11);
-    try testing.expectEqual(std.math.maxInt(u64), obs.generation);
+    try testing_t.expectEqual(std_t.math.maxInt(u64), obs.generation);
     _ = discard_events(graph);
     var facts = window_facts(0x300, 12);
     try offer_fails(graph, &facts, .GenerationExhausted);
     var stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.rejected_generation_exhausted);
-    try testing.expectEqual(@as(u64, 1), graph.diag_generation_exhausted);
-    try testing.expectEqual(@as(u64, 0), stats.rejected_at_capacity);
+    try testing_t.expectEqual(@as(u64, 1), stats.rejected_generation_exhausted);
+    try testing_t.expectEqual(@as(u64, 1), graph.diag_generation_exhausted);
+    try testing_t.expectEqual(@as(u64, 0), stats.rejected_at_capacity);
     // Deferral needs no generation, so it still works.
     var dialog = owned_facts(0x400, 0x900, 13);
     const deferred = try offer(graph, &dialog);
-    try testing.expectEqual(DispositionDeferred, deferred.disposition);
+    try testing_t.expectEqual(DispositionDeferred, deferred.disposition);
     // Existing entries keep updating, passing checks and retiring.
     facts = window_facts(0x100, 14);
     facts.x = 50;
     obs = try offer(graph, &facts);
-    try testing.expectEqual(DispositionUpdated, obs.disposition);
-    try testing.expectEqual(status_t.Ok, call_check_action(graph, TestEpoch, 0x200, std.math.maxInt(u64)));
+    try testing_t.expectEqual(DispositionUpdated, obs.disposition);
+    try testing_t.expectEqual(status_t.Ok, call_check_action(graph, TestEpoch, 0x200, std_t.math.maxInt(u64)));
     obs = try destroy_hint(graph, 0x200, 100, 9000);
-    try testing.expectEqual(DispositionRetired, obs.disposition);
+    try testing_t.expectEqual(DispositionRetired, obs.disposition);
     stats = current_stats(graph);
-    try testing.expectEqual(std.math.maxInt(u64), stats.generations_issued);
+    try testing_t.expectEqual(std_t.math.maxInt(u64), stats.generations_issued);
 }
 
 test "a flush cut by the last generations counts them as generation exhaustion" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = owned_facts(0x201, 0x100, 10);
     _ = try offer(graph, &facts);
     facts = owned_facts(0x202, 0x100, 11);
     _ = try offer(graph, &facts);
-    set_generations_issued(graph, std.math.maxInt(u64) - 2);
+    set_generations_issued(graph, std_t.math.maxInt(u64) - 2);
     const obs = try admit_top(graph, 0x100, 12);
-    try expect_obs(obs, DispositionAdmitted, RoleToplevel, std.math.maxInt(u64) - 1, 0, ReasonNone);
+    try expect_obs(obs, DispositionAdmitted, RoleToplevel, std_t.math.maxInt(u64) - 1, 0, ReasonNone);
     try expect_counts(obs, 2, 2, 0, 0);
-    try testing.expect(call_find_deferred(graph, 0x202) != null);
+    try testing_t.expect(call_find_deferred(graph, 0x202) != null);
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.rejected_generation_exhausted);
-    try testing.expectEqual(@as(u64, 0), stats.rejected_at_capacity);
+    try testing_t.expectEqual(@as(u64, 1), stats.rejected_generation_exhausted);
+    try testing_t.expectEqual(@as(u64, 0), stats.rejected_at_capacity);
 }
 
 test "reusing an HWND always yields a fresh generation and a late completion cannot touch it" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = discard_events(graph);
@@ -6352,14 +6352,14 @@ test "reusing an HWND always yields a fresh generation and a late completion can
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 2, 0, ReasonNone);
     // The same tuple after completing the first quarantine is still a new generation.
     const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
-    try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, 1, &proof));
-    try testing.expectEqual(status_t.Stale, call_complete_retire(graph, TestEpoch, 0x100, 1, &proof));
-    try testing.expectEqual(@as(u64, 2), live_generation(graph, 0x100));
+    try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, 1, &proof));
+    try testing_t.expectEqual(status_t.Stale, call_complete_retire(graph, TestEpoch, 0x100, 1, &proof));
+    try testing_t.expectEqual(@as(u64, 2), live_generation(graph, 0x100));
     _ = try destroy_hint(graph, 0x100, 30, 6000);
     obs = try admit_top(graph, 0x100, 31);
-    try testing.expectEqual(@as(u64, 3), obs.generation);
-    try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, 2, &proof));
-    try testing.expectEqual(@as(u64, 3), live_generation(graph, 0x100));
+    try testing_t.expectEqual(@as(u64, 3), obs.generation);
+    try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, 2, &proof));
+    try testing_t.expectEqual(@as(u64, 3), live_generation(graph, 0x100));
     // The stale-facts reference is the Active entry only: a retired window accepts any stamp.
     _ = try destroy_hint(graph, 0x100, 40, 7000);
     facts = window_facts(0x100, 5);
@@ -6368,7 +6368,7 @@ test "reusing an HWND always yields a fresh generation and a late completion can
 }
 
 test "stale epochs, invalid facts and stale facts are rejected before any state change" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = discard_events(graph);
@@ -6376,12 +6376,12 @@ test "stale epochs, invalid facts and stale facts are rejected before any state 
     facts.x = 4;
     var obs = sentinel_observation();
     var before = state_digest(graph);
-    try testing.expectEqual(status_t.StaleEpoch, call_observe(graph, TestEpoch + 1, &facts, &obs));
-    try testing.expectEqual(status_t.StaleEpoch, call_observe(graph, 0, &facts, &obs));
-    try testing.expectEqual(status_t.StaleEpoch, call_note_destroyed(graph, TestEpoch + 1, 0x100, 50, 9000, &obs));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-    try testing.expectEqual(before, state_digest(graph));
-    try testing.expectEqual(@as(u64, 3), current_stats(graph).rejected_stale_epoch);
+    try testing_t.expectEqual(status_t.StaleEpoch, call_observe(graph, TestEpoch + 1, &facts, &obs));
+    try testing_t.expectEqual(status_t.StaleEpoch, call_observe(graph, 0, &facts, &obs));
+    try testing_t.expectEqual(status_t.StaleEpoch, call_note_destroyed(graph, TestEpoch + 1, 0x100, 50, 9000, &obs));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(@as(u64, 3), current_stats(graph).rejected_stale_epoch);
     // Invalid facts win over staleness.
     facts.stamp = 0;
     try offer_fails(graph, &facts, .InvalidFacts);
@@ -6393,21 +6393,21 @@ test "stale epochs, invalid facts and stale facts are rejected before any state 
     facts.flags |= FactOwnerHidden;
     facts.owner_root = 0;
     try offer_fails(graph, &facts, .InvalidFacts);
-    try testing.expectEqual(@as(u64, 3), current_stats(graph).rejected_invalid_facts);
+    try testing_t.expectEqual(@as(u64, 3), current_stats(graph).rejected_invalid_facts);
     // Older stamps are stale; equal stamps are accepted.
     facts = window_facts(0x100, 9);
     try offer_fails(graph, &facts, .StaleFacts);
     facts.stamp = 10;
     obs = try offer(graph, &facts);
-    try testing.expectEqual(DispositionUnchanged, obs.disposition);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_stale_facts);
+    try testing_t.expectEqual(DispositionUnchanged, obs.disposition);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_stale_facts);
     before = state_digest(graph);
     // note_destroyed argument checks.
     obs = sentinel_observation();
-    try testing.expectEqual(status_t.InvalidArgument, call_note_destroyed(graph, TestEpoch, 0, 50, 9000, &obs));
-    try testing.expectEqual(status_t.InvalidArgument, call_note_destroyed(graph, TestEpoch, 0x100, 0, 9000, &obs));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-    try testing.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_note_destroyed(graph, TestEpoch, 0, 50, 9000, &obs));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_note_destroyed(graph, TestEpoch, 0x100, 0, 9000, &obs));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(before, state_digest(graph));
 }
 
 /// One simulated day in milliseconds.
@@ -6417,35 +6417,35 @@ fn admit_at(graph: *graph_t, window: u64, stamp: u64, tick: u32) !observation_t 
     var facts = window_facts(window, stamp);
     facts.captured_ms = tick;
     const obs = try offer(graph, &facts);
-    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    try testing_t.expectEqual(DispositionAdmitted, obs.disposition);
     return obs;
 }
 
 test "a genuine destroy hint retires the live entry and advances the high-water marks" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_at(graph, 0x100, 10, 5000);
     _ = discard_events(graph);
     const obs = try destroy_hint(graph, 0x100, 11, 5100);
     try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
     try expect_counts(obs, 1, 0, 1, 0);
-    try testing.expectEqual(@as(u64, 0x100), obs.window);
-    try testing.expectEqual(@as(u64, 11), graph.stamp_high_water);
-    try testing.expectEqual(TickBaseStart + 5100, graph.tick_base);
-    try testing.expectEqual(@as(?usize, null), call_find_active(graph, 0x100));
+    try testing_t.expectEqual(@as(u64, 0x100), obs.window);
+    try testing_t.expectEqual(@as(u64, 11), graph.stamp_high_water);
+    try testing_t.expectEqual(TickBaseStart + 5100, graph.tick_base);
+    try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x100));
     const ev = try next_ev(graph);
     try expect_ev(ev, EventRetireIntent, 0x100, 1, 0, 0, ReasonDestroyed);
-    try testing.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 0x100, 1));
+    try testing_t.expectEqual(status_t.Stale, call_check_action(graph, TestEpoch, 0x100, 1));
     // Retiring entries are never touched by a second hint.
     const again = try destroy_hint(graph, 0x100, 12, 5200);
     try expect_obs(again, DispositionUnchanged, 0, 0, 0, ReasonNone);
     try expect_counts(again, 0, 0, 0, 0);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
-    try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Retiring));
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, 1), call_count_state(graph, .Retiring));
 }
 
 test "a destroy hint older than the admitting facts is ignored" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_at(graph, 0x100, 10, 5000);
     _ = discard_events(graph);
@@ -6454,22 +6454,22 @@ test "a destroy hint older than the admitting facts is ignored" {
     try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
     obs = try destroy_hint(graph, 0x100, 9, 6000);
     try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
-    try testing.expectEqual(@as(u64, 10), graph.stamp_high_water);
+    try testing_t.expectEqual(@as(u64, 10), graph.stamp_high_water);
     // Tick clause: the event happened 1 and 10 ms before the facts that admitted the entry.
     obs = try destroy_hint(graph, 0x100, 11, 4999);
     try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
     obs = try destroy_hint(graph, 0x100, 12, 4990);
     try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
-    try testing.expect(call_find_active(graph, 0x100) != null);
-    try testing.expectEqual(@as(u64, 12), graph.stamp_high_water);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expect(call_find_active(graph, 0x100) != null);
+    try testing_t.expectEqual(@as(u64, 12), graph.stamp_high_water);
     // Equal ticks count as destroyed (documented conservative churn).
     obs = try destroy_hint(graph, 0x100, 13, 5000);
     try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
 }
 
 test "a destroy hint for a deferred record needs both a newer stamp and a non-older tick" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = owned_facts(0x200, 0x900, 10);
     facts.captured_ms = 5000;
@@ -6479,12 +6479,12 @@ test "a destroy hint for a deferred record needs both a newer stamp and a non-ol
     try expect_counts(obs, 0, 0, 0, 0);
     obs = try destroy_hint(graph, 0x200, 11, 4999);
     try expect_counts(obs, 0, 0, 0, 0);
-    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
     obs = try destroy_hint(graph, 0x200, 11, 5000);
     try expect_obs(obs, DispositionUnchanged, 0, 0, 0, ReasonNone);
     try expect_counts(obs, 0, 0, 0, 1);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
     // Nothing known about the window at all.
     obs = try destroy_hint(graph, 0x777, 12, 5000);
     try expect_obs(obs, DispositionUnchanged, 0, 0, 0, ReasonNone);
@@ -6493,28 +6493,28 @@ test "a destroy hint for a deferred record needs both a newer stamp and a non-ol
 
 test "tick wrap: a destroy across the 32-bit wrap retires, one just before the admission does not" {
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_at(graph, 0x100, 10, 0xFFFF_FFF0);
         const obs = try destroy_hint(graph, 0x100, 11, 0x0000_0010);
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
-        try testing.expectEqual(@as(u64, 0x1_0000_0010) + TickBaseStart - 0x1_0000_0000, graph.tick_base);
+        try testing_t.expectEqual(@as(u64, 0x1_0000_0010) + TickBaseStart - 0x1_0000_0000, graph.tick_base);
     }
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         _ = try admit_at(graph, 0x100, 10, 0xFFFF_FFF0);
         const obs = try destroy_hint(graph, 0x100, 11, 0xFFFF_FFE0);
         try expect_obs(obs, DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
         // A stale hint 10 ms before an admission close to the wrap point.
         _ = try destroy_hint(graph, 0x100, 12, 0xFFFF_FFE6);
-        try testing.expect(call_find_active(graph, 0x100) != null);
+        try testing_t.expect(call_find_active(graph, 0x100) != null);
     }
 }
 
 test "destroy hints still work 30 and 60 simulated days after the admission" {
     for ([_]u64{ 30, 60 }) |days| {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         const admit_tick: u64 = 0xFFFF_0000;
         _ = try admit_at(graph, 0x100, 10, @truncate(admit_tick));
@@ -6525,9 +6525,9 @@ test "destroy hints still work 30 and 60 simulated days after the admission" {
             var keepalive = window_facts(0x200, 11 + day);
             keepalive.captured_ms = @truncate(admit_tick + day * DayMs);
             const obs = try offer(graph, &keepalive);
-            try testing.expectEqual(DispositionUnchanged, obs.disposition);
+            try testing_t.expectEqual(DispositionUnchanged, obs.disposition);
         }
-        try testing.expectEqual(TickBaseStart - 0x1_0000 + days * DayMs, graph.tick_base);
+        try testing_t.expectEqual(TickBaseStart - 0x1_0000 + days * DayMs, graph.tick_base);
         const final_tick: u32 = @truncate(admit_tick + days * DayMs);
         const obs = try destroy_hint(graph, 0x100, 1000, final_tick);
         try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
@@ -6538,7 +6538,7 @@ test "destroy hints still work 30 and 60 simulated days after the admission" {
 }
 
 test "with a clock that does not advance, a silence longer than half the range still aliases" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_at(graph, 0x100, 10, 0xFFFF_0000);
     // 30 days later but no Ok call in between and a graph clock that did not move (so the elapsed
@@ -6551,63 +6551,63 @@ test "with a clock that does not advance, a silence longer than half the range s
 }
 
 test "tick_estimate adds the clock time elapsed since the anchor, never goes below the base and saturates" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     graph.tick_base = TickBaseStart + 1000;
     graph.tick_clock_at_base = 400;
-    try testing.expectEqual(TickBaseStart + 1000, tick_estimate(graph, 400));
-    try testing.expectEqual(TickBaseStart + 1600, tick_estimate(graph, 1000));
+    try testing_t.expectEqual(TickBaseStart + 1000, tick_estimate(graph, 400));
+    try testing_t.expectEqual(TickBaseStart + 1600, tick_estimate(graph, 1000));
     // A clock that went backwards (or never moved) counts as 0 elapsed.
-    try testing.expectEqual(TickBaseStart + 1000, tick_estimate(graph, 399));
-    try testing.expectEqual(TickBaseStart + 1000, tick_estimate(graph, 0));
-    graph.tick_base = std.math.maxInt(u64) - 5;
+    try testing_t.expectEqual(TickBaseStart + 1000, tick_estimate(graph, 399));
+    try testing_t.expectEqual(TickBaseStart + 1000, tick_estimate(graph, 0));
+    graph.tick_base = std_t.math.maxInt(u64) - 5;
     graph.tick_clock_at_base = 0;
-    try testing.expectEqual(@as(u64, std.math.maxInt(u64)), tick_estimate(graph, 100));
+    try testing_t.expectEqual(@as(u64, std_t.math.maxInt(u64)), tick_estimate(graph, 100));
 }
 
 test "the estimate anchor follows ticks and clock: newer ticks re-anchor, delayed ticks keep the estimate" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     test_clock.now = 100;
     _ = try admit_at(graph, 0x100, 10, 5000);
-    try testing.expectEqual(TickBaseStart + 5000, graph.tick_base);
-    try testing.expectEqual(@as(u64, 100), graph.tick_clock_at_base);
+    try testing_t.expectEqual(TickBaseStart + 5000, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 100), graph.tick_clock_at_base);
     // 500 ms of clock later the estimate is base + 500. A delayed tick 200 ms behind the estimate
     // still raises the base (monotonic max) but the estimate stays where it was.
     test_clock.now = 600;
     var facts = window_facts(0x100, 11);
     facts.captured_ms = 5300;
     _ = try offer(graph, &facts);
-    try testing.expectEqual(TickBaseStart + 5300, graph.tick_base);
-    try testing.expectEqual(TickBaseStart + 5500, tick_estimate(graph, 600));
+    try testing_t.expectEqual(TickBaseStart + 5300, graph.tick_base);
+    try testing_t.expectEqual(TickBaseStart + 5500, tick_estimate(graph, 600));
     // A tick 7 ms ahead of the estimate re-anchors the pair at the current clock reading.
     facts.stamp = 12;
     facts.captured_ms = 5507;
     _ = try offer(graph, &facts);
-    try testing.expectEqual(TickBaseStart + 5507, graph.tick_base);
-    try testing.expectEqual(@as(u64, 600), graph.tick_clock_at_base);
+    try testing_t.expectEqual(TickBaseStart + 5507, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 600), graph.tick_clock_at_base);
     // A delayed tick older than the base changes neither value.
     test_clock.now = 700;
     facts.stamp = 13;
     facts.captured_ms = 5000;
     _ = try offer(graph, &facts);
-    try testing.expectEqual(TickBaseStart + 5507, graph.tick_base);
-    try testing.expectEqual(@as(u64, 600), graph.tick_clock_at_base);
+    try testing_t.expectEqual(TickBaseStart + 5507, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 600), graph.tick_clock_at_base);
     // A clock that went backwards re-anchors at the new reading; the base itself never decreases.
     test_clock.now = 50;
     facts.stamp = 14;
     facts.captured_ms = 5600;
     _ = try offer(graph, &facts);
-    try testing.expectEqual(TickBaseStart + 5600, graph.tick_base);
-    try testing.expectEqual(@as(u64, 50), graph.tick_clock_at_base);
+    try testing_t.expectEqual(TickBaseStart + 5600, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 50), graph.tick_clock_at_base);
     test_clock.now = 10;
     _ = try destroy_hint(graph, 0x777, 20, 5000);
-    try testing.expectEqual(TickBaseStart + 5600, graph.tick_base);
-    try testing.expectEqual(@as(u64, 10), graph.tick_clock_at_base);
+    try testing_t.expectEqual(TickBaseStart + 5600, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 10), graph.tick_clock_at_base);
 }
 
 test "a rejected call reads the clock but changes neither tick_base nor its anchor" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_at(graph, 0x100, 10, 5000);
     test_clock.now = 9000;
@@ -6615,9 +6615,9 @@ test "a rejected call reads the clock but changes neither tick_base nor its anch
     stale.captured_ms = 9000;
     try offer_fails(graph, &stale, .StaleFacts);
     var obs = sentinel_observation();
-    try testing.expectEqual(status_t.InvalidArgument, call_note_destroyed(graph, TestEpoch, 0, 20, 9000, &obs));
-    try testing.expectEqual(TickBaseStart + 5000, graph.tick_base);
-    try testing.expectEqual(@as(u64, 0), graph.tick_clock_at_base);
+    try testing_t.expectEqual(status_t.InvalidArgument, call_note_destroyed(graph, TestEpoch, 0, 20, 9000, &obs));
+    try testing_t.expectEqual(TickBaseStart + 5000, graph.tick_base);
+    try testing_t.expectEqual(@as(u64, 0), graph.tick_clock_at_base);
 }
 
 test "a graph without a now_ms callback unwraps with its default timer and keeps working" {
@@ -6626,17 +6626,17 @@ test "a graph without a now_ms callback unwraps with its default timer and keeps
     config.now_ms_context = null;
     lookup_probe = .{};
     config.app_key_lookup = probe_lookup;
-    const graph = try call_create(testing.allocator, &config);
+    const graph = try call_create(testing_t.allocator, &config);
     defer call_destroy(graph);
     lookup_probe.graph = graph;
     _ = try admit_at(graph, 0x100, 10, 0xFFFF_FFF0);
     const obs = try destroy_hint(graph, 0x100, 11, 0x0000_0010);
     try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
-    try testing.expectEqual(TickBaseStart + 0x10, graph.tick_base);
+    try testing_t.expectEqual(TickBaseStart + 0x10, graph.tick_base);
 }
 
 test "after a silence longer than 2^31 ms of the graph clock, current-tick offers repair the base and a genuine destroy hint retires" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     test_clock.now = 5;
     var first = window_facts(0x100, 10);
@@ -6653,22 +6653,22 @@ test "after a silence longer than 2^31 ms of the graph clock, current-tick offer
         var facts = window_facts(0x100, stamp);
         facts.captured_ms = @truncate(tick_now);
         var obs = sentinel_observation();
-        try testing.expectEqual(status_t.Ok, call_observe(graph, TestEpoch, &facts, &obs));
-        try testing.expectEqual(DispositionUnchanged, obs.disposition);
+        try testing_t.expectEqual(status_t.Ok, call_observe(graph, TestEpoch, &facts, &obs));
+        try testing_t.expectEqual(DispositionUnchanged, obs.disposition);
         if (round % 1000 == 0) try check_invariants(graph);
         stamp += 1;
         clock_now += 250;
         tick_now += 250;
     }
     // The base follows the true time although 30 days exceed half the 32-bit range.
-    try testing.expectEqual(TickBaseStart + 1000 + thirty_days + 14_399 * 250, graph.tick_base);
+    try testing_t.expectEqual(TickBaseStart + 1000 + thirty_days + 14_399 * 250, graph.tick_base);
     test_clock.now = clock_now;
     const obs = try destroy_hint(graph, 0x100, stamp, @truncate(tick_now));
     try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonDestroyed);
 }
 
 test "the very first tick-carrying call after a long silence is unwrapped by the clock estimate" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_at(graph, 0x100, 10, 0xFFFF_0000);
     test_clock.now = 30 * DayMs;
@@ -6685,7 +6685,7 @@ test "the very first tick-carrying call after a long silence is unwrapped by the
 }
 
 test "estimate unwrap tolerates a clock that runs ahead of the ticks by less than half the range" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_at(graph, 0x100, 10, 5000);
     // The clock ran 20 days but the offered tick is only 2 days after the base: 18 days behind the
@@ -6694,8 +6694,8 @@ test "estimate unwrap tolerates a clock that runs ahead of the ticks by less tha
     var facts = window_facts(0x100, 11);
     facts.captured_ms = @truncate(5000 + 2 * DayMs);
     _ = try offer(graph, &facts);
-    try testing.expectEqual(TickBaseStart + 5000 + 2 * DayMs, graph.tick_base);
-    try testing.expectEqual(TickBaseStart + 5000 + 20 * DayMs, tick_estimate(graph, 20 * DayMs));
+    try testing_t.expectEqual(TickBaseStart + 5000 + 2 * DayMs, graph.tick_base);
+    try testing_t.expectEqual(TickBaseStart + 5000 + 20 * DayMs, tick_estimate(graph, 20 * DayMs));
 }
 
 fn fill_toplevels(graph: *graph_t, first: u64, count: u64, stamp: *u64) !void {
@@ -6717,18 +6717,18 @@ fn cut_leftover_state(graph: *graph_t, stamp: *u64) !void {
     stamp.* += 1;
     facts = window_facts(0x100, stamp.*);
     obs = try offer(graph, &facts);
-    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    try testing_t.expectEqual(DispositionAdmitted, obs.disposition);
     stamp.* += 1;
     facts = owned_facts(0x200, 0x100, stamp.*);
     obs = try offer(graph, &facts);
-    try testing.expectEqual(DispositionAdmitted, obs.disposition);
-    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
-    try testing.expect(call_find_deferred(graph, 0x300) != null);
+    try testing_t.expectEqual(DispositionAdmitted, obs.disposition);
+    try testing_t.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    try testing_t.expect(call_find_deferred(graph, 0x300) != null);
     _ = discard_events(graph);
 }
 
 test "a reclassification whose new parent chain re-enters the cascade through a deferred leftover is retire-only" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var stamp: u64 = 10;
     try cut_leftover_state(graph, &stamp);
@@ -6740,26 +6740,26 @@ test "a reclassification whose new parent chain re-enters the cascade through a 
     const obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionRetired, 0, 0, 63, ReasonReclassified);
     try expect_counts(obs, 2, 0, 2, 0);
-    try testing.expectEqual(cycles_before + 1, current_stats(graph).rejected_cycle);
-    try testing.expect(call_find_active(graph, 0x100) == null);
-    try testing.expect(call_find_active(graph, 0x200) == null);
-    try testing.expect(call_find_deferred(graph, 0x100) == null);
-    try testing.expect(call_find_deferred(graph, 0x200) == null);
+    try testing_t.expectEqual(cycles_before + 1, current_stats(graph).rejected_cycle);
+    try testing_t.expect(call_find_active(graph, 0x100) == null);
+    try testing_t.expect(call_find_active(graph, 0x200) == null);
+    try testing_t.expect(call_find_deferred(graph, 0x100) == null);
+    try testing_t.expect(call_find_deferred(graph, 0x200) == null);
     // X keeps waiting for C; no deferred link was added.
-    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
-    try testing.expect(call_find_deferred(graph, 0x300) != null);
+    try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing_t.expect(call_find_deferred(graph, 0x300) != null);
     try check_invariants(graph);
     // The retirement events are the only events: C (child) first, then W.
     var ev = try next_ev(graph);
     try expect_ev(ev, EventRetireIntent, 0x200, 64, 0x100, 63, ReasonParentRetired);
     ev = try next_ev(graph);
     try expect_ev(ev, EventRetireIntent, 0x100, 63, 0, 0, ReasonReclassified);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
 }
 
 test "the cascade rule follows a longer deferred chain and a plain chain to a non-cascade terminal still defers" {
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         var stamp: u64 = 10;
         try cut_leftover_state(graph, &stamp);
@@ -6772,39 +6772,39 @@ test "the cascade rule follows a longer deferred chain and a plain chain to a no
         facts = owned_facts(0x100, 0x400, stamp);
         obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionRetired, 0, 0, 63, ReasonReclassified);
-        try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
         try check_invariants(graph);
     }
     {
         // Control: the same deferred leftover X -> C, but the reclassified window is a sibling of C.
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         var stamp: u64 = 10;
         try cut_leftover_state(graph, &stamp);
         // Free one slot (a filler is destroyed), then admit 0x500 as a top-level window.
         stamp += 1;
         var obs = try destroy_hint(graph, 0x10000, stamp, 1000);
-        try testing.expectEqual(DispositionRetired, obs.disposition);
+        try testing_t.expectEqual(DispositionRetired, obs.disposition);
         _ = discard_events(graph);
         const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
-        try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x10000, 1, &proof));
+        try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x10000, 1, &proof));
         _ = discard_events(graph);
         stamp += 1;
         var facts = window_facts(0x500, stamp);
         obs = try offer(graph, &facts);
-        try testing.expectEqual(DispositionAdmitted, obs.disposition);
+        try testing_t.expectEqual(DispositionAdmitted, obs.disposition);
         // 0x500 becomes owned by X: X -> C(Active, not in 0x500's cascade). Deferred, no cycle.
         stamp += 1;
         facts = owned_facts(0x500, 0x300, stamp);
         obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 65, ReasonReclassified);
-        try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
         try check_invariants(graph);
     }
 }
 
 test "OwnerHidden promotes an owned window and a later flag change reclassifies it" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var facts = owned_facts(0x200, 0x900, 10);
     var obs = try offer(graph, &facts);
@@ -6814,14 +6814,14 @@ test "OwnerHidden promotes an owned window and a later flag change reclassifies 
     facts.flags |= FactOwnerHidden;
     obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
-    try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 1), lookup_probe.calls);
     var ev = try next_ev(graph);
     try expect_ev(ev, EventAnnounce, 0x200, 1, 0, 0, 0);
     // The owner became exportable again: Dialog under an owner that is not announced.
     facts = owned_facts(0x200, 0x900, 12);
     obs = try offer(graph, &facts);
     try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 1, ReasonReclassified);
-    try testing.expectEqual(@as(u32, 1), lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 1), lookup_probe.calls);
     ev = try next_ev(graph);
     try expect_ev(ev, EventRetireIntent, 0x200, 1, 0, 0, ReasonReclassified);
     facts = owned_facts(0x200, 0x900, 13);
@@ -6844,7 +6844,7 @@ test "OwnerHidden promotes an owned window and a later flag change reclassifies 
 }
 
 test "an IME preedit window follows its owner and loses the parent when the owner is hidden" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     var preedit = owned_facts(0x400, 0x100, 10);
     preedit.flags |= FactAgentOwned | FactAgentPreedit;
@@ -6853,9 +6853,9 @@ test "an IME preedit window follows its owner and loses the parent when the owne
     obs = try admit_top(graph, 0x100, 11);
     try expect_counts(obs, 2, 2, 0, 0);
     var events: [4]event_t = undefined;
-    try testing.expectEqual(@as(usize, 2), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 2), try drain_events(graph, &events));
     try expect_ev(events[1], EventAnnounce, 0x400, 2, 0x100, 1, 0);
-    try testing.expectEqual(RoleImePreedit, events[1].role);
+    try testing_t.expectEqual(RoleImePreedit, events[1].role);
     // The observer now reports the owner as hidden: no parent, so the role is the same but the parent changed.
     preedit = owned_facts(0x400, 0x100, 12);
     preedit.flags |= FactAgentOwned | FactAgentPreedit | FactOwnerHidden;
@@ -6870,87 +6870,87 @@ test "an IME preedit window follows its owner and loses the parent when the owne
 
 test "classify_public reports the pure verdict in the C struct" {
     var facts = fixture_facts();
-    var verdict: c.interop_window_verdict_t = undefined;
-    @memset(std.mem.asBytes(&verdict), 0xA5);
-    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
-    try testing.expectEqual(@as(u32, 1), verdict.kind);
-    try testing.expectEqual(RoleToplevel, verdict.role);
-    try testing.expectEqual(@as(u32, 0), verdict.reason);
-    try testing.expectEqual(@as(u32, 0), verdict.reserved0);
-    try testing.expectEqual(@as(u64, 0), verdict.parent_window);
+    var verdict: c_t.interop_window_verdict_t = undefined;
+    @memset(std_t.mem.asBytes(&verdict), 0xA5);
+    try testing_t.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+    try testing_t.expectEqual(@as(u32, 1), verdict.kind);
+    try testing_t.expectEqual(RoleToplevel, verdict.role);
+    try testing_t.expectEqual(@as(u32, 0), verdict.reason);
+    try testing_t.expectEqual(@as(u32, 0), verdict.reserved0);
+    try testing_t.expectEqual(@as(u64, 0), verdict.parent_window);
 
     facts.owner = OwnerWindow;
     facts.owner_root = OwnerRootWindow;
-    @memset(std.mem.asBytes(&verdict), 0xA5);
-    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacAuto, &verdict));
-    try testing.expectEqual(@as(u32, 1), verdict.kind);
-    try testing.expectEqual(RoleDialog, verdict.role);
-    try testing.expectEqual(OwnerRootWindow, verdict.parent_window);
+    @memset(std_t.mem.asBytes(&verdict), 0xA5);
+    try testing_t.expectEqual(status_t.Ok, call_classify_public(&facts, UacAuto, &verdict));
+    try testing_t.expectEqual(@as(u32, 1), verdict.kind);
+    try testing_t.expectEqual(RoleDialog, verdict.role);
+    try testing_t.expectEqual(OwnerRootWindow, verdict.parent_window);
     facts.flags |= FactOwnerHidden;
-    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacAuto, &verdict));
-    try testing.expectEqual(RoleToplevel, verdict.role);
-    try testing.expectEqual(@as(u64, 0), verdict.parent_window);
+    try testing_t.expectEqual(status_t.Ok, call_classify_public(&facts, UacAuto, &verdict));
+    try testing_t.expectEqual(RoleToplevel, verdict.role);
+    try testing_t.expectEqual(@as(u64, 0), verdict.parent_window);
 
     facts = fixture_facts();
     set_class(&facts, "Progman");
-    @memset(std.mem.asBytes(&verdict), 0xA5);
-    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
-    try testing.expectEqual(@as(u32, 2), verdict.kind);
-    try testing.expectEqual(@as(u32, 0), verdict.role);
-    try testing.expectEqual(ReasonExcludedClass, verdict.reason);
-    try testing.expectEqual(@as(u32, 0), verdict.reserved0);
-    try testing.expectEqual(@as(u64, 0), verdict.parent_window);
+    @memset(std_t.mem.asBytes(&verdict), 0xA5);
+    try testing_t.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+    try testing_t.expectEqual(@as(u32, 2), verdict.kind);
+    try testing_t.expectEqual(@as(u32, 0), verdict.role);
+    try testing_t.expectEqual(ReasonExcludedClass, verdict.reason);
+    try testing_t.expectEqual(@as(u32, 0), verdict.reserved0);
+    try testing_t.expectEqual(@as(u64, 0), verdict.parent_window);
 
     facts = fixture_facts();
     facts.flags &= ~FactOnInputDesktop;
     facts.owner = OwnerWindow;
     facts.owner_root = OwnerRootWindow;
-    @memset(std.mem.asBytes(&verdict), 0xA5);
-    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
-    try testing.expectEqual(@as(u32, 3), verdict.kind);
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&verdict)[4..], 0));
+    @memset(std_t.mem.asBytes(&verdict), 0xA5);
+    try testing_t.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+    try testing_t.expectEqual(@as(u32, 3), verdict.kind);
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&verdict)[4..], 0));
 
     // UAC modes reach the classifier.
     facts = fixture_facts();
     set_class(&facts, UacCredentialName);
     set_image(&facts, "consent.exe");
-    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
-    try testing.expectEqual(RoleUacConsent, verdict.role);
-    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacNative, &verdict));
-    try testing.expectEqual(@as(u32, 2), verdict.kind);
-    try testing.expectEqual(ReasonUacNativeHidden, verdict.reason);
+    try testing_t.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+    try testing_t.expectEqual(RoleUacConsent, verdict.role);
+    try testing_t.expectEqual(status_t.Ok, call_classify_public(&facts, UacNative, &verdict));
+    try testing_t.expectEqual(@as(u32, 2), verdict.kind);
+    try testing_t.expectEqual(ReasonUacNativeHidden, verdict.reason);
 }
 
 test "classify_public rejects bad arguments and invalid facts and leaves the verdict alone" {
     var facts = fixture_facts();
-    var verdict: c.interop_window_verdict_t = undefined;
-    @memset(std.mem.asBytes(&verdict), 0xA5);
-    try testing.expectEqual(status_t.InvalidArgument, call_classify_public(&facts, 3, &verdict));
-    try testing.expectEqual(status_t.InvalidArgument, call_classify_public(&facts, 0xFFFF_FFFF, &verdict));
+    var verdict: c_t.interop_window_verdict_t = undefined;
+    @memset(std_t.mem.asBytes(&verdict), 0xA5);
+    try testing_t.expectEqual(status_t.InvalidArgument, call_classify_public(&facts, 3, &verdict));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_classify_public(&facts, 0xFFFF_FFFF, &verdict));
     facts.stamp = 0;
-    try testing.expectEqual(status_t.InvalidFacts, call_classify_public(&facts, UacWindow, &verdict));
+    try testing_t.expectEqual(status_t.InvalidFacts, call_classify_public(&facts, UacWindow, &verdict));
     facts = fixture_facts();
     facts.flags |= FactOwnerHidden;
-    try testing.expectEqual(status_t.InvalidFacts, call_classify_public(&facts, UacWindow, &verdict));
+    try testing_t.expectEqual(status_t.InvalidFacts, call_classify_public(&facts, UacWindow, &verdict));
     // The argument check comes first, as for the other pure checks of the C function.
-    try testing.expectEqual(status_t.InvalidArgument, call_classify_public(&facts, 9, &verdict));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&verdict), 0xA5));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_classify_public(&facts, 9, &verdict));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&verdict), 0xA5));
     facts.owner = OwnerWindow;
     facts.owner_root = OwnerRootWindow;
-    try testing.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
+    try testing_t.expectEqual(status_t.Ok, call_classify_public(&facts, UacWindow, &verdict));
 }
 
 test "OwnerHidden is valid only together with an owner" {
     var facts = fixture_facts();
     facts.flags |= FactOwnerHidden;
-    try testing.expect(!call_validate(&facts));
+    try testing_t.expect(!call_validate(&facts));
     facts.owner = OwnerWindow;
     facts.owner_root = OwnerRootWindow;
-    try testing.expect(call_validate(&facts));
+    try testing_t.expect(call_validate(&facts));
     facts.flags &= ~FactOwnerHidden;
-    try testing.expect(call_validate(&facts));
-    try testing.expectEqual(@as(u32, 0x1FFF), FactMask);
-    try testing.expectEqual(@as(u32, 1 << 12), FactOwnerHidden);
+    try testing_t.expect(call_validate(&facts));
+    try testing_t.expectEqual(@as(u32, 0x1FFF), FactMask);
+    try testing_t.expectEqual(@as(u32, 1 << 12), FactOwnerHidden);
 }
 
 fn link_child(rec: *record_t, parent_window: u64, parent_generation: u64) void {
@@ -6982,56 +6982,56 @@ fn inject_tree(graph: *graph_t) void {
 }
 
 test "collect_cascade gathers Active descendants by exact parent pair, descending by generation" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     inject_tree(graph);
     var cascade = cascade_t{};
     call_collect_cascade(graph, 3, &cascade);
-    try testing.expectEqual(@as(u32, 4), cascade.count);
-    try testing.expectEqualSlices(u8, &[_]u8{ 1, 20, 7, 3 }, cascade.slots[0..4]);
-    try testing.expect(call_cascade_has_window(graph, &cascade, 0xA));
-    try testing.expect(call_cascade_has_window(graph, &cascade, 0xC));
-    try testing.expect(!call_cascade_has_window(graph, &cascade, 0xE));
-    try testing.expect(!call_cascade_has_window(graph, &cascade, 0x10));
-    try testing.expect(!call_cascade_has_window(graph, &cascade, 0x11));
+    try testing_t.expectEqual(@as(u32, 4), cascade.count);
+    try testing_t.expectEqualSlices(u8, &[_]u8{ 1, 20, 7, 3 }, cascade.slots[0..4]);
+    try testing_t.expect(call_cascade_has_window(graph, &cascade, 0xA));
+    try testing_t.expect(call_cascade_has_window(graph, &cascade, 0xC));
+    try testing_t.expect(!call_cascade_has_window(graph, &cascade, 0xE));
+    try testing_t.expect(!call_cascade_has_window(graph, &cascade, 0x10));
+    try testing_t.expect(!call_cascade_has_window(graph, &cascade, 0x11));
     // A leaf is its own cascade.
     call_collect_cascade(graph, 1, &cascade);
-    try testing.expectEqual(@as(u32, 1), cascade.count);
-    try testing.expectEqual(@as(u8, 1), cascade.slots[0]);
+    try testing_t.expectEqual(@as(u32, 1), cascade.count);
+    try testing_t.expectEqual(@as(u8, 1), cascade.slots[0]);
 }
 
 test "retire_cascade keeps records, marks Retiring and queues children before the root" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     inject_tree(graph);
     var cascade = cascade_t{};
     call_collect_cascade(graph, 3, &cascade);
     var tally = tally_t{};
     call_retire_cascade(graph, &cascade, ReasonDestroyed, &tally);
-    try testing.expectEqual(@as(u32, 4), tally.events);
-    try testing.expectEqual(@as(u32, 4), tally.retired);
-    try testing.expectEqual(@as(u32, 0), tally.admitted);
-    for ([_]usize{ 3, 7, 1, 20 }) |slot| try testing.expectEqual(slot_state_t.Retiring, graph.entries[slot].state);
-    try testing.expectEqual(slot_state_t.Active, graph.entries[2].state);
-    try testing.expectEqual(ReasonDestroyed, graph.entries[3].record.retire_reason);
-    try testing.expectEqual(ReasonParentRetired, graph.entries[7].record.retire_reason);
+    try testing_t.expectEqual(@as(u32, 4), tally.events);
+    try testing_t.expectEqual(@as(u32, 4), tally.retired);
+    try testing_t.expectEqual(@as(u32, 0), tally.admitted);
+    for ([_]usize{ 3, 7, 1, 20 }) |slot| try testing_t.expectEqual(slot_state_t.Retiring, graph.entries[slot].state);
+    try testing_t.expectEqual(slot_state_t.Active, graph.entries[2].state);
+    try testing_t.expectEqual(ReasonDestroyed, graph.entries[3].record.retire_reason);
+    try testing_t.expectEqual(ReasonParentRetired, graph.entries[7].record.retire_reason);
     var events: [6]event_t = undefined;
-    try testing.expectEqual(@as(usize, 4), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 4), try drain_events(graph, &events));
     const expected = [_][3]u64{ .{ 0xC, 9, ReasonParentRetired }, .{ 0xD, 7, ReasonParentRetired }, .{ 0xB, 6, ReasonParentRetired }, .{ 0xA, 5, ReasonDestroyed } };
     for (expected, events[0..4]) |want, got| {
-        try testing.expectEqual(want[0], got.window);
-        try testing.expectEqual(want[1], got.generation);
-        try testing.expectEqual(@as(u32, @intCast(want[2])), got.reason);
-        try testing.expectEqual(EventRetireIntent, got.kind);
-        try testing.expectEqual(@as(u32, 0), got.changed_mask);
-        try testing.expectEqualStrings("title", got.title[0..got.title_length]);
-        try testing.expectEqualStrings("a-k", got.app_key[0..got.app_key_length]);
+        try testing_t.expectEqual(want[0], got.window);
+        try testing_t.expectEqual(want[1], got.generation);
+        try testing_t.expectEqual(@as(u32, @intCast(want[2])), got.reason);
+        try testing_t.expectEqual(EventRetireIntent, got.kind);
+        try testing_t.expectEqual(@as(u32, 0), got.changed_mask);
+        try testing_t.expectEqualStrings("title", got.title[0..got.title_length]);
+        try testing_t.expectEqualStrings("a-k", got.app_key[0..got.app_key_length]);
     }
-    try testing.expectEqual(@as(u64, 4), current_stats(graph).retire_intents);
+    try testing_t.expectEqual(@as(u64, 4), current_stats(graph).retire_intents);
 }
 
 test "event_from_record copies every payload field and leaves the rest zero" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     var facts = fixture_facts();
     facts.min_width = 7;
@@ -7043,17 +7043,17 @@ test "event_from_record copies every payload field and leaves the rest zero" {
     @memcpy(rec.app_key[0..3], "p-z");
     const ev = call_event_from_record(graph, &rec, EventUpdate, ChangeDpi, ReasonDestroyed);
     try expect_ev(ev, EventUpdate, facts.window, 12, 0x55, 4, ReasonDestroyed);
-    try testing.expectEqual(RoleDialog, ev.role);
-    try testing.expectEqual(ChangeDpi, ev.changed_mask);
-    try testing.expectEqual(facts.x, ev.x);
-    try testing.expectEqual(@as(u32, 7), ev.min_width);
-    try testing.expectEqual(@as(u32, 9), ev.min_height);
-    try testing.expectEqual(facts.process_id, ev.process_id);
-    try testing.expectEqual(derive_state(&facts), ev.state);
-    try testing.expectEqual(@as(u32, 3), ev.app_key_length);
-    try testing.expectEqualStrings("p-z", ev.app_key[0..3]);
-    try testing.expectEqualSlices(u8, title_bytes(&facts), ev.title[0..ev.title_length]);
-    try testing.expect(std.mem.allEqual(u8, ev.app_key[3..], 0));
+    try testing_t.expectEqual(RoleDialog, ev.role);
+    try testing_t.expectEqual(ChangeDpi, ev.changed_mask);
+    try testing_t.expectEqual(facts.x, ev.x);
+    try testing_t.expectEqual(@as(u32, 7), ev.min_width);
+    try testing_t.expectEqual(@as(u32, 9), ev.min_height);
+    try testing_t.expectEqual(facts.process_id, ev.process_id);
+    try testing_t.expectEqual(derive_state(&facts), ev.state);
+    try testing_t.expectEqual(@as(u32, 3), ev.app_key_length);
+    try testing_t.expectEqualStrings("p-z", ev.app_key[0..3]);
+    try testing_t.expectEqualSlices(u8, title_bytes(&facts), ev.title[0..ev.title_length]);
+    try testing_t.expect(std_t.mem.allEqual(u8, ev.app_key[3..], 0));
 }
 
 test "record_from_facts copies identity and geometry and only the stated title bytes" {
@@ -7061,25 +7061,25 @@ test "record_from_facts copies identity and geometry and only the stated title b
     facts.title[facts.title_length] = 'Q';
     facts.stamp = 77;
     const rec = call_record_from_facts(&facts, TickBaseStart + 5, RoleToplevel, 0);
-    try testing.expectEqual(facts.window, rec.window);
-    try testing.expectEqual(@as(u64, 77), rec.last_stamp);
-    try testing.expectEqual(@as(u64, 0), rec.admit_stamp);
-    try testing.expectEqual(TickBaseStart + 5, rec.last_captured_ms);
-    try testing.expectEqual(@as(u64, 0), rec.admit_captured_ms);
-    try testing.expectEqual(facts.process_start_time, rec.process_start_time);
-    try testing.expectEqual(call_hash(call_class_bytes(&facts)), rec.class_hash);
-    try testing.expect(call_identity(&rec, &facts));
-    try testing.expectEqual(facts.title_length, rec.title_length);
-    try testing.expectEqual(@as(u8, 0), rec.title[rec.title_length]);
-    try testing.expectEqual(@as(u64, 0), rec.generation);
-    try testing.expectEqual(@as(u64, 0), rec.seq);
-    try testing.expectEqual(@as(u32, 0), rec.app_key_length);
+    try testing_t.expectEqual(facts.window, rec.window);
+    try testing_t.expectEqual(@as(u64, 77), rec.last_stamp);
+    try testing_t.expectEqual(@as(u64, 0), rec.admit_stamp);
+    try testing_t.expectEqual(TickBaseStart + 5, rec.last_captured_ms);
+    try testing_t.expectEqual(@as(u64, 0), rec.admit_captured_ms);
+    try testing_t.expectEqual(facts.process_start_time, rec.process_start_time);
+    try testing_t.expectEqual(call_hash(call_class_bytes(&facts)), rec.class_hash);
+    try testing_t.expect(call_identity(&rec, &facts));
+    try testing_t.expectEqual(facts.title_length, rec.title_length);
+    try testing_t.expectEqual(@as(u8, 0), rec.title[rec.title_length]);
+    try testing_t.expectEqual(@as(u64, 0), rec.generation);
+    try testing_t.expectEqual(@as(u64, 0), rec.seq);
+    try testing_t.expectEqual(@as(u32, 0), rec.app_key_length);
 }
 
 test "defer_insert uses a saturating age and evicts the lowest index among equal ages" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
-    graph.next_seq = std.math.maxInt(u64);
+    graph.next_seq = std_t.math.maxInt(u64);
     var tally = tally_t{};
     var index: u64 = 0;
     while (index < MaxDeferred) : (index += 1) {
@@ -7092,43 +7092,43 @@ test "defer_insert uses a saturating age and evicts the lowest index among equal
         rec.app_key_length = 3;
         call_defer_insert(graph, &rec, false, &tally);
     }
-    try testing.expectEqual(@as(u32, 0), tally.dropped);
-    try testing.expectEqual(std.math.maxInt(u64), graph.next_seq);
-    try testing.expectEqual(std.math.maxInt(u64), graph.deferred[5].record.seq);
-    try testing.expectEqual(@as(u64, 0), graph.deferred[5].record.generation);
-    try testing.expectEqual(@as(u64, 0), graph.deferred[5].record.admit_stamp);
-    try testing.expectEqual(@as(u32, 0), graph.deferred[5].record.retire_reason);
+    try testing_t.expectEqual(@as(u32, 0), tally.dropped);
+    try testing_t.expectEqual(std_t.math.maxInt(u64), graph.next_seq);
+    try testing_t.expectEqual(std_t.math.maxInt(u64), graph.deferred[5].record.seq);
+    try testing_t.expectEqual(@as(u64, 0), graph.deferred[5].record.generation);
+    try testing_t.expectEqual(@as(u64, 0), graph.deferred[5].record.admit_stamp);
+    try testing_t.expectEqual(@as(u32, 0), graph.deferred[5].record.retire_reason);
     var rec = record_init();
     rec.window = 0x7777;
     rec.parent_window = 0x9000;
     rec.app_key_length = 3;
     call_defer_insert(graph, &rec, true, &tally);
-    try testing.expectEqual(@as(u32, 1), tally.dropped);
-    try testing.expectEqual(@as(u64, 0x7777), graph.deferred[0].record.window);
-    try testing.expect(graph.deferred[0].seen);
-    try testing.expectEqual(@as(u64, 0x101), graph.deferred[1].record.window);
+    try testing_t.expectEqual(@as(u32, 1), tally.dropped);
+    try testing_t.expectEqual(@as(u64, 0x7777), graph.deferred[0].record.window);
+    try testing_t.expect(graph.deferred[0].seen);
+    try testing_t.expectEqual(@as(u64, 0x101), graph.deferred[1].record.window);
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.deferred_evicted);
-    try testing.expectEqual(@as(u64, 65), stats.deferred_added);
-    try testing.expectEqual(@as(u64, 0), stats.deferred_dropped);
+    try testing_t.expectEqual(@as(u64, 1), stats.deferred_evicted);
+    try testing_t.expectEqual(@as(u64, 65), stats.deferred_added);
+    try testing_t.expectEqual(@as(u64, 0), stats.deferred_dropped);
 }
 
 test "drop_deferred empties the slot and counts a drop, not an eviction" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     inject_deferred(graph, 9, 0x300);
     var tally = tally_t{};
     call_drop_deferred(graph, 9, &tally);
-    try testing.expectEqual(@as(u32, 1), tally.dropped);
-    try testing.expect(!graph.deferred[9].used);
-    try testing.expectEqual(@as(u64, 0), graph.deferred[9].record.window);
+    try testing_t.expectEqual(@as(u32, 1), tally.dropped);
+    try testing_t.expect(!graph.deferred[9].used);
+    try testing_t.expectEqual(@as(u64, 0), graph.deferred[9].record.window);
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.deferred_dropped);
-    try testing.expectEqual(@as(u64, 0), stats.deferred_evicted);
+    try testing_t.expectEqual(@as(u64, 1), stats.deferred_dropped);
+    try testing_t.expectEqual(@as(u64, 0), stats.deferred_evicted);
 }
 
 test "mark_seen marks the Active entry and the deferred record but never a Retiring entry" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
     _ = inject_entry(graph, 0, .Active, 0xA, 1);
     _ = inject_entry(graph, 1, .Retiring, 0xB, 2);
@@ -7137,65 +7137,65 @@ test "mark_seen marks the Active entry and the deferred record but never a Retir
     call_mark_seen(graph, 0xB);
     call_mark_seen(graph, 0xC);
     call_mark_seen(graph, 0xD);
-    try testing.expect(graph.entries[0].seen);
-    try testing.expect(!graph.entries[1].seen);
-    try testing.expect(graph.deferred[0].seen);
+    try testing_t.expect(graph.entries[0].seen);
+    try testing_t.expect(!graph.entries[1].seen);
+    try testing_t.expect(graph.deferred[0].seen);
 }
 
 test "bump_by adds and saturates" {
     var counter: u64 = 5;
     call_bump_by(&counter, 3);
-    try testing.expectEqual(@as(u64, 8), counter);
-    call_bump_by(&counter, std.math.maxInt(u64));
-    try testing.expectEqual(std.math.maxInt(u64), counter);
+    try testing_t.expectEqual(@as(u64, 8), counter);
+    call_bump_by(&counter, std_t.math.maxInt(u64));
+    try testing_t.expectEqual(std_t.math.maxInt(u64), counter);
 }
 
 test "ring_merge_target returns the newest Announce or Update and stops at a RetireIntent" {
-    const graph = try test_graph(testing.allocator, TestEpoch);
+    const graph = try test_graph(testing_t.allocator, TestEpoch);
     defer call_destroy(graph);
-    try testing.expectEqual(@as(?*event_t, null), call_merge_target(graph, 5, 1));
+    try testing_t.expectEqual(@as(?*event_t, null), call_merge_target(graph, 5, 1));
     queue_raw(graph, make_event(EventAnnounce, 5, 1));
     queue_raw(graph, make_event(EventAnnounce, 6, 1));
     queue_raw(graph, make_event(EventUpdate, 5, 1));
     const target = call_merge_target(graph, 5, 1).?;
-    try testing.expectEqual(EventUpdate, target.kind);
-    try testing.expectEqual(@as(?*event_t, null), call_merge_target(graph, 5, 2));
+    try testing_t.expectEqual(EventUpdate, target.kind);
+    try testing_t.expectEqual(@as(?*event_t, null), call_merge_target(graph, 5, 2));
     queue_raw(graph, make_event(EventRetireIntent, 5, 1));
-    try testing.expectEqual(@as(?*event_t, null), call_merge_target(graph, 5, 1));
-    try testing.expect(call_merge_target(graph, 6, 1) != null);
+    try testing_t.expectEqual(@as(?*event_t, null), call_merge_target(graph, 5, 1));
+    try testing_t.expect(call_merge_target(graph, 6, 1) != null);
 }
 
 test "seen marks follow entries through re-deferral, promotion and flush" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     try build_family(graph);
     for (&graph.entries) |*entry| entry.seen = false;
     // P is offered with an unannounced owner: P' is a fresh offer (seen), descendants inherit their entries' marks.
     var facts = owned_facts(0x100, 0x900, 20);
     _ = try offer(graph, &facts);
-    try testing.expect(graph.deferred[call_find_deferred(graph, 0x100).?].seen);
-    try testing.expect(!graph.deferred[call_find_deferred(graph, 0x200).?].seen);
-    try testing.expect(!graph.deferred[call_find_deferred(graph, 0x300).?].seen);
-    try testing.expect(!graph.deferred[call_find_deferred(graph, 0x400).?].seen);
+    try testing_t.expect(graph.deferred[call_find_deferred(graph, 0x100).?].seen);
+    try testing_t.expect(!graph.deferred[call_find_deferred(graph, 0x200).?].seen);
+    try testing_t.expect(!graph.deferred[call_find_deferred(graph, 0x300).?].seen);
+    try testing_t.expect(!graph.deferred[call_find_deferred(graph, 0x400).?].seen);
     _ = discard_events(graph);
     // Marked deferred leftovers keep their mark through the flush; promoted entries keep the record's mark.
     graph.deferred[call_find_deferred(graph, 0x300).?].seen = true;
     _ = try admit_top(graph, 0x900, 21);
-    try testing.expect(graph.entries[call_find_active(graph, 0x900).?].seen);
-    try testing.expect(graph.entries[call_find_active(graph, 0x100).?].seen);
-    try testing.expect(!graph.entries[call_find_active(graph, 0x200).?].seen);
-    try testing.expect(graph.entries[call_find_active(graph, 0x300).?].seen);
+    try testing_t.expect(graph.entries[call_find_active(graph, 0x900).?].seen);
+    try testing_t.expect(graph.entries[call_find_active(graph, 0x100).?].seen);
+    try testing_t.expect(!graph.entries[call_find_active(graph, 0x200).?].seen);
+    try testing_t.expect(graph.entries[call_find_active(graph, 0x300).?].seen);
     // A plain Ok offer marks the window's Active entry, a retired entry carries no new mark.
     facts = owned_facts(0x200, 0x100, 22);
     _ = try offer(graph, &facts);
-    try testing.expect(graph.entries[call_find_active(graph, 0x200).?].seen);
-    try testing.expect(!graph.entries[call_find_active(graph, 0x400).?].seen);
+    try testing_t.expect(graph.entries[call_find_active(graph, 0x200).?].seen);
+    try testing_t.expect(!graph.entries[call_find_active(graph, 0x400).?].seen);
 }
 
 test "a deferred record of another incarnation is dropped and its key is never reused" {
     // Admission branch: the window reappears with a different process and an announced owner.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         var facts = owned_facts(0x200, 0x100, 10);
         _ = try offer(graph, &facts);
@@ -7206,16 +7206,16 @@ test "a deferred record of another incarnation is dropped and its key is never r
         const obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionAdmitted, RoleDialog, 2, 0, ReasonNone);
         try expect_counts(obs, 1, 1, 0, 1);
-        try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
+        try testing_t.expectEqual(@as(u32, 3), lookup_probe.calls);
         const ev = try next_ev(graph);
         var key_buffer: [64]u8 = undefined;
-        try testing.expectEqualStrings(expected_key(&key_buffer, 0x200, 3), ev.app_key[0..ev.app_key_length]);
-        try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-        try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+        try testing_t.expectEqualStrings(expected_key(&key_buffer, 0x200, 3), ev.app_key[0..ev.app_key_length]);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
     }
     // Deferral branch: the new record gets a fresh lookup and a new age position.
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         var facts = owned_facts(0x200, 0x100, 10);
         _ = try offer(graph, &facts);
@@ -7226,20 +7226,20 @@ test "a deferred record of another incarnation is dropped and its key is never r
         const obs = try offer(graph, &facts);
         try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
         try expect_counts(obs, 0, 0, 0, 1);
-        try testing.expectEqual(@as(u32, 3), lookup_probe.calls);
+        try testing_t.expectEqual(@as(u32, 3), lookup_probe.calls);
         const record = &graph.deferred[call_find_deferred(graph, 0x200).?].record;
-        try testing.expectEqual(@as(u64, 3), record.seq);
-        try testing.expectEqual(@as(u32, 5), record.thread_id - 4243 + 0);
+        try testing_t.expectEqual(@as(u64, 3), record.seq);
+        try testing_t.expectEqual(@as(u32, 5), record.thread_id - 4243 + 0);
         var key_buffer: [64]u8 = undefined;
-        try testing.expectEqualStrings(expected_key(&key_buffer, 0x200, 3), record.app_key[0..record.app_key_length]);
-        try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
+        try testing_t.expectEqualStrings(expected_key(&key_buffer, 0x200, 3), record.app_key[0..record.app_key_length]);
+        try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
         const stats = current_stats(graph);
-        try testing.expectEqual(@as(u64, 3), stats.deferred_added);
-        try testing.expectEqual(@as(u64, 1), stats.deferred_dropped);
+        try testing_t.expectEqual(@as(u64, 3), stats.deferred_added);
+        try testing_t.expectEqual(@as(u64, 1), stats.deferred_dropped);
     }
     // A lookup failure on the replacement leaves the old record untouched (nothing changed).
     {
-        const graph = try probe_graph(testing.allocator);
+        const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
         var facts = owned_facts(0x200, 0x100, 10);
         _ = try offer(graph, &facts);
@@ -7247,15 +7247,15 @@ test "a deferred record of another incarnation is dropped and its key is never r
         facts.process_id = 9999;
         facts.stamp = 11;
         try offer_fails(graph, &facts, .LookupFailed);
-        try testing.expectEqual(@as(u32, 4242), graph.deferred[call_find_deferred(graph, 0x200).?].record.process_id);
+        try testing_t.expectEqual(@as(u32, 4242), graph.deferred[call_find_deferred(graph, 0x200).?].record.process_id);
     }
 }
 
 const consumer_t = struct {
-    live: std.AutoHashMap(u64, [2]u64),
+    live: std_t.AutoHashMap(u64, [2]u64),
 
-    fn init(allocator: std.mem.Allocator) consumer_t {
-        return .{ .live = std.AutoHashMap(u64, [2]u64).init(allocator) };
+    fn init(allocator: std_t.mem.Allocator) consumer_t {
+        return .{ .live = std_t.AutoHashMap(u64, [2]u64).init(allocator) };
     }
 
     fn deinit(self: *consumer_t) void {
@@ -7266,29 +7266,29 @@ const consumer_t = struct {
     fn apply(self: *consumer_t, ev: *const event_t) !void {
         switch (ev.kind) {
             EventAnnounce => {
-                try testing.expect(!self.live.contains(ev.generation));
+                try testing_t.expect(!self.live.contains(ev.generation));
                 if (ev.parent_generation != 0) {
                     const parent = self.live.get(ev.parent_generation) orelse return error.TestUnexpectedResult;
-                    try testing.expectEqual(ev.parent_window, parent[0]);
-                    try testing.expect(ev.parent_generation < ev.generation);
+                    try testing_t.expectEqual(ev.parent_window, parent[0]);
+                    try testing_t.expect(ev.parent_generation < ev.generation);
                 } else {
-                    try testing.expectEqual(@as(u64, 0), ev.parent_window);
+                    try testing_t.expectEqual(@as(u64, 0), ev.parent_window);
                 }
                 try self.live.put(ev.generation, .{ ev.window, ev.parent_generation });
             },
-            EventUpdate => try testing.expect(self.live.contains(ev.generation)),
+            EventUpdate => try testing_t.expect(self.live.contains(ev.generation)),
             else => {
-                try testing.expectEqual(EventRetireIntent, ev.kind);
-                try testing.expect(self.live.contains(ev.generation));
+                try testing_t.expectEqual(EventRetireIntent, ev.kind);
+                try testing_t.expect(self.live.contains(ev.generation));
                 var values = self.live.valueIterator();
-                while (values.next()) |value| try testing.expect(value[1] != ev.generation);
+                while (values.next()) |value| try testing_t.expect(value[1] != ev.generation);
                 _ = self.live.remove(ev.generation);
             },
         }
     }
 
     fn drain(self: *consumer_t, graph: *graph_t, limit: u32) !void {
-        var ev = std.mem.zeroes(event_t);
+        var ev = std_t.mem.zeroes(event_t);
         var taken: u32 = 0;
         while (taken < limit and call_next_event(graph, TestEpoch, &ev) == .Ok) : (taken += 1) try self.apply(&ev);
     }
@@ -7317,10 +7317,10 @@ const trace_totals_t = struct {
     unseen_listed: u64 = 0,
 };
 
-fn random_trace_facts(random: std.Random, variants: []u32, base: u64, stamp: u64, tick: u32) facts_t {
+fn random_trace_facts(random: std_t.Random, variants: []u32, base: u64, stamp: u64, tick: u32) facts_t {
     const index = random.uintLessThan(usize, variants.len);
     if (random.uintLessThan(u32, 9) == 0) variants[index] = random.int(u32);
-    var shape_prng = std.Random.DefaultPrng.init(@as(u64, variants[index]) *% 0x9E37_79B9 +% index);
+    var shape_prng = std_t.Random.DefaultPrng.init(@as(u64, variants[index]) *% 0x9E37_79B9 +% index);
     const shape = shape_prng.random();
     const window = base + index;
     var facts = window_facts(window, stamp);
@@ -7353,21 +7353,21 @@ fn random_trace_facts(random: std.Random, variants: []u32, base: u64, stamp: u64
 
 /// One random refresh-engine operation of the trace; `op` is 0..13. Checks the operation's contract
 /// against a before/after view of the graph and then the structural invariants.
-fn trace_refresh_op(graph: *graph_t, random: std.Random, op: u32, base: u64, count: usize, totals: *trace_totals_t) !void {
+fn trace_refresh_op(graph: *graph_t, random: std_t.Random, op: u32, base: u64, count: usize, totals: *trace_totals_t) !void {
     const was_open = graph.refresh_open;
     const before = state_digest(graph);
     const before_unmarked = state_digest_unmarked(graph);
     switch (op) {
         0, 1, 2 => {
             const status = call_refresh_begin(graph, TestEpoch);
-            try testing.expect(graph.refresh_open);
+            try testing_t.expect(graph.refresh_open);
             if (was_open) {
-                try testing.expectEqual(status_t.RefreshActive, status);
-                try testing.expectEqual(before, state_digest(graph));
+                try testing_t.expectEqual(status_t.RefreshActive, status);
+                try testing_t.expectEqual(before, state_digest(graph));
             } else {
-                try testing.expectEqual(status_t.Ok, status);
-                for (&graph.entries) |*entry| try testing.expect(!entry.seen);
-                for (&graph.deferred) |*slot| try testing.expect(!slot.seen);
+                try testing_t.expectEqual(status_t.Ok, status);
+                for (&graph.entries) |*entry| try testing_t.expect(!entry.seen);
+                for (&graph.deferred) |*slot| try testing_t.expect(!slot.seen);
             }
         },
         3, 4, 5, 6 => {
@@ -7377,41 +7377,41 @@ fn trace_refresh_op(graph: *graph_t, random: std.Random, op: u32, base: u64, cou
             const active = call_find_active(graph, window);
             const deferred = call_find_deferred(graph, window);
             if (!was_open) {
-                try testing.expectEqual(status_t.NoRefresh, status);
-                try testing.expectEqual(before, state_digest(graph));
+                try testing_t.expectEqual(status_t.NoRefresh, status);
+                try testing_t.expectEqual(before, state_digest(graph));
             } else if (active == null and deferred == null) {
-                try testing.expectEqual(status_t.None, status);
-                try testing.expectEqual(before, state_digest(graph));
+                try testing_t.expectEqual(status_t.None, status);
+                try testing_t.expectEqual(before, state_digest(graph));
             } else {
-                try testing.expectEqual(status_t.Ok, status);
-                try testing.expectEqual(before_unmarked, state_digest_unmarked(graph));
-                if (active) |slot| try testing.expect(graph.entries[slot].seen);
-                if (deferred) |slot| try testing.expect(graph.deferred[slot].seen);
+                try testing_t.expectEqual(status_t.Ok, status);
+                try testing_t.expectEqual(before_unmarked, state_digest_unmarked(graph));
+                if (active) |slot| try testing_t.expect(graph.entries[slot].seen);
+                if (deferred) |slot| try testing_t.expect(graph.deferred[slot].seen);
             }
         },
         7, 8, 9 => {
             var retired: u32 = 0xDEAD_BEEF;
             const status = call_refresh_commit(graph, TestEpoch, &retired);
             if (!was_open) {
-                try testing.expectEqual(status_t.NoRefresh, status);
-                try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
-                try testing.expectEqual(before, state_digest(graph));
+                try testing_t.expectEqual(status_t.NoRefresh, status);
+                try testing_t.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+                try testing_t.expectEqual(before, state_digest(graph));
             } else if (status == .QueueFull) {
                 totals.commit_queue_full += 1;
-                try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
-                try testing.expect(graph.refresh_open);
-                try testing.expectEqual(before, state_digest(graph));
+                try testing_t.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+                try testing_t.expect(graph.refresh_open);
+                try testing_t.expectEqual(before, state_digest(graph));
             } else {
-                try testing.expectEqual(status_t.Ok, status);
+                try testing_t.expectEqual(status_t.Ok, status);
                 totals.commits += 1;
                 totals.commit_retired += retired;
-                try testing.expect(!graph.refresh_open);
+                try testing_t.expect(!graph.refresh_open);
                 // Everything that survived was seen; every other entry and record is gone.
                 for (&graph.entries) |*entry| {
-                    if (entry.state == .Active) try testing.expect(entry.seen);
+                    if (entry.state == .Active) try testing_t.expect(entry.seen);
                 }
                 for (&graph.deferred) |*slot| {
-                    if (slot.used) try testing.expect(slot.seen);
+                    if (slot.used) try testing_t.expect(slot.seen);
                 }
             }
         },
@@ -7419,50 +7419,50 @@ fn trace_refresh_op(graph: *graph_t, random: std.Random, op: u32, base: u64, cou
             const status = call_refresh_abort(graph, TestEpoch);
             if (was_open) {
                 totals.aborts += 1;
-                try testing.expectEqual(status_t.Ok, status);
+                try testing_t.expectEqual(status_t.Ok, status);
             } else {
-                try testing.expectEqual(status_t.NoRefresh, status);
+                try testing_t.expectEqual(status_t.NoRefresh, status);
             }
-            try testing.expect(!graph.refresh_open);
-            try testing.expectEqual(before_unmarked, state_digest_unmarked(graph));
+            try testing_t.expect(!graph.refresh_open);
+            try testing_t.expectEqual(before_unmarked, state_digest_unmarked(graph));
         },
         11 => {
             var retired: u32 = 0xDEAD_BEEF;
             const status = call_invalidate_all(graph, TestEpoch, if (random.boolean()) &retired else null);
             if (status == .QueueFull) {
                 totals.invalidate_queue_full += 1;
-                try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
-                try testing.expectEqual(before, state_digest(graph));
-                try testing.expectEqual(was_open, graph.refresh_open);
+                try testing_t.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+                try testing_t.expectEqual(before, state_digest(graph));
+                try testing_t.expectEqual(was_open, graph.refresh_open);
             } else {
-                try testing.expectEqual(status_t.Ok, status);
+                try testing_t.expectEqual(status_t.Ok, status);
                 totals.invalidations += 1;
-                try testing.expect(!graph.refresh_open);
-                try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
-                try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
+                try testing_t.expect(!graph.refresh_open);
+                try testing_t.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
+                try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
             }
         },
         else => {
             var windows: [MaxEntries]u64 = undefined;
             var total: u32 = 0xDEAD_BEEF;
             const status = call_refresh_unseen(graph, TestEpoch, &windows, MaxEntries, &total);
-            try testing.expectEqual(before, state_digest(graph));
+            try testing_t.expectEqual(before, state_digest(graph));
             if (!was_open) {
-                try testing.expectEqual(status_t.NoRefresh, status);
-                try testing.expectEqual(@as(u32, 0xDEAD_BEEF), total);
+                try testing_t.expectEqual(status_t.NoRefresh, status);
+                try testing_t.expectEqual(@as(u32, 0xDEAD_BEEF), total);
             } else {
-                try testing.expectEqual(status_t.Ok, status);
+                try testing_t.expectEqual(status_t.Ok, status);
                 totals.unseen_listed += total;
                 var expected: u32 = 0;
                 var last_generation: u64 = 0;
                 for (&graph.entries) |*entry| {
                     if (entry.state == .Active and !entry.seen) expected += 1;
                 }
-                try testing.expectEqual(expected, total);
+                try testing_t.expectEqual(expected, total);
                 for (windows[0..total]) |window| {
                     const slot = call_find_active(graph, window).?;
-                    try testing.expect(!graph.entries[slot].seen);
-                    try testing.expect(graph.entries[slot].record.generation > last_generation);
+                    try testing_t.expect(!graph.entries[slot].seen);
+                    try testing_t.expect(graph.entries[slot].record.generation > last_generation);
                     last_generation = graph.entries[slot].record.generation;
                 }
             }
@@ -7472,14 +7472,14 @@ fn trace_refresh_op(graph: *graph_t, random: std.Random, op: u32, base: u64, cou
 }
 
 fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above: u32, drain_max: u32, refresh_ops: bool, totals: *trace_totals_t) !void {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
-    var consumer = consumer_t.init(testing.allocator);
+    var consumer = consumer_t.init(testing_t.allocator);
     defer consumer.deinit();
-    var prng = std.Random.DefaultPrng.init(seed);
+    var prng = std_t.Random.DefaultPrng.init(seed);
     const random = prng.random();
-    const variants = try testing.allocator.alloc(u32, count);
-    defer testing.allocator.free(variants);
+    const variants = try testing_t.allocator.alloc(u32, count);
+    defer testing_t.allocator.free(variants);
     for (variants) |*variant| variant.* = random.int(u32);
     var stamp: u64 = 100;
     var tick: u32 = 0xFFFF_FF00;
@@ -7518,11 +7518,11 @@ fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above:
         } else if (choice < 78) {
             var entries: [MaxEntries]retiring_entry_t = undefined;
             var total: u32 = 0;
-            try testing.expectEqual(status_t.Ok, call_list_retiring(graph, &entries, MaxEntries, &total));
+            try testing_t.expectEqual(status_t.Ok, call_list_retiring(graph, &entries, MaxEntries, &total));
             if (total != 0) {
                 const picked = entries[random.uintLessThan(u32, total)];
                 const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
-                try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, picked.window, picked.generation, &proof));
+                try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, picked.window, picked.generation, &proof));
             }
             try check_invariants(graph);
             continue;
@@ -7541,36 +7541,36 @@ fn run_random_trace(seed: u64, base: u64, count: usize, steps: u32, drain_above:
         }
         switch (status) {
             .Ok => {
-                try testing.expect(!std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-                try testing.expect(obs.events_queued <= MaxCallEvents);
+                try testing_t.expect(!std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+                try testing_t.expect(obs.events_queued <= MaxCallEvents);
             },
             .Cycle => {},
             .NoRefresh => {
-                try testing.expect(offered_window != 0 and !was_open);
-                try testing.expectEqual(before, state_digest_unmarked(graph));
+                try testing_t.expect(offered_window != 0 and !was_open);
+                try testing_t.expectEqual(before, state_digest_unmarked(graph));
             },
-            .AtCapacity, .QueueFull, .LookupFailed, .StaleFacts => try testing.expectEqual(before, state_digest_unmarked(graph)),
+            .AtCapacity, .QueueFull, .LookupFailed, .StaleFacts => try testing_t.expectEqual(before, state_digest_unmarked(graph)),
             else => return error.TestUnexpectedResult,
         }
         if (offered_window != 0 and status != .NoRefresh) {
             // Seen rule: after any outcome whatever exists for the offered window carries the mark.
-            try testing.expect(was_open);
-            if (call_find_active(graph, offered_window)) |slot| try testing.expect(graph.entries[slot].seen);
-            if (call_find_deferred(graph, offered_window)) |slot| try testing.expect(graph.deferred[slot].seen);
+            try testing_t.expect(was_open);
+            if (call_find_active(graph, offered_window)) |slot| try testing_t.expect(graph.entries[slot].seen);
+            if (call_find_deferred(graph, offered_window)) |slot| try testing_t.expect(graph.deferred[slot].seen);
         }
         try check_invariants(graph);
         if (graph.ring_len > drain_above) try consumer.drain(graph, EventCapacity);
     }
     try consumer.drain(graph, EventCapacity);
     // After a full drain the consumer's live set is exactly the Active entries.
-    try testing.expectEqual(@as(u32, @intCast(consumer.live.count())), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, @intCast(consumer.live.count())), call_count_state(graph, .Active));
     for (&graph.entries) |*entry| {
-        if (entry.state == .Active) try testing.expect(consumer.live.contains(entry.record.generation));
+        if (entry.state == .Active) try testing_t.expect(consumer.live.contains(entry.record.generation));
     }
     const stats = current_stats(graph);
-    try testing.expectEqual(stats.events_queued, stats.events_drained);
-    try testing.expectEqual(@as(u32, 0), stats.events_pending);
-    try testing.expect(stats.admitted >= stats.retire_intents);
+    try testing_t.expectEqual(stats.events_queued, stats.events_drained);
+    try testing_t.expectEqual(@as(u32, 0), stats.events_pending);
+    try testing_t.expect(stats.admitted >= stats.retire_intents);
     totals.reclassified += stats.reclassified;
     totals.updates += stats.updates_queued;
     totals.coalesced += stats.events_coalesced;
@@ -7593,44 +7593,44 @@ test "random operation traces keep every graph invariant and the event stream or
     try run_random_trace(0x5EED_0005, 0x1000, 90, 30000, 256, 1, true, &totals);
     try run_random_trace(0x5EED_0006, 0x1000, 220, 60000, 150, 5, true, &totals);
     // 210000 steps in total (the invariants are checked after every step).
-    try testing.expectEqual(@as(u32, 210000), totals.steps);
+    try testing_t.expectEqual(@as(u32, 210000), totals.steps);
     // The generator really exercised the interesting paths.
-    try testing.expect(totals.reclassified > 20);
-    try testing.expect(totals.updates > 20);
-    try testing.expect(totals.coalesced > 5);
-    try testing.expect(totals.evicted > 0);
-    try testing.expect(totals.at_capacity > 20);
-    try testing.expect(totals.cycle > 5);
-    try testing.expect(totals.queue_full > 0);
-    try testing.expect(totals.lookup_failures > 5);
-    try testing.expect(totals.stale_facts > 5);
+    try testing_t.expect(totals.reclassified > 20);
+    try testing_t.expect(totals.updates > 20);
+    try testing_t.expect(totals.coalesced > 5);
+    try testing_t.expect(totals.evicted > 0);
+    try testing_t.expect(totals.at_capacity > 20);
+    try testing_t.expect(totals.cycle > 5);
+    try testing_t.expect(totals.queue_full > 0);
+    try testing_t.expect(totals.lookup_failures > 5);
+    try testing_t.expect(totals.stale_facts > 5);
     // ... and so did the refresh engine.
-    try testing.expect(totals.offers > 200);
-    try testing.expect(totals.keeps > 100);
-    try testing.expect(totals.commits > 20);
-    try testing.expect(totals.commit_retired > 20);
-    try testing.expect(totals.commit_queue_full > 0);
-    try testing.expect(totals.aborts > 5);
-    try testing.expect(totals.invalidations > 5);
-    try testing.expect(totals.unseen_listed > 20);
+    try testing_t.expect(totals.offers > 200);
+    try testing_t.expect(totals.keeps > 100);
+    try testing_t.expect(totals.commits > 20);
+    try testing_t.expect(totals.commit_retired > 20);
+    try testing_t.expect(totals.commit_queue_full > 0);
+    try testing_t.expect(totals.aborts > 5);
+    try testing_t.expect(totals.invalidations > 5);
+    try testing_t.expect(totals.unseen_listed > 20);
 }
 
 test "observe_locked runs the plan on the facts it is given without applying the call guards" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     graph.busy = true;
     defer graph.busy = false;
     var facts = window_facts(0x100, 10);
     var obs = sentinel_observation();
-    try testing.expectEqual(status_t.Ok, call_observe_locked(graph, &facts, &obs));
+    try testing_t.expectEqual(status_t.Ok, call_observe_locked(graph, &facts, &obs));
     try expect_obs(obs, DispositionAdmitted, RoleToplevel, 1, 0, ReasonNone);
     // The refresh engine hands over its own stack copy: the lookup sees exactly that pointer.
-    try testing.expectEqual(@intFromPtr(&facts), lookup_probe.last_pointer);
+    try testing_t.expectEqual(@intFromPtr(&facts), lookup_probe.last_pointer);
     facts.stamp = 0;
     obs = sentinel_observation();
-    try testing.expectEqual(status_t.InvalidFacts, call_observe_locked(graph, &facts, &obs));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-    try testing.expectEqual(@as(u64, 1), graph.stats.rejected_invalid_facts);
+    try testing_t.expectEqual(status_t.InvalidFacts, call_observe_locked(graph, &facts, &obs));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(@as(u64, 1), graph.stats.rejected_invalid_facts);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -7675,29 +7675,29 @@ fn state_digest_unmarked(graph: *const graph_t) u64 {
     for (&entries) |*entry| entry.seen = false;
     var deferred = graph.deferred;
     for (&deferred) |*slot| slot.seen = false;
-    var hasher = std.hash.Wyhash.init(0);
-    hasher.update(std.mem.asBytes(&entries));
-    hasher.update(std.mem.asBytes(&deferred));
-    hasher.update(std.mem.asBytes(&graph.ring));
-    hasher.update(std.mem.asBytes(&graph.ring_head));
-    hasher.update(std.mem.asBytes(&graph.ring_len));
-    hasher.update(std.mem.asBytes(&graph.generations_issued));
-    hasher.update(std.mem.asBytes(&graph.next_seq));
-    hasher.update(std.mem.asBytes(&graph.stamp_high_water));
-    hasher.update(std.mem.asBytes(&graph.tick_base));
-    hasher.update(std.mem.asBytes(&graph.tick_clock_at_base));
+    var hasher = std_t.hash.Wyhash.init(0);
+    hasher.update(std_t.mem.asBytes(&entries));
+    hasher.update(std_t.mem.asBytes(&deferred));
+    hasher.update(std_t.mem.asBytes(&graph.ring));
+    hasher.update(std_t.mem.asBytes(&graph.ring_head));
+    hasher.update(std_t.mem.asBytes(&graph.ring_len));
+    hasher.update(std_t.mem.asBytes(&graph.generations_issued));
+    hasher.update(std_t.mem.asBytes(&graph.next_seq));
+    hasher.update(std_t.mem.asBytes(&graph.stamp_high_water));
+    hasher.update(std_t.mem.asBytes(&graph.tick_base));
+    hasher.update(std_t.mem.asBytes(&graph.tick_clock_at_base));
     return hasher.final();
 }
 
 fn refresh_open_ok(graph: *graph_t) !void {
-    try testing.expectEqual(status_t.Ok, call_refresh_begin(graph, TestEpoch));
-    try testing.expect(graph.refresh_open);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_begin(graph, TestEpoch));
+    try testing_t.expect(graph.refresh_open);
     try check_invariants(graph);
 }
 
 fn refresh_offer_ok(graph: *graph_t, facts: *const facts_t) !observation_t {
     var obs = sentinel_observation();
-    try testing.expectEqual(status_t.Ok, call_refresh_offer(graph, TestEpoch, facts, &obs));
+    try testing_t.expectEqual(status_t.Ok, call_refresh_offer(graph, TestEpoch, facts, &obs));
     try check_invariants(graph);
     return obs;
 }
@@ -7706,16 +7706,16 @@ fn refresh_offer_ok(graph: *graph_t, facts: *const facts_t) !observation_t {
 fn refresh_offer_fails(graph: *graph_t, facts: *const facts_t, want: status_t) !void {
     var obs = sentinel_observation();
     const before = state_digest_unmarked(graph);
-    try testing.expectEqual(want, call_refresh_offer(graph, TestEpoch, facts, &obs));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-    try testing.expectEqual(before, state_digest_unmarked(graph));
+    try testing_t.expectEqual(want, call_refresh_offer(graph, TestEpoch, facts, &obs));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(before, state_digest_unmarked(graph));
     try check_invariants(graph);
 }
 
 fn refresh_commit_ok(graph: *graph_t) !u32 {
     var retired: u32 = 0xDEAD_BEEF;
-    try testing.expectEqual(status_t.Ok, call_refresh_commit(graph, TestEpoch, &retired));
-    try testing.expect(!graph.refresh_open);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_commit(graph, TestEpoch, &retired));
+    try testing_t.expect(!graph.refresh_open);
     try check_invariants(graph);
     return retired;
 }
@@ -7729,31 +7729,31 @@ fn deferred_seen(graph: *const graph_t, window: u64) bool {
 }
 
 test "refresh_begin opens the refresh, clears every mark and reports an already open refresh" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = try admit_dialog(graph, 0x900, 0x777, 11);
-    try testing.expect(active_seen(graph, 0x100));
-    try testing.expect(deferred_seen(graph, 0x900));
-    try testing.expectEqual(@as(u32, 0), current_stats(graph).refresh_active);
+    try testing_t.expect(active_seen(graph, 0x100));
+    try testing_t.expect(deferred_seen(graph, 0x900));
+    try testing_t.expectEqual(@as(u32, 0), current_stats(graph).refresh_active);
     try refresh_open_ok(graph);
-    try testing.expect(!active_seen(graph, 0x100));
-    try testing.expect(!deferred_seen(graph, 0x900));
-    try testing.expectEqual(@as(u32, 1), current_stats(graph).refresh_active);
+    try testing_t.expect(!active_seen(graph, 0x100));
+    try testing_t.expect(!deferred_seen(graph, 0x900));
+    try testing_t.expectEqual(@as(u32, 1), current_stats(graph).refresh_active);
     // A second begin leaves the open refresh and its marks alone.
-    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x100));
+    try testing_t.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x100));
     const before = state_digest(graph);
-    try testing.expectEqual(status_t.RefreshActive, call_refresh_begin(graph, TestEpoch));
-    try testing.expectEqual(before, state_digest(graph));
-    try testing.expect(graph.refresh_open);
-    try testing.expect(active_seen(graph, 0x100));
-    try testing.expectEqual(@as(u32, 1), current_stats(graph).refresh_active);
-    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_commits);
-    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_aborts);
+    try testing_t.expectEqual(status_t.RefreshActive, call_refresh_begin(graph, TestEpoch));
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expect(graph.refresh_open);
+    try testing_t.expect(active_seen(graph, 0x100));
+    try testing_t.expectEqual(@as(u32, 1), current_stats(graph).refresh_active);
+    try testing_t.expectEqual(@as(u64, 0), current_stats(graph).refresh_commits);
+    try testing_t.expectEqual(@as(u64, 0), current_stats(graph).refresh_aborts);
 }
 
 test "offering every live window and committing retires nothing" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x50, 10);
     _ = try admit_top(graph, 0x100, 11);
@@ -7773,46 +7773,46 @@ test "offering every live window and committing retires nothing" {
     try expect_obs(obs, DispositionUnchanged, RoleDialog, 3, 0, ReasonNone);
     facts = owned_facts(0x900, 0x777, 23);
     obs = try refresh_offer_ok(graph, &facts);
-    try testing.expectEqual(DispositionDeferred, obs.disposition);
+    try testing_t.expectEqual(DispositionDeferred, obs.disposition);
     try expect_counts(obs, 0, 0, 0, 0);
-    try testing.expectEqual(lookups, lookup_probe.calls);
-    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
-    try testing.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
-    try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Retiring));
-    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(lookups, lookup_probe.calls);
+    try testing_t.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing_t.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, 0), call_count_state(graph, .Retiring));
+    try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.refresh_commits);
-    try testing.expectEqual(@as(u64, 0), stats.refresh_aborts);
-    try testing.expectEqual(@as(u32, 0), stats.refresh_active);
-    try testing.expectEqual(@as(u64, 0), stats.retire_intents);
-    try testing.expectEqual(@as(u64, 0), stats.deferred_dropped);
+    try testing_t.expectEqual(@as(u64, 1), stats.refresh_commits);
+    try testing_t.expectEqual(@as(u64, 0), stats.refresh_aborts);
+    try testing_t.expectEqual(@as(u32, 0), stats.refresh_active);
+    try testing_t.expectEqual(@as(u64, 0), stats.retire_intents);
+    try testing_t.expectEqual(@as(u64, 0), stats.deferred_dropped);
     // The next call without an open refresh is refused.
-    try testing.expectEqual(status_t.NoRefresh, call_refresh_commit(graph, TestEpoch, null));
+    try testing_t.expectEqual(status_t.NoRefresh, call_refresh_commit(graph, TestEpoch, null));
 }
 
 test "a commit retires every unseen entry children first with reason RefreshUnseen" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     try build_family(graph);
     try refresh_open_ok(graph);
     const retired = try refresh_commit_ok(graph);
-    try testing.expectEqual(@as(u32, 5), retired);
+    try testing_t.expectEqual(@as(u32, 5), retired);
     var events: [8]event_t = undefined;
-    try testing.expectEqual(@as(usize, 5), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 5), try drain_events(graph, &events));
     try expect_ev(events[0], EventRetireIntent, 0x400, 5, 0x200, 3, ReasonRefreshUnseen);
     try expect_ev(events[1], EventRetireIntent, 0x300, 4, 0x100, 2, ReasonRefreshUnseen);
     try expect_ev(events[2], EventRetireIntent, 0x200, 3, 0x100, 2, ReasonRefreshUnseen);
     try expect_ev(events[3], EventRetireIntent, 0x100, 2, 0, 0, ReasonRefreshUnseen);
     try expect_ev(events[4], EventRetireIntent, 0x50, 1, 0, 0, ReasonRefreshUnseen);
-    try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
-    try testing.expectEqual(@as(u32, 5), call_count_state(graph, .Retiring));
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-    try testing.expectEqual(@as(u64, 5), current_stats(graph).retire_intents);
+    try testing_t.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, 5), call_count_state(graph, .Retiring));
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u64, 5), current_stats(graph).retire_intents);
 }
 
 test "a seen child of an unseen parent retires with it as ParentRetired and is never re-deferred" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     try build_family(graph);
     try refresh_open_ok(graph);
@@ -7825,46 +7825,46 @@ test "a seen child of an unseen parent retires with it as ParentRetired and is n
     _ = try refresh_offer_ok(graph, &facts);
     var windows: [MaxEntries]u64 = undefined;
     var total: u32 = 0;
-    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, MaxEntries, &total));
-    try testing.expectEqual(@as(u32, 2), total);
-    try testing.expectEqualSlices(u64, &[_]u64{ 0x100, 0x300 }, windows[0..2]);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, MaxEntries, &total));
+    try testing_t.expectEqual(@as(u32, 2), total);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 0x100, 0x300 }, windows[0..2]);
     const retired = try refresh_commit_ok(graph);
-    try testing.expectEqual(@as(u32, 4), retired);
+    try testing_t.expectEqual(@as(u32, 4), retired);
     var events: [8]event_t = undefined;
-    try testing.expectEqual(@as(usize, 4), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 4), try drain_events(graph, &events));
     try expect_ev(events[0], EventRetireIntent, 0x300, 4, 0x100, 2, ReasonRefreshUnseen);
     try expect_ev(events[1], EventRetireIntent, 0x400, 5, 0x200, 3, ReasonParentRetired);
     try expect_ev(events[2], EventRetireIntent, 0x200, 3, 0x100, 2, ReasonParentRetired);
     try expect_ev(events[3], EventRetireIntent, 0x100, 2, 0, 0, ReasonRefreshUnseen);
-    try testing.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
-    try testing.expect(call_find_active(graph, 0x50) != null);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-    try testing.expectEqual(@as(u32, 4), call_count_state(graph, .Retiring));
+    try testing_t.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
+    try testing_t.expect(call_find_active(graph, 0x50) != null);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 4), call_count_state(graph, .Retiring));
 }
 
 test "a commit drops unseen deferred records and keeps the seen ones" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_dialog(graph, 0x900, 0x777, 10);
     _ = try admit_dialog(graph, 0xA00, 0x777, 11);
     _ = try admit_dialog(graph, 0xB00, 0x888, 12);
-    try testing.expectEqual(@as(u32, 3), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u32, 3), call_count_deferred(graph));
     try refresh_open_ok(graph);
-    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0xA00));
+    try testing_t.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0xA00));
     var facts = owned_facts(0xB00, 0x888, 20);
     const obs = try refresh_offer_ok(graph, &facts);
-    try testing.expectEqual(DispositionDeferred, obs.disposition);
-    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
-    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x900));
-    try testing.expect(call_find_deferred(graph, 0xA00) != null);
-    try testing.expect(call_find_deferred(graph, 0xB00) != null);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
-    try testing.expectEqual(@as(u64, 0), current_stats(graph).deferred_evicted);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(DispositionDeferred, obs.disposition);
+    try testing_t.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x900));
+    try testing_t.expect(call_find_deferred(graph, 0xA00) != null);
+    try testing_t.expect(call_find_deferred(graph, 0xB00) != null);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+    try testing_t.expectEqual(@as(u64, 0), current_stats(graph).deferred_evicted);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
 }
 
 test "offers that fail still mark the window seen so the commit keeps it" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10); // StaleFacts
     _ = try admit_top(graph, 0x200, 10); // InvalidFacts
@@ -7880,66 +7880,66 @@ test "offers that fail still mark the window seen so the commit keeps it" {
 
     var facts = window_facts(0x100, 5);
     try refresh_offer_fails(graph, &facts, .StaleFacts);
-    try testing.expect(active_seen(graph, 0x100));
+    try testing_t.expect(active_seen(graph, 0x100));
 
     facts = window_facts(0x200, 30);
     facts.stamp = 0;
     try refresh_offer_fails(graph, &facts, .InvalidFacts);
-    try testing.expect(active_seen(graph, 0x200));
+    try testing_t.expect(active_seen(graph, 0x200));
 
     facts = owned_facts(0xB00, 0x888, 31);
     facts.process_id += 1;
     lookup_probe.mode = .Fail;
     try refresh_offer_fails(graph, &facts, .LookupFailed);
     lookup_probe.mode = .Ok;
-    try testing.expect(deferred_seen(graph, 0xB00));
+    try testing_t.expect(deferred_seen(graph, 0xB00));
 
     facts = owned_facts(0x700, 0x800, 32);
     try refresh_offer_fails(graph, &facts, .Cycle);
-    try testing.expect(active_seen(graph, 0x700));
+    try testing_t.expect(active_seen(graph, 0x700));
 
-    try testing.expect(!active_seen(graph, 0x400));
-    try testing.expect(!deferred_seen(graph, 0x800));
+    try testing_t.expect(!active_seen(graph, 0x400));
+    try testing_t.expect(!deferred_seen(graph, 0x800));
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.rejected_stale_facts);
-    try testing.expectEqual(@as(u64, 1), stats.rejected_invalid_facts);
-    try testing.expectEqual(@as(u64, 1), stats.lookup_failures);
-    try testing.expectEqual(@as(u64, 1), stats.rejected_cycle);
-    try testing.expectEqual(@as(u32, 1), try refresh_commit_ok(graph));
-    try testing.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
-    try testing.expectEqual(@as(?usize, null), call_find_active(graph, 0x400));
-    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x800));
-    try testing.expect(call_find_deferred(graph, 0xB00) != null);
+    try testing_t.expectEqual(@as(u64, 1), stats.rejected_stale_facts);
+    try testing_t.expectEqual(@as(u64, 1), stats.rejected_invalid_facts);
+    try testing_t.expectEqual(@as(u64, 1), stats.lookup_failures);
+    try testing_t.expectEqual(@as(u64, 1), stats.rejected_cycle);
+    try testing_t.expectEqual(@as(u32, 1), try refresh_commit_ok(graph));
+    try testing_t.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x400));
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x800));
+    try testing_t.expect(call_find_deferred(graph, 0xB00) != null);
     const ev = try next_ev(graph);
     try expect_ev(ev, EventRetireIntent, 0x400, 4, 0, 0, ReasonRefreshUnseen);
-    try testing.expectEqual(@as(u32, 0), graph.ring_len);
+    try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
 }
 
 test "an offer rejected with QueueFull is not applied but marks the window seen" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x5000, 10);
     _ = try admit_top(graph, 0x5001, 11);
     _ = discard_events(graph);
     fill_ring(graph, EventCapacity);
-    try testing.expectEqual(@as(u32, 0), call_ring_room(graph));
+    try testing_t.expectEqual(@as(u32, 0), call_ring_room(graph));
     try refresh_open_ok(graph);
     var facts = window_facts(0x5000, 20);
     facts.x += 7;
     try refresh_offer_fails(graph, &facts, .QueueFull);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
-    try testing.expect(active_seen(graph, 0x5000));
-    try testing.expect(!active_seen(graph, 0x5001));
-    try testing.expect(graph.entries[call_find_active(graph, 0x5000).?].record.x != facts.x);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
+    try testing_t.expect(active_seen(graph, 0x5000));
+    try testing_t.expect(!active_seen(graph, 0x5001));
+    try testing_t.expect(graph.entries[call_find_active(graph, 0x5000).?].record.x != facts.x);
     // Keep the other window too: the commit has no victim and needs no ring room.
-    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x5001));
-    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
-    try testing.expectEqual(@as(u32, 2), call_count_state(graph, .Active));
-    try testing.expectEqual(@as(u32, EventCapacity), graph.ring_len);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x5001));
+    try testing_t.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing_t.expectEqual(@as(u32, 2), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, EventCapacity), graph.ring_len);
 }
 
 test "a flush leftover cut off by capacity survives the commit only when it is offered again" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_dialog(graph, 0x7000, 0x7001, 10);
     _ = try admit_dialog(graph, 0x7002, 0x7001, 11);
@@ -7947,103 +7947,103 @@ test "a flush leftover cut off by capacity survives the commit only when it is o
     try refresh_open_ok(graph);
     var index: u64 = 0;
     while (index < 63) : (index += 1) {
-        try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x8000 + index));
+        try testing_t.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x8000 + index));
     }
     // The owner takes the 64th slot; both owned windows stay deferred and unseen.
     var facts = window_facts(0x7001, 200);
     const obs = try refresh_offer_ok(graph, &facts);
-    try testing.expectEqual(DispositionAdmitted, obs.disposition);
+    try testing_t.expectEqual(DispositionAdmitted, obs.disposition);
     try expect_counts(obs, 1, 1, 0, 0);
-    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
-    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
-    try testing.expect(!deferred_seen(graph, 0x7000));
-    try testing.expect(!deferred_seen(graph, 0x7002));
+    try testing_t.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing_t.expect(!deferred_seen(graph, 0x7000));
+    try testing_t.expect(!deferred_seen(graph, 0x7002));
     // Offering 0x7000 again hits the full graph: AtCapacity, yet the record is marked.
     facts = owned_facts(0x7000, 0x7001, 201);
     try refresh_offer_fails(graph, &facts, .AtCapacity);
-    try testing.expect(deferred_seen(graph, 0x7000));
-    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
-    try testing.expect(call_find_deferred(graph, 0x7000) != null);
-    try testing.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x7002));
-    try testing.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+    try testing_t.expect(deferred_seen(graph, 0x7000));
+    try testing_t.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing_t.expect(call_find_deferred(graph, 0x7000) != null);
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x7002));
+    try testing_t.expectEqual(@as(u32, 64), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
 }
 
 test "refresh_keep and refresh_unseen: statuses, ordering, truncation and null rules" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     // Without a refresh: the argument check outranks NoRefresh.
-    try testing.expectEqual(status_t.NoRefresh, call_refresh_keep(graph, TestEpoch, 0x100));
-    try testing.expectEqual(status_t.InvalidArgument, call_refresh_keep(graph, TestEpoch, 0));
+    try testing_t.expectEqual(status_t.NoRefresh, call_refresh_keep(graph, TestEpoch, 0x100));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_refresh_keep(graph, TestEpoch, 0));
     var total: u32 = 0xABCD;
     var windows = [_]u64{0xEEEE} ** 4;
-    try testing.expectEqual(status_t.NoRefresh, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
-    try testing.expectEqual(status_t.InvalidArgument, call_refresh_unseen(graph, TestEpoch, null, 1, &total));
-    try testing.expectEqual(@as(u32, 0xABCD), total);
+    try testing_t.expectEqual(status_t.NoRefresh, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
+    try testing_t.expectEqual(status_t.InvalidArgument, call_refresh_unseen(graph, TestEpoch, null, 1, &total));
+    try testing_t.expectEqual(@as(u32, 0xABCD), total);
 
     // Slot order differs from generation order: 0x200 reuses the slot of 0x400.
     _ = try admit_top(graph, 0x400, 10);
     _ = try admit_top(graph, 0x300, 11);
     _ = try destroy_hint(graph, 0x400, 50, 2000);
-    try testing.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x400, 1, &ProofOk));
+    try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x400, 1, &ProofOk));
     _ = try admit_top(graph, 0x200, 12);
     _ = try admit_dialog(graph, 0x900, 0x777, 13);
     _ = try admit_top(graph, 0x500, 14);
     _ = try destroy_hint(graph, 0x500, 60, 2000); // Retiring: never listed, never kept
-    try testing.expectEqual(@as(usize, 0), call_find_active(graph, 0x200).?);
-    try testing.expectEqual(@as(usize, 1), call_find_active(graph, 0x300).?);
+    try testing_t.expectEqual(@as(usize, 0), call_find_active(graph, 0x200).?);
+    try testing_t.expectEqual(@as(usize, 1), call_find_active(graph, 0x300).?);
     var order = [_]u8{0xFF} ** MaxEntries;
-    try testing.expectEqual(@as(u32, 2), call_active_by_generation(graph, &order));
-    try testing.expectEqualSlices(u8, &[_]u8{ 1, 0, 0xFF }, order[0..3]);
+    try testing_t.expectEqual(@as(u32, 2), call_active_by_generation(graph, &order));
+    try testing_t.expectEqualSlices(u8, &[_]u8{ 1, 0, 0xFF }, order[0..3]);
 
     try refresh_open_ok(graph);
-    try testing.expectEqual(status_t.InvalidArgument, call_refresh_keep(graph, TestEpoch, 0));
-    try testing.expectEqual(status_t.None, call_refresh_keep(graph, TestEpoch, 0xBAD));
-    try testing.expectEqual(status_t.None, call_refresh_keep(graph, TestEpoch, 0x400));
-    try testing.expectEqual(status_t.None, call_refresh_keep(graph, TestEpoch, 0x500));
-    try testing.expect(!graph.entries[call_find_exact(graph, 0x500, 4).?].seen);
+    try testing_t.expectEqual(status_t.InvalidArgument, call_refresh_keep(graph, TestEpoch, 0));
+    try testing_t.expectEqual(status_t.None, call_refresh_keep(graph, TestEpoch, 0xBAD));
+    try testing_t.expectEqual(status_t.None, call_refresh_keep(graph, TestEpoch, 0x400));
+    try testing_t.expectEqual(status_t.None, call_refresh_keep(graph, TestEpoch, 0x500));
+    try testing_t.expect(!graph.entries[call_find_exact(graph, 0x500, 4).?].seen);
 
-    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
-    try testing.expectEqual(@as(u32, 2), total);
-    try testing.expectEqualSlices(u64, &[_]u64{ 0x300, 0x200, 0xEEEE, 0xEEEE }, &windows);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
+    try testing_t.expectEqual(@as(u32, 2), total);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 0x300, 0x200, 0xEEEE, 0xEEEE }, &windows);
     // Truncation: the total stays visible, the rest of the array is untouched.
     windows = [_]u64{0xEEEE} ** 4;
-    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 1, &total));
-    try testing.expectEqual(@as(u32, 2), total);
-    try testing.expectEqualSlices(u64, &[_]u64{ 0x300, 0xEEEE, 0xEEEE, 0xEEEE }, &windows);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 1, &total));
+    try testing_t.expectEqual(@as(u32, 2), total);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 0x300, 0xEEEE, 0xEEEE, 0xEEEE }, &windows);
     // Capacity 0 accepts a null array and still reports the total.
     total = 0;
-    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, null, 0, &total));
-    try testing.expectEqual(@as(u32, 2), total);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, null, 0, &total));
+    try testing_t.expectEqual(@as(u32, 2), total);
     // A null array with a nonzero capacity is rejected and leaves the count alone.
     total = 0xABCD;
-    try testing.expectEqual(status_t.InvalidArgument, call_refresh_unseen(graph, TestEpoch, null, 2, &total));
-    try testing.expectEqual(@as(u32, 0xABCD), total);
+    try testing_t.expectEqual(status_t.InvalidArgument, call_refresh_unseen(graph, TestEpoch, null, 2, &total));
+    try testing_t.expectEqual(@as(u32, 0xABCD), total);
 
     // keep marks Active entries and deferred records; the listing follows.
-    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x300));
-    try testing.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x900));
-    try testing.expect(active_seen(graph, 0x300));
-    try testing.expect(deferred_seen(graph, 0x900));
+    try testing_t.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x300));
+    try testing_t.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x900));
+    try testing_t.expect(active_seen(graph, 0x300));
+    try testing_t.expect(deferred_seen(graph, 0x900));
     windows = [_]u64{0xEEEE} ** 4;
-    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
-    try testing.expectEqual(@as(u32, 1), total);
-    try testing.expectEqualSlices(u64, &[_]u64{ 0x200, 0xEEEE, 0xEEEE, 0xEEEE }, &windows);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
+    try testing_t.expectEqual(@as(u32, 1), total);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 0x200, 0xEEEE, 0xEEEE, 0xEEEE }, &windows);
     // An Ok plain observe marks, an offer marks, and the listing is empty at the end.
     var facts = window_facts(0x200, 70);
     _ = try offer(graph, &facts);
-    try testing.expect(active_seen(graph, 0x200));
+    try testing_t.expect(active_seen(graph, 0x200));
     total = 9;
-    try testing.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
-    try testing.expectEqual(@as(u32, 0), total);
-    try testing.expectEqualSlices(u64, &[_]u64{ 0x200, 0xEEEE, 0xEEEE, 0xEEEE }, &windows);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_unseen(graph, TestEpoch, &windows, 4, &total));
+    try testing_t.expectEqual(@as(u32, 0), total);
+    try testing_t.expectEqualSlices(u64, &[_]u64{ 0x200, 0xEEEE, 0xEEEE, 0xEEEE }, &windows);
     try check_invariants(graph);
     // The listing moved no mark and no event.
-    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing_t.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
 }
 
 test "a commit that does not fit the ring changes nothing and succeeds after draining" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x6000, 10);
     _ = try admit_top(graph, 0x6001, 11);
@@ -8054,114 +8054,114 @@ test "a commit that does not fit the ring changes nothing and succeeds after dra
     try refresh_open_ok(graph);
     const before = state_digest(graph);
     var retired: u32 = 0xDEAD_BEEF;
-    try testing.expectEqual(status_t.QueueFull, call_refresh_commit(graph, TestEpoch, &retired));
-    try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
-    try testing.expectEqual(before, state_digest(graph));
-    try testing.expect(graph.refresh_open);
+    try testing_t.expectEqual(status_t.QueueFull, call_refresh_commit(graph, TestEpoch, &retired));
+    try testing_t.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expect(graph.refresh_open);
     try check_invariants(graph);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
-    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_commits);
-    try testing.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
-    try testing.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
+    try testing_t.expectEqual(@as(u64, 0), current_stats(graph).refresh_commits);
+    try testing_t.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
     // One slot freed: room 3 for exactly 3 victims.
-    var ev = std.mem.zeroes(event_t);
-    try testing.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &ev));
-    try testing.expectEqual(@as(u32, 3), call_ring_room(graph));
-    try testing.expectEqual(@as(u32, 3), try refresh_commit_ok(graph));
-    try testing.expectEqual(@as(u32, 0), call_ring_room(graph));
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).refresh_commits);
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+    var ev = std_t.mem.zeroes(event_t);
+    try testing_t.expectEqual(status_t.Ok, call_next_event(graph, TestEpoch, &ev));
+    try testing_t.expectEqual(@as(u32, 3), call_ring_room(graph));
+    try testing_t.expectEqual(@as(u32, 3), try refresh_commit_ok(graph));
+    try testing_t.expectEqual(@as(u32, 0), call_ring_room(graph));
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).refresh_commits);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
 }
 
 test "refresh_abort closes the refresh without retiring or dropping anything" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = try admit_dialog(graph, 0x900, 0x777, 11);
     _ = discard_events(graph);
-    try testing.expectEqual(status_t.NoRefresh, call_refresh_abort(graph, TestEpoch));
-    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_aborts);
+    try testing_t.expectEqual(status_t.NoRefresh, call_refresh_abort(graph, TestEpoch));
+    try testing_t.expectEqual(@as(u64, 0), current_stats(graph).refresh_aborts);
     try refresh_open_ok(graph);
     const before = state_digest(graph);
-    try testing.expectEqual(status_t.Ok, call_refresh_abort(graph, TestEpoch));
-    try testing.expect(!graph.refresh_open);
-    try testing.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(status_t.Ok, call_refresh_abort(graph, TestEpoch));
+    try testing_t.expect(!graph.refresh_open);
+    try testing_t.expectEqual(before, state_digest(graph));
     try check_invariants(graph);
     var stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.refresh_aborts);
-    try testing.expectEqual(@as(u64, 0), stats.refresh_commits);
-    try testing.expectEqual(@as(u32, 0), stats.refresh_active);
-    try testing.expectEqual(status_t.NoRefresh, call_refresh_commit(graph, TestEpoch, null));
-    try testing.expectEqual(status_t.NoRefresh, call_refresh_keep(graph, TestEpoch, 0x100));
+    try testing_t.expectEqual(@as(u64, 1), stats.refresh_aborts);
+    try testing_t.expectEqual(@as(u64, 0), stats.refresh_commits);
+    try testing_t.expectEqual(@as(u32, 0), stats.refresh_active);
+    try testing_t.expectEqual(status_t.NoRefresh, call_refresh_commit(graph, TestEpoch, null));
+    try testing_t.expectEqual(status_t.NoRefresh, call_refresh_keep(graph, TestEpoch, 0x100));
     var facts = window_facts(0x100, 20);
     var obs = sentinel_observation();
-    try testing.expectEqual(status_t.NoRefresh, call_refresh_offer(graph, TestEpoch, &facts, &obs));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-    try testing.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(status_t.NoRefresh, call_refresh_offer(graph, TestEpoch, &facts, &obs));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(before, state_digest(graph));
     // A new refresh starts from clean marks and can commit normally.
     try refresh_open_ok(graph);
-    try testing.expect(!active_seen(graph, 0x100));
-    try testing.expectEqual(@as(u32, 1), try refresh_commit_ok(graph));
+    try testing_t.expect(!active_seen(graph, 0x100));
+    try testing_t.expectEqual(@as(u32, 1), try refresh_commit_ok(graph));
     stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 1), stats.refresh_commits);
-    try testing.expectEqual(@as(u64, 1), stats.refresh_aborts);
+    try testing_t.expectEqual(@as(u64, 1), stats.refresh_commits);
+    try testing_t.expectEqual(@as(u64, 1), stats.refresh_aborts);
 }
 
 test "an offer without an open refresh returns NoRefresh after the argument checks and marks nothing" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     // Invalid facts are not even looked at: the NoRefresh check precedes validation.
     var facts = window_facts(0x100, 0);
     var obs = sentinel_observation();
     const before = state_digest(graph);
-    try testing.expectEqual(status_t.NoRefresh, call_refresh_offer(graph, TestEpoch, &facts, &obs));
-    try testing.expectEqual(before, state_digest(graph));
-    try testing.expectEqual(@as(u64, 0), current_stats(graph).rejected_invalid_facts);
+    try testing_t.expectEqual(status_t.NoRefresh, call_refresh_offer(graph, TestEpoch, &facts, &obs));
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(@as(u64, 0), current_stats(graph).rejected_invalid_facts);
     // Inside a refresh the same facts fail validation and still mark the window.
     try refresh_open_ok(graph);
     try refresh_offer_fails(graph, &facts, .InvalidFacts);
-    try testing.expect(active_seen(graph, 0x100));
+    try testing_t.expect(active_seen(graph, 0x100));
     // Window 0 can not be marked and fails validation without touching any mark.
     facts = window_facts(0, 11);
     try refresh_offer_fails(graph, &facts, .InvalidFacts);
 }
 
 test "refresh_offer hands the lookup its own stack copy of the facts" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     try refresh_open_ok(graph);
     var facts = window_facts(0x100, 10);
     const obs = try refresh_offer_ok(graph, &facts);
-    try testing.expectEqual(DispositionAdmitted, obs.disposition);
-    try testing.expect(lookup_probe.last_pointer != @intFromPtr(&facts));
-    try testing.expectEqual(@as(u64, 0x100), lookup_probe.last_window);
+    try testing_t.expectEqual(DispositionAdmitted, obs.disposition);
+    try testing_t.expect(lookup_probe.last_pointer != @intFromPtr(&facts));
+    try testing_t.expectEqual(@as(u64, 0x100), lookup_probe.last_window);
     // A new generation is born seen.
-    try testing.expect(active_seen(graph, 0x100));
-    try testing.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
+    try testing_t.expect(active_seen(graph, 0x100));
+    try testing_t.expectEqual(@as(u32, 0), try refresh_commit_ok(graph));
 }
 
 test "a reclassification inside a refresh keeps the new generation seen and its re-deferred children unseen" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     try build_family(graph);
     try refresh_open_ok(graph);
     var facts = reclassify_facts(20);
     const obs = try refresh_offer_ok(graph, &facts);
-    try testing.expectEqual(DispositionReclassified, obs.disposition);
+    try testing_t.expectEqual(DispositionReclassified, obs.disposition);
     // Q (0x50) is unseen, the reclassified P and its flushed children inherit the marks of their entries.
-    try testing.expect(active_seen(graph, 0x100));
-    try testing.expect(!active_seen(graph, 0x50));
+    try testing_t.expect(active_seen(graph, 0x100));
+    try testing_t.expect(!active_seen(graph, 0x50));
     // Q is the owner of P now: the commit retires Q and with it the whole new subtree.
     _ = discard_events(graph);
     const retired = try refresh_commit_ok(graph);
-    try testing.expectEqual(@as(u32, 5), retired);
-    try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, 5), retired);
+    try testing_t.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
 }
 
 test "invalidate_all retires every Active entry children first with reason Invalidated" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     try build_family(graph);
     _ = try admit_dialog(graph, 0x900, 0x777, 20);
@@ -8174,44 +8174,44 @@ test "invalidate_all retires every Active entry children first with reason Inval
     fill_ring(graph, EventCapacity - 3);
     const before = state_digest(graph);
     var retired: u32 = 0xDEAD_BEEF;
-    try testing.expectEqual(status_t.QueueFull, call_invalidate_all(graph, TestEpoch, &retired));
-    try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
-    try testing.expectEqual(before, state_digest(graph));
-    try testing.expect(graph.refresh_open);
-    try testing.expectEqual(@as(u32, 2), call_count_deferred(graph));
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
-    try testing.expectEqual(@as(u64, 0), current_stats(graph).refresh_aborts);
+    try testing_t.expectEqual(status_t.QueueFull, call_invalidate_all(graph, TestEpoch, &retired));
+    try testing_t.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expect(graph.refresh_open);
+    try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_queue_full);
+    try testing_t.expectEqual(@as(u64, 0), current_stats(graph).refresh_aborts);
     try check_invariants(graph);
     _ = discard_events(graph);
-    try testing.expectEqual(status_t.Ok, call_invalidate_all(graph, TestEpoch, &retired));
-    try testing.expectEqual(@as(u32, 4), retired);
+    try testing_t.expectEqual(status_t.Ok, call_invalidate_all(graph, TestEpoch, &retired));
+    try testing_t.expectEqual(@as(u32, 4), retired);
     try check_invariants(graph);
     var events: [8]event_t = undefined;
-    try testing.expectEqual(@as(usize, 4), try drain_events(graph, &events));
+    try testing_t.expectEqual(@as(usize, 4), try drain_events(graph, &events));
     try expect_ev(events[0], EventRetireIntent, 0x400, 5, 0x200, 3, ReasonInvalidated);
     try expect_ev(events[1], EventRetireIntent, 0x300, 4, 0x100, 2, ReasonInvalidated);
     try expect_ev(events[2], EventRetireIntent, 0x200, 3, 0x100, 2, ReasonInvalidated);
     try expect_ev(events[3], EventRetireIntent, 0x100, 2, 0, 0, ReasonInvalidated);
-    try testing.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
-    try testing.expectEqual(@as(u32, 5), call_count_state(graph, .Retiring));
-    try testing.expectEqual(ReasonDestroyed, graph.entries[call_find_exact(graph, 0x50, 1).?].record.retire_reason);
-    try testing.expectEqual(@as(u32, 0), call_count_deferred(graph));
-    try testing.expect(!graph.refresh_open);
+    try testing_t.expectEqual(@as(u32, 0), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(u32, 5), call_count_state(graph, .Retiring));
+    try testing_t.expectEqual(ReasonDestroyed, graph.entries[call_find_exact(graph, 0x50, 1).?].record.retire_reason);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expect(!graph.refresh_open);
     const stats = current_stats(graph);
-    try testing.expectEqual(@as(u64, 2), stats.deferred_dropped);
-    try testing.expectEqual(@as(u64, 1), stats.refresh_aborts);
-    try testing.expectEqual(@as(u64, 0), stats.refresh_commits);
-    try testing.expectEqual(@as(u32, 0), stats.refresh_active);
-    try testing.expectEqual(status_t.NoRefresh, call_refresh_commit(graph, TestEpoch, null));
+    try testing_t.expectEqual(@as(u64, 2), stats.deferred_dropped);
+    try testing_t.expectEqual(@as(u64, 1), stats.refresh_aborts);
+    try testing_t.expectEqual(@as(u64, 0), stats.refresh_commits);
+    try testing_t.expectEqual(@as(u32, 0), stats.refresh_active);
+    try testing_t.expectEqual(status_t.NoRefresh, call_refresh_commit(graph, TestEpoch, null));
     // Repeating it on an empty Active set is Ok, retires nothing and aborts nothing more.
-    try testing.expectEqual(status_t.Ok, call_invalidate_all(graph, TestEpoch, &retired));
-    try testing.expectEqual(@as(u32, 0), retired);
-    try testing.expectEqual(status_t.Ok, call_invalidate_all(graph, TestEpoch, null));
-    try testing.expectEqual(@as(u64, 1), current_stats(graph).refresh_aborts);
+    try testing_t.expectEqual(status_t.Ok, call_invalidate_all(graph, TestEpoch, &retired));
+    try testing_t.expectEqual(@as(u32, 0), retired);
+    try testing_t.expectEqual(status_t.Ok, call_invalidate_all(graph, TestEpoch, null));
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).refresh_aborts);
 }
 
 test "every refresh function rejects a stale epoch and changes only the rejection counter" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     _ = discard_events(graph);
@@ -8224,23 +8224,23 @@ test "every refresh function rejects a stale epoch and changes only the rejectio
     var retired: u32 = 0xDEAD_BEEF;
     var rejected: u64 = 0;
     for ([_]u64{ TestEpoch + 1, 0 }) |stale| {
-        try testing.expectEqual(status_t.StaleEpoch, call_refresh_begin(graph, stale));
-        try testing.expectEqual(status_t.StaleEpoch, call_refresh_offer(graph, stale, &facts, &obs));
-        try testing.expectEqual(status_t.StaleEpoch, call_refresh_keep(graph, stale, 0x100));
-        try testing.expectEqual(status_t.StaleEpoch, call_refresh_unseen(graph, stale, &windows, 1, &total));
-        try testing.expectEqual(status_t.StaleEpoch, call_refresh_commit(graph, stale, &retired));
-        try testing.expectEqual(status_t.StaleEpoch, call_refresh_abort(graph, stale));
-        try testing.expectEqual(status_t.StaleEpoch, call_invalidate_all(graph, stale, &retired));
+        try testing_t.expectEqual(status_t.StaleEpoch, call_refresh_begin(graph, stale));
+        try testing_t.expectEqual(status_t.StaleEpoch, call_refresh_offer(graph, stale, &facts, &obs));
+        try testing_t.expectEqual(status_t.StaleEpoch, call_refresh_keep(graph, stale, 0x100));
+        try testing_t.expectEqual(status_t.StaleEpoch, call_refresh_unseen(graph, stale, &windows, 1, &total));
+        try testing_t.expectEqual(status_t.StaleEpoch, call_refresh_commit(graph, stale, &retired));
+        try testing_t.expectEqual(status_t.StaleEpoch, call_refresh_abort(graph, stale));
+        try testing_t.expectEqual(status_t.StaleEpoch, call_invalidate_all(graph, stale, &retired));
         rejected += 7;
-        try testing.expectEqual(rejected, current_stats(graph).rejected_stale_epoch);
+        try testing_t.expectEqual(rejected, current_stats(graph).rejected_stale_epoch);
     }
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-    try testing.expectEqual(@as(u64, 0xEEEE), windows[0]);
-    try testing.expectEqual(@as(u32, 0xABCD), total);
-    try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
-    try testing.expectEqual(before, state_digest(graph));
-    try testing.expect(graph.refresh_open);
-    try testing.expect(!graph.busy);
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(@as(u64, 0xEEEE), windows[0]);
+    try testing_t.expectEqual(@as(u32, 0xABCD), total);
+    try testing_t.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expect(graph.refresh_open);
+    try testing_t.expect(!graph.busy);
 }
 
 const refresh_thread_probe_t = struct {
@@ -8264,7 +8264,7 @@ fn refresh_thread_body(probe: *refresh_thread_probe_t) void {
 }
 
 test "every refresh function from a foreign thread returns WrongThread and touches nothing" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     try refresh_open_ok(graph);
@@ -8273,18 +8273,18 @@ test "every refresh function from a foreign thread returns WrongThread and touch
     const before = state_digest(graph);
     const stats_before = graph.stats;
     var probe = refresh_thread_probe_t{ .graph = graph };
-    const thread = try std.Thread.spawn(.{}, refresh_thread_body, .{&probe});
+    const thread = try std_t.Thread.spawn(.{}, refresh_thread_body, .{&probe});
     thread.join();
-    for (probe.statuses) |status| try testing.expectEqual(status_t.WrongThread, status);
-    try testing.expectEqual(before, state_digest(graph));
-    try testing.expectEqualSlices(u8, std.mem.asBytes(&stats_before), stats_bytes(graph));
-    try testing.expect(graph.busy);
+    for (probe.statuses) |status| try testing_t.expectEqual(status_t.WrongThread, status);
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqualSlices(u8, std_t.mem.asBytes(&stats_before), stats_bytes(graph));
+    try testing_t.expect(graph.busy);
     graph.busy = false;
-    try testing.expect(graph.refresh_open);
+    try testing_t.expect(graph.refresh_open);
 }
 
 test "every refresh function called while the graph is busy returns Reentrant and touches nothing" {
-    const graph = try probe_graph(testing.allocator);
+    const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10);
     try refresh_open_ok(graph);
@@ -8296,17 +8296,17 @@ test "every refresh function called while the graph is busy returns Reentrant an
     var windows = [_]u64{0xEEEE};
     var total: u32 = 0xABCD;
     var retired: u32 = 0xDEAD_BEEF;
-    try testing.expectEqual(status_t.Reentrant, call_refresh_begin(graph, TestEpoch));
-    try testing.expectEqual(status_t.Reentrant, call_refresh_offer(graph, TestEpoch, &facts, &obs));
-    try testing.expectEqual(status_t.Reentrant, call_refresh_keep(graph, TestEpoch, 0x100));
-    try testing.expectEqual(status_t.Reentrant, call_refresh_unseen(graph, TestEpoch, &windows, 1, &total));
-    try testing.expectEqual(status_t.Reentrant, call_refresh_commit(graph, TestEpoch, &retired));
-    try testing.expectEqual(status_t.Reentrant, call_refresh_abort(graph, TestEpoch));
-    try testing.expectEqual(status_t.Reentrant, call_invalidate_all(graph, TestEpoch, &retired));
-    try testing.expect(std.mem.allEqual(u8, std.mem.asBytes(&obs), 0xA5));
-    try testing.expectEqual(@as(u32, 0xABCD), total);
-    try testing.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
-    try testing.expectEqual(before, state_digest(graph));
-    try testing.expectEqualSlices(u8, std.mem.asBytes(&stats_before), stats_bytes(graph));
+    try testing_t.expectEqual(status_t.Reentrant, call_refresh_begin(graph, TestEpoch));
+    try testing_t.expectEqual(status_t.Reentrant, call_refresh_offer(graph, TestEpoch, &facts, &obs));
+    try testing_t.expectEqual(status_t.Reentrant, call_refresh_keep(graph, TestEpoch, 0x100));
+    try testing_t.expectEqual(status_t.Reentrant, call_refresh_unseen(graph, TestEpoch, &windows, 1, &total));
+    try testing_t.expectEqual(status_t.Reentrant, call_refresh_commit(graph, TestEpoch, &retired));
+    try testing_t.expectEqual(status_t.Reentrant, call_refresh_abort(graph, TestEpoch));
+    try testing_t.expectEqual(status_t.Reentrant, call_invalidate_all(graph, TestEpoch, &retired));
+    try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&obs), 0xA5));
+    try testing_t.expectEqual(@as(u32, 0xABCD), total);
+    try testing_t.expectEqual(@as(u32, 0xDEAD_BEEF), retired);
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqualSlices(u8, std_t.mem.asBytes(&stats_before), stats_bytes(graph));
     graph.busy = false;
 }

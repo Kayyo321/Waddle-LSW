@@ -64,7 +64,7 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     overlap regressions; Debug/ReleaseSafe150 Zig and27 C tests pass. HEAD is this
     containing review-fix commit; Windows execution and native acceptance remain open.
 
-- **Commit `HEAD`**: `fix(interop): retain observer reservation and failed hook ownership`
+- **Commit `28748bc`**: `fix(interop): retain observer reservation and failed hook ownership`
   - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local92.25%).
   - **Summary**: Keeps a separate lifecycle reservation through hook cleanup,
     immediately owns acquired tokens and retains failed unhooks for stop/destroy
@@ -72,3 +72,12 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     and partial-rollback retry regressions. Strict65 portable tests and Windows
     cross-build pass; lead leak-enabled qualification remains pending. HEAD is
     this containing observer review-fix commit.
+
+- **Commit `HEAD`**: `refactor(interop): conform graph namespace aliases to type naming`
+  - **Task Impact**: +0% to local #1/#2/#4; +0% global TODO #10 (local92.25%).
+  - **Summary**: Renames owned Zig namespace aliases to `_t` names without
+    changing behavior. Token-stream proof preserves literals, comments, trivia,
+    punctuation, C pointer sentinels and external module properties. The receipt
+    records exact before/after hashes. Debug graph136/ABI150 tests pass; full
+    post-review qualification and native Windows execution remain pending.
+    HEAD identifies this containing conformance commit.

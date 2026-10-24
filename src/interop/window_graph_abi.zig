@@ -24,30 +24,30 @@
 //! No wrapper retains a pointer, allocates (except `create`), blocks, or touches the operating
 //! system. Threading follows the header: a graph belongs to its creating thread and every call
 //! except `create` and `classify` is rejected on any other thread by the engine guards.
-const std = @import("std");
-const graph = @import("window_graph.zig");
+const std_t = @import("std");
+const graph_t = @import("window_graph.zig");
 
-const c = @cImport({
+const c_t = @cImport({
     @cInclude("waddle/interop_window_graph.h");
 });
 
 /// Opaque graph handle (`interop_window_graph_t`); points at the engine's `graph_t`.
 const graph_handle_t = opaque {};
 
-const facts_t = c.interop_window_facts_t;
-const verdict_t = c.interop_window_verdict_t;
-const event_t = c.interop_window_event_t;
-const observation_t = c.interop_window_observation_t;
-const live_t = c.interop_window_live_t;
-const retiring_entry_t = c.interop_window_retiring_entry_t;
-const retire_proof_t = c.interop_window_retire_proof_t;
-const diagnostic_t = c.interop_window_capacity_diagnostic_t;
-const stats_t = c.interop_window_graph_stats_t;
-const config_t = c.interop_window_graph_config_t;
+const facts_t = c_t.interop_window_facts_t;
+const verdict_t = c_t.interop_window_verdict_t;
+const event_t = c_t.interop_window_event_t;
+const observation_t = c_t.interop_window_observation_t;
+const live_t = c_t.interop_window_live_t;
+const retiring_entry_t = c_t.interop_window_retiring_entry_t;
+const retire_proof_t = c_t.interop_window_retire_proof_t;
+const diagnostic_t = c_t.interop_window_capacity_diagnostic_t;
+const stats_t = c_t.interop_window_graph_stats_t;
+const config_t = c_t.interop_window_graph_config_t;
 
-const StatusOk: c_int = @intFromEnum(graph.status_t.Ok);
-const StatusInvalidArgument: c_int = @intFromEnum(graph.status_t.InvalidArgument);
-const StatusNoMemory: c_int = @intFromEnum(graph.status_t.NoMemory);
+const StatusOk: c_int = @intFromEnum(graph_t.status_t.Ok);
+const StatusInvalidArgument: c_int = @intFromEnum(graph_t.status_t.InvalidArgument);
+const StatusNoMemory: c_int = @intFromEnum(graph_t.status_t.NoMemory);
 
 /// The only allocation seam of the ABI: `create` takes the graph's single allocation from it and
 /// the graph remembers the allocator it came from, so `destroy` frees through the same one.
@@ -55,13 +55,13 @@ const StatusNoMemory: c_int = @intFromEnum(graph.status_t.NoMemory);
 /// Defaults to the C allocator. It is mutable for tests only (failure injection and leak
 /// checking); production code never writes it, and it is not synchronized, so a test must swap it
 /// while no other thread calls `create`.
-var abi_allocator: std.mem.Allocator = std.heap.c_allocator;
+var abi_allocator: std_t.mem.Allocator = std_t.heap.c_allocator;
 
 comptime {
     // The ABI file imports the header itself; it must be the very same types the engine uses.
-    if (facts_t != graph.facts_t or event_t != graph.event_t or observation_t != graph.observation_t)
+    if (facts_t != graph_t.facts_t or event_t != graph_t.event_t or observation_t != graph_t.observation_t)
         @compileError("ABI and engine disagree on the imported header types");
-    if (config_t != graph.config_t or stats_t != graph.stats_t or diagnostic_t != graph.diagnostic_t)
+    if (config_t != graph_t.config_t or stats_t != graph_t.stats_t or diagnostic_t != graph_t.diagnostic_t)
         @compileError("ABI and engine disagree on the imported header types");
 
     // Sizes asserted by the header's _Static_assert lines.
@@ -97,7 +97,7 @@ comptime {
     for (offsets) |entry| {
         if (@offsetOf(entry[0], entry[1]) != entry[2]) @compileError("ABI field offset drifted from the header");
     }
-    if (@alignOf(graph.graph_t) > 8) @compileError("the graph must be allocatable with 8-byte alignment");
+    if (@alignOf(graph_t.graph_t) > 8) @compileError("the graph must be allocatable with 8-byte alignment");
 }
 
 const range_t = struct {
@@ -108,13 +108,13 @@ const range_t = struct {
 /// A zero-length region: stands in for an unused optional or ignored argument; overlaps nothing.
 const EmptySpan: range_t = .{ .start = 0, .end = 0 };
 
-fn status_code(status: graph.status_t) c_int {
+fn status_code(status: graph_t.status_t) c_int {
     return @intFromEnum(status);
 }
 
 fn checked_range(address: usize, length: usize) ?range_t {
     if (address == 0 or length == 0) return null;
-    const end = std.math.add(usize, address, length) catch return null;
+    const end = std_t.math.add(usize, address, length) catch return null;
     return .{ .start = address, .end = end };
 }
 
@@ -129,7 +129,7 @@ fn span_of(comptime T: type, pointer: anytype) ?range_t {
 fn array_span_of(comptime T: type, pointer: anytype, count: u32) ?range_t {
     const address = @intFromPtr(pointer);
     if (address % @alignOf(T) != 0) return null;
-    const length = std.math.mul(usize, @sizeOf(T), count) catch return null;
+    const length = std_t.math.mul(usize, @sizeOf(T), count) catch return null;
     return checked_range(address, length);
 }
 
@@ -145,26 +145,26 @@ fn spans_valid(spans: []const ?range_t) bool {
     return true;
 }
 
-fn graph_span(pointer: *const graph.graph_t) ?range_t {
-    return checked_range(@intFromPtr(pointer), @sizeOf(graph.graph_t));
+fn graph_span(pointer: *const graph_t.graph_t) ?range_t {
+    return checked_range(@intFromPtr(pointer), @sizeOf(graph_t.graph_t));
 }
 
 /// The engine graph behind a handle, or null for NULL, misalignment or an overflowing extent.
-fn graph_of(handle: ?*graph_handle_t) ?*graph.graph_t {
+fn graph_of(handle: ?*graph_handle_t) ?*graph_t.graph_t {
     const pointer = handle orelse return null;
     const address = @intFromPtr(pointer);
-    if (address % @alignOf(graph.graph_t) != 0) return null;
-    if (checked_range(address, @sizeOf(graph.graph_t)) == null) return null;
-    const typed: *graph.graph_t = @ptrCast(@alignCast(pointer));
+    if (address % @alignOf(graph_t.graph_t) != 0) return null;
+    if (checked_range(address, @sizeOf(graph_t.graph_t)) == null) return null;
+    const typed: *graph_t.graph_t = @ptrCast(@alignCast(pointer));
     return typed;
 }
 
-fn graph_of_const(handle: ?*const graph_handle_t) ?*const graph.graph_t {
+fn graph_of_const(handle: ?*const graph_handle_t) ?*const graph_t.graph_t {
     const pointer = handle orelse return null;
     const address = @intFromPtr(pointer);
-    if (address % @alignOf(graph.graph_t) != 0) return null;
-    if (checked_range(address, @sizeOf(graph.graph_t)) == null) return null;
-    const typed: *const graph.graph_t = @ptrCast(@alignCast(pointer));
+    if (address % @alignOf(graph_t.graph_t) != 0) return null;
+    if (checked_range(address, @sizeOf(graph_t.graph_t)) == null) return null;
+    const typed: *const graph_t.graph_t = @ptrCast(@alignCast(pointer));
     return typed;
 }
 
@@ -178,16 +178,16 @@ fn aligned_mut(comptime T: type, pointer: ?*align(1) T) *T {
 
 /// Status of a call whose pointer arguments failed validation: the engine guards (wrong thread,
 /// re-entrancy, stale epoch) still come first, then InvalidArgument.
-fn fault_mutating(graph_pointer: *graph.graph_t, epoch: ?u64) c_int {
-    if (graph.enter(graph_pointer, epoch)) |status| return status_code(status);
-    graph.leave(graph_pointer);
+fn fault_mutating(graph_pointer: *graph_t.graph_t, epoch: ?u64) c_int {
+    if (graph_t.enter(graph_pointer, epoch)) |status| return status_code(status);
+    graph_t.leave(graph_pointer);
     return StatusInvalidArgument;
 }
 
 /// Read-only variant of `fault_mutating` for calls without an epoch parameter that must not
 /// change any state (not even the busy flag).
-fn fault_reading(graph_pointer: *const graph.graph_t) c_int {
-    if (graph.enter_read(graph_pointer)) |status| return status_code(status);
+fn fault_reading(graph_pointer: *const graph_t.graph_t) c_int {
+    if (graph_t.enter_read(graph_pointer)) |status| return status_code(status);
     return StatusInvalidArgument;
 }
 
@@ -215,14 +215,14 @@ export fn interop_window_graph_create(
     // must remain untouched. An unrepresentable extent is rejected conservatively.
     if (config) |config_pointer| {
         const config_start = @intFromPtr(config_pointer);
-        const config_end = std.math.add(usize, config_start, @sizeOf(config_t)) catch return StatusInvalidArgument;
+        const config_end = std_t.math.add(usize, config_start, @sizeOf(config_t)) catch return StatusInvalidArgument;
         if (slot_span.start < config_end and config_start < slot_span.end) return StatusInvalidArgument;
     }
     const slot = aligned_mut(?*graph_handle_t, out_graph);
     slot.* = null;
     if (!spans_valid(&.{ slot_span, span_of(config_t, config) })) return StatusInvalidArgument;
     const local_config: config_t = aligned_const(config_t, config).*;
-    const created = graph.create(abi_allocator, &local_config) catch |err| return switch (err) {
+    const created = graph_t.create(abi_allocator, &local_config) catch |err| return switch (err) {
         error.OutOfMemory => StatusNoMemory,
         error.InvalidArgument => StatusInvalidArgument,
     };
@@ -247,8 +247,8 @@ export fn interop_window_graph_destroy(graph_slot: ?*align(1) ?*graph_handle_t) 
     const handle = slot.* orelse return StatusOk;
     const graph_pointer = graph_of(handle) orelse return StatusInvalidArgument;
     if (!spans_valid(&.{ graph_span(graph_pointer), slot_span })) return fault_reading(graph_pointer);
-    if (graph.enter_read(graph_pointer)) |status| return status_code(status);
-    graph.destroy(graph_pointer);
+    if (graph_t.enter_read(graph_pointer)) |status| return status_code(status);
+    graph_t.destroy(graph_pointer);
     slot.* = null;
     return StatusOk;
 }
@@ -268,7 +268,7 @@ export fn interop_window_graph_classify(
 ) c_int {
     if (!spans_valid(&.{ span_of(facts_t, facts), span_of(verdict_t, verdict) })) return StatusInvalidArgument;
     var staged: verdict_t = undefined;
-    const status = graph.classify_public(aligned_const(facts_t, facts), uac_mode, &staged);
+    const status = graph_t.classify_public(aligned_const(facts_t, facts), uac_mode, &staged);
     if (status == .Ok) aligned_mut(verdict_t, verdict).* = staged;
     return status_code(status);
 }
@@ -293,7 +293,7 @@ export fn interop_window_graph_observe(
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(facts_t, facts), span_of(observation_t, observation) }))
         return fault_mutating(graph_pointer, session_epoch);
     var staged: observation_t = undefined;
-    const status = graph.observe(graph_pointer, session_epoch, aligned_const(facts_t, facts), &staged);
+    const status = graph_t.observe(graph_pointer, session_epoch, aligned_const(facts_t, facts), &staged);
     if (status == .Ok) aligned_mut(observation_t, observation).* = staged;
     return status_code(status);
 }
@@ -320,7 +320,7 @@ export fn interop_window_graph_note_destroyed(
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(observation_t, observation) }))
         return fault_mutating(graph_pointer, session_epoch);
     var staged: observation_t = undefined;
-    const status = graph.note_destroyed(graph_pointer, session_epoch, window, hint_stamp, event_time_ms, &staged);
+    const status = graph_t.note_destroyed(graph_pointer, session_epoch, window, hint_stamp, event_time_ms, &staged);
     if (status == .Ok) aligned_mut(observation_t, observation).* = staged;
     return status_code(status);
 }
@@ -346,7 +346,7 @@ export fn interop_window_graph_complete_retire(
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(retire_proof_t, proof) }))
         return fault_mutating(graph_pointer, session_epoch);
     const local_proof: retire_proof_t = aligned_const(retire_proof_t, proof).*;
-    return status_code(graph.complete_retire(graph_pointer, session_epoch, window, generation, &local_proof));
+    return status_code(graph_t.complete_retire(graph_pointer, session_epoch, window, generation, &local_proof));
 }
 
 /// Check that an action may be performed on (window, generation) (header:
@@ -366,7 +366,7 @@ export fn interop_window_graph_check_action(
     generation: u64,
 ) c_int {
     const graph_pointer = graph_of(graph_handle) orelse return StatusInvalidArgument;
-    return status_code(graph.check_action(graph_pointer, session_epoch, window, generation));
+    return status_code(graph_t.check_action(graph_pointer, session_epoch, window, generation));
 }
 
 /// Retire every Active entry and clear deferred records (header: interop_window_graph_invalidate_all).
@@ -386,7 +386,7 @@ export fn interop_window_graph_invalidate_all(
     const retired_span = if (retired_out == null) EmptySpan else span_of(u32, retired_out);
     if (!spans_valid(&.{ graph_span(graph_pointer), retired_span })) return fault_mutating(graph_pointer, session_epoch);
     var staged: u32 = 0;
-    const status = graph.invalidate_all(graph_pointer, session_epoch, &staged);
+    const status = graph_t.invalidate_all(graph_pointer, session_epoch, &staged);
     if (status == .Ok and retired_out != null) aligned_mut(u32, retired_out).* = staged;
     return status_code(status);
 }
@@ -399,7 +399,7 @@ export fn interop_window_graph_invalidate_all(
 /// @note Owner thread only; no callback; no allocation.
 export fn interop_window_graph_refresh_begin(graph_handle: ?*graph_handle_t, session_epoch: u64) c_int {
     const graph_pointer = graph_of(graph_handle) orelse return StatusInvalidArgument;
-    return status_code(graph.refresh_begin(graph_pointer, session_epoch));
+    return status_code(graph_t.refresh_begin(graph_pointer, session_epoch));
 }
 
 /// Offer one snapshot inside an open refresh (header: interop_window_graph_refresh_offer).
@@ -421,7 +421,7 @@ export fn interop_window_graph_refresh_offer(
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(facts_t, facts), span_of(observation_t, observation) }))
         return fault_mutating(graph_pointer, session_epoch);
     var staged: observation_t = undefined;
-    const status = graph.refresh_offer(graph_pointer, session_epoch, aligned_const(facts_t, facts), &staged);
+    const status = graph_t.refresh_offer(graph_pointer, session_epoch, aligned_const(facts_t, facts), &staged);
     if (status == .Ok) aligned_mut(observation_t, observation).* = staged;
     return status_code(status);
 }
@@ -436,7 +436,7 @@ export fn interop_window_graph_refresh_offer(
 /// @note Owner thread only; no callback; no allocation.
 export fn interop_window_graph_refresh_keep(graph_handle: ?*graph_handle_t, session_epoch: u64, window: u64) c_int {
     const graph_pointer = graph_of(graph_handle) orelse return StatusInvalidArgument;
-    return status_code(graph.refresh_keep(graph_pointer, session_epoch, window));
+    return status_code(graph_t.refresh_keep(graph_pointer, session_epoch, window));
 }
 
 /// List the Active windows still unseen in the open refresh (header: interop_window_graph_refresh_unseen).
@@ -467,7 +467,7 @@ export fn interop_window_graph_refresh_unseen(
         const first: *u64 = aligned_mut(u64, windows);
         many = @ptrCast(first);
     }
-    const status = graph.refresh_unseen(graph_pointer, session_epoch, many, capacity, &staged);
+    const status = graph_t.refresh_unseen(graph_pointer, session_epoch, many, capacity, &staged);
     if (status == .Ok) aligned_mut(u32, count).* = staged;
     return status_code(status);
 }
@@ -489,7 +489,7 @@ export fn interop_window_graph_refresh_commit(
     const retired_span = if (retired_out == null) EmptySpan else span_of(u32, retired_out);
     if (!spans_valid(&.{ graph_span(graph_pointer), retired_span })) return fault_mutating(graph_pointer, session_epoch);
     var staged: u32 = 0;
-    const status = graph.refresh_commit(graph_pointer, session_epoch, &staged);
+    const status = graph_t.refresh_commit(graph_pointer, session_epoch, &staged);
     if (status == .Ok and retired_out != null) aligned_mut(u32, retired_out).* = staged;
     return status_code(status);
 }
@@ -502,7 +502,7 @@ export fn interop_window_graph_refresh_commit(
 /// @note Owner thread only; no callback; no allocation.
 export fn interop_window_graph_refresh_abort(graph_handle: ?*graph_handle_t, session_epoch: u64) c_int {
     const graph_pointer = graph_of(graph_handle) orelse return StatusInvalidArgument;
-    return status_code(graph.refresh_abort(graph_pointer, session_epoch));
+    return status_code(graph_t.refresh_abort(graph_pointer, session_epoch));
 }
 
 /// Pop the oldest queued event (header: interop_window_graph_next_event).
@@ -521,7 +521,7 @@ export fn interop_window_graph_next_event(
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(event_t, event) }))
         return fault_mutating(graph_pointer, session_epoch);
     var staged: event_t = undefined;
-    const status = graph.next_event(graph_pointer, session_epoch, &staged);
+    const status = graph_t.next_event(graph_pointer, session_epoch, &staged);
     if (status == .Ok) aligned_mut(event_t, event).* = staged;
     return status_code(status);
 }
@@ -542,7 +542,7 @@ export fn interop_window_graph_next_event(
 export fn interop_window_graph_drain(
     graph_handle: ?*graph_handle_t,
     session_epoch: u64,
-    sink: graph.event_sink_t,
+    sink: graph_t.event_sink_t,
     sink_context: ?*anyopaque,
     max_events: u32,
     delivered: ?*align(1) u32,
@@ -551,7 +551,7 @@ export fn interop_window_graph_drain(
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(u32, delivered) }))
         return fault_mutating(graph_pointer, session_epoch);
     var staged: u32 = 0;
-    const status = graph.drain(graph_pointer, session_epoch, sink, sink_context, max_events, &staged);
+    const status = graph_t.drain(graph_pointer, session_epoch, sink, sink_context, max_events, &staged);
     switch (status) {
         .Ok, .None, .SinkFailed => aligned_mut(u32, delivered).* = staged,
         else => {},
@@ -573,7 +573,7 @@ export fn interop_window_graph_take_capacity_diagnostic(
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(diagnostic_t, diagnostic) }))
         return fault_mutating(graph_pointer, null);
     var staged: diagnostic_t = undefined;
-    const status = graph.take_capacity_diagnostic(graph_pointer, &staged);
+    const status = graph_t.take_capacity_diagnostic(graph_pointer, &staged);
     if (status == .Ok) aligned_mut(diagnostic_t, diagnostic).* = staged;
     return status_code(status);
 }
@@ -588,7 +588,7 @@ export fn interop_window_graph_get_stats(graph_handle: ?*const graph_handle_t, s
     const graph_pointer = graph_of_const(graph_handle) orelse return StatusInvalidArgument;
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(stats_t, stats) })) return fault_reading(graph_pointer);
     var staged: stats_t = undefined;
-    const status = graph.get_stats(graph_pointer, &staged);
+    const status = graph_t.get_stats(graph_pointer, &staged);
     if (status == .Ok) aligned_mut(stats_t, stats).* = staged;
     return status_code(status);
 }
@@ -603,7 +603,7 @@ export fn interop_window_graph_stamp_high_water(graph_handle: ?*const graph_hand
     const graph_pointer = graph_of_const(graph_handle) orelse return StatusInvalidArgument;
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(u64, stamp) })) return fault_reading(graph_pointer);
     var staged: u64 = 0;
-    const status = graph.stamp_high_water(graph_pointer, &staged);
+    const status = graph_t.stamp_high_water(graph_pointer, &staged);
     if (status == .Ok) aligned_mut(u64, stamp).* = staged;
     return status_code(status);
 }
@@ -623,7 +623,7 @@ export fn interop_window_graph_find_live(
     const graph_pointer = graph_of_const(graph_handle) orelse return StatusInvalidArgument;
     if (!spans_valid(&.{ graph_span(graph_pointer), span_of(live_t, live) })) return fault_reading(graph_pointer);
     var staged: live_t = undefined;
-    const status = graph.find_live(graph_pointer, window, &staged);
+    const status = graph_t.find_live(graph_pointer, window, &staged);
     if (status == .Ok) aligned_mut(live_t, live).* = staged;
     return status_code(status);
 }
@@ -654,28 +654,28 @@ export fn interop_window_graph_list_retiring(
         const first: *retiring_entry_t = aligned_mut(retiring_entry_t, entries);
         many = @ptrCast(first);
     }
-    const status = graph.list_retiring(graph_pointer, many, capacity, &staged);
+    const status = graph_t.list_retiring(graph_pointer, many, capacity, &staged);
     if (status == .Ok) aligned_mut(u32, count).* = staged;
     return status_code(status);
 }
 
 // Test-only fixtures.
-const testing = std.testing;
+const testing_t = std_t.testing;
 
 const TestEpoch: u64 = 0x5EED;
 const FixtureStyle: u32 = 0x00CF0000;
 
-fn expect_status(expected: graph.status_t, actual: c_int) !void {
-    try testing.expectEqual(@as(c_int, @intFromEnum(expected)), actual);
+fn expect_status(expected: graph_t.status_t, actual: c_int) !void {
+    try testing_t.expectEqual(@as(c_int, @intFromEnum(expected)), actual);
 }
 
 fn make_facts(window: u64, stamp: u64) facts_t {
-    var facts = std.mem.zeroes(facts_t);
+    var facts = std_t.mem.zeroes(facts_t);
     facts.window = window;
     facts.root = window;
     facts.stamp = stamp;
     facts.style = FixtureStyle;
-    facts.flags = graph.FactVisible | graph.FactEnabled | graph.FactOnInputDesktop;
+    facts.flags = graph_t.FactVisible | graph_t.FactEnabled | graph_t.FactOnInputDesktop;
     facts.process_id = 4242;
     facts.thread_id = 4243;
     facts.process_start_time = 1;
@@ -701,12 +701,12 @@ fn make_dialog_facts(window: u64, owner: u64, stamp: u64) facts_t {
 
 fn sentinel(comptime T: type) T {
     var value: T = undefined;
-    @memset(std.mem.asBytes(&value), 0xA5);
+    @memset(std_t.mem.asBytes(&value), 0xA5);
     return value;
 }
 
 fn is_sentinel(value: anytype) bool {
-    for (std.mem.asBytes(value)) |byte| {
+    for (std_t.mem.asBytes(value)) |byte| {
         if (byte != 0xA5) return false;
     }
     return true;
@@ -861,7 +861,7 @@ fn call_next_event(handle: ?*graph_handle_t, epoch: u64, event: ?*align(1) event
 fn call_drain(
     handle: ?*graph_handle_t,
     epoch: u64,
-    sink: graph.event_sink_t,
+    sink: graph_t.event_sink_t,
     context: ?*anyopaque,
     max_events: u32,
     delivered: ?*align(1) u32,
@@ -945,31 +945,31 @@ const harness_t = struct {
     probe: lookup_probe_t = .{},
     clock: u64 = 0,
     handle: ?*graph_handle_t = null,
-    saved_allocator: std.mem.Allocator = undefined,
+    saved_allocator: std_t.mem.Allocator = undefined,
     stamp: u64 = 0,
 
     fn open(self: *harness_t) !void {
         self.saved_allocator = abi_allocator;
-        abi_allocator = testing.allocator;
-        var config = std.mem.zeroes(config_t);
+        abi_allocator = testing_t.allocator;
+        var config = std_t.mem.zeroes(config_t);
         config.session_epoch = TestEpoch;
         config.app_key_lookup = probe_lookup;
         config.app_key_context = &self.probe;
         config.now_ms = fake_now;
         config.now_ms_context = &self.clock;
         try expect_status(.Ok, call_create(&config, &self.handle));
-        try testing.expect(self.handle != null);
+        try testing_t.expect(self.handle != null);
         self.probe.handle = self.handle;
     }
 
     fn close(self: *harness_t) void {
         if (self.handle != null) {
-            testing.expectEqual(StatusOk, call_destroy(&self.handle)) catch @panic("destroy failed");
+            testing_t.expectEqual(StatusOk, call_destroy(&self.handle)) catch @panic("destroy failed");
         }
         abi_allocator = self.saved_allocator;
     }
 
-    fn engine(self: *harness_t) *graph.graph_t {
+    fn engine(self: *harness_t) *graph_t.graph_t {
         return graph_of(self.handle).?;
     }
 
@@ -986,19 +986,19 @@ const harness_t = struct {
     }
 
     fn snapshot(self: *harness_t) ![]u8 {
-        return testing.allocator.dupe(u8, std.mem.asBytes(self.engine()));
+        return testing_t.allocator.dupe(u8, std_t.mem.asBytes(self.engine()));
     }
 
     fn expect_unchanged(self: *harness_t, before: []const u8) !void {
-        try testing.expect(std.mem.eql(u8, before, std.mem.asBytes(self.engine())));
+        try testing_t.expect(std_t.mem.eql(u8, before, std_t.mem.asBytes(self.engine())));
     }
 };
 
 test "create rejects bad slot and config pointers and nulls every valid slot" {
     const saved = abi_allocator;
-    abi_allocator = testing.allocator;
+    abi_allocator = testing_t.allocator;
     defer abi_allocator = saved;
-    var config = std.mem.zeroes(config_t);
+    var config = std_t.mem.zeroes(config_t);
     config.session_epoch = TestEpoch;
     config.app_key_lookup = probe_lookup;
     const stale: ?*graph_handle_t = @ptrFromInt(0x1000);
@@ -1006,17 +1006,17 @@ test "create rejects bad slot and config pointers and nulls every valid slot" {
     try expect_status(.InvalidArgument, call_create(&config, null));
     var slot: ?*graph_handle_t = stale;
     try expect_status(.InvalidArgument, call_create(null, &slot));
-    try testing.expect(slot == null);
+    try testing_t.expect(slot == null);
 
     var raw: [128]u8 align(8) = [_]u8{0xA5} ** 128;
     const misaligned_slot: ?*align(1) ?*graph_handle_t = @ptrCast(&raw[1]);
     try expect_status(.InvalidArgument, call_create(&config, misaligned_slot));
-    for (raw) |byte| try testing.expectEqual(@as(u8, 0xA5), byte);
+    for (raw) |byte| try testing_t.expectEqual(@as(u8, 0xA5), byte);
 
     slot = stale;
     const misaligned_config: ?*align(1) const config_t = @ptrCast(&raw[1]);
     try expect_status(.InvalidArgument, call_create(misaligned_config, &slot));
-    try testing.expect(slot == null);
+    try testing_t.expect(slot == null);
 
     // An aliased output is rejected before either caller region is changed.
     var shared: [64]u8 align(8) = [_]u8{0} ** 64;
@@ -1026,7 +1026,7 @@ test "create rejects bad slot and config pointers and nulls every valid slot" {
     shared_slot.* = stale;
     const shared_before = shared;
     try expect_status(.InvalidArgument, call_create(shared_config, shared_slot));
-    try testing.expectEqualSlices(u8, &shared_before, &shared);
+    try testing_t.expectEqualSlices(u8, &shared_before, &shared);
 
     // Raw extent overlap is detected before config alignment is required.
     var misaligned_shared: [128]u8 align(8) = [_]u8{0x5A} ** 128;
@@ -1034,13 +1034,13 @@ test "create rejects bad slot and config pointers and nulls every valid slot" {
     const misaligned_shared_slot: *align(8) ?*graph_handle_t = @ptrCast(&misaligned_shared[16]);
     const misaligned_shared_before = misaligned_shared;
     try expect_status(.InvalidArgument, call_create(misaligned_shared_config, misaligned_shared_slot));
-    try testing.expectEqualSlices(u8, &misaligned_shared_before, &misaligned_shared);
+    try testing_t.expectEqualSlices(u8, &misaligned_shared_before, &misaligned_shared);
 
     var bad = config;
     bad.session_epoch = 0;
     slot = stale;
     try expect_status(.InvalidArgument, call_create(&bad, &slot));
-    try testing.expect(slot == null);
+    try testing_t.expect(slot == null);
     bad = config;
     bad.reserved0 = 1;
     try expect_status(.InvalidArgument, call_create(&bad, &slot));
@@ -1051,41 +1051,41 @@ test "create rejects bad slot and config pointers and nulls every valid slot" {
     bad.app_key_lookup = null;
     slot = stale;
     try expect_status(.InvalidArgument, call_create(&bad, &slot));
-    try testing.expect(slot == null);
+    try testing_t.expect(slot == null);
 
     try expect_status(.Ok, call_create(&config, &slot));
-    try testing.expect(slot != null);
+    try testing_t.expect(slot != null);
     // Mutating the caller's config after create changes nothing (the config was copied).
     config.session_epoch = 0;
     try expect_status(.StaleEpoch, call_refresh_begin(slot, TestEpoch + 1));
     try expect_status(.Ok, call_refresh_begin(slot, TestEpoch));
     try expect_status(.Ok, call_destroy(&slot));
-    try testing.expect(slot == null);
+    try testing_t.expect(slot == null);
 }
 
 test "create maps allocation failure to NoMemory and frees everything it took" {
     const saved = abi_allocator;
     defer abi_allocator = saved;
-    var config = std.mem.zeroes(config_t);
+    var config = std_t.mem.zeroes(config_t);
     config.session_epoch = TestEpoch;
     config.app_key_lookup = probe_lookup;
     var fail_index: usize = 0;
     while (fail_index < 3) : (fail_index += 1) {
-        var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        var failing = testing_t.FailingAllocator.init(testing_t.allocator, .{ .fail_index = fail_index });
         abi_allocator = failing.allocator();
         var slot: ?*graph_handle_t = @ptrFromInt(0x1000);
         const status = call_create(&config, &slot);
         if (fail_index == 0) {
             try expect_status(.NoMemory, status);
-            try testing.expect(slot == null);
+            try testing_t.expect(slot == null);
         } else {
             try expect_status(.Ok, status);
-            try testing.expect(slot != null);
+            try testing_t.expect(slot != null);
             try expect_status(.Ok, call_destroy(&slot));
-            try testing.expect(slot == null);
+            try testing_t.expect(slot == null);
         }
         abi_allocator = saved;
-        try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+        try testing_t.expectEqual(failing.allocated_bytes, failing.freed_bytes);
     }
 }
 
@@ -1100,27 +1100,27 @@ test "destroy handles null, empty, repeated, misaligned and self-containing slot
 
     var empty: ?*graph_handle_t = null;
     try expect_status(.Ok, call_destroy(&empty));
-    try testing.expect(empty == null);
+    try testing_t.expect(empty == null);
 
     // A misaligned handle value is rejected and the slot keeps it.
     const bogus: ?*graph_handle_t = @ptrFromInt(@intFromPtr(h.handle.?) + 1);
     var bogus_slot = bogus;
     try expect_status(.InvalidArgument, call_destroy(&bogus_slot));
-    try testing.expect(bogus_slot == bogus);
+    try testing_t.expect(bogus_slot == bogus);
 
     // A slot that lives inside the graph it names must not free the graph.
     const before = try h.snapshot();
-    defer testing.allocator.free(before);
-    const inner: *?*graph_handle_t = @ptrFromInt(@intFromPtr(h.engine()) + @offsetOf(graph.graph_t, "ring"));
+    defer testing_t.allocator.free(before);
+    const inner: *?*graph_handle_t = @ptrFromInt(@intFromPtr(h.engine()) + @offsetOf(graph_t.graph_t, "ring"));
     inner.* = h.handle;
     try expect_status(.InvalidArgument, call_destroy(inner));
-    try testing.expect(inner.* == h.handle);
+    try testing_t.expect(inner.* == h.handle);
     inner.* = null;
     try h.expect_unchanged(before);
 
     var again = h.handle;
     try expect_status(.Ok, call_destroy(&again));
-    try testing.expect(again == null);
+    try testing_t.expect(again == null);
     try expect_status(.Ok, call_destroy(&again));
     h.handle = null;
 }
@@ -1136,12 +1136,12 @@ test "null and misaligned graph handles are InvalidArgument for every export" {
     try h.open();
     defer h.close();
     const before = try h.snapshot();
-    defer testing.allocator.free(before);
+    defer testing_t.allocator.free(before);
     const bogus: ?*graph_handle_t = @ptrFromInt(@intFromPtr(h.handle.?) + 1);
     result = .{};
     run_battery(bogus, TestEpoch, &result);
     for (result.status) |status| try expect_status(.InvalidArgument, status);
-    try testing.expect(result.slot_kept);
+    try testing_t.expect(result.slot_kept);
     try expect_status(.Ok, result.classify_status);
     try h.expect_unchanged(before);
 }
@@ -1156,7 +1156,7 @@ const thread_job_t = struct {
 
 fn thread_main(job: *thread_job_t) void {
     run_battery(job.handle, TestEpoch, &job.result);
-    var config = std.mem.zeroes(config_t);
+    var config = std_t.mem.zeroes(config_t);
     config.session_epoch = TestEpoch;
     config.app_key_lookup = probe_lookup;
     job.create_status = call_create(&config, &job.created);
@@ -1169,16 +1169,16 @@ test "a foreign thread gets WrongThread from every graph export and touches noth
     defer h.close();
     _ = try h.admit(0x100);
     const before = try h.snapshot();
-    defer testing.allocator.free(before);
+    defer testing_t.allocator.free(before);
     var job: thread_job_t = .{ .handle = h.handle };
-    const thread = try std.Thread.spawn(.{}, thread_main, .{&job});
+    const thread = try std_t.Thread.spawn(.{}, thread_main, .{&job});
     thread.join();
     for (job.result.status) |status| try expect_status(.WrongThread, status);
-    try testing.expect(job.result.slot_kept);
+    try testing_t.expect(job.result.slot_kept);
     // create and classify have no thread binding: they work on any thread.
     try expect_status(.Ok, job.result.classify_status);
     try expect_status(.Ok, job.create_status);
-    try testing.expect(job.created == null);
+    try testing_t.expect(job.created == null);
     try h.expect_unchanged(before);
     var live: live_t = undefined;
     try expect_status(.Ok, call_find_live(h.handle, 0x100, &live));
@@ -1190,10 +1190,10 @@ test "calls from inside the lookup and sink callbacks return Reentrant and destr
     defer h.close();
     h.probe.run_battery = true;
     const first = try h.admit(0x200);
-    try testing.expectEqual(@as(u32, 1), first.entries_admitted);
-    try testing.expectEqual(@as(u32, 1), h.probe.calls);
+    try testing_t.expectEqual(@as(u32, 1), first.entries_admitted);
+    try testing_t.expectEqual(@as(u32, 1), h.probe.calls);
     for (h.probe.battery.status) |status| try expect_status(.Reentrant, status);
-    try testing.expect(h.probe.battery.slot_kept);
+    try testing_t.expect(h.probe.battery.slot_kept);
     try expect_status(.Ok, h.probe.battery.classify_status);
     var live: live_t = undefined;
     try expect_status(.Ok, call_find_live(h.handle, 0x200, &live));
@@ -1201,9 +1201,9 @@ test "calls from inside the lookup and sink callbacks return Reentrant and destr
     var sink: sink_probe_t = .{ .handle = h.handle, .run_battery = true };
     var delivered: u32 = 0;
     try expect_status(.Ok, call_drain(h.handle, TestEpoch, probe_sink, &sink, 4, &delivered));
-    try testing.expectEqual(@as(u32, 1), delivered);
+    try testing_t.expectEqual(@as(u32, 1), delivered);
     for (sink.battery.status) |status| try expect_status(.Reentrant, status);
-    try testing.expect(sink.battery.slot_kept);
+    try testing_t.expect(sink.battery.slot_kept);
 }
 
 test "a stale epoch is decided before argument errors and changes only its counter" {
@@ -1234,14 +1234,14 @@ test "a stale epoch is decided before argument errors and changes only its count
     try expect_status(.StaleEpoch, call_refresh_abort(h.handle, stale));
     try expect_status(.StaleEpoch, call_next_event(h.handle, stale, &event));
     try expect_status(.StaleEpoch, call_drain(h.handle, stale, null, null, 0, &delivered));
-    try testing.expect(is_sentinel(&observation));
-    try testing.expect(is_sentinel(&event));
-    try testing.expectEqual(@as(u32, 0), count);
+    try testing_t.expect(is_sentinel(&observation));
+    try testing_t.expect(is_sentinel(&event));
+    try testing_t.expectEqual(@as(u32, 0), count);
     var after: stats_t = undefined;
     try expect_status(.Ok, call_get_stats(h.handle, &after));
-    try testing.expectEqual(stats.rejected_stale_epoch + 14, after.rejected_stale_epoch);
+    try testing_t.expectEqual(stats.rejected_stale_epoch + 14, after.rejected_stale_epoch);
     after.rejected_stale_epoch = stats.rejected_stale_epoch;
-    try testing.expect(std.mem.eql(u8, std.mem.asBytes(&stats), std.mem.asBytes(&after)));
+    try testing_t.expect(std_t.mem.eql(u8, std_t.mem.asBytes(&stats), std_t.mem.asBytes(&after)));
 }
 
 const BadKind = enum { NullPointer, Misaligned, InsideGraph, AliasInput, PartialAlias };
@@ -1250,14 +1250,14 @@ var scratch_bytes: [4096]u8 align(16) = undefined;
 
 /// A pointer of type `T` that every export must reject: NULL, misaligned, inside the graph, or
 /// overlapping `alias` (fully or from byte 8 on).
-fn bad_pointer(comptime T: type, kind: BadKind, graph_pointer: *graph.graph_t, alias: *anyopaque) ?*align(1) T {
+fn bad_pointer(comptime T: type, kind: BadKind, graph_pointer: *graph_t.graph_t, alias: *anyopaque) ?*align(1) T {
     switch (kind) {
         .NullPointer => return null,
         .Misaligned => {
             @memset(&scratch_bytes, 0xA5);
             return @ptrCast(&scratch_bytes[1]);
         },
-        .InsideGraph => return @ptrFromInt(@intFromPtr(graph_pointer) + @offsetOf(graph.graph_t, "ring")),
+        .InsideGraph => return @ptrFromInt(@intFromPtr(graph_pointer) + @offsetOf(graph_t.graph_t, "ring")),
         .AliasInput => return @ptrCast(alias),
         .PartialAlias => return @ptrFromInt(@intFromPtr(alias) + 8),
     }
@@ -1284,7 +1284,7 @@ test "pointer faults are rejected before the engine for every export with pointe
     try expect_status(.Ok, call_refresh_begin(h.handle, TestEpoch));
     const gp = h.engine();
     const before = try h.snapshot();
-    defer testing.allocator.free(before);
+    defer testing_t.allocator.free(before);
     var facts = make_facts(0x100, 90);
     const facts_before = facts;
     var combined: [4]u64 align(8) = [_]u64{ 0xA5A5A5A5A5A5A5A5, 0xA5A5A5A5A5A5A5A5, 0xA5A5A5A5A5A5A5A5, 0xA5A5A5A5A5A5A5A5 };
@@ -1293,8 +1293,8 @@ test "pointer faults are rejected before the engine for every export with pointe
         const observation = bad_pointer(observation_t, kind, gp, &facts);
         try expect_status(.InvalidArgument, call_observe(h.handle, TestEpoch, &facts, observation));
         try expect_status(.InvalidArgument, call_refresh_offer(h.handle, TestEpoch, &facts, observation));
-        try testing.expect(scratch_untouched(kind));
-        try testing.expect(std.mem.eql(u8, std.mem.asBytes(&facts), std.mem.asBytes(&facts_before)));
+        try testing_t.expect(scratch_untouched(kind));
+        try testing_t.expect(std_t.mem.eql(u8, std_t.mem.asBytes(&facts), std_t.mem.asBytes(&facts_before)));
         // classify has no graph, so a verdict buffer that happens to sit in graph memory is legal.
         if (kind == .InsideGraph) continue;
         const verdict_target = bad_pointer(verdict_t, kind, gp, &facts);
@@ -1305,10 +1305,10 @@ test "pointer faults are rejected before the engine for every export with pointe
         var observation = sentinel(observation_t);
         try expect_status(.InvalidArgument, call_observe(h.handle, TestEpoch, input, &observation));
         try expect_status(.InvalidArgument, call_refresh_offer(h.handle, TestEpoch, input, &observation));
-        try testing.expect(is_sentinel(&observation));
+        try testing_t.expect(is_sentinel(&observation));
         var verdict = sentinel(verdict_t);
         if (kind != .InsideGraph) try expect_status(.InvalidArgument, call_classify(input, 0, &verdict));
-        try testing.expect(is_sentinel(&verdict));
+        try testing_t.expect(is_sentinel(&verdict));
         try expect_status(.InvalidArgument, call_note_destroyed(h.handle, TestEpoch, 0x100, 99, 1000, bad_pointer(observation_t, kind, gp, &facts)));
         try expect_status(.InvalidArgument, call_complete_retire(h.handle, TestEpoch, 0x100, 1, bad_pointer(retire_proof_t, kind, gp, &facts)));
         try expect_status(.InvalidArgument, call_next_event(h.handle, TestEpoch, bad_pointer(event_t, kind, gp, &facts)));
@@ -1317,12 +1317,12 @@ test "pointer faults are rejected before the engine for every export with pointe
         try expect_status(.InvalidArgument, call_get_stats(h.handle, bad_pointer(stats_t, kind, gp, &facts)));
         try expect_status(.InvalidArgument, call_stamp_high_water(h.handle, bad_pointer(u64, kind, gp, &facts)));
         try expect_status(.InvalidArgument, call_find_live(h.handle, 0x100, bad_pointer(live_t, kind, gp, &facts)));
-        try testing.expect(scratch_untouched(kind));
+        try testing_t.expect(scratch_untouched(kind));
     }
     for (OptionalKinds) |kind| {
         try expect_status(.InvalidArgument, call_invalidate_all(h.handle, TestEpoch, bad_pointer(u32, kind, gp, &facts)));
         try expect_status(.InvalidArgument, call_refresh_commit(h.handle, TestEpoch, bad_pointer(u32, kind, gp, &facts)));
-        try testing.expect(scratch_untouched(kind));
+        try testing_t.expect(scratch_untouched(kind));
     }
     // refresh_unseen and list_retiring: the count and the array may not be NULL, misaligned, in the
     // graph or overlap each other.
@@ -1331,18 +1331,18 @@ test "pointer faults are rejected before the engine for every export with pointe
         try expect_status(.InvalidArgument, call_refresh_unseen(h.handle, TestEpoch, bad_pointer(u64, kind, gp, &facts), 2, @ptrCast(&combined[3])));
         try expect_status(.InvalidArgument, call_list_retiring(h.handle, @ptrCast(&combined[0]), 1, bad_pointer(u32, kind, gp, &facts)));
         try expect_status(.InvalidArgument, call_list_retiring(h.handle, bad_pointer(retiring_entry_t, kind, gp, &facts), 1, @ptrCast(&combined[3])));
-        try testing.expect(scratch_untouched(kind));
+        try testing_t.expect(scratch_untouched(kind));
     }
     try expect_status(.InvalidArgument, call_refresh_unseen(h.handle, TestEpoch, &combined[0], 2, @ptrCast(&combined[1])));
     try expect_status(.InvalidArgument, call_list_retiring(h.handle, @ptrCast(&combined[0]), 1, @ptrCast(&combined[0])));
     // An array whose range wraps the address space is rejected even though its start is valid.
-    const high: ?*align(1) u64 = @ptrFromInt(std.math.maxInt(usize) - 7);
+    const high: ?*align(1) u64 = @ptrFromInt(std_t.math.maxInt(usize) - 7);
     var count: u32 = 0;
     try expect_status(.InvalidArgument, call_refresh_unseen(h.handle, TestEpoch, high, 4, &count));
-    const high_entries: ?*align(1) retiring_entry_t = @ptrFromInt(std.math.maxInt(usize) - 7);
+    const high_entries: ?*align(1) retiring_entry_t = @ptrFromInt(std_t.math.maxInt(usize) - 7);
     try expect_status(.InvalidArgument, call_list_retiring(h.handle, high_entries, 4, &count));
-    try testing.expectEqual(@as(u32, 0), count);
-    for (combined) |word| try testing.expectEqual(@as(u64, 0xA5A5A5A5A5A5A5A5), word);
+    try testing_t.expectEqual(@as(u32, 0), count);
+    for (combined) |word| try testing_t.expectEqual(@as(u64, 0xA5A5A5A5A5A5A5A5), word);
     try h.expect_unchanged(before);
 }
 
@@ -1351,7 +1351,7 @@ test "a pointer fault on a foreign thread is WrongThread and a stale epoch is St
     try h.open();
     defer h.close();
     const before = try h.snapshot();
-    defer testing.allocator.free(before);
+    defer testing_t.allocator.free(before);
     const Job = struct {
         handle: ?*graph_handle_t,
         status: c_int = -1,
@@ -1360,7 +1360,7 @@ test "a pointer fault on a foreign thread is WrongThread and a stale epoch is St
         }
     };
     var job: Job = .{ .handle = h.handle };
-    const thread = try std.Thread.spawn(.{}, Job.run, .{&job});
+    const thread = try std_t.Thread.spawn(.{}, Job.run, .{&job});
     thread.join();
     try expect_status(.WrongThread, job.status);
     try h.expect_unchanged(before);
@@ -1372,22 +1372,22 @@ test "classify validates its arguments and facts" {
     var facts = make_facts(0x300, 1);
     var verdict = sentinel(verdict_t);
     try expect_status(.Ok, call_classify(&facts, 0, &verdict));
-    try testing.expectEqual(@as(u32, 1), verdict.kind);
-    try testing.expectEqual(graph.RoleToplevel, verdict.role);
+    try testing_t.expectEqual(@as(u32, 1), verdict.kind);
+    try testing_t.expectEqual(graph_t.RoleToplevel, verdict.role);
     try expect_status(.InvalidArgument, call_classify(&facts, 3, &verdict));
     facts.stamp = 0;
     verdict = sentinel(verdict_t);
     try expect_status(.InvalidFacts, call_classify(&facts, 0, &verdict));
-    try testing.expect(is_sentinel(&verdict));
+    try testing_t.expect(is_sentinel(&verdict));
     facts = make_facts(0x300, 1);
-    facts.flags &= ~graph.FactOnInputDesktop;
+    facts.flags &= ~graph_t.FactOnInputDesktop;
     try expect_status(.Ok, call_classify(&facts, 0, &verdict));
-    try testing.expectEqual(@as(u32, 3), verdict.kind);
+    try testing_t.expectEqual(@as(u32, 3), verdict.kind);
     facts = make_facts(0x300, 1);
     facts.root = 0x301;
     try expect_status(.Ok, call_classify(&facts, 0, &verdict));
-    try testing.expectEqual(@as(u32, 2), verdict.kind);
-    try testing.expectEqual(graph.ReasonChild, verdict.reason);
+    try testing_t.expectEqual(@as(u32, 2), verdict.kind);
+    try testing_t.expectEqual(graph_t.ReasonChild, verdict.reason);
 }
 
 test "zero-capacity arrays ignore their pointer and truncation reports the full count" {
@@ -1402,36 +1402,36 @@ test "zero-capacity arrays ignore their pointer and truncation reports the full 
     try expect_status(.Ok, call_refresh_begin(h.handle, TestEpoch));
     try expect_status(.RefreshActive, call_refresh_begin(h.handle, TestEpoch));
     try expect_status(.Ok, call_refresh_unseen(h.handle, TestEpoch, null, 0, &count));
-    try testing.expectEqual(@as(u32, 3), count);
+    try testing_t.expectEqual(@as(u32, 3), count);
     // A garbage pointer is ignored when capacity is zero.
     const garbage: ?*align(1) u64 = @ptrFromInt(1);
     try expect_status(.Ok, call_refresh_unseen(h.handle, TestEpoch, garbage, 0, &count));
     var windows = [_]u64{ 7, 7, 7 };
     count = 0;
     try expect_status(.Ok, call_refresh_unseen(h.handle, TestEpoch, &windows[0], 2, &count));
-    try testing.expectEqual(@as(u32, 3), count);
-    try testing.expectEqual(@as(u64, 0x100), windows[0]);
-    try testing.expectEqual(@as(u64, 0x101), windows[1]);
-    try testing.expectEqual(@as(u64, 7), windows[2]);
+    try testing_t.expectEqual(@as(u32, 3), count);
+    try testing_t.expectEqual(@as(u64, 0x100), windows[0]);
+    try testing_t.expectEqual(@as(u64, 0x101), windows[1]);
+    try testing_t.expectEqual(@as(u64, 7), windows[2]);
     try expect_status(.Ok, call_refresh_keep(h.handle, TestEpoch, 0x100));
     try expect_status(.None, call_refresh_keep(h.handle, TestEpoch, 0xBEEF));
     try expect_status(.InvalidArgument, call_refresh_keep(h.handle, TestEpoch, 0));
     var retired: u32 = 0xFFFF;
     try expect_status(.Ok, call_refresh_commit(h.handle, TestEpoch, &retired));
-    try testing.expectEqual(@as(u32, 2), retired);
+    try testing_t.expectEqual(@as(u32, 2), retired);
     retired = 0xFFFF;
     try expect_status(.NoRefresh, call_refresh_commit(h.handle, TestEpoch, &retired));
-    try testing.expectEqual(@as(u32, 0xFFFF), retired);
+    try testing_t.expectEqual(@as(u32, 0xFFFF), retired);
 
-    var entries = [_]retiring_entry_t{std.mem.zeroes(retiring_entry_t)} ** 3;
+    var entries = [_]retiring_entry_t{std_t.mem.zeroes(retiring_entry_t)} ** 3;
     try expect_status(.Ok, call_list_retiring(h.handle, null, 0, &count));
-    try testing.expectEqual(@as(u32, 2), count);
+    try testing_t.expectEqual(@as(u32, 2), count);
     try expect_status(.Ok, call_list_retiring(h.handle, garbage_entries(), 0, &count));
     count = 0;
     try expect_status(.Ok, call_list_retiring(h.handle, &entries[0], 1, &count));
-    try testing.expectEqual(@as(u32, 2), count);
-    try testing.expectEqual(@as(u64, 0x101), entries[0].window);
-    try testing.expectEqual(@as(u64, 0), entries[1].window);
+    try testing_t.expectEqual(@as(u32, 2), count);
+    try testing_t.expectEqual(@as(u64, 0x101), entries[0].window);
+    try testing_t.expectEqual(@as(u64, 0), entries[1].window);
     try expect_status(.InvalidArgument, call_list_retiring(h.handle, null, 1, &count));
 }
 
@@ -1449,20 +1449,20 @@ test "drain reports SinkFailed with the delivered count and keeps the refused ev
     var delivered: u32 = 0xFFFF;
     try expect_status(.InvalidArgument, call_drain(h.handle, TestEpoch, null, null, 1, &delivered));
     try expect_status(.InvalidArgument, call_drain(h.handle, TestEpoch, accept_sink, null, 0, &delivered));
-    try testing.expectEqual(@as(u32, 0xFFFF), delivered);
+    try testing_t.expectEqual(@as(u32, 0xFFFF), delivered);
     var sink: sink_probe_t = .{ .handle = h.handle, .fail_on_call = 2 };
     try expect_status(.SinkFailed, call_drain(h.handle, TestEpoch, probe_sink, &sink, 8, &delivered));
-    try testing.expectEqual(@as(u32, 1), delivered);
-    try testing.expectEqual(@as(u32, 2), sink.calls);
+    try testing_t.expectEqual(@as(u32, 1), delivered);
+    try testing_t.expectEqual(@as(u32, 2), sink.calls);
     sink.fail_on_call = 0;
     try expect_status(.Ok, call_drain(h.handle, TestEpoch, probe_sink, &sink, 8, &delivered));
-    try testing.expectEqual(@as(u32, 2), delivered);
-    try testing.expectEqual(@as(u64, 0x101), sink.windows[1]);
-    try testing.expectEqual(@as(u64, 0x101), sink.windows[2]);
-    try testing.expectEqual(@as(u64, 0x102), sink.windows[3]);
+    try testing_t.expectEqual(@as(u32, 2), delivered);
+    try testing_t.expectEqual(@as(u64, 0x101), sink.windows[1]);
+    try testing_t.expectEqual(@as(u64, 0x101), sink.windows[2]);
+    try testing_t.expectEqual(@as(u64, 0x102), sink.windows[3]);
     delivered = 0xFFFF;
     try expect_status(.None, call_drain(h.handle, TestEpoch, probe_sink, &sink, 8, &delivered));
-    try testing.expectEqual(@as(u32, 0), delivered);
+    try testing_t.expectEqual(@as(u32, 0), delivered);
 }
 
 test "capacity diagnostic, invalidate_all and lookup failures through the exports" {
@@ -1471,32 +1471,32 @@ test "capacity diagnostic, invalidate_all and lookup failures through the export
     defer h.close();
     var diagnostic = sentinel(diagnostic_t);
     try expect_status(.None, call_take_diagnostic(h.handle, &diagnostic));
-    try testing.expect(is_sentinel(&diagnostic));
+    try testing_t.expect(is_sentinel(&diagnostic));
     h.probe.fail = true;
     const refused = make_facts(0x3000, h.next_stamp());
     var observation = sentinel(observation_t);
     try expect_status(.LookupFailed, call_observe(h.handle, TestEpoch, &refused, &observation));
-    try testing.expect(is_sentinel(&observation));
+    try testing_t.expect(is_sentinel(&observation));
     h.probe.fail = false;
     var window: u64 = 0x1000;
     while (window < 0x1000 + 64) : (window += 1) _ = try h.admit(window);
     const extra = make_facts(0x2000, h.next_stamp());
     try expect_status(.AtCapacity, call_observe(h.handle, TestEpoch, &extra, &observation));
-    try testing.expect(is_sentinel(&observation));
+    try testing_t.expect(is_sentinel(&observation));
     h.clock = 5;
     try expect_status(.Ok, call_take_diagnostic(h.handle, &diagnostic));
-    try testing.expectEqual(@as(u64, 1), diagnostic.at_capacity);
-    try testing.expectEqual(@as(u32, 64), diagnostic.active_count);
+    try testing_t.expectEqual(@as(u64, 1), diagnostic.at_capacity);
+    try testing_t.expectEqual(@as(u32, 64), diagnostic.active_count);
     try expect_status(.None, call_take_diagnostic(h.handle, &diagnostic));
 
     var retired: u32 = 0;
     try expect_status(.Ok, call_invalidate_all(h.handle, TestEpoch, &retired));
-    try testing.expectEqual(@as(u32, 64), retired);
+    try testing_t.expectEqual(@as(u32, 64), retired);
     try expect_status(.Ok, call_invalidate_all(h.handle, TestEpoch, null));
     var count: u32 = 0;
     var entries: [64]retiring_entry_t = undefined;
     try expect_status(.Ok, call_list_retiring(h.handle, &entries[0], 64, &count));
-    try testing.expectEqual(@as(u32, 64), count);
+    try testing_t.expectEqual(@as(u32, 64), count);
 }
 
 test "lifecycle through the exports: admit, events, retire, complete, refresh, drain" {
@@ -1505,34 +1505,34 @@ test "lifecycle through the exports: admit, events, retire, complete, refresh, d
     defer h.close();
     var stamp_value: u64 = 99;
     try expect_status(.Ok, call_stamp_high_water(h.handle, &stamp_value));
-    try testing.expectEqual(@as(u64, 0), stamp_value);
+    try testing_t.expectEqual(@as(u64, 0), stamp_value);
 
     const a_facts = make_facts(0xA00, h.next_stamp());
     var verdict: verdict_t = undefined;
     try expect_status(.Ok, call_classify(&a_facts, 0, &verdict));
-    try testing.expectEqual(@as(u32, 1), verdict.kind);
+    try testing_t.expectEqual(@as(u32, 1), verdict.kind);
     var observation: observation_t = undefined;
     try expect_status(.Ok, call_observe(h.handle, TestEpoch, &a_facts, &observation));
-    try testing.expectEqual(graph.DispositionAdmitted, observation.disposition);
-    try testing.expectEqual(@as(u64, 1), observation.generation);
-    try testing.expectEqual(@as(u32, 1), observation.events_queued);
+    try testing_t.expectEqual(graph_t.DispositionAdmitted, observation.disposition);
+    try testing_t.expectEqual(@as(u64, 1), observation.generation);
+    try testing_t.expectEqual(@as(u32, 1), observation.events_queued);
 
     var event: event_t = undefined;
     try expect_status(.Ok, call_next_event(h.handle, TestEpoch, &event));
-    try testing.expectEqual(graph.EventAnnounce, event.kind);
-    try testing.expectEqual(@as(u64, 0xA00), event.window);
-    try testing.expectEqual(@as(u32, 6), event.app_key_length);
-    try testing.expect(std.mem.eql(u8, event.app_key[0..6], "a-test"));
+    try testing_t.expectEqual(graph_t.EventAnnounce, event.kind);
+    try testing_t.expectEqual(@as(u64, 0xA00), event.window);
+    try testing_t.expectEqual(@as(u32, 6), event.app_key_length);
+    try testing_t.expect(std_t.mem.eql(u8, event.app_key[0..6], "a-test"));
     try expect_status(.None, call_next_event(h.handle, TestEpoch, &event));
 
     var live: live_t = undefined;
     try expect_status(.Ok, call_find_live(h.handle, 0xA00, &live));
-    try testing.expectEqual(@as(u64, 1), live.generation);
+    try testing_t.expectEqual(@as(u64, 1), live.generation);
     live = sentinel(live_t);
     try expect_status(.None, call_find_live(h.handle, 0xDEAD, &live));
-    try testing.expect(is_sentinel(&live));
+    try testing_t.expect(is_sentinel(&live));
     try expect_status(.Ok, call_stamp_high_water(h.handle, &stamp_value));
-    try testing.expectEqual(@as(u64, 1), stamp_value);
+    try testing_t.expectEqual(@as(u64, 1), stamp_value);
     try expect_status(.Ok, call_check_action(h.handle, TestEpoch, 0xA00, 1));
     try expect_status(.Stale, call_check_action(h.handle, TestEpoch, 0xA00, 2));
     try expect_status(.InvalidArgument, call_check_action(h.handle, TestEpoch, 0, 1));
@@ -1540,20 +1540,20 @@ test "lifecycle through the exports: admit, events, retire, complete, refresh, d
     // A dialog owned by A, then a refresh that only offers A: the dialog is retired as unseen.
     const b_facts = make_dialog_facts(0xB00, 0xA00, h.next_stamp());
     try expect_status(.Ok, call_observe(h.handle, TestEpoch, &b_facts, &observation));
-    try testing.expectEqual(graph.DispositionAdmitted, observation.disposition);
+    try testing_t.expectEqual(graph_t.DispositionAdmitted, observation.disposition);
     try expect_status(.Ok, call_refresh_begin(h.handle, TestEpoch));
     try expect_status(.RefreshActive, call_refresh_begin(h.handle, TestEpoch));
     const a_again = make_facts(0xA00, h.next_stamp());
     try expect_status(.Ok, call_refresh_offer(h.handle, TestEpoch, &a_again, &observation));
-    try testing.expectEqual(graph.DispositionUnchanged, observation.disposition);
+    try testing_t.expectEqual(graph_t.DispositionUnchanged, observation.disposition);
     var windows: [4]u64 = undefined;
     var count: u32 = 0;
     try expect_status(.Ok, call_refresh_unseen(h.handle, TestEpoch, &windows[0], 4, &count));
-    try testing.expectEqual(@as(u32, 1), count);
-    try testing.expectEqual(@as(u64, 0xB00), windows[0]);
+    try testing_t.expectEqual(@as(u32, 1), count);
+    try testing_t.expectEqual(@as(u64, 0xB00), windows[0]);
     var retired: u32 = 0;
     try expect_status(.Ok, call_refresh_commit(h.handle, TestEpoch, &retired));
-    try testing.expectEqual(@as(u32, 1), retired);
+    try testing_t.expectEqual(@as(u32, 1), retired);
     try expect_status(.NoRefresh, call_refresh_abort(h.handle, TestEpoch));
     try expect_status(.Ok, call_refresh_begin(h.handle, TestEpoch));
     try expect_status(.Ok, call_refresh_abort(h.handle, TestEpoch));
@@ -1562,17 +1562,17 @@ test "lifecycle through the exports: admit, events, retire, complete, refresh, d
     var sink: sink_probe_t = .{ .handle = h.handle };
     var delivered: u32 = 0;
     try expect_status(.Ok, call_drain(h.handle, TestEpoch, probe_sink, &sink, 8, &delivered));
-    try testing.expectEqual(@as(u32, 2), delivered);
-    try testing.expectEqual(graph.EventAnnounce, sink.kinds[0]);
-    try testing.expectEqual(graph.EventRetireIntent, sink.kinds[1]);
-    try testing.expectEqual(@as(u64, 0xB00), sink.windows[1]);
+    try testing_t.expectEqual(@as(u32, 2), delivered);
+    try testing_t.expectEqual(graph_t.EventAnnounce, sink.kinds[0]);
+    try testing_t.expectEqual(graph_t.EventRetireIntent, sink.kinds[1]);
+    try testing_t.expectEqual(@as(u64, 0xB00), sink.windows[1]);
 
     // B is quarantined: listed, not live, proof checked in the documented order.
     var entries: [4]retiring_entry_t = undefined;
     try expect_status(.Ok, call_list_retiring(h.handle, &entries[0], 4, &count));
-    try testing.expectEqual(@as(u32, 1), count);
-    try testing.expectEqual(@as(u64, 0xB00), entries[0].window);
-    try testing.expectEqual(@as(u64, 2), entries[0].generation);
+    try testing_t.expectEqual(@as(u32, 1), count);
+    try testing_t.expectEqual(@as(u64, 0xB00), entries[0].window);
+    try testing_t.expectEqual(@as(u64, 2), entries[0].generation);
     try expect_status(.None, call_find_live(h.handle, 0xB00, &live));
     var proof: retire_proof_t = .{ .capture_stopped = 1, .pins_drained = 0 };
     try expect_status(.ProofIncomplete, call_complete_retire(h.handle, TestEpoch, 0xB00, 2, &proof));
@@ -1585,28 +1585,28 @@ test "lifecycle through the exports: admit, events, retire, complete, refresh, d
     // A destroy hint retires A.
     const hint_stamp = h.next_stamp();
     try expect_status(.Ok, call_note_destroyed(h.handle, TestEpoch, 0xA00, hint_stamp, 2000, &observation));
-    try testing.expectEqual(graph.DispositionRetired, observation.disposition);
-    try testing.expectEqual(@as(u64, 1), observation.retired_generation);
+    try testing_t.expectEqual(graph_t.DispositionRetired, observation.disposition);
+    try testing_t.expectEqual(@as(u64, 1), observation.retired_generation);
     try expect_status(.InvalidArgument, call_note_destroyed(h.handle, TestEpoch, 0, hint_stamp, 2000, &observation));
     try expect_status(.Stale, call_check_action(h.handle, TestEpoch, 0xA00, 1));
     sink = .{ .handle = h.handle };
     try expect_status(.Ok, call_drain(h.handle, TestEpoch, probe_sink, &sink, 8, &delivered));
-    try testing.expectEqual(@as(u32, 1), delivered);
+    try testing_t.expectEqual(@as(u32, 1), delivered);
     try expect_status(.Ok, call_complete_retire(h.handle, TestEpoch, 0xA00, 1, &proof));
     try expect_status(.Ok, call_list_retiring(h.handle, null, 0, &count));
-    try testing.expectEqual(@as(u32, 0), count);
+    try testing_t.expectEqual(@as(u32, 0), count);
 
     var stats: stats_t = undefined;
     try expect_status(.Ok, call_get_stats(h.handle, &stats));
-    try testing.expectEqual(TestEpoch, stats.session_epoch);
-    try testing.expectEqual(@as(u64, 2), stats.admitted);
-    try testing.expectEqual(@as(u64, 2), stats.retire_completed);
-    try testing.expectEqual(@as(u32, 0), stats.active_count);
+    try testing_t.expectEqual(TestEpoch, stats.session_epoch);
+    try testing_t.expectEqual(@as(u64, 2), stats.admitted);
+    try testing_t.expectEqual(@as(u64, 2), stats.retire_completed);
+    try testing_t.expectEqual(@as(u32, 0), stats.active_count);
 
     // A new generation after the teardown; destroy with a pending event is fine.
     _ = try h.admit(0xC00);
     var handle = h.handle;
     try expect_status(.Ok, call_destroy(&handle));
-    try testing.expect(handle == null);
+    try testing_t.expect(handle == null);
     h.handle = null;
 }

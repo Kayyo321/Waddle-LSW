@@ -1367,3 +1367,12 @@ The retry policy follows that boundary and never treats failure as detachment.
 OUTOFCONTEXT callbacks require a message loop and run on the installing thread,
 with reentrancy possible (https://learn.microsoft.com/en-us/windows/desktop/api/winuser/nf-winuser-setwineventhook).
 Native behavior and installed-agent acceptance remain separate qualification.
+
+### 9.5 Codex namespace conformance
+
+Owned Zig module aliases use `std_t`, `c_t`, `graph_t`, and `testing_t` to
+satisfy the repository type naming rule. External module properties, including
+`std_t.testing`, and C pointer sentinel syntax `[*c]` remain unchanged. This is
+an identifier-only transformation: `namespace_review_receipt.json` records the
+exact two source hashes and token proof. It grants no behavioral or native
+qualification credit.
