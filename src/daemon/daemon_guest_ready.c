@@ -62,7 +62,9 @@ int daemon_guest_ready_step(daemon_guest_ready_t *probe, int running,
     if (!running) return complete_probe(probe, -ENOTCONN, response);
     if (now_ms >= probe->deadline_ms) return complete_probe(probe, -ETIMEDOUT, response);
     if (probe->probe_fd >= 0) {
-        if (revents & (POLLERR | POLLHUP | POLLNVAL)) {
+        if (now_ms >= probe->probe_deadline_ms) {
+            retry_probe(probe, now_ms);
+        } else if (revents & (POLLERR | POLLHUP | POLLNVAL)) {
             retry_probe(probe, now_ms);
         } else if (revents & POLLOUT) {
             int socket_error = 0;
@@ -70,8 +72,6 @@ int daemon_guest_ready_step(daemon_guest_ready_t *probe, int running,
             if (getsockopt(probe->probe_fd, SOL_SOCKET, SO_ERROR, &socket_error, &bytes) == 0 &&
                 bytes == sizeof(socket_error) && socket_error == 0)
                 return complete_probe(probe, 0, response);
-            retry_probe(probe, now_ms);
-        } else if (now_ms >= probe->probe_deadline_ms) {
             retry_probe(probe, now_ms);
         }
         return 0;

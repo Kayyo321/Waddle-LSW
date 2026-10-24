@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "progress_delta": 0,
+  "scope": "daemon GuestReady implementation and isolated IPC tests; actual host session pending",
+  "source_sha256": {
+    "src/daemon/daemon_server.c": "835801cf607f0dd0a9c08e562d46b600929f0c6cd20dcad79713cf0e9f44f41a",
+    "src/daemon/daemon_guest_ready.c": "110c6bdba65d6c7239560c28111a7c90e41da529f68dff4b99eeba9ec22b57d1",
+    "src/daemon/daemon_guest_ready_client.c": "f8f84eb3c04cae31e9230d4f3b3faf6fd155fd7d506ae5aa1e46d0abbf63521d",
+    "src/daemon/daemon_wire.zig": "9cf2c1a5176d170e9eeb5e3719654e992460f3c119856d32d7a618d3ec00cba4",
+    "src/daemon/daemon_wire.h": "431d4c9f9419203358000c7528d7b9b5f431ade00898fe2056e8cee167b600ba",
+    "src/daemon/daemon_client.h": "23b953a467a3f44aa52bc8ae2a156c42057044a0f9ddf52a914a356dec6e5580",
+    "include/waddle/daemon_protocol.h": "89f24b120e19080c930173ce9b896e2468f04f5332098f5e26750c769499938c",
+    "tests/daemon/test_guest_ready_client.c": "489e0e426a97ffe60f6e13bf31ba6f53099daf9bf79ed169ee7b528e49e22c65",
+    "tests/daemon/test_guest_ready_client_faults.c": "170a0be7379e947a75199622220a89292de3f5e0efbd26c92ae0e9d41df79f0c",
+    "tests/daemon/test_guest_ready_runtime.c": "88f483827ea66648d9e367681b1536ebd8ad8686b755bd0dbef9e4d0ba2dd98e",
+    "tests/daemon/guest_ready_coverage.py": "0e05ab1e22fa977ee999f8ef3e481d356435a6a7d6f1bb0f4eb077970310f38a"
+  },
+  "decoder": {
+    "lines": [
+      28,
+      28
+    ],
+    "taken_branches": [
+      18,
+      18
+    ]
+  },
+  "probe": {
+    "lines": [
+      66,
+      66
+    ],
+    "taken_branches": [
+      52,
+      52
+    ]
+  },
+  "client": {
+    "lines": [
+      55,
+      55
+    ],
+    "taken_branches": [
+      78,
+      80
+    ]
+  },
+  "server_integration_coverage_percent": null,
+  "server_tests": [
+    "partial header/body retention",
+    "queued request ordering",
+    "two-client responsiveness during mocked Running readiness wait",
+    "same-user peer credential admission",
+    "correlated unknown type rejection",
+    "timer failure keeps supervisor/mock VM Running",
+    "response completes before idle supervisor shutdown"
+  ],
+  "sanitizers": {
+    "address": true,
+    "leak": true,
+    "undefined": true,
+    "detect_leaks": 1,
+    "exit_code": 0
+  },
+  "native_vsock": false,
+  "actual_waddle_session_entry": false,
+  "notes": [
+    "No full-feature or native acceptance credit.",
+    "Server existing Start/Stop handlers remain synchronous; GuestReady introduces no dispatcher wait.",
+    "Fault tests and actual AF_UNIX/socketpair integration run separately.",
+    "A prior apparent socketpair hang was sandbox-only; escalated real fixture passes.",
+    "Final runtime fixture confines XDG config/state/runtime and logs to its temporary tree; leak-enabled final rerun passes."
+  ]
+}

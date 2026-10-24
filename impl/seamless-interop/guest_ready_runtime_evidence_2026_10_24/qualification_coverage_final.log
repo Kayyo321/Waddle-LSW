@@ -1,0 +1,28 @@
+python3 tests/av/coverage.py daemon_wire
+preserved daemon_wire coverage: /home/dev/Waddle-LSW/build/coverage/daemon/daemon_wire/run-20261024T225719473721Z-776384
+daemon_wire instrumentation: 37 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 188/524288 bytes; 37 sites
+1/4 daemon_wire.test.legacy error status exact bounds preserve destination...OK
+2/4 daemon_wire.test.exact little endian header and all rejection boundaries preserve output...OK
+3/4 daemon_wire.test.readiness request default maximum and malformed bytes...OK
+4/4 daemon_wire.test.response validates every status CID and length before output mutation...OK
+All 4 tests passed.
+daemon_wire production branch coverage: 100.00% (18/18); 0 compiler panic/stack-canary guards excluded
+daemon_wire production line coverage: 100.00% (28/28); 0 compiler panic/stack-canary guards excluded
+python3 tests/daemon/guest_ready_coverage.py
+guest readiness state machine: all deterministic faults passed
+daemon_guest_ready line {'covered': 66, 'total': 66, 'percent': 100.0} evidence /home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready/run-20261024T225727-61ec205d
+daemon_guest_ready taken_branch {'covered': 52, 'total': 52, 'percent': 100.0} evidence /home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready/run-20261024T225727-61ec205d
+test_guest_ready_client_faults: all tests passed
+daemon_guest_ready_client line {'covered': 55, 'total': 55, 'percent': 100.0} evidence /home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready_client/run-20261024T225727-71a2c8b8
+daemon_guest_ready_client taken_branch {'covered': 78, 'total': 80, 'percent': 97.5} evidence /home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready_client/run-20261024T225727-71a2c8b8

@@ -129,6 +129,19 @@ int waddle_client_stop(int fd,
  */
 int waddle_client_status(int fd, waddle_daemon_status_resp_t *resp);
 
+/** @brief Wait for configured guest-exec reachability through one daemon transaction.
+ * @param[in] fd Borrowed connected socket; serialized caller owns/retains it.
+ * @param[in] timeout_ms Zero selects120000; otherwise1..120000 milliseconds.
+ * @param[out] resp Non-null aligned writable response, unchanged on any failure.
+ * @return 0 complete validated reply (inspect signed status), -1 with errno for
+ *         local/transport/protocol failure, including ENOTSUP from older daemons.
+ * @note No allocation or retained memory. One total timeout_ms+2000ms deadline
+ *       covers request and reply. After transport failure caller must close fd;
+ *       never retry on a partially consumed stream. No interop/mapping authority.
+ */
+int waddle_client_guest_ready(int fd, uint32_t timeout_ms,
+                              waddle_daemon_guest_ready_resp_t *resp);
+
 /**
  * @brief Request supervisor exit after all subsystem children are stopped and reaped.
  * @param[in] fd Borrowed connected socket, nonnegative; caller closes it.

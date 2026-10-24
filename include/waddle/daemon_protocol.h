@@ -180,6 +180,13 @@ typedef struct waddle_daemon_guest_ready_resp_t {
     uint32_t cid;
 } waddle_daemon_guest_ready_resp_t;
 
+#ifndef __cplusplus
+_Static_assert(sizeof(waddle_daemon_header_t) == 16, "daemon header wire ABI");
+_Static_assert(sizeof(waddle_daemon_guest_ready_req_t) == 4, "GuestReady request wire ABI");
+_Static_assert(sizeof(waddle_daemon_guest_ready_resp_t) == 8, "GuestReady response wire ABI");
+_Static_assert(offsetof(waddle_daemon_guest_ready_resp_t, cid) == 4, "GuestReady CID wire offset");
+#endif
+
 /**
  * @brief Payload for DaemonMsgStartResp, DaemonMsgStopResp, DaemonMsgKillResp, DaemonMsgErrorResp.
  */

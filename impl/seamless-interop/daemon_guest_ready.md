@@ -37,7 +37,8 @@ closes the probe before reporting0. POLLERR/HUP/NVAL is failure, not readiness.
 Disconnect/client shutdown closes a pending probe once. No probe fd is handed
 to an interop owner. Clock failure closes affected clients and pending probes.
 
-The client helper uses one total monotonic deadline for request write and
+The client helper uses one total monotonic deadline (requested duration, with
+zero selecting120000ms, plus2000ms bounded IPC allowance) for request write and
 response read, validates exact type/sequence/payload length and Zig-decoded
 status/CID before committing output, reports old-daemon ENOTSUP, and leaves the
 borrowed fd open. A partial transport failure requires its caller to close that
@@ -50,3 +51,11 @@ New parsers and state machines require≥90% production line and branch coverage
 leak-enabled sanitizer runs and zero allocator leaks. No native credit follows
 from mocked probes. The actual waddle-session entry and guest integration remain
 separate runtime work.
+
+The legacy ErrorResp decoder requires exactly264 bytes and errno1..4095, leaving
+its diagnostic tail opaque. A final nonblocking read that finishes at or beyond
+the shared deadline is rejected before committing the response. Clock failure
+in the daemon cancels clients/probes and keeps the VM/supervisor alive; it must
+not exit through daemon_state_cleanup. A queued idle Shutdown response disables
+new request dispatch until its complete nonblocking write, preventing an
+intervening Start from changing the shutdown precondition.

@@ -58,7 +58,34 @@ export fn daemon_wire_decode_ready_response(bytes: ?[*]const u8, length: usize, 
     return 0;
 }
 
+/// in: readable bytes[length]; out: disjoint aligned u32 errno. Returns0/-1.
+/// Legacy diagnostic bytes are opaque. Failure preserves output; no allocation; thread-safe.
+export fn daemon_wire_decode_error_response(bytes: ?[*]const u8, length: usize, out_error: ?*u32) c_int {
+    if (bytes == null or out_error == null or length != 264) return -1;
+    const code = read_u32(bytes.?[0..length]);
+    if (code == 0 or code > 4095) return -1;
+    out_error.?.* = code;
+    return 0;
+}
+
 // Test-only fixtures.
+test "legacy error status exact bounds preserve destination" {
+    var data = [_]u8{0xa5} ** 264;
+    var out: u32 = 9;
+    for ([_]u32{ 0, 1, 95, 4095, 4096, std_t.math.maxInt(u32) }) |code| {
+        std_t.mem.writeInt(u32, data[0..4], code, .little);
+        out = 9;
+        const valid = code >= 1 and code <= 4095;
+        try std_t.testing.expectEqual(@as(c_int, if (valid) 0 else -1), @call(.never_inline, daemon_wire_decode_error_response, .{ &data, 264, &out }));
+        try std_t.testing.expectEqual(if (valid) code else 9, out);
+    }
+    try std_t.testing.expectEqual(@as(c_int, -1), @call(.never_inline, daemon_wire_decode_error_response, .{ null, 264, &out }));
+    try std_t.testing.expectEqual(@as(c_int, -1), @call(.never_inline, daemon_wire_decode_error_response, .{ &data, 264, null }));
+    for ([_]usize{ 0, 263, 265, std_t.math.maxInt(usize) }) |length| {
+        try std_t.testing.expectEqual(@as(c_int, -1), @call(.never_inline, daemon_wire_decode_error_response, .{ &data, length, &out }));
+        try std_t.testing.expectEqual(@as(u32, 9), out);
+    }
+}
 test "exact little endian header and all rejection boundaries preserve output" {
     var data = [_]u8{ 0x44, 0x44, 0x41, 0x57, 1, 0, 0x10, 0, 4, 3, 2, 1, 0, 0, 1, 0 };
     const Sentinel = daemon_header_t{ .magic = 7, .version = 7, .msg_type = 7, .sequence = 7, .payload_len = 7 };

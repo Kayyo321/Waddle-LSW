@@ -1,0 +1,79 @@
+{
+  "sha256": {
+    "src/daemon/daemon_guest_ready_client.c": "f8f84eb3c04cae31e9230d4f3b3faf6fd155fd7d506ae5aa1e46d0abbf63521d",
+    "tests/daemon/test_guest_ready_client_faults.c": "170a0be7379e947a75199622220a89292de3f5e0efbd26c92ae0e9d41df79f0c",
+    "src/daemon/daemon_client.h": "23b953a467a3f44aa52bc8ae2a156c42057044a0f9ddf52a914a356dec6e5580",
+    "src/daemon/daemon_guest_ready.h": "4f41ddebab42c524d51d7323e64103ef6ff315d0ad32652a812cdec27e7aedd3",
+    "src/daemon/daemon_wire.h": "431d4c9f9419203358000c7528d7b9b5f431ade00898fe2056e8cee167b600ba",
+    "src/daemon/daemon_wire.zig": "9cf2c1a5176d170e9eeb5e3719654e992460f3c119856d32d7a618d3ec00cba4",
+    "include/waddle/daemon_protocol.h": "7b5d831f6ba5c55a6a139352b72aa50971f0089ea3cc2f2b5579715b6bcde67e",
+    "build/daemon_wire.o": "bbeec325b85af17d573d0f074f898d4129dbf013d4a5d0de329f82ef9502ff3b",
+    "tests/daemon/guest_ready_coverage.py": "0e05ab1e22fa977ee999f8ef3e481d356435a6a7d6f1bb0f4eb077970310f38a"
+  },
+  "commands": [
+    [
+      "cc",
+      "-D_GNU_SOURCE",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-Iinclude",
+      "-Isrc/daemon",
+      "-pthread",
+      "--coverage",
+      "-fprofile-abs-path",
+      "-c",
+      "/home/dev/Waddle-LSW/src/daemon/daemon_guest_ready_client.c",
+      "-o",
+      "/home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready_client/run-20261024T224728-a0bf78ee/production.o"
+    ],
+    [
+      "cc",
+      "-D_GNU_SOURCE",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-Iinclude",
+      "-Isrc/daemon",
+      "-pthread",
+      "-c",
+      "/home/dev/Waddle-LSW/tests/daemon/test_guest_ready_client_faults.c",
+      "-o",
+      "/home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready_client/run-20261024T224728-a0bf78ee/fixture.o"
+    ],
+    [
+      "cc",
+      "/home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready_client/run-20261024T224728-a0bf78ee/production.o",
+      "/home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready_client/run-20261024T224728-a0bf78ee/fixture.o",
+      "build/daemon_wire.o",
+      "--coverage",
+      "-pthread",
+      "-Wl,--wrap=clock_gettime",
+      "-Wl,--wrap=poll",
+      "-Wl,--wrap=recv",
+      "-Wl,--wrap=send",
+      "-o",
+      "/home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready_client/run-20261024T224728-a0bf78ee/runner"
+    ],
+    [
+      "/home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready_client/run-20261024T224728-a0bf78ee/runner"
+    ],
+    [
+      "gcov",
+      "--json-format",
+      "-b",
+      "-c",
+      "/home/dev/Waddle-LSW/build/coverage/daemon/daemon_guest_ready_client/run-20261024T224728-a0bf78ee/production.gcno"
+    ]
+  ]
+}

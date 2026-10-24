@@ -1,0 +1,74 @@
+[
+  {
+    "function": "daemon_wire_decode_header",
+    "line": 22,
+    "column": 9,
+    "edge": 0
+  },
+  {
+    "function": "daemon_wire_decode_header",
+    "line": 22,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "daemon_wire_decode_header",
+    "line": 27,
+    "column": 9,
+    "edge": 0
+  },
+  {
+    "function": "daemon_wire_decode_header",
+    "line": 27,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_request",
+    "line": 41,
+    "column": 9,
+    "edge": 0
+  },
+  {
+    "function": "daemon_wire_decode_ready_request",
+    "line": 41,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_request",
+    "line": 43,
+    "column": 9,
+    "edge": 0
+  },
+  {
+    "function": "daemon_wire_decode_ready_request",
+    "line": 43,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 51,
+    "column": 9,
+    "edge": 0
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 51,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 56,
+    "column": 44,
+    "edge": 0
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 56,
+    "column": 44,
+    "edge": 1
+  }
+]

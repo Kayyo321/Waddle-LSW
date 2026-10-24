@@ -1,0 +1,229 @@
+[
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 21,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 22,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "daemon_wire_decode_header",
+    "line": 22,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 23,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 24,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 25,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 26,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 27,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "daemon_wire_decode_header",
+    "line": 27,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 28,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 31,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_header",
+    "line": 32,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_request",
+    "line": 40,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_request",
+    "line": 41,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_request",
+    "line": 41,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_request",
+    "line": 42,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_request",
+    "line": 43,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_request",
+    "line": 43,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_request",
+    "line": 44,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_response",
+    "line": 50,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_response",
+    "line": 51,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 51,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_response",
+    "line": 52,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_response",
+    "line": 53,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_response",
+    "line": 54,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_response",
+    "line": 55,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 55,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_response",
+    "line": 56,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 56,
+    "column": 44,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "daemon_wire_decode_ready_response",
+    "line": 57,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 55,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 55,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 55,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "function": "daemon_wire_decode_ready_response",
+    "line": 55,
+    "column": 9,
+    "edges": 2
+  }
+]

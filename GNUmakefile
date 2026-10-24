@@ -143,7 +143,7 @@ build/test_daemon_fs: tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/c
 build/test_daemon_device: tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/device_storage.o build/daemon_config.o src/daemon/daemon_device.h src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/device_storage.o build/daemon_config.o $(LDFLAGS) -o $@
 
-DAEMON_COMMON = build/av_gpu.o build/av_codec.o build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c src/common/path_filesystem.c build/device_storage.o build/daemon_config.o build/path_rules.o
+DAEMON_COMMON = build/daemon_wire.o src/daemon/daemon_guest_ready_client.c src/daemon/daemon_guest_ready.c build/av_gpu.o build/av_codec.o build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c src/common/path_filesystem.c build/device_storage.o build/daemon_config.o build/path_rules.o
 
 build/waddled: src/daemon/daemon_main.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon/daemon_main.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
@@ -153,6 +153,31 @@ build/test_daemon_server: tests/daemon/test_daemon_server.c $(DAEMON_COMMON) | b
 
 build/test_daemon_client: tests/daemon/test_daemon_client.c src/daemon/daemon_client.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_client.c src/daemon/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
+
+build/test_guest_ready_runtime: tests/daemon/test_guest_ready_runtime.c $(DAEMON_COMMON) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(DAEMON_COMMON) $(LDFLAGS) -Wl,--wrap=clock_gettime -lpthread -o $@
+
+GuestReadyClientWrapFlags = -Wl,--wrap=clock_gettime,--wrap=send,--wrap=recv,--wrap=poll
+build/test_guest_ready_client_faults: tests/daemon/test_guest_ready_client_faults.c src/daemon/daemon_guest_ready_client.c build/daemon_wire.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< src/daemon/daemon_guest_ready_client.c build/daemon_wire.o $(LDFLAGS) $(GuestReadyClientWrapFlags) -lpthread -o $@
+
+build/test_guest_ready_client: tests/daemon/test_guest_ready_client.c src/daemon/daemon_guest_ready_client.c build/daemon_wire.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< src/daemon/daemon_guest_ready_client.c build/daemon_wire.o $(LDFLAGS) -lpthread -o $@
+
+.PHONY: daemon-guest-ready-runtime-test
+daemon-guest-ready-runtime-test: daemon-guest-ready-test build/test_guest_ready_client_faults build/test_guest_ready_runtime build/test_guest_ready_client build/test_daemon_server build/test_daemon_client
+	./build/test_guest_ready_client_faults
+	./build/test_guest_ready_runtime
+	./build/test_guest_ready_client
+	./build/test_daemon_server
+	./build/test_daemon_client
+
+.PHONY: daemon-guest-ready-sanitizers daemon-guest-ready-coverage
+daemon-guest-ready-sanitizers:
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 $(MAKE) -W src/daemon/daemon_server.c -W tests/daemon/test_guest_ready.c -W tests/daemon/test_guest_ready_client.c -W tests/daemon/test_guest_ready_client_faults.c daemon-guest-ready-runtime-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+daemon-guest-ready-coverage: build/daemon_wire.o
+	python3 tests/av/coverage.py daemon_wire
+	python3 tests/daemon/guest_ready_coverage.py
 
 build/test_auto_terminal: tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@

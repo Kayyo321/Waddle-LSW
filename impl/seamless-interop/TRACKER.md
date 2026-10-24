@@ -34,7 +34,7 @@ acceptance remain pending.
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 23 codec/imported parser tests; 97.13% branch / 96.56% line; bounded SemVer2 and app-key helpers; native Windows/ASan/LSan gates pass |
 | #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 60% | Snapshot, heap, C ABI, native CPU atomics and pure slot pins/growth/drain accepted; live mapping/session integration and qualification remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | In Progress | 4% | 25% | Shared framing/owned queue/handshake/liveness qualified on Linux and Windows; Win32 listener/mapping, signing/deploy and native acceptance remain open |
-| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 30% | Shared protocol25% + Linux connected-byte-owner5% accepted; VSOCK admission/singleton, daemon control, module extraction and native acceptance remain open |
+| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 30% | Shared protocol25% + Linux connected-byte-owner5% accepted; Lease/VSOCK and GuestReady components qualified without entry credit; actual session entry, mapping/Wayland, module extraction and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 35% | Pure graph25% + C ABI10% accepted after reviewed73bc833 import; snapshot/native fact fixes and full Linux/Windows CI40129670493 green. O5 preservation blocks observer credit; coordinator and installed session remain open |
@@ -1117,7 +1117,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     credit, producer-release proof or mapping/reconnect permission is claimed.
     HEAD identifies this harness/boot evidence commit.
 
-- **Commit `HEAD`**: `feat(interop): own Linux session leases and bounded VSOCK admission`
+- **Commit `7ead90f`**: `feat(interop): own Linux session leases and bounded VSOCK admission`
   - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
   - **Summary**: Adds secure per-device session/AV lease ownership and one bounded
     connection to reserved5002, with exact fd handoff into the real byte owner.
@@ -1130,3 +1130,16 @@ its uncompiled draft earns no credit until current acceptance passes.
     retains failed coverage attempts. The real host entry, daemon admission policy,
     mapping/Wayland lifetime and production VSOCK remain open; no runtime credit.
     HEAD identifies this bounded component/qualification commit.
+
+- **Commit `HEAD`**: `feat(daemon): integrate nonblocking GuestReady transactions`
+  - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
+  - **Summary**: Replaces lossy daemon receive calls/blocking reply writes with
+    bounded per-client incremental frames and queued replies, same-UID credentials,
+    configured-port readiness waits, correlated finite-deadline client helper and
+    older-daemon ENOTSUP handling. Clock failure cancels clients without VM teardown;
+    idle shutdown reply flushes before exit. Real AF_UNIX/socketpair tests and
+    adversarial syscall faults pass strict builds and detect_leaks=1 ASan/LSan/UBSan.
+    Decoder28/28 lines18/18 arcs; probe66/66 lines52/52 arcs; client55/55 lines78/80
+    taken arcs. Adds corresponding Linux CI gates. [Qualification](guest_ready_runtime_evidence_2026_10_24/qualification.json).
+    The actual waddle-session/Wayland/mapping entry and native VSOCK remain open.
+    HEAD identifies this daemon integration/qualification commit.

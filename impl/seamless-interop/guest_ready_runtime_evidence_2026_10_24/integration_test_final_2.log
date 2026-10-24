@@ -1,0 +1,74 @@
+./build/test_guest_ready
+guest readiness state machine: all deterministic faults passed
+zig test src/daemon/daemon_wire.zig
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror tests/daemon/test_guest_ready_runtime.c build/daemon_wire.o src/daemon/daemon_guest_ready_client.c src/daemon/daemon_guest_ready.c build/av_gpu.o build/av_codec.o build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c src/common/path_filesystem.c build/device_storage.o build/daemon_config.o build/path_rules.o  -Wl,--wrap=clock_gettime -lpthread -o build/test_guest_ready_runtime
+1/4 daemon_wire.test.legacy error status exact bounds preserve destination...OK
+2/4 daemon_wire.test.exact little endian header and all rejection boundaries preserve output...OK
+3/4 daemon_wire.test.readiness request default maximum and malformed bytes...OK
+4/4 daemon_wire.test.response validates every status CID and length before output mutation...OK
+All 4 tests passed.
+./build/test_guest_ready_client_faults
+test_guest_ready_client_faults: all tests passed
+./build/test_guest_ready_runtime
+test_guest_ready_runtime: all tests passed
+./build/test_guest_ready_client
+test_guest_ready_client: all tests passed
+./build/test_daemon_server
+test_daemon_server: all daemon lockfile, state machine, and IPC server tests passed
+./build/test_daemon_client
+Waddle Subsystem Status:
+  State:         Stopped
+  Daemon PID:    -
+  QEMU PID:      -
+  VirtIO-FS PID: -
+{
+  "state": "stopped",
+  "state_code": 0,
+  "daemon_pid": 0,
+  "qemu_pid": 0,
+  "virtiofsd_pid": 0,
+  "vsock_cid": 3,
+  "vsock_port": 5242,
+  "uptime_sec": 0,
+  "memory_mb": 0,
+  "vcpus": 0,
+  "mount_count": 0,
+  "mounts": []
+}
+[waddle] Subsystem daemon is not running.
+Waddle Subsystem Status:
+  State:         stopped
+  Daemon PID:    764906
+  QEMU PID:      -
+  VirtIO-FS PID: -
+  VSOCK:         CID 3, Port 5242
+  Uptime:        0s
+  Memory:        4096 MB
+  vCPUs:         4
+Active Filesystem Mounts (1):
+  - Host: /home/dev -> Guest: Z:\ (rw)
+{
+  "state": "stopped",
+  "state_code": 0,
+  "daemon_pid": 764906,
+  "qemu_pid": 0,
+  "virtiofsd_pid": 0,
+  "vsock_cid": 3,
+  "vsock_port": 5242,
+  "uptime_sec": 0,
+  "memory_mb": 4096,
+  "vcpus": 4,
+  "mount_count": 1,
+  "mounts": [
+    {
+      "host_path": "/home/dev",
+      "guest_drive": "Z:\",
+      "read_only": false
+    }
+  ]
+}
+Active VirtIO-FS Exports (1):
+  [1] /home/dev -> Z:\ (read-write)
+[waddle] Stopping background subsystem (graceful ACPI)...
+[waddle] Subsystem stopped successfully.
+All test_daemon_client tests passed successfully!

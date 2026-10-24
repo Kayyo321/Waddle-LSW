@@ -96,6 +96,10 @@ const char *waddle_daemon_msg_type_to_string(waddle_daemon_msg_type_t type) {
         return "shutdown_req";
     case DaemonMsgShutdownResp:
         return "shutdown_resp";
+    case DaemonMsgGuestReadyReq:
+        return "guest_ready_req";
+    case DaemonMsgGuestReadyResp:
+        return "guest_ready_resp";
     case DaemonMsgErrorResp:
         return "error_resp";
     default:

@@ -32,6 +32,11 @@ jobs:
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Run hardware-free interop gates
         run: make interop-test
+      - name: Run daemon GuestReady runtime, faults and coverage
+        run: |
+          make daemon-guest-ready-runtime-test
+          make daemon-guest-ready-sanitizers
+          make daemon-guest-ready-coverage
       - name: Run interop C consumers under ASan/LSan/UBSan
         run: make interop-sanitizers
       - name: Gate each implemented interop module's line/branch coverage

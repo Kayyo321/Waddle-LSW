@@ -34,4 +34,14 @@ int daemon_wire_decode_ready_request(const uint8_t *bytes, size_t length,
  */
 int daemon_wire_decode_ready_response(const uint8_t *bytes, size_t length,
                                       waddle_daemon_guest_ready_resp_t *out_response);
+
+/** @brief Decode the errno of an exact legacy 264-byte ErrorResp.
+ * @param[in] bytes Borrowed readable length-byte range, non-null.
+ * @param[in] length Must equal 264; trailing legacy diagnostic bytes remain opaque.
+ * @param[out] out_error Non-null aligned u32, disjoint from bytes.
+ * @return 0 for errno1..4095, -1 otherwise with output unchanged.
+ * @note No allocation, retained pointers or shared state; thread-safe.
+ */
+int daemon_wire_decode_error_response(const uint8_t *bytes, size_t length,
+                                      uint32_t *out_error);
 #endif
