@@ -111,50 +111,73 @@
   "checkpoint_status": "active",
   "active_workers": [
     {
-      "agent": "luna_layout",
-      "model": "gpt-6-luna",
-      "effort": "high",
-      "owned_files": [
-        "src/interop/interop_slot_runtime.zig"
-      ],
-      "task": "Pure slot pin/growth/drain bookkeeping against IMPL_DESC8.9; no mapping integration",
-      "acceptance": [
-        "isolated zig test",
-        "lead production coverage >=90%",
-        "lead C/native integration remains separate"
-      ]
-    },
-    {
       "agent": "luna_qemu_build",
       "model": "gpt-6-luna",
       "effort": "high",
       "owned_files": [
         "src/interop/manifest_store.zig"
       ],
-      "task": "Durable manifest store/journal/recovery with bounded kind/path policy and fault tests",
+      "task": "Resume partial manifest revision after output-limit failure. Finish current identity/backup/reconciliation corrections, restore isolated Debug tests, add minimal direct regressions for root/parent/state replacement and backup split-write crash. Return concise receipt promptly; no broad new integration.",
       "acceptance": [
-        "isolated zig test with testing allocator",
-        "crash/failure/recovery cases",
-        "lead coverage and integration"
+        "zig test src/interop/manifest_store.zig -lc -O Debug -femit-bin=/tmp/manifest_store_revision_tests",
+        "isolated regression tests for every review finding; testing allocator sweeps",
+        "lead independent diff, coverage, crash/syscall and integration review"
+      ],
+      "constraints": [
+        "No Git mutations, shared builds, native VM/GPU, README, Claude-owned files, recursive delegation",
+        "Only owned module writable; /tmp isolated tests allowed"
+      ],
+      "runner_ownership": "none; lead owns native/shared runners",
+      "allocation_source": "user_override",
+      "reason": "User requested Luna parallel implementation; same validated high effort phase",
+      "escalation_conditions": [
+        "Frozen-contract conflict",
+        "Cannot safely establish identity or recovery invariants"
+      ]
+    },
+    {
+      "agent": "luna_layout",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "src/interop/interop_slot_runtime_abi.zig",
+        "src/interop/interop_slot_runtime.h",
+        "tests/interop/slot_runtime_abi.c"
+      ],
+      "task": "Opaque C ABI for reviewed pure slot runtime, IMPL_DESC8.10; bounded scalar copies, all statuses and proof-gated destruction; no underlying runtime edits",
+      "acceptance": [
+        "isolated zig test src/interop/interop_slot_runtime_abi.zig -Isrc/interop -lc",
+        "isolated C fixture linking ReleaseSafe object",
+        "lead coverage >=90%, leak-enabled C sanitizers and actual Windows CI"
+      ],
+      "constraints": [
+        "No Git, shared build outputs, VM/GPU/CI, README, Claude-owned files or recursive delegation; no edits outside owned files"
+      ],
+      "runner_ownership": "none; isolated /tmp CPU tests only",
+      "allocation_source": "user_override",
+      "reason": "User-selected Luna; exact opaque boundary and teardown warrants same validated high effort",
+      "escalation_conditions": [
+        "Underlying runtime needs changes",
+        "Cannot preserve ownership on failure"
       ]
     },
     {
       "agent": "luna_mounts",
       "model": "gpt-6-luna",
       "effort": "high",
-      "owned_files": [
-        "src/common/arguments.c",
-        "src/common/path_rules.h",
-        "src/daemon/daemon_fs.c",
-        "src/cli/host.c",
-        "tests/daemon/test_daemon_fs.c",
-        "tests/interop/canonical_paths.c"
-      ],
-      "task": "Filesystem-aware canonical translation and backend root validation; preserve pure lexical APIs",
+      "owned_files": [],
+      "task": "Read-only adversarial review tests/interop/device_smoke.py and its final receipt; exact process ownership, private device state, ACL restoration, cleanup failure paths and honest acceptance scope. No native rerun.",
       "acceptance": [
-        "isolated canonical path fixture",
-        "lead CLI/daemon integration",
-        "ASan/LSan/UBSan"
+        "Exact actionable paths/lines or explicit no findings and limits"
+      ],
+      "constraints": [
+        "No writes, native tests, Git, Claude paths or recursive delegation"
+      ],
+      "runner_ownership": "none",
+      "allocation_source": "user_override",
+      "reason": "Independent cleanup review before lead preserves native evidence",
+      "escalation_conditions": [
+        "Cleanup could affect unrelated process/device"
       ]
     }
   ],
@@ -209,5 +232,6 @@
       "Local atomic commits only in isolated feature branch; no push/merge",
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
-  }
+  },
+  "lead_current_work": "Wire pure slot runtime CI/coverage, qualify accepted native smoke, review worker changes; keep working until concrete checkpoint without waiting on Claude"
 }

@@ -496,7 +496,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Codex. Existing Luna lanes have no overlapping files. Planning earns no
     implementation credit. Source commit4710cc7 contains this handoff.
 
-- **Commit `HEAD`**: `fix(interop): canonicalize exported host paths before translation`
+- **Commit `7d66882`**: `fix(interop): canonicalize exported host paths before translation`
   - **Task Impact**: +10% to TODO #9 (+0.10% overall; total14.10%).
   - **Summary**: Adds a distinct C/POSIX filesystem boundary while retaining the
     pure lexical API. Validates all existing export roots before startup, rejects
@@ -506,5 +506,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     Whole-module coverage is143/143 lines and170/170 branches; fault fixtures,
     leak-enabled ASan/LSan/UBSan and the full host make test pass. Evidence:
     [qualification receipt](canonical_qualification_2026_10_24.json). Roots must
-    remain stable; guest binding and native qualification remain open. HEAD
-    identifies this containing implementation commit.
+    remain stable; guest binding and native qualification remain open. Source commit7d66882 contains this implementation.
+
+- **Commit `HEAD`**: `docs(interop): bound parallel runtime and recovery follow-ups`
+  - **Task Impact**: +0% to TODO #5/#9/#33/#34 (+0% overall; total14.10%).
+  - **Summary**: Records the opaque scalar slot-runtime C API, explicit epoch
+    and proof-gated destruction, and resumes bounded independent Luna tasks
+    after the manifest worker hit an output limit. Reserves all Claude-owned
+    paths unchanged. Clarifies menu roots and writer epoch requirements.
+    Planning and pending unaccepted source add no credit. HEAD identifies this
+    containing design/ownership commit.

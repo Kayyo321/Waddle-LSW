@@ -2396,7 +2396,10 @@ on a successful provisional claim even if later cancelled; never wrap or reuse.
 At most one provisional writer per window is admitted at a time. The local
 runtime claim precedes Free->Writing CAS; failed CAS cancels only that unentered
 claim. After successful CAS, cancellation requires confirmed Writing->Free;
-publication pin commit requires successful Writing->Ready. A post-publication
+publication pin commit requires successful Writing->Ready. Writer prepare,
+entry, publication and cancellation also receive the captured session epoch;
+mismatches reject before mutation and cannot fail-close a different session.
+A post-publication
 local inconsistency fails the session closed and retains reservations.
 
 The host performs Consuming->Free only after buffer use has ended, then sends
@@ -2447,7 +2450,8 @@ Journal schema1 is private, strict JSON with at most32 journals,4096 actions,
 key rejection. Only allowlisted kind/root-relative targets are actionable.
 Guest kinds and unimplemented host policy kinds fail before any mutation.
 DesktopEntry/HandlerEntry target applications, Icon targets hicolor size/apps,
-Menu targets applications-merged, Autostart targets config/autostart, and
+Menu targets config/menus/applications-merged or data/desktop-directories,
+Autostart targets config/autostart, and
 DesktopShortcut requires an explicit caller-supplied validated desktop root.
 MIME state/system binfmt/polkit producers remain disabled until their dedicated
 policy boundary is implemented. No arbitrary journal absolute path is trusted.
@@ -2466,3 +2470,42 @@ Crash between manifest replacement and committed journal rolls back; after
 committed journal it finishes cleanup. Failed recovery blocks further commits.
 Every durable boundary receives crash/I/O failure testing and allocator-failure
 sweeps; all FD/arena/path ownership must be released or retained explicitly.
+
+### 8.10 Opaque slot lifetime C adapter
+
+The new interop_slot_runtime.h and interop_slot_runtime_abi.zig wrap the pure
+runtime without exposing its Zig layout, heap tickets or mutable pointers. A
+create(epoch, out_handle) call allocates one runtime using the C allocator;
+only that opaque handle owns the allocation. Failure leaves out_handle unchanged.
+One guest event-loop thread serializes all access. The wrapper never maps memory,
+performs shared atomics or checks whether external teardown assertions are true.
+Callers must supply truthful transition and producer/host-drain proof as in8.9.
+
+Destroy takes a pointer to the caller-owned handle and releases memory only once
+the underlying runtime has completed confirm_host_drained; otherwise it fails
+without freeing or NULLing the handle. A NULL handle is an idempotent no-op.
+There is no force-free path. Successful destruction NULLs the handle. Creation
+with epoch zero fails. All other calls take the captured session epoch and
+reject mismatches before underlying mutation, including admission/resize/retire
+and drain; release retains its exact sequence/window/generation checks.
+
+Expose admission, request_geometry, prepare_publish, mark_writer_entered,
+commit_publish, cancel_unentered, cancel_entered, release_frame, retire_window,
+begin_drain and confirm_host_drained with their underlying scalar arguments.
+Admission copies exactly three scalar view values to an output array;
+prepare_publish copies one. Each view contains descriptor_index, window,
+generation, width, height, stride, pixel_bytes, data_offset and data_bytes.
+No reservation token or allocator identity crosses this API. The caller owns
+outputs; failures leave them byte-for-byte unchanged. NULL/misaligned/overflowing
+arguments or outputs overlapping runtime storage are rejected before mutation.
+Booleans use fixed uint32 values0/1 and reject all others.
+
+The C status enum has explicit fixed values: Ok0, InvalidArgument1,
+OutOfMemory2, followed by every pure runtime error in its declaration order,
+starting InvalidSessionEpoch3. Zig maps its exhaustive error set; no catch-all
+can silently hide a new error. Static assertions cover enum and scalar-view
+size/offsets on both platforms. Header docs specify lifetime, ownership, null
+handling, errors and serialization for every entry point. Tests cover output
+preservation, stale epochs, publication/release ordering, proof-gated destroy,
+growth/retirement and repeated create/drain/destroy under leak-enabled C
+sanitizers. This adapter alone adds no integrated capture/session credit.
