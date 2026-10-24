@@ -3396,3 +3396,36 @@ coverage of preprocessed-out native branches. Source authority: Microsoft
 [MonitorFromWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-monitorfromwindow),
 verified2026-10-24. Observer/native acceptance still waits on O5 and its own
 full qualification; this correction alone earns no progress.
+
+
+#### 8.22.3 Callback-free tracked graph snapshot
+
+The first bounded O5 prerequisite is additive C export
+`interop_window_graph_list_tracked_windows(const interop_window_graph_t *graph,
+uint64_t session_epoch, uint64_t *windows, uint32_t capacity,
+uint32_t *count, uint32_t *free_entry_count)`. No existing enum, struct layout
+or wire version changes. It lists unique nonzero numeric HWND values from all
+Active and Retiring entries, sorted ascending; equal HWNDs across generations
+produce one value. Deferred records are excluded. The exact Free-slot count
+counts the64 entry states, never64 minus unique HWND count.
+
+Capacity must be at least InteropMaxWindows64 and windows must be non-NULL even
+when the graph is empty. Only count elements are written; the remainder of the
+caller array stays unchanged. Count and free_entry_count are mandatory aligned
+u32 outputs. Validate the complete claimed capacity span, alignment, no address
+wrap, pairwise array/scalar disjointness and disjointness from the full graph
+allocation before forming slices or writing outputs. Common result precedence:
+invalid graph pointer, then WrongThread, Reentrant, StaleEpoch, then argument
+errors. StaleEpoch on this read-only API changes no rejection counter. Every
+non-Ok result leaves all caller bytes and graph state/counters unchanged.
+
+The function uses fixed64-element stack staging and bounded sort/deduplication,
+no allocation, callback, clock, OS query, locks or graph busy mutation. Engine
+and C ABI tests cover empty/mixed/full states, duplicate HWND generations,
+Deferred exclusion, exact free slots before/after proof completion, output
+tails, null/short/alias/misalignment/wrap errors, epoch/thread/reentrancy
+precedence and unchanged state/counters. Production line and branch gates
+remain90%, sanitizer/testing-allocator checks remain leak-free, and the exact
+export allowlist grows from21 to22. This snapshot alone fixes no delivered-
+destroy loss and earns no new #10 progress. Observer binding/mailbox/lifecycle
+proposal remains advisory until separately frozen and implemented.

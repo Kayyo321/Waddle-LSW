@@ -926,11 +926,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     [Qualification](claude_window_graph/main_import_qualification_2026_10_24.json).
     HEAD identifies this containing import commit.
 
-- **Commit `HEAD`**: `docs(interop): specify native window fact consistency guards`
+- **Commit `e385e3c`**: `docs(interop): specify native window fact consistency guards`
   - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
   - **Summary**: Freezes pre/post PID/TID checks before property reads and a
     three-result fullscreen helper so indeterminate monitor queries preserve
     prior graph facts. Requires separate deterministic native fault tests and
     unchanged real native smoke; no atomic snapshot or same-tuple reuse claim.
     Implementation/native CI and O5 acceptance remain open.
+    HEAD identifies this contract commit.
+
+- **Commit `HEAD`**: `docs(interop): freeze callback-free tracked window snapshot`
+  - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
+  - **Summary**: Specifies a read-only sorted/deduplicated Active+Retiring HWND
+    snapshot with exact Free-slot count, complete C span validation and unchanged
+    outputs/counters on failure. Adds no wire or layout changes. This is only
+    the bounded O5 capacity prerequisite; observer preservation stays open.
     HEAD identifies this contract commit.
