@@ -25,7 +25,7 @@ build:
 build/vendor: | build
 	mkdir -p $@
 
-.PHONY: qemu-source qemu-source-smoke
+.PHONY: qemu-source qemu-source-smoke qemu-vendor-from-source qemu-vendor-verify
 qemu-source: scripts/qemu_build.py | build
 	python3 scripts/qemu_build.py --source "$(QEMU_DIR)" --build-dir "$(QEMU_BUILD_DIR)" --expected-source-commit "$$(git rev-parse HEAD:$(QEMU_DIR))" --jobs "$(QemuBuildJobs)"
 $(QEMU_SYSTEM_X86): qemu-source
@@ -33,25 +33,28 @@ $(QEMU_SYSTEM_X86): qemu-source
 qemu-source-smoke: qemu-source
 	python3 tests/interop/qemu_source_smoke.py --qemu "$(QEMU_SYSTEM_X86)"
 
-build/vendor/qemu-system-x86_64: | build/vendor
-	@if [ -x /usr/bin/qemu-system-x86_64 ]; then \
-		cp -f /usr/bin/qemu-system-x86_64 $@; \
-	elif which qemu-system-x86_64 >/dev/null 2>&1; then \
-		cp -f "$$(which qemu-system-x86_64)" $@; \
-	elif [ -d $(QEMU_DIR) ]; then \
-		$(MAKE) $(QEMU_SYSTEM_X86) && cp -f $(QEMU_SYSTEM_X86) $@; \
-	fi
-	@[ -f $@ ] && chmod +x $@ || true
+qemu-vendor-from-source: qemu-source | build/vendor
+	python3 scripts/vendor_copy.py copy --kind qemu --source-kind pinned-source --source "$(QEMU_SYSTEM_X86)" --destination build/vendor/qemu-system-x86_64 --identity build/vendor/qemu_identity.json --provenance "$(QEMU_BUILD_DIR)/.waddle-qemu-build.json"
+	rm -f build/vendor/qemu_source_provenance.json
 
-build/vendor/virtiofsd: | build/vendor
-	@if [ -x /usr/libexec/virtiofsd ]; then \
-		cp -f /usr/libexec/virtiofsd $@; \
-	elif [ -x /usr/lib/qemu/virtiofsd ]; then \
-		cp -f /usr/lib/qemu/virtiofsd $@; \
-	elif which virtiofsd >/dev/null 2>&1; then \
-		cp -f "$$(which virtiofsd)" $@; \
+build/vendor/qemu-system-x86_64: scripts/vendor_copy.py | build/vendor
+	@set -e; if [ -x /usr/bin/qemu-system-x86_64 ]; then \
+		python3 scripts/vendor_copy.py copy --kind qemu --source-kind system --source /usr/bin/qemu-system-x86_64 --destination "$@" --identity build/vendor/qemu_identity.json; \
+	elif command -v qemu-system-x86_64 >/dev/null 2>&1; then \
+		python3 scripts/vendor_copy.py copy --kind qemu --source-kind system --source "$$(command -v qemu-system-x86_64)" --destination "$@" --identity build/vendor/qemu_identity.json; \
+	elif [ -f "$(QEMU_DIR)/configure" ]; then \
+		$(MAKE) qemu-vendor-from-source; \
 	fi
-	@[ -f $@ ] && chmod +x $@ || true
+	@if [ -f "$@" ]; then rm -f build/vendor/qemu_source_provenance.json; fi
+
+build/vendor/virtiofsd: scripts/vendor_copy.py | build/vendor
+	@set -e; if [ -x /usr/libexec/virtiofsd ]; then \
+		python3 scripts/vendor_copy.py copy --kind virtiofsd --source-kind system --source /usr/libexec/virtiofsd --destination "$@" --identity build/vendor/virtiofsd_identity.json; \
+	elif [ -x /usr/lib/qemu/virtiofsd ]; then \
+		python3 scripts/vendor_copy.py copy --kind virtiofsd --source-kind system --source /usr/lib/qemu/virtiofsd --destination "$@" --identity build/vendor/virtiofsd_identity.json; \
+	elif command -v virtiofsd >/dev/null 2>&1; then \
+		python3 scripts/vendor_copy.py copy --kind virtiofsd --source-kind system --source "$$(command -v virtiofsd)" --destination "$@" --identity build/vendor/virtiofsd_identity.json; \
+	fi
 
 build/vendor/pc-bios: | build/vendor
 	@if [ -d $(QEMU_DIR)/pc-bios ]; then \
@@ -59,6 +62,10 @@ build/vendor/pc-bios: | build/vendor
 	fi
 
 qemu-vendor: build/vendor/qemu-system-x86_64 build/vendor/virtiofsd build/vendor/pc-bios
+	@$(MAKE) qemu-vendor-verify
+qemu-vendor-verify:
+	@if [ -f build/vendor/qemu-system-x86_64 ]; then python3 scripts/vendor_copy.py verify --kind qemu --destination build/vendor/qemu-system-x86_64 --identity build/vendor/qemu_identity.json; fi
+	@if [ -f build/vendor/virtiofsd ]; then python3 scripts/vendor_copy.py verify --kind virtiofsd --destination build/vendor/virtiofsd --identity build/vendor/virtiofsd_identity.json; fi
 
 qemu-clean:
 	rm -rf $(QEMU_BUILD_DIR)

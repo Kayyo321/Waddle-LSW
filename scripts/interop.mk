@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig include/waddle/interop_protocol.h | build
@@ -79,7 +79,7 @@ build/interop_layout_abi_windows.lib: src/interop/interop_layout_abi.zig src/int
 build/interop_layout_abi_test.exe: tests/interop/layout_abi.c build/interop_layout_abi_windows.lib src/interop/interop_layout.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Isrc/interop $< build/interop_layout_abi_windows.lib -o $@
 
-.PHONY: interop-native-atomic-test interop-qemu-build-test
+.PHONY: interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test
 build/interop_native_atomic_test: src/interop/interop_native_atomic.c src/interop/interop_native_atomic.h include/waddle/interop_memory.h tests/interop/native_atomic.c | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/interop src/interop/interop_native_atomic.c tests/interop/native_atomic.c $(LDFLAGS) -pthread -o $@
 interop-native-atomic-test: build/interop_native_atomic_test
@@ -88,3 +88,5 @@ build/interop_native_atomic_test.exe: src/interop/interop_native_atomic.c src/in
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -O2 -Isrc/interop -Iinclude src/interop/interop_native_atomic.c tests/interop/native_atomic.c -o $@
 interop-qemu-build-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/qemu_build.py
+interop-vendor-copy-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/vendor_copy.py

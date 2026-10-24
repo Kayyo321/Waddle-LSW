@@ -418,7 +418,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     audio stream/audibility, USB realization or network/printing traffic proof
     is claimed. Source commit56ceca5 provides the accepted build subtask.
 
-- **Commit `HEAD`**: `test(interop): preserve wide compiler switches in coverage recording`
+- **Commit `51f3923`**: `test(interop): preserve wide compiler switches in coverage recording`
   - **Task Impact**: +0% to TODO #34 (+0% overall; total13.40%).
   - **Summary**: Fixes hosted run40055774547 failing before Windows execution
     because compiler-generated switch arity exceeded32. Schema2 retains every
@@ -428,4 +428,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     metadata rejection, budget errors and nonrecoverable sanitizer violation.
     Luna's five production coverage modes pass; lead aggregate and hosted
     Linux/Windows reruns remain pending. No native or overall acceptance credit.
-    HEAD identifies this containing recorder correction.
+    Source commit51f3923 contains this recorder correction.
+
+- **Commit `HEAD`**: `fix(interop): bind vendor packages to verified executable provenance`
+  - **Task Impact**: +0% to TODO #8 (+0% overall; total13.40%).
+  - **Summary**: Prevents stale source-build attribution after a system-QEMU
+    copy. Bounded probes, source/stamp/hash validation, exclusive identity lock,
+    owned temporary publication and post-copy verification cover both package
+    origins. virtiofsd requires advertised --readonly support. Fourteen isolated
+    tests and actual pinned-QEMU9.2.4/virtiofsd1.13.2 packaging/verification pass.
+    Publication interruption is detectable by hash verification; no atomic-pair
+    or native guest behavior claim. HEAD identifies this packaging commit.

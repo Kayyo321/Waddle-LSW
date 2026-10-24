@@ -2329,3 +2329,18 @@ runs. Invalid hits abort; edge recording is relaxed atomic OR, and dumping after
 worker joins preserves all recorded edges. No compiler sites are omitted or
 regrouped to meet capacity or coverage. Synthetic255-edge and76,512-site stress
 fixtures supplement each module's actual native compiler output.
+
+Vendor packaging uses scripts/vendor_copy.py to record source kind/path/version,
+source/package SHA256 and, for pinned QEMU, checked source commit/build signature
+and configuration digests. System identities cannot carry pinned-only claims.
+virtiofsd packaging requires bounded --help advertisement of --readonly and
+records the help digest; this is capability evidence, not guest write-denial.
+
+Publisher and verifier share a nonblocking regular no-follow identity lock.
+Preflight errors preserve the previous package. Executable and identity are
+fsynced owned sibling temporaries, replaced sequentially, then hash-verified;
+the pair is not an atomic transaction. A crash between replacements is detected
+by verification. Readers must verify before relying on provenance. Make verifies
+existing packaged binaries, and explicit qemu-vendor-from-source replaces the
+system package only with a validated pinned build. The obsolete source sidecar
+is removed only after successful packaging. No directory tree is cleaned.
