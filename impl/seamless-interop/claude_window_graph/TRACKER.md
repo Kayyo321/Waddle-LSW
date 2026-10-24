@@ -123,7 +123,7 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     and portable65-case lifecycle regression pass; native execution pending.
     HEAD identifies this containing ownership correction.
 
-- **Commit `HEAD`**: `docs(interop): reject deferred identity retention after replacement failure`
+- **Commit `ae6d592`**: `docs(interop): reject deferred identity retention after replacement failure`
   - **Task Impact**: -5% to local #1 (-1.75% local total, now90.50%);
     +0% global TODO #10 (parent16.40%).
   - **Summary**: Critical review requires pruning a changed Deferred parent and
@@ -132,3 +132,12 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     and QueueFull remain unchanged. Revokes local graph completion while this
     correction is under review. Original handback92.25% remains historical.
     HEAD identifies this contract correction.
+
+- **Commit `HEAD`**: `test(interop): correlate native hook delivery with fixture HWND`
+  - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local90.50%).
+  - **Summary**: Independent review found aggregate hint counters could pass on
+    unrelated desktop traffic. White-box inclusion now inspects the exact
+    production dirty key and Create/Show kinds, without synthetic callbacks or
+    a production seam. Bounds message dispatch per poll; preserves10s timeout.
+    Strict Windows cross-link passes; native runtime evidence remains pending.
+    HEAD identifies this containing smoke-test correction.

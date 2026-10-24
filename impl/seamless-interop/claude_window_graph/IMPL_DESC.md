@@ -1447,8 +1447,11 @@ native facts for that HWND (root/owner, process/thread, geometry, DPI and the
 intentional empty title for own-process windows), hide visibility, then Gone
 after destruction. The ownerless query exercises the O26 GetWindow/last-error
 case on an actual Windows runner. A bounded message pump waits at most10s for
-native hook delivery to increase observer hint counters. The count proves real
-hook delivery, not that every hint belongs to this fixture's window.
+a Create/Show hint for the exact fixture HWND in the production dirty table.
+The test includes the exact production C source, adding no production test API
+and never calling note_hint manually. Message dispatch is bounded to256 queued
+messages per poll; the outer poll has a10s deadline. Aggregate hint counters are
+informational and cannot satisfy target correlation.
 
 All failures return nonzero after cleanup attempts. No unavailable desktop or
 Unsupported result is a successful skip. Destroy only the fixture-owned HWND;

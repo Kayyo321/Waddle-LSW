@@ -176,7 +176,7 @@ $(WgBuild)/window_observer_test.exe: $(wildcard $(WgObsSrc) $(WgObsHdr) $(WgTest
 
 # Real native adapter smoke, executed by the separate Windows CI job only.
 $(WgBuild)/window_observer_native_test.exe: tests/interop/window_observer_native_windows.c $(wildcard $(WgObsSrc) $(WgObsHdr)) $(WgBuild)/window_graph_abi_windows.lib | $(WgBuild)
-	$(WgWinZigCC) $(WgCFlags) $(WgWinDefs) -Isrc/interop -Iinclude $(WgObsSrc) $< $(WgBuild)/window_graph_abi_windows.lib $(WgWinLibs) -o $@
+	$(WgWinZigCC) $(WgCFlags) $(WgWinDefs) -Isrc/interop -Iinclude $< $(WgBuild)/window_graph_abi_windows.lib $(WgWinLibs) -o $@
 
 # Native observer object only (-c, no link), once per Windows toolchain.
 $(WgBuild)/observer_native_zig.o: $(wildcard $(WgObsSrc) $(WgObsHdr)) | $(WgBuild)

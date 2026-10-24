@@ -1,11 +1,12 @@
 /**
  * @file window_observer_native_windows.c
- * @brief Real Win32 adapter smoke; no graph, API double, driver or capture.
+ * @brief White-box real Win32 adapter smoke; no graph operations, API double, driver or capture.
  *
- * The calling thread owns one temporary HWND and one observer. Every exit
- * attempts both lifecycles and restores DPI context. Failure is never a skip.
+ * The fixture includes the exact production observer C source so it can correlate a real hook hint
+ * with its temporary HWND without adding a production test API. The calling thread owns one HWND
+ * and one observer. Every exit attempts both lifecycles and restores DPI context. Failure is never a skip.
  */
-#include "window_observer_windows.h"
+#include "../../src/interop/window_observer_windows.c"
 #include <windows.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -14,10 +15,22 @@
 /** @brief Drain queued messages without waiting; no borrowed message escapes. */
 static void dispatch_messages(void) {
     MSG message;
-    while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
+    for (unsigned count = 0; count < 256; ++count) {
+        if (!PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) break;
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+}
+
+/** @brief True when the production dirty table contains a create/show hint for this exact HWND. */
+static int has_target_create_show_hint(const window_observer_t *observer, uint64_t window_key) {
+    for (uint32_t index = 0; index < observer->dirty_count; ++index) {
+        const dirty_entry_t *entry = &observer->dirty[index];
+        if (entry->window == window_key && (entry->kinds & (DirtyKindCreate | DirtyKindShow)) != 0u) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /** @brief Smoke owner; returns zero only after checks and complete cleanup. */
@@ -59,7 +72,7 @@ int main(void) {
         WS_OVERLAPPEDWINDOW | WS_VISIBLE, 40, 40, 400, 240,
         NULL, NULL, GetModuleHandleW(NULL), NULL);
     Check(window != NULL);
-    window_key = (uint64_t)(uintptr_t)window;
+    window_key = hwnd_to_u64(window);
     memset(&facts, 0, sizeof(facts));
     Check(api->query_facts(NULL, window_key, &facts) == WindowObserverQueryExists);
     Check(facts.window == window_key && facts.root == window_key);
@@ -73,10 +86,10 @@ int main(void) {
     do {
         dispatch_messages();
         Check(window_observer_status(observer, &after) == WindowObserverStatusOk);
-        if (after.hints_received > before.hints_received) break;
+        if (has_target_create_show_hint(observer, window_key)) break;
         Sleep(1);
     } while (GetTickCount64() < deadline_ms);
-    Check(after.hints_received > before.hints_received);
+    Check(has_target_create_show_hint(observer, window_key));
     Check(after.hints_wrong_thread == 0);
     ShowWindow(window, SW_HIDE);
     memset(&facts, 0, sizeof(facts));
@@ -91,7 +104,7 @@ int main(void) {
     Check(after.state == WindowObserverStateStopped);
     Check(window_observer_destroy(&observer) == WindowObserverStatusOk);
     Check(observer == NULL);
-    printf("native observer: real ownerless query, visibility, Gone, hook delivery and teardown passed; hints=%" PRIu64 "\n",
+    printf("native observer: real ownerless query, visibility, Gone, target-correlated hook and teardown passed; hints=%" PRIu64 "\n",
         after.hints_received - before.hints_received);
     result = 0;
 cleanup:
