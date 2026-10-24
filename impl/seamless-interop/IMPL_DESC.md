@@ -3221,3 +3221,47 @@ under ASan/LSan/UBSan with detect_leaks1 and actual Windows CPU CI. Zig builtin
 allocator tests inject creation/queue allocation failures with zero bytes leaked.
 Production wrapper line AND branch coverage remain>=90%; no native endpoint or
 parent progress credit follows a standalone pure C ABI pass.
+
+
+### 8.22 Window graph review and acceptance allocation (2026-10-24)
+
+TODO #10 is allocated before integration credit: pure bounded graph25%, opaque
+C ABI10%, portable observer15%, native Win32 adapter15%, coordinator/capture/
+slot/wire integration20%, installed-session native qualification15%. These sum
+to100% of #10. Local Claude92.25% is never copied into the global tracker.
+Pure graph/C ABI credit requires independent review, >=90% actual production
+line and branch coverage, zero-leak tests, and native Windows CPU execution.
+Observer credit additionally requires the delivered-destroy overflow gap and
+cached descendant discontinuity rules to be resolved. Session/capture/wire and
+installed-session qualification retain their separate allocations.
+
+Claude's human-released source is3714cf2 in the isolated feature worktree.
+Codex review fixes graph-create alias mutation, lifecycle singleton release,
+failed-hook ownership and namespace conformance through1a179b0. Exact1a179b0
+full gates pass with detect_leaks1: graph136/ABI150 each in Debug+ReleaseSafe,
+C27/portable observer65, exact21 exports; graph764/765 lines505/514 branches,
+ABI145/146 lines60/62 branches, portable observer624/645 lines358/382 branches.
+Windows binaries/native SDK objects cross-build; no Windows execution is
+inferred. Durable isolated receipt is claude_window_graph/review_qualification_1a179b0.json
+once the reviewed paths are imported. It is provisional source evidence.
+
+Further review requires staged deferred-subtree invalidation after accepted
+parent destruction, exclusion or identity replacement, including each retiring
+Active cascade member and changed Deferred parent. Same-incarnation Reclassified
+keeps parent-first flush; rejected stale hints and QueueFull cannot apply the
+mask. The exact pending correction is isolated IMPL_DESC9.6, with independent
+incarnation_review.md. O5 is separate: discarding a delivered destroy during
+hint overflow is not unavoidable OS uncertainty. Full refresh of identical
+identity tuples is not proof of continuity. No observer acceptance while this
+known loss path remains. Native omission of a callback cannot be detected by
+this tuple alone and must remain distinct from loss introduced by our queues.
+
+A dedicated native Windows smoke owns one temporary HWND and observer, uses real
+hooks and native queries, verifies ownerless relations, visibility/Gone and
+complete teardown, and fails rather than skipping an unavailable desktop. This
+is an actual adapter test, distinct from API doubles, but grants no foreign-
+process, UAC, secure-desktop, driver, capture or installed-session qualification.
+The isolated branch now has dedicated Linux/Windows CI; it is allowed to be
+pushed for evidence, never merged into the standard branch before the global
+tracker is100% and all required checks pass. No source is imported at this
+contract commit, and global completion stays16.40%.

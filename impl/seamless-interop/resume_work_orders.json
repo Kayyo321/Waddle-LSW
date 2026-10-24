@@ -114,8 +114,11 @@
       "agent": "luna_layout",
       "model": "gpt-6-luna",
       "effort": "high",
-      "owned_files": [],
-      "task": "Read-only returned graph incarnation/OwnerHidden contract review; naming pass released"
+      "owned_files": [
+        "isolated:src/interop/window_graph.zig",
+        "isolated:include/waddle/interop_window_graph.h"
+      ],
+      "task": "Staged cached-descendant invalidation per isolated IMPL_DESC9.6; root owns observer/native tests/docs/Git"
     },
     {
       "agent": "luna_qemu_build",
@@ -184,7 +187,7 @@
   ],
   "resume_entry": "checkpoint_2026_10_24.md",
   "external_claude_handoff": {
-    "status": "returned_ownership_released_under_codex_review",
+    "status": "review_fixes_in_isolated_branch_native_ci_running_graph_correction_in_progress",
     "base": "e86cf8e344c6bafea5e562f04129a408e19629ff",
     "branch": "feat/seamless-window-graph",
     "worktree": "/home/dev/.codex/worktrees/seamless-window-graph/Waddle-LSW",
@@ -212,12 +215,14 @@
     ],
     "returned_tip": "3714cf2",
     "user_release_received_utc": "2026-10-24T18:41:24.437970+00:00",
-    "review_tip": "1a179b0",
+    "review_tip": "a2e72d3",
     "review_fixes": [
       "ac4c422 graph-create alias preservation",
       "28748bc retryable hook cleanup and lifecycle reservation",
       "1a179b0 identifier-only namespace conformance"
-    ]
+    ],
+    "pushed_review_tip": "5aff0813e6c5dcd912799ff05bd42f080515563d",
+    "ci_run": 40123985933
   },
-  "lead_current_work": "Claude return3714cf2 reviewed; isolated fixes through1a179b0, fresh complete leak-enabled gates running before import. Main peer branch80.81% below90, ABI coverage in progress; two exclusive Luna implementation lanes and read-only graph review active. Root alone owns docs/Git/shared build/CI/native runner; overall16.40%."
+  "lead_current_work": "Exact1a179b0 complete leak-enabled gates pass; further O25 graph correction active, O5 observer delivered-hint loss unaccepted. Isolated native CI40123985933 at5aff081 running, later snapshot cleanupa2e72d3 unpushed. Root prepares integration/reviews; main core/ABI workers expand failing branch gates, final source qualification will be sequential. Parent16.40%."
 }

@@ -77,6 +77,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | Shared framing5%; owned queue5%; handshake10%; liveness5%; native CPU units accepted; integrated host client remains open |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
+| #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | None accepted yet; local graph evidence and isolated Windows CI under review; O5/O25 block observer acceptance |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
 Execution resumed at the user's request from checkpoint4079560. Current
@@ -853,7 +854,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     37-case line gate passes but75.58% branches still fails90%, so no peer/core
     acceptance or native progress is awarded. HEAD is this evidence/ownership commit.
 
-- **Commit `HEAD`**: `docs(interop): record returned graph review fixes and active peer lanes`
+- **Commit `45c981c`**: `docs(interop): record returned graph review fixes and active peer lanes`
   - **Task Impact**: +0% to TODO #6/#7/#10/#34 (+0% overall; total16.40%).
   - **Summary**: Archives the independent observer findings against3714cf2:
     premature singleton release and discarded failed unhook tokens. Records
@@ -862,3 +863,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     claimed. Updates exclusive Luna core/ABI coverage lanes and graph review.
     Peer94.46% lines/80.81% branches is still below the unchanged90% branch gate.
     HEAD identifies this containing review/coordination commit.
+
+- **Commit `HEAD`**: `docs(interop): freeze window tracking acceptance and review disposition`
+  - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total16.40%).
+  - **Summary**: Freezes parent #10 subtask allocation before any credit. Records
+    exact1a179b0 full Linux/leak/coverage/cross-build success, further cached-child
+    correctness requirements, and dedicated real-Win32 fixture/CI40123985933
+    on isolated5aff081. Source remains isolated; native results pending, O5
+    delivered-destroy loss unaccepted, no parent/native credit awarded.
+    HEAD identifies this containing allocation/review commit.
