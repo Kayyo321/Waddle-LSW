@@ -785,7 +785,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     exact source3230877. Fake driver calls remain explicit; no installed driver,
     live mapping or endpoint acceptance is credited. Source commit5d67f6f contains this receipt.
 
-- **Commit `HEAD`**: `docs(interop): define retained host frame ownership and safe stop boundaries`
+- **Commit `47c5eee`**: `docs(interop): define retained host frame ownership and safe stop boundaries`
   - **Task Impact**: +0% to TODO #1/#5/#6/#7/#34 (+0% overall; total16.40%).
   - **Summary**: Corrects GuestReady to the configured guest-exec service and
     defines epoch per authorized mapping initialization. Removes unsafe reset
@@ -793,4 +793,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     as unaccepted research; freezes a bounded pure registry with exact callback
     tickets, explicit never-attached completion, notification backpressure and
     retained quarantine. Assigns separate Luna implementation/tests/review lanes.
-    No protocol-version or runtime behavior changes; HEAD is this contract commit.
+    No protocol-version or runtime behavior changes; source commit47c5eee contains this contract.
+
+- **Commit `HEAD`**: `docs(interop): freeze connected control peer composition`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
+  - **Summary**: Defines the bounded protocolv2 composition before implementation:
+    full-send readiness, scoped peer errors, deterministic terminal codec policy,
+    one request namespace, transactional local errors and copy-out feature events.
+    Keeps facility/native side effects and reconnect authorization outside this
+    core. Preserves host-coordinated drain as unaccepted protocolv3 research and
+    the completed registry review. HEAD is this specification commit.

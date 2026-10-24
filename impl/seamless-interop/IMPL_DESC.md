@@ -2980,3 +2980,133 @@ begin_drain(epoch)!void: Open->Draining, idempotent Draining, forbids new admiss
 quarantine(epoch)!void: ->Quarantined (idempotent), forbids admission; retains all records and allows exact completion callbacks/slot_free/notify to progress. Never auto-open; no free-all.
 counts() counts_t: counts import_pending,attached,released,total,admission state; sums192. zero records necessary not sufficient for unmap; no API returns can_unmap/drained proof. No allocation, mapping access, wire parsing/encoding, Wayland operations, callback storage, timeline or proof generation.
 Tests production bothline/branch>=90; no exclusions/loweredgate. Full192, invalidfields, wrongphase, wrong/staleepoch/ticket, UINT64_MAX exhaustion, stale ticket after reuse, callback sequences, duplicate events, neverattached false proof, queuebackpressure, drain/quarantine whilepending and attached, stress192 records variedcompletion. Tests should assert full-state unchanged on errors. Lead separately implements build/Windows/coverage gates. Worker test output/cache /tmp, no sharedmake/build/Git/VM/README/Claude reserved paths.
+
+
+### 8.20 Connected control-peer composition slice (2026-10-24)
+
+Implement `src/interop/control_peer.zig`, pure serialized Zig composition of the
+existing reader/owned queue/handshake/liveness/request_ids/SemVer/C codec. This
+is protocol2/layout3, not the proposed drain amendment. No socket, mapping,
+compositor, epoch reset or native resource ownership is implemented. Capabilities
+advertise implemented facilities only; core Ready means negotiated connection,
+not native surface readiness. This slice deliberately has no feature TX/request
+API yet: the host/guest OS control loop and unsolicited feature TX are later
+integration work. Incoming codec-valid feature frames can be copied to the
+external capability/feature dispatcher, which MUST authorize before side effects.
+
+## API and ownership
+
+Module types/constants snake_case_t/PascalCase, methods snake_case; every public
+symbol/field documented. `peer_t.init(allocator, config)` copies local version
+(5..32 bytes, bounded SemVer2, checked u32 major), borrows allocator until
+idempotent deinit, owns reader/queue/one request-ID namespace and fixed scalar
+state; no other allocation until a frame is queued. Config: role Host/Guest,
+nonzero connection_token, accepted_at_ms, local_version slice, known capability
+mask. Initialize existing handshake and incoming reader direction (opposite local
+role), outgoing queue direction (local role). No callbacks or borrowed input
+survive calls. Caller owns peer value; all methods on it serialized.
+
+Required methods (names fixed; exact result structs/errors documented in source):
+- `feed(token, bytes)` returns exact consumed prefix; no timestamp and no internal
+  dispatch. Copies into reader; one pending frame backpressures subsequent feed.
+  Invalid header is terminal: enter Draining and best-effort unsolicited Error
+  ProtocolViolation (ID0). Empty input is no-op, never EOF. Every successful call
+  reports phase so a framing failure is visible without a later tick.
+- `next_event(token, now_ms, output)` handles exactly one pending complete frame.
+  Returns copied scalar event: None, ValidateMapping{epoch,layout_version}, Ready
+  {epoch,capabilities}, FeatureFrame{message_type,request_id,copied_bytes},
+  PeerError{code,request_id,copied_bytes}, or Draining{reason}. Ready may also be
+  indicated by ack_tx (Host readiness boundary). Error/Goodbye can copy full
+  frames to output; all feature frames copy complete header+payload. Short output
+  returns OutputTooSmall with required_bytes available through `pending_bytes()`;
+  leaves reader, clock, peer and output unchanged. No borrowed frame escapes.
+  All controls except valid received Error are internal. No pending frame returns
+  None. Validate payload fully before extracting fields. Events copy no strings
+  apart from the complete caller-owned output frame.
+- `pending_bytes()` read-only pending full-frame size or0; no phase mutation.
+- `host_mapping_validated(token, now_ms, epoch, layout_version, succeeded)` feeds
+  existing handshake result and enqueues returned Ack/Error, reports phase/event.
+- `guest_mapping_initialized(token, now_ms, epoch, succeeded)` reserves one
+  shared Guest-direction Hello ID, feeds successful initialization to handshake,
+  queues Hello using copied full configured version and original capabilities.
+  Local invalid args/wrong phase preserve state incl ID cursor; stage fixed
+  handshake/ID values before commit. Mandatory queue allocation failure is a
+  terminal connection failure (Draining), not a successful Hello or API no-op.
+- `peek_tx(token)` borrows current remaining bytes until ANY mutating peer call;
+  null when no queue data. No byte may be retained across ack/deinit/mutation.
+- `ack_tx(token, now_ms, written)` acknowledges only exact successful OS send
+  bytes, at most current remainder. Bad counts/wrong token/backwards-time errors
+  preserve all state. Zero is no progress. Only final byte of original Hello or
+  HelloAck calls existing hello_sent/ack_sent and can change readiness. Preserve
+  original control kind/ID separately from front remainder so partial writes
+  cannot misparse header. All internal enqueues share a fixed512-entry completion
+  metadata ring synchronized with owned queue success/full-pop, no parallel
+  heap ownership. No completion hook on queue admission or partial ACK.
+- `tick(token, now_ms)` enforces overall5s handshake deadline; once Ready starts
+  existing liveness at exact Ready time/epoch. On Host Ping due reserve ID from
+  same request_ids, register with liveness, queue Ping; full/alloc failure drains.
+  Apply ReleasedIds exactly once. Normal pending Ping expiry/receive timeout uses
+  existing helper behavior. Tick never initializes/retires mappings.
+- `begin_drain(token, now_ms)` ends protocol admission and best-effort queues
+  unsolicited Goodbye(status Cancelled, ID0), tells owner Draining; not safe-unmap.
+- `transport_lost(token)` called only after native I/O callbacks quiesced: mark
+  Closed, retire IDs, retain queued allocations until deinit; no fake peer/native
+  proof. Repeated same-token terminal callbacks do not reopen state.
+- `phase()` read-only phase Handshaking/Ready/Draining/Closed.
+- `deinit()` idempotently frees only queue allocations and invalidates core.
+
+All stateful methods check original connection token and live flag first. Local
+argument errors (wrong token, backwards time, wrong role/phase, bad byte count,
+output too small) leave all state and outputs unchanged. now_ms uses one core
+last_now_ms; successful timed processing commits nondecreasing time. A valid wire
+violation is a terminal state transition, not a local argument error. Exact
+5s handshake and6s Ready boundaries expire BEFORE processing a frame/completion.
+Draining is terminal for negotiation (Closed cannot reopen); this v2 core does
+not authorize automatic epoch reconnect or replacement. In Draining existing TX
+can be flushed bounded by caller; no Ping/Hello/facility dispatch restarts. No
+special drain-protocol claims. Feature/native owners retain external resources.
+
+## Dispatch/error policy frozen for this slice
+
+Before Ready accept only expected Hello(Host) or HelloAck(Guest); wrong message,
+wrong ID/version/layout/major/epoch/caps is Error and Draining, using existing
+handshake actions. Host receives Hello -> ValidateMapping; it cannot Ack/Ready
+until explicit matching successful external validation. Guest cannot consume Ack
+as Ready until full Hello send. Handshake ID released only on successful Guest
+Ready or terminal quiescence. No incoming Error is ever answered with another
+Error; pre-Ready Error causes Draining without reply.
+
+In Ready: Hello/Ack again is protocol violation. Ping Host->Guest requires
+nonzero request_id; queue Pong echo internally, no feature event. Pong Guest->Host
+requires nonzero ID; matched/unknown/expired handling uses existing liveness;
+unknown late Pong is ignored according to helper. Every valid complete frame
+counts for receive-liveness BEFORE normal handling; deadline wins at equality.
+Valid Error is copied as PeerError/scoped diagnostic, never answered and does not
+automatically close. Valid Goodbye requiresID0, is copied then immediately
+Draining, never replied to; status/message do not grant resource proof. Other
+codec-valid feature frames copied unchanged as FeatureFrame only in Ready;
+external dispatcher owns negotiated capability checks, type-specific request
+correlation and native effects. No facility side effect runs in core.
+
+Malformed/unsupported payload or wrong-direction message -> best-effort Error
+with codec's MalformedFrame/UnsupportedField/UnsupportedType code, then Draining.
+Locally generated Error echoes triggering decoded request_id (including0), and
+sets RefusedType only for a valid decoded header; bad header usesID0/noRefusedType.
+All fields use canonical ascending tags and codec writer; never hand-encode known
+fields. No recursive error reply for invalid received Error payload: drain only.
+Mandatory Hello/Ack/Pong/Ping enqueue failure drains; Error/Goodbye allocation or
+queue failure leaves Draining with terminal-send-unavailable result. No dropped
+mandatory response may report Ready. Queue deinit remains the sole free owner.
+
+## Required verification
+
+Isolated worker tests/cache/output under /tmp; production both line+branch>=90,
+no exclusions/lowered gates, std.testing.allocator allocation failures and zero
+leaks. Builtin tests plus separate independent named-module suite: two real core
+values exchange arbitrarily fragmented Hello/Ack/Ping/Pong; queued/partial writes
+cannot grant Ready; mapping callback gates; all exact time boundaries; bad/stale
+callbacks leave state; short output doesn't consume or refreshclock; scoped Error
+no reply; malformed received Error no recursive reply; header/body/direction/ID
+violations; allocation failure for each mandatory response; FIFO512/controlcapacity;
+deinit/repeated terminal events; unknown/latePong; no epoch/native proof generated.
+Lead owns shared builds, coverage harness, Windows/C ABI integration and Git.

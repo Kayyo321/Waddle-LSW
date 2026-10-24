@@ -115,25 +115,25 @@
       "model": "gpt-6-luna",
       "effort": "high",
       "owned_files": [
-        "src/interop/host_buffer_registry.zig"
+        "src/interop/control_peer.zig"
       ],
-      "task": "Implement accepted appendix8.19 fixed host frame registry; isolated unit tests; no native proof"
+      "task": "Implement appendix8.20 connected control peer, owning queue and common ID namespace; isolated unit/allocator tests"
     },
     {
       "agent": "luna_layout",
       "model": "gpt-6-luna",
       "effort": "high",
       "owned_files": [
-        "tests/interop/host_buffer_registry.zig"
+        "tests/interop/control_peer.zig"
       ],
-      "task": "Independent black-box stale-callback/backpressure/capacity/stress tests and review"
+      "task": "Independent two-peer fragmentation/partial-write/failure/clock tests; review core"
     },
     {
       "agent": "luna_qemu_build",
       "model": "gpt-6-luna",
       "effort": "high",
       "owned_files": [],
-      "task": "Read-only single-host-coordinator drain transition review to /tmp; protocol amendment unaccepted"
+      "task": "Read-only composition contract/source critique; save /tmp findings"
     }
   ],
   "completed_followups": [
@@ -209,5 +209,5 @@
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
   },
-  "lead_current_work": "Source3230877 passes both CI workflows, including native Windows CPU fixtures. Overall16.40%. Lead corrects startup probe/epoch lifetime contract, reviews registry and keeps shared integration/CI/Git ownership. Claude graph lane remains reserved."
+  "lead_current_work": "Registry local Debug/adversarial/coverage and Windows cross-build pass; root retains source, gates and pending implementation commit. Next parallel core composition uses accepted appendix8.20; protocol3 remains unaccepted. Both workflows at3230877 are green; total16.40%; Claude reservation unchanged."
 }
