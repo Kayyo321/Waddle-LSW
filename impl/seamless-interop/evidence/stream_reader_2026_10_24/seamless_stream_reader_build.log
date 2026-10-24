@@ -1,0 +1,15 @@
+zig test src/interop/stream_reader.zig -Iinclude build/interop_codec.o -lc
+1/12 stream_reader.test.real codec ping frame is framed at every split and bytewise...OK
+2/12 stream_reader.test.coalesced frames stop at one boundary and require explicit consume...OK
+3/12 stream_reader.test.maximum frame is bounded and payload validation remains visible...OK
+4/12 stream_reader.test.bad header fails closed and retains exact codec error...OK
+5/12 stream_reader.test.initialization rejects unsupported producer directions...OK
+6/12 stream_reader.test.oversize and unaligned payload headers are rejected by codec...OK
+7/12 stream_reader.test.input alias is rejected before any reader state changes...OK
+8/12 stream_reader.test.EOF distinguishes partial header body and pending complete frame...OK
+9/12 stream_reader.test.payload schema and producer direction errors are returned without hiding frame...OK
+10/12 stream_reader.test.deterministic header mutation corpus never exceeds fixed storage...OK
+11/12 stream_reader.test.payload-only fragments preserve the boundary and clean EOF rejects later access...OK
+12/12 stream_reader.test.failed header refuses every consumer and EOF operation...OK
+All 12 tests passed.
+zig test src/interop/stream_reader.zig -Iinclude build/interop_codec_windows.lib -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=build/interop_stream_reader_test.exe

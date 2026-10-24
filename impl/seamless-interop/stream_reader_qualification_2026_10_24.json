@@ -1,0 +1,41 @@
+{
+  "source": "src/interop/stream_reader.zig",
+  "source_sha256": "08e57bcc3b986269f4ac8a595993960162937d8a3295aa7ada9a1500a4c0e3eb",
+  "recorded_utc": "2026-10-24T16:46:53.781273+00:00",
+  "commands": [
+    {
+      "command": "make interop-stream-reader-test build/interop_stream_reader_test.exe",
+      "exit_code": 0,
+      "tests_passed": 12
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py stream_reader",
+      "exit_code": 0,
+      "line": [
+        49,
+        49
+      ],
+      "branch": [
+        34,
+        36
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/stream_reader_2026_10_24/seamless_stream_reader_build.log",
+      "sha256": "cf82f4280e0aded27fc329e03a1f50c0724b32d82581235dcb304b39ec51c32b"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/stream_reader_2026_10_24/seamless_stream_reader_coverage.log",
+      "sha256": "0c0f6357cf55d97362190cbb3333c82733343200a8fd2fe5d6f96d96a82d2bc5"
+    }
+  ],
+  "limits": [
+    "Allocation-free pure ingress; no socket, capability, request correlation or mapping ownership.",
+    "Payload codec status must be checked by caller before interpreting fields.",
+    "Windows cross-build passes; actual Windows execution pending next CI.",
+    "Uses the normal production codec object without symbol modification."
+  ],
+  "progress_credit": 0
+}

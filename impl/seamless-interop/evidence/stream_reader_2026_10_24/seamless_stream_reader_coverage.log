@@ -1,0 +1,28 @@
+preserved stream_reader coverage: /home/dev/Waddle-LSW/build/coverage/interop/stream_reader/run-20261024T163158552325Z-297776
+stream_reader instrumentation: 100 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 500/524288 bytes; 100 sites
+1/12 stream_reader.test.real codec ping frame is framed at every split and bytewise...OK
+2/12 stream_reader.test.coalesced frames stop at one boundary and require explicit consume...OK
+3/12 stream_reader.test.maximum frame is bounded and payload validation remains visible...OK
+4/12 stream_reader.test.bad header fails closed and retains exact codec error...OK
+5/12 stream_reader.test.initialization rejects unsupported producer directions...OK
+6/12 stream_reader.test.oversize and unaligned payload headers are rejected by codec...OK
+7/12 stream_reader.test.input alias is rejected before any reader state changes...OK
+8/12 stream_reader.test.EOF distinguishes partial header body and pending complete frame...OK
+9/12 stream_reader.test.payload schema and producer direction errors are returned without hiding frame...OK
+10/12 stream_reader.test.deterministic header mutation corpus never exceeds fixed storage...OK
+11/12 stream_reader.test.payload-only fragments preserve the boundary and clean EOF rejects later access...OK
+12/12 stream_reader.test.failed header refuses every consumer and EOF operation...OK
+All 12 tests passed.
+stream_reader production branch coverage: 94.44% (34/36); 16 compiler panic/stack-canary guards excluded
+stream_reader production line coverage: 100.00% (49/49); 16 compiler panic/stack-canary guards excluded

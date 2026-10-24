@@ -35,7 +35,7 @@ jobs:
       - name: Gate each implemented interop module's line/branch coverage
         run: make interop-coverage
       - name: Cross-build Windows ABI and foundation tests
-        run: make build/interop_codec_abi_test.exe build/interop_layout_test.exe build/interop_heap_test.exe build/interop_manifest_test.exe build/interop_layout_abi_test.exe build/interop_native_atomic_test.exe build/interop_slot_runtime_test.exe build/interop_slot_runtime_abi_test.exe build/interop_slot_runtime_abi_unit_test.exe build/interop_mapping_init_test.exe
+        run: make build/interop_codec_abi_test.exe build/interop_layout_test.exe build/interop_heap_test.exe build/interop_manifest_test.exe build/interop_layout_abi_test.exe build/interop_native_atomic_test.exe build/interop_slot_runtime_test.exe build/interop_slot_runtime_abi_test.exe build/interop_slot_runtime_abi_unit_test.exe build/interop_mapping_init_test.exe build/interop_stream_reader_test.exe
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: interop-codec-windows
@@ -50,6 +50,7 @@ jobs:
             build/interop_slot_runtime_abi_test.exe
             build/interop_slot_runtime_abi_unit_test.exe
             build/interop_mapping_init_test.exe
+            build/interop_stream_reader_test.exe
           if-no-files-found: error
   windows:
     needs: linux
@@ -63,7 +64,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($test_name in @('interop_codec_abi_test.exe', 'interop_layout_test.exe', 'interop_heap_test.exe', 'interop_manifest_test.exe', 'interop_layout_abi_test.exe', 'interop_native_atomic_test.exe', 'interop_slot_runtime_test.exe', 'interop_slot_runtime_abi_test.exe', 'interop_slot_runtime_abi_unit_test.exe', 'interop_mapping_init_test.exe')) {
+          foreach ($test_name in @('interop_codec_abi_test.exe', 'interop_layout_test.exe', 'interop_heap_test.exe', 'interop_manifest_test.exe', 'interop_layout_abi_test.exe', 'interop_native_atomic_test.exe', 'interop_slot_runtime_test.exe', 'interop_slot_runtime_abi_test.exe', 'interop_slot_runtime_abi_unit_test.exe', 'interop_mapping_init_test.exe', 'interop_stream_reader_test.exe')) {
             & ".\build\$test_name"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

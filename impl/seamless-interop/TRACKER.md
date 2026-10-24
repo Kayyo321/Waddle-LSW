@@ -618,11 +618,23 @@ its uncompiled draft earns no credit until current acceptance passes.
     are not new-session readiness. No live endpoint or qualification credit.
     Source commit11fb4c1 contains this specification/evidence.
 
-- **Commit `HEAD`**: `docs(interop): record native Windows session foundation qualification`
+- **Commit `2407048`**: `docs(interop): record native Windows session foundation qualification`
   - **Task Impact**: +0% to TODO #5/#6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Records exact-head interop40110811887 Linux/Windows and Native
     AV40110811855 success atacd2011. Windows executes both C/Zig opaque-runtime
     suites and the metadata initializer. Qualification receipts retain hashed
     run/job evidence and remove pending-CPU-execution limitations. Live endpoint,
     signed-driver and compositor acceptance remain open; no extra task credit.
-    HEAD identifies this containing qualification commit.
+    Source commit2407048 contains this qualification.
+
+- **Commit `HEAD`**: `feat(interop): frame bounded fragmented session input`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Adds a fixed64KiB codec-backed reader with exact coalesced-frame
+    consumption, sticky header failure, explicit payload-validation results and
+    borrowed-view/EOF rules. Independent review finds no actionable defect.
+    Lead adds payload-only fragmentation and failed/closed consumer regressions;
+    twelve tests,100% production lines and94.44% branches pass. Normal codec
+    object links without a symbol workaround. Windows cross-build joins native
+    CI; framing5% per endpoint remains uncredited pending that run.
+    [Qualification](stream_reader_qualification_2026_10_24.json). HEAD identifies
+    this containing implementation commit.
