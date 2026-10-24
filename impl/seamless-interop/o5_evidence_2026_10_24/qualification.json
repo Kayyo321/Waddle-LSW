@@ -1,0 +1,45 @@
+{
+  "local_gate": "make -j1 -f scripts/interop_window_graph.mk window-graph-all WgBuild=/tmp/seamless_o5_worker_gate",
+  "exit_code": 0,
+  "portable_observer_tests": 89,
+  "graph_tests": 148,
+  "graph_abi_imported_tests": 164,
+  "c_abi_tests": 28,
+  "fault_fixture": "passed",
+  "sanitizers": "address,leak,undefined; ASAN_OPTIONS=detect_leaks=1",
+  "ordinary_graph_exports": 22,
+  "stats_abi_bytes": 176,
+  "observer_line": {
+    "covered": 1188,
+    "total": 1245
+  },
+  "observer_taken_branch_arcs": {
+    "covered": 851,
+    "total": 944
+  },
+  "observer_coverage_exclusions": [],
+  "windows": "Zig and MinGW cross-build/link only; exact updated binaries await Windows CI execution",
+  "review_fixes": [
+    "preserve previous/proposed candidate union during reentrant graph callbacks",
+    "retain exact mailbox stamp and every queued Destroy across overflow",
+    "bound reentrant Destroy work without false evidence-loss poison",
+    "reject sync/configuration mutation in Failed and sticky-fault configuration changes"
+  ],
+  "coordinator_or_installed_session_credit": false,
+  "feature_progress_delta": 0,
+  "source_sha256": {
+    "src/interop/window_observer_windows.c": "b43b736580e7aeeb5a9a0c2c938fda5198f1083dda26fd0d6d2262262c7c5521",
+    "src/interop/window_observer_windows.h": "c949bf04f69c95cd2e62683ca17add4ade30e4fa276bff538dacda76347ea897",
+    "tests/interop/window_observer_windows.c": "f01b8cf6cfed2bed324489ddfff32caa48a213c919d7f8c1fd52428bfd12f46a",
+    "tests/interop/window_observer_private.c": "fd8335c5943064bca08bb5e4ea038edef91ee63057275896c48413f68e5dcc68",
+    "tests/interop/window_observer_graph_faults.c": "e07dc929b31e60046ae7c4fc628b3f0dbdd478a5034cbb28c003f8f695a78bf1",
+    "tests/interop/window_observer_api_double.h": "08dc4726bc3db0c79c785455d9d12c0a32b5d3d0c7704aa899ee21c11f6024d9",
+    "tests/interop/window_observer_native_windows.c": "ade3e79219d42846b87b4cca0e098b3bee10fc350f0e251e6b69d431b1eacf61",
+    "tests/interop/window_observer_native_failures_windows.c": "fba4992c552e5baa97ec6c42ee26cefe5f01310e4f0f7ac8b1da2df83b271aae",
+    "tests/interop/window_observer_coverage.py": "e942f4d64300f5428e26b074b3cb03d5a15ffffd54d3924880f05e92b92b373a",
+    "scripts/interop_window_graph.mk": "ad2bcf58e2cc872ba1762b14b65d3d9b76f5d0654c7a95a2a4a0cec8f6cc0231",
+    "impl/seamless-interop/observer_destroy_preservation.md": "3d1ed9250fadee6f000aa8af0d691344565fd1094ca08ecb3dd637620bacfe00"
+  },
+  "retained_coverage_attempt": "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913",
+  "incomplete_attempt": "Earlier full gate interrupted with SIGINT exit130 after final review found Failed-state API mutations; it is not acceptance evidence."
+}

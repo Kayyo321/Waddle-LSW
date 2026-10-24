@@ -12,8 +12,10 @@
  * the api table so a test double can replace it on any platform. The header contains no
  * Win32 types; only window_observer_native_api() exists under _WIN32.
  *
- * Boundaries. The observer owns its hooks, its dirty table and its enumeration buffer and
- * nothing else. It never owns, retires or frees graph state, never produces frame-drain
+ * Boundaries. The observer owns its hooks, dirty table, protected Destroy mailbox, tracked-key
+ * snapshot and enumeration buffer. It binds to a borrowed graph and may invalidate/retire entries
+ * or apply exact Destroy evidence, but never completes retirement or frees graph state. It never
+ * produces frame-drain
  * proof, never sends a protocol message (no DesktopSwitch, no Hello), and never sends
  * messages to foreign windows (no WM_GETTEXT, no WM_GETMINMAXINFO). It also never sends a
  * message of any kind to a window of the agent's own process: the title of an AgentOwned
@@ -54,15 +56,11 @@
  * place the condition is reported: after a successful create the native table is runnable and no
  * later call returns Unsupported. A caller-supplied api table is never checked this way.
  *
- * Identity continuity. The observer does not stamp foreign windows with properties (SetProp
- * would mutate other processes' windows, can clash with unrelated properties, and is blocked by
- * UIPI for elevated windows). Continuity is proven by the graph from the identity tuple
- * (process id, thread id, process start time, class hash) plus the destroy-hint rule of
- * interop_window_graph_note_destroyed(). Residual risk: a window destroyed and recreated with
- * the identical tuple and the same HWND, with the destroy hint lost (by the OS, or discarded by a
- * hint-table overflow recovery, see pump), is indistinguishable from the old incarnation.
- * interop_window_graph_invalidate_all stays in the graph ABI for the coordinator; the observer never
- * calls it.
+ * Identity continuity. The observer does not stamp foreign windows with properties. Protected
+ * Destroy evidence is retained outside the ordinary FIFO and applied before stale query facts; if
+ * it cannot be retained, tracking faults permanently. A Destroy callback lost by the OS, or an
+ * identical HWND/identity reuse during an interval with no hooks, remains undetectable. Stop
+ * invalidates graph entries but never completes retirement or proves host drain.
  *
  * Access denied. The image basename is resolved in two steps. First OpenProcess
  * (PROCESS_QUERY_LIMITED_INFORMATION) with QueryFullProcessImageName, which also yields the process
@@ -146,6 +144,12 @@
 
 /** @brief Capacity of the dirty-handle table (distinct HWNDs awaiting a requery); while pump holds a popped key one slot is reserved for its put-back, so a new HWND is accepted only while dirty_pending plus the popped key count stays below this value. */
 #define WindowObserverDirtyCapacity 512u
+/** @brief Fixed protected Destroy mailbox bound from the O5 reservation proof. */
+#define WindowObserverDestroyCapacity 129u
+/** @brief Active/Retiring snapshot bound; aliases the frozen graph capacity. */
+#define WindowObserverTrackedCapacity InteropMaxWindows
+/** @brief Version of caller-owned local quarantine evidence. */
+#define WindowObserverQuarantineVersion 1u
 /**
  * @brief Capacity of the enumeration buffer. HARD LIMIT: a desktop with more top-level windows yields a
  *        Truncated enumeration, and a refresh then runs without ever committing (see window_observer_refresh):
@@ -188,14 +192,17 @@ typedef enum window_observer_state_t {
     WindowObserverStateCreated = 1, /**< Created, never started; no hooks exist. */
     WindowObserverStateStarted = 2, /**< Hooks installed; hints accepted; pump and refresh allowed. */
     WindowObserverStateStopped = 3, /**< Stopped; no hooks; may be started again or destroyed. */
-    WindowObserverStateFailed = 4 /**< Hook install/removal failed; stop/destroy retry retained hook removals. */
+    WindowObserverStateFailed = 4, /**< Hook install/removal failed; stop retries retained hook removals. */
+    WindowObserverStateStarting = 5, /**< Callback target published; hooks are being installed. */
+    WindowObserverStateStopping = 6, /**< Graph invalidated; hooks are being removed. */
+    WindowObserverStateTrackingFault = 7 /**< Permanent evidence fault; cleanup/handoff only. */
 } window_observer_state_t;
 
 /** @brief Result codes of the observer functions. Only Ok and More are fully successful. */
 typedef enum window_observer_status_t {
     WindowObserverStatusOk = 0, /**< Completed; for pump, no hint remains queued and no overflow is latched. */
     WindowObserverStatusMore = 1, /**< pump only: budget exhausted, or hints remain or arrived while an overflow recovery ran; call again. */
-    WindowObserverStatusDesktopInactive = 2, /**< Input desktop is not Default or unknown; nothing processed, graph untouched, hints kept, full refresh latched. */
+    WindowObserverStatusDesktopInactive = 2, /**< Input desktop is not Default or unknown; no native admission, hints kept and refresh latched. A preceding reservation may have applied protected Destroy. */
     WindowObserverStatusGraphQueueFull = 3, /**< Graph reported QueueFull; the coordinator must drain graph events and call again. */
     WindowObserverStatusInvalidArgument = 4, /**< NULL pointer, zero budget/stamp/process id, uac_mode above 2, malformed api table or config; nothing changed. */
     WindowObserverStatusWrongThread = 5, /**< Not the owner thread; nothing touched (a destroy does not free). */
@@ -203,12 +210,15 @@ typedef enum window_observer_status_t {
     WindowObserverStatusAlreadyActive = 7, /**< Another observer owns or tears down this process's hook lifecycle; this one stays unchanged. */
     WindowObserverStatusBadState = 8, /**< The call is illegal in the current lifecycle state; nothing changed. */
     WindowObserverStatusHookFailed = 9, /**< A hook could not be installed; acquired hooks were rolled back or retained for retry. */
-    WindowObserverStatusUnhookFailed = 10, /**< One or more hook tokens remain owned in Failed; stop/destroy can retry. */
+    WindowObserverStatusUnhookFailed = 10, /**< One or more hook tokens remain owned in Failed; explicit stop can retry. */
     WindowObserverStatusGraphError = 11, /**< Graph returned an unexpected status (see last_graph_status); processing stopped. */
     WindowObserverStatusEnumFailed = 12, /**< Enumeration failed (no refresh begun, nothing retired) or was truncated (the refresh ran its offers and unseen requery but was aborted, never committed). refresh, and pump when it runs an overflow recovery; the refresh latch stays set. */
-    WindowObserverStatusStampExhausted = 13, /**< The logical clock cannot issue another stamp; the observer must be replaced. */
+    WindowObserverStatusStampExhausted = 13, /**< Reserved legacy value; stamp exhaustion now latches TrackingFault. */
     WindowObserverStatusReentrant = 14, /**< Any function with an observer handle except note_hint: another entry point of this observer is active (busy flag); nothing touched (a destroy does not free). pump and refresh: also returned when the graph reports Reentrant (key put back, processing stopped, last_graph_status Reentrant). */
-    WindowObserverStatusUnsupported = 15 /**< create only: the native table cannot run here (GetDpiForWindow missing, or the calling thread is not DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); no observer exists. */
+    WindowObserverStatusUnsupported = 15, /**< create only: the native table cannot run here. */
+    WindowObserverStatusGraphBindingMismatch = 16, /**< Bound graph pointer or epoch differs; no mutation. */
+    WindowObserverStatusProtectedStatePending = 17, /**< Local destroy prerequisites or retained evidence remain. */
+    WindowObserverStatusTrackingFault = 18 /**< Permanent fault; retain graph/native bundle and hand off evidence. */
 } window_observer_status_t;
 
 /** @brief Outcome of one native fact query. */
@@ -264,7 +274,7 @@ typedef struct window_observer_api_t {
      * @brief Remove a hook previously installed by install_hook.
      * @param[in,out] context The config's api_context; may be NULL.
      * @param[in] hook Token from install_hook; never 0.
-     * @return 0 on success, nonzero on failure (the hook state is then unknown and is not retried).
+     * @return 0 on success, nonzero on failure (the token remains owned for explicit stop retry).
      *         stop() and failed-start cleanup call it once per installed hook (up to three), in
      *         reverse order of installation.
      */
@@ -391,9 +401,90 @@ typedef struct window_observer_stats_t {
     uint64_t refreshes_started; /**< refresh_begin calls issued. */
     uint64_t refreshes_committed; /**< Refreshes committed. */
     uint64_t refreshes_aborted; /**< Refreshes aborted by the observer (before the commit, on QueueFull, a call-level graph status, Reentrant or a defensive Suspended). */
-    uint64_t invalidations; /**< Overflow recoveries started by pump (name kept for ABI stability). No invalidate_all is issued: each recovery discards the table and runs one full refresh. */
+    uint64_t invalidations; /**< Overflow recoveries; the legacy counter name/ABI is retained. Bind/stop invalidations do not increment it. */
     uint64_t uac_native_hidden; /**< Offers whose result reason was UacNativeHidden (a consent window exists but is hidden from export). */
 } window_observer_stats_t;
+
+/** @brief One exact Destroy event retained outside the ordinary hint FIFO.
+ * @param[in] window Nonzero HWND value.
+ * @param[in] destroy_stamp Monotonic observer stamp assigned at callback receipt.
+ * @param[in] event_time_ms Original WinEvent 32-bit event time.
+ * @param[in] reserved_zero Must be zero; output records always zero it.
+ * @ownership Caller-owned value; no graph/native resource ownership.
+ * @thread_safety Immutable copy after publication.
+ */
+typedef struct window_observer_destroy_entry_t {
+    uint64_t window;
+    uint64_t destroy_stamp;
+    uint32_t event_time_ms;
+    uint32_t reserved_zero;
+} window_observer_destroy_entry_t;
+
+/** @brief Exact ordinary dirty entry copied into a quarantine handoff.
+ * @param[in] window Nonzero HWND value.
+ * @param[in] kinds Coalesced dirty event bits, including Destroy when present.
+ * @param[in] retries Failed-query retry count.
+ * @param[in] first_stamp First retained event stamp.
+ * @param[in] last_stamp Latest retained event stamp.
+ * @param[in] destroy_stamp Latest Destroy stamp, or zero when absent.
+ * @param[in] destroy_event_ms Event time paired with destroy_stamp.
+ * @param[in] reserved_zero Always zero.
+ * @ownership Caller-owned value; no graph/native resource ownership.
+ * @thread_safety Immutable copy after publication.
+ */
+typedef struct window_observer_dirty_record_t {
+    uint64_t window;
+    uint32_t kinds;
+    uint32_t retries;
+    uint64_t first_stamp;
+    uint64_t last_stamp;
+    uint64_t destroy_stamp;
+    uint32_t destroy_event_ms;
+    uint32_t reserved_zero;
+} window_observer_dirty_record_t;
+
+/** @brief Fixed evidence copy for permanent local quarantine; it grants no restore/release authority.
+ * @param[in] version Must equal WindowObserverQuarantineVersion.
+ * @param[in] size Exact sizeof(window_observer_quarantine_record_t).
+ * @param[in] borrowed_graph Opaque identity only; never owned by this record.
+ * @param[in] session_epoch Bound epoch, or zero for an unbound observer.
+ * @param[in] observer_state Final observer state at handoff.
+ * @param[in] last_graph_status Last non-Ok/None graph result.
+ * @param[in] tracking_fault Permanent fault latch.
+ * @param[in] evidence_incomplete One when evidence could not be fully retained.
+ * @param[in] protected_count Number of initialized mailbox entries.
+ * @param[in] dirty_count Number of initialized ordinary dirty entries.
+ * @param[in] tracked_count Number of last-known tracked HWNDs.
+ * @param[in] tracked_snapshot_valid One only if last_known_tracked_windows is a complete snapshot.
+ * @param[in] candidate_window Reserved callback candidate, or zero.
+ * @param[in] mailbox_inflight_index UINT32_MAX when no mailbox operation is in flight.
+ * @param[in] reserved_zero Always zero.
+ * @param[in] protected_destroys Exact retained protected entries in mailbox order.
+ * @param[in] pending_dirty Exact retained dirty records in queue order.
+ * @param[in] last_known_tracked_windows Sorted unique Active/Retiring keys from the last complete snapshot.
+ * @ownership Caller owns this fixed storage. borrowed_graph remains borrowed metadata only.
+ * @thread_safety Written only by successful owner-thread handoff after callback quiescence.
+ */
+typedef struct window_observer_quarantine_record_t {
+    uint32_t version;
+    uint32_t size;
+    interop_window_graph_t *borrowed_graph;
+    uint64_t session_epoch;
+    uint32_t observer_state;
+    uint32_t last_graph_status;
+    uint32_t tracking_fault;
+    uint32_t evidence_incomplete;
+    uint32_t protected_count;
+    uint32_t dirty_count;
+    uint32_t tracked_count;
+    uint32_t tracked_snapshot_valid;
+    uint64_t candidate_window;
+    uint32_t mailbox_inflight_index;
+    uint32_t reserved_zero;
+    window_observer_destroy_entry_t protected_destroys[WindowObserverDestroyCapacity];
+    window_observer_dirty_record_t pending_dirty[WindowObserverDirtyCapacity];
+    uint64_t last_known_tracked_windows[WindowObserverTrackedCapacity];
+} window_observer_quarantine_record_t;
 
 _Static_assert(sizeof(window_observer_state_t) == 4, "observer state enum ABI");
 _Static_assert(sizeof(window_observer_status_t) == 4, "observer status enum ABI");
@@ -431,6 +522,18 @@ _Static_assert(offsetof(window_observer_config_t, own_process_id) == 32, "config
 _Static_assert(offsetof(window_observer_config_t, uac_mode) == 36, "config uac_mode ABI");
 
 _Static_assert(sizeof(window_observer_stats_t) == 176, "observer stats ABI");
+_Static_assert(sizeof(window_observer_destroy_entry_t) == 24, "protected destroy entry ABI");
+_Static_assert(_Alignof(window_observer_destroy_entry_t) == 8, "protected destroy alignment ABI");
+_Static_assert(sizeof(window_observer_dirty_record_t) == 48, "dirty evidence record ABI");
+_Static_assert(_Alignof(window_observer_dirty_record_t) == 8, "dirty evidence alignment ABI");
+_Static_assert(offsetof(window_observer_quarantine_record_t, borrowed_graph) == 8, "quarantine graph ABI");
+_Static_assert(offsetof(window_observer_quarantine_record_t, session_epoch) == 16, "quarantine epoch ABI");
+_Static_assert(offsetof(window_observer_quarantine_record_t, candidate_window) == 56, "quarantine candidate ABI");
+_Static_assert(offsetof(window_observer_quarantine_record_t, protected_destroys) == 72, "quarantine mailbox ABI");
+_Static_assert(offsetof(window_observer_quarantine_record_t, pending_dirty) == 3168, "quarantine dirty ABI");
+_Static_assert(offsetof(window_observer_quarantine_record_t, last_known_tracked_windows) == 27744, "quarantine tracked ABI");
+_Static_assert(sizeof(window_observer_quarantine_record_t) == 28256, "quarantine record ABI");
+_Static_assert(_Alignof(window_observer_quarantine_record_t) == 8, "quarantine record alignment ABI");
 _Static_assert(offsetof(window_observer_stats_t, next_stamp) == 0, "stats next_stamp ABI");
 _Static_assert(offsetof(window_observer_stats_t, state) == 8, "stats state ABI");
 _Static_assert(offsetof(window_observer_stats_t, last_graph_status) == 12, "stats graph status ABI");
@@ -481,58 +584,56 @@ window_observer_status_t window_observer_create(const window_observer_config_t *
                                                 window_observer_t **out_observer);
 
 /**
- * @brief Stop if needed, then free the observer and set the caller's handle to NULL.
+ * @brief Free only a quiescent unbound Created or empty bound Stopped observer; never stop implicitly.
  *
- * A Started or Failed observer first unpublishes its callback target and waits for in-flight hints,
- * then attempts every retained hook token. If any removal fails, the observer, caller slot, failed
- * tokens, and process-wide lifecycle reservation remain owned so stop/destroy can retry; no observer
- * memory is freed. On success every hook is gone, the lifecycle reservation is released, and the
- * observer is freed. The observer never touches the graph, so destroy order relative to the graph is
- * free.
+ * A bound observer requires no hook tokens, no published callback target, zero in-flight hints, no
+ * protected mailbox evidence, no fault, and a fresh graph snapshot with no Active or Retiring
+ * keys. Ordinary hints and an overflow latch may be discarded only after this empty bound snapshot.
+ * An unbound Created observer must have no dirty/overflow evidence and has never touched a graph. Any unmet condition
+ * returns ProtectedStatePending (or TrackingFault) with the observer and caller slot retained.
+ * Stop, graph retirement, host drain and backing release remain caller responsibilities; this call
+ * frees only the observer allocation.
  *
  * @param[in,out] observer_slot Non-NULL caller slot. If *observer_slot is NULL this is a successful
- *                              no-op. On Ok the owner is freed and the slot is NULL. On UnhookFailed
- *                              the owner and slot are unchanged and retained hooks may be retried.
- * @return Ok; UnhookFailed (one or more hook tokens remain owned); InvalidArgument for a NULL slot;
- *         WrongThread; Reentrant (another entry point is active; nothing freed).
+ *                              no-op. On Ok the owner is freed and the slot is NULL; otherwise both
+ *                              remain unchanged.
+ * @return Ok; InvalidArgument; WrongThread; Reentrant; ProtectedStatePending; TrackingFault.
  * @note Owner thread only. Not safe against concurrent use of the same observer. Holds the busy flag.
  */
 window_observer_status_t window_observer_destroy(window_observer_t **observer_slot);
 
 /**
- * @brief Reserve the process-wide lifecycle, publish the callback target, install the three hooks,
- *        and latch a full refresh as due.
+ * @brief Require a graph binding, reserve lifecycle, publish the callback target, install hooks, and latch refresh.
  *
- * Allowed from Created and Stopped (restart; the logical clock keeps counting up). The reservation
+ * Allowed from bound Created and Stopped (restart; the logical clock keeps counting up). The reservation
  * remains held for the full Started lifetime and during stop/rollback. Installs, in order, the object
  * range [ObjectCreate, ObjectParentChange], the system range [SystemMinimizeStart, SystemMinimizeEnd]
  * and the cloak range [ObjectCloaked, ObjectUncloaked]. On HookFailed the callback slot is released
  * (waiting for in-flight hints) and acquired hook tokens are removed in reverse order. If rollback
- * removal fails, those tokens and the reservation remain owned in Failed state for stop/destroy retry;
- * successful rollback enters Stopped and releases the reservation. Clears the cadence clock (no
+ * removal fails, those tokens and reservation remain owned for stop retry. Successful rollback
+ * enters bound Stopped and releases the reservation. Evidence and graph binding are retained. A
+ * callback fault during installation or the final clock callback triggers rollback and returns
+ * TrackingFault. Clears the cadence clock (no
  * refresh attempt yet) and stamps latch_ms on success.
  *
  * @param[in,out] observer Non-NULL handle.
- * @return Ok; InvalidArgument; WrongThread; Reentrant; BadState (already Started or Failed);
+ * @return Ok; InvalidArgument; WrongThread; Reentrant; BadState; GraphQueueFull; ProtectedStatePending; TrackingFault;
  *         AlreadyActive (another observer owns or tears down the lifecycle; this one unchanged);
  *         HookFailed (acquired tokens were rolled back, or remain owned for retry if removal failed).
- * @note Owner thread only. Calls api->install_hook; may dispatch hint callbacks only after it returns.
+ * @note Owner thread only. Calls api->install_hook; may dispatch callbacks before it returns.
  *       Holds the busy flag.
  */
 window_observer_status_t window_observer_start(window_observer_t *observer);
 
 /**
- * @brief Cease hint production, remove retained hooks in reverse order, and release the lifecycle
- *        reservation only after complete success.
+ * @brief Invalidate the bound graph, remove retained hooks in reverse order, then release lifecycle.
  *
- * Releasing the callback slot waits until the process-wide in-flight hint counter is zero. The separate
- * lifecycle reservation remains held until all hooks are removed and the state is Stopped, so a second
- * observer cannot start in the teardown gap. A Failed observer retries retained hook tokens. Never
- * touches the graph: nothing is retired, freed or proven; the coordinator decides what happens to the
- * graph. Stopping a Created or Stopped observer succeeds without effect.
+ * The callback target remains published until every hook is removed and callbacks quiesce. A Failed
+ * observer retries retained hook tokens without invalidating twice. Stop never frees graph state or
+ * proves host drain. Bound Created may explicitly reach Stopped; unbound Created is BadState.
  *
  * @param[in,out] observer Non-NULL handle.
- * @return Ok; UnhookFailed (every retained hook was attempted and failures remain retryable in Failed);
+ * @return Ok; GraphQueueFull (no invalidation or hook change); UnhookFailed; TrackingFault;
  *         InvalidArgument; WrongThread; Reentrant; BadState for other invalid lifecycle states.
  * @note Owner thread only. Calls api->remove_hook up to three times. Holds the busy flag.
  */
@@ -546,7 +647,9 @@ window_observer_status_t window_observer_stop(window_observer_t *observer);
  *
  * @param[in,out] observer Non-NULL handle.
  * @param[in] window HWND value, or 0 for none.
- * @return Ok; InvalidArgument; WrongThread; Reentrant.
+ * @return Ok; InvalidArgument; WrongThread; Reentrant; BadState in Failed; TrackingFault when already
+ *         faulted or if the clock callback latches
+ *         incomplete protected Destroy evidence (the preedit value is then unchanged).
  * @note Owner thread only; no OS or graph access (the only api call is the monotonic clock read, and
  *       only when the window changes while Started).
  */
@@ -555,16 +658,17 @@ window_observer_status_t window_observer_set_preedit_window(window_observer_t *o
 /**
  * @brief Process queued hints against the graph.
  *
- * Order: take the busy flag (Reentrant if taken); if the input desktop is not Default, process nothing,
+ * The graph pointer and epoch must match the immutable binding. Before callbacks, the observer reserves
+ * bounded Destroy and graph-slot capacity. Order: take the busy flag (Reentrant if taken); if the input desktop is not Default, process nothing,
  * latch a refresh, stamp the cadence clock and return DesktopInactive. If the overflow latch is set,
- * recover WITHOUT invalidate_all: discard the table (destroy information included) and the overflow
- * latch, latch a refresh and run a full refresh (steps 2 to 6 of window_observer_refresh; pump has just
+ * recover by preserving every queued Destroy and applying protected entries, then discard non-Destroy hints and the
+ * overflow latch, latch a refresh and run a full refresh (steps 2 to 6 of window_observer_refresh; pump has just
  * checked the desktop and stamped the attempt) in this call. The refresh offers every enumerated window
  * (an unchanged window causes no event), requeries the unseen Active ones individually and retires only
  * what is gone, so a flood of hints for unrelated windows costs one refresh and no export churn. Residual
- * risk, shared with a hint the OS loses: a window destroyed and recreated with the identical HWND and
- * identity tuple whose destroy hint was discarded here is not detected. If the recovery refresh fails the
- * hints are already gone; the refresh latch stays set and the cadence retries it. Otherwise
+ * An untracked Destroy that cannot fit the dirty table permanently faults continuity; protected Destroy
+ * evidence is never discarded by overflow recovery. If the recovery refresh fails the ordinary hints
+ * without Destroy payloads are already gone; retained Destroy payloads and the refresh latch remain. Otherwise
  * pop at most min(budget, entries present at call start) keys in first-seen order; each key is removed
  * from the table before its facts are queried, so a hint arriving during the query re-adds it. While a
  * key is popped one dirty slot stays reserved for it: note_hint treats the table as full when
@@ -581,18 +685,21 @@ window_observer_status_t window_observer_set_preedit_window(window_observer_t *o
  * @param[in,out] observer Non-NULL Started handle.
  * @param[in,out] graph Non-NULL graph owned by the caller, mutated only on its owner thread (the
  *                      owner threads of graph and observer must be the same thread).
- * @param[in] session_epoch Captured epoch of the graph; passed to every graph call, so a mismatch
- *                          yields GraphError with last_graph_status StaleEpoch and no graph effect.
+ * @param[in] session_epoch Exact bound epoch; a graph pointer or epoch mismatch returns
+ *                          GraphBindingMismatch before clocks, queries or graph mutation.
  * @param[in] budget At least 1; maximum keys popped in this call.
  * @param[out] stats Nullable; receives a snapshot of the cumulative counters after the call
- *                   (also on non-Ok statuses other than InvalidArgument, WrongThread and Reentrant).
+ *                   after work begins. Local InvalidArgument, WrongThread, Reentrant, BadState,
+ *                   GraphBindingMismatch and a previously latched TrackingFault preserve its bytes.
  * @return Ok (the table is empty and no overflow is latched on return); More (hints remain: budget
  *         exhausted, a key was put back after a failed query, or hints arrived while an overflow recovery
- *         refresh ran); DesktopInactive; GraphQueueFull; GraphError; StampExhausted; Reentrant (busy flag,
- *         or the graph reported Reentrant); BadState (not Started); InvalidArgument; WrongThread. When
+ *         refresh ran); DesktopInactive; GraphQueueFull; GraphError; Reentrant (busy flag,
+ *         or the graph reported Reentrant); BadState (not Started); InvalidArgument; WrongThread;
+ *         GraphBindingMismatch; TrackingFault; ProtectedStatePending. StampExhausted is a reserved
+ *         legacy status; logical stamp exhaustion now latches TrackingFault. When
  *         the overflow recovery refresh fails, pump also returns that refresh's failure status:
- *         EnumFailed (failed or truncated enumeration), GraphQueueFull, GraphError, StampExhausted,
- *         DesktopInactive; the table is already empty and the refresh latch is set.
+ *         EnumFailed (failed or truncated enumeration), GraphQueueFull, GraphError, TrackingFault,
+ *         DesktopInactive; queued Destroy payloads remain and the refresh latch is set.
  * @note Owner thread only; calls api query entries and the graph; the portable core does not allocate
  *       (two facts structs live on the stack; the native query_facts allocates only for a long image
  *       path, see its note). Graph callbacks (app-key lookup) run inside observe.
@@ -642,15 +749,18 @@ window_observer_status_t window_observer_pump(window_observer_t *observer, inter
  * next refresh call detects that (RefreshActive), aborts it and starts over. The attempt timestamp is
  * stamped when a refresh is attempted, before the desktop check, so a persistently failing refresh
  * retries at the normal 250 ms cadence, not in a loop; the refresh latch clears only on commit.
- * Pending hints are not consumed.
+ * Before returning graph events to its caller, pump snapshots the graph and promotes/applies any
+ * Destroy payload whose HWND became tracked. QueueFull retains exact evidence and stops processing.
  *
  * @param[in,out] observer Non-NULL Started handle.
  * @param[in,out] graph Non-NULL graph (same thread rule as pump).
  * @param[in] session_epoch Captured epoch of the graph.
- * @param[out] stats Nullable; snapshot of the cumulative counters after the call.
+ * @param[out] stats Nullable; cumulative counters after work starts. Local argument/thread/state/
+ *                   binding failures, reentrancy and an already latched fault preserve its bytes.
  * @return Ok (committed, possibly with failed queries); DesktopInactive; EnumFailed (failed enumeration:
  *         nothing begun; truncated enumeration: begun, applied, aborted); GraphQueueFull;
- *         GraphError; StampExhausted; Reentrant; BadState; InvalidArgument; WrongThread.
+ *         GraphError; Reentrant; BadState; InvalidArgument; WrongThread; GraphBindingMismatch;
+ *         ProtectedStatePending; TrackingFault (including stamp exhaustion).
  * @note Owner thread only; calls api entries and the graph; uses the observer's enumeration buffer
  *       (outermost call only). Total queries per call are bounded by WindowObserverMaxEnumerated plus
  *       InteropMaxWindows (each with at most one owner sub-query; none for a window that is not visible).
@@ -689,6 +799,84 @@ int window_observer_refresh_due(const window_observer_t *observer, uint64_t now_
 uint32_t window_observer_next_timeout_ms(const window_observer_t *observer, uint64_t now_ms);
 
 /**
+ * @brief Bind this Created observer once to an invalidated, caller-owned graph.
+ * @param[in,out] observer Non-NULL Created observer on its owner thread.
+ * @param[in,out] graph Non-NULL authentic graph; borrowed and immutable as the binding identity.
+ * @param[in] session_epoch Nonzero graph epoch; must match the graph.
+ * @return Ok; InvalidArgument; WrongThread; Reentrant; BadState; GraphQueueFull; GraphError; TrackingFault.
+ *         Graph pre-read failures preserve the binding and observer state; a failure after attempted
+ *         invalidation retains the attempted graph/epoch as fault metadata for quarantine.
+ * @ownership The graph remains caller-owned and must outlive the observer.
+ * @thread_safety Owner thread only; caller suspends graph event consumption/admission during bind.
+ */
+window_observer_status_t window_observer_bind_graph(window_observer_t *observer,
+                                                    interop_window_graph_t *graph,
+                                                    uint64_t session_epoch);
+
+/**
+ * @brief Replace the fixed Active/Retiring snapshot after caller-confirmed exact retirement completion.
+ * @param[in,out] observer Non-NULL authentic handle on its owner thread.
+ * @return Ok; InvalidArgument; WrongThread; Reentrant; BadState when unbound or Failed; TrackingFault.
+ *         Failed rejects this operation before any graph read. Any graph-list failure after external
+ *         retirement latches TrackingFault and leaves the last complete snapshot intact.
+ * @ownership Does not own the graph and does not release graph entries.
+ * @thread_safety Owner-thread only; caller suspends graph admission and event exposure during sync.
+ */
+window_observer_status_t window_observer_sync_tracked(window_observer_t *observer);
+
+/**
+ * @brief Reserve bounded callback/admission capacity before dispatch or work.
+ * @param[in,out] observer Non-NULL bound Started or Stopped owner-thread handle.
+ * @param[in] candidate_window Candidate HWND, or zero for an ordinary callback safe point.
+ * @param[in] admission_may_add_entries Exactly 0 or 1; 1 reserves all currently Free graph slots.
+ * If retained protected Destroy evidence must be applied to make the reserve fit, this call applies
+ * it before returning. When the reserve already fits, use window_observer_drain_protected_destroys
+ * at barriers that require all known Destroy evidence applied before continuing.
+ * @return Ok; InvalidArgument; GraphQueueFull; GraphError; WrongThread; Reentrant; BadState; TrackingFault;
+ *         ProtectedStatePending when the bounded work budget cannot establish the reservation.
+ * @ownership Graph remains borrowed. This call neither admits nor releases graph entries.
+ * @thread_safety Owner-thread only. Caller blocks external graph mutation/event publication until
+ *                return; failure retains the preceding candidate reservation.
+ */
+window_observer_status_t window_observer_prepare_callbacks(window_observer_t *observer,
+                                                           uint64_t candidate_window,
+                                                           uint32_t admission_may_add_entries);
+
+/**
+ * @brief Report protected mailbox membership for one HWND.
+ * @param[in] observer Non-NULL authentic bound observer.
+ * @param[in] window Nonzero HWND value.
+ * @param[out] out_pending Aligned writable nonoverlapping uint32_t; receives exactly 0 or 1 on Ok.
+ * @return Ok; InvalidArgument; WrongThread; Reentrant; BadState. Output bytes remain unchanged on error.
+ * @ownership Observer and graph remain caller-owned; this is not an OS incarnation check.
+ * @thread_safety Owner-thread only; read-only and does not call the graph or native API.
+ */
+window_observer_status_t window_observer_destroy_pending(const window_observer_t *observer,
+                                                         uint64_t window,
+                                                         uint32_t *out_pending);
+
+/**
+ * @brief Apply all currently known protected Destroy entries within one bounded pass.
+ * @param[in,out] observer Non-NULL bound observer in Started or Stopped.
+ * @return Ok; GraphQueueFull; WrongThread; Reentrant; BadState; TrackingFault; ProtectedStatePending
+ *         when the 129-operation pass retains reentrant newer evidence.
+ * @ownership Graph remains caller-owned; this does not complete retirement or release backing.
+ * @thread_safety Owner-thread only; graph event consumers remain suspended until return.
+ */
+window_observer_status_t window_observer_drain_protected_destroys(window_observer_t *observer);
+
+/**
+ * @brief Copy complete evidence to caller storage and free only a quiescent observer allocation.
+ * @param[in,out] observer_slot Aligned writable caller slot; nulled only on Ok.
+ * @param[out] record Aligned writable complete record, disjoint from slot and observer allocation.
+ * @return Ok; InvalidArgument; WrongThread; Reentrant; ProtectedStatePending; TrackingFault.
+ * @ownership Caller owns record storage; copied graph identity remains borrowed metadata only.
+ * @thread_safety Owner-thread only after all hooks are absent, target unpublished and callbacks quiesced.
+ */
+window_observer_status_t window_observer_quarantine_handoff(
+    window_observer_t **observer_slot, window_observer_quarantine_record_t *record);
+
+/**
  * @brief Copy the lifecycle state, gauges and cumulative counters.
  *
  * @param[in] observer Non-NULL handle.
@@ -701,29 +889,35 @@ window_observer_status_t window_observer_status(const window_observer_t *observe
 /**
  * @brief Record one WinEvent as a dirty hint. Entry point for the hook procedure (native or double).
  *
- * Applies to the process-wide active observer; with none, or one that is not Started, the call is
- * ignored. A call off the owner thread (judged by api->current_thread_id) is ignored except for an
+ * Applies to the process-wide callback target. A call off the owner thread (judged by
+ * api->current_thread_id) is ignored except for an
  * atomic hints_wrong_thread increment. A hint is filtered (hints_filtered) when object_id is not
  * WindowObserverObjectIdWindow, child_id is not WindowObserverChildIdSelf, window is 0, or event lies
  * outside all three hooked ranges [ObjectCreate, ObjectParentChange], [SystemMinimizeStart,
- * SystemMinimizeEnd] and [ObjectCloaked, ObjectUncloaked]. Otherwise
- * the hint draws a stamp from the logical clock and merges into the dirty table (coalescing per
- * HWND: OR of kind bits, latest stamp, and for the Destroy event the latest destroy stamp and
- * event time, first-seen order kept). A new HWND latches overflow instead when the table is full,
+ * SystemMinimizeEnd] and [ObjectCloaked, ObjectUncloaked]. In Started, all accepted events enter the
+ * ordinary dirty table unless a Destroy belongs to the protected union. During Starting, Stopping,
+ * Failed, or TrackingFault, Destroy still enters the protected mailbox or ordinary table as capacity
+ * permits; other event kinds are ignored while a refresh is
+ * requested. A matching Destroy is copied into the protected mailbox and, when space is available,
+ * mirrored in the ordinary table; the newest exact (stamp,event-time) pair is retained. Other hints
+ * merge into the dirty table (coalescing per HWND: OR of kind bits, latest stamp, first-seen order).
+ * An untracked Destroy that cannot fit permanently faults continuity. A non-Destroy new HWND latches
+ * overflow instead when the table is full,
  * where full means dirty_pending plus one reserved slot for a key that pump has popped (if any)
  * has reached WindowObserverDirtyCapacity; the reservation guarantees that a put-back after a failed
  * query or a stop always fits.
  *
  * Child windows. Windows raises the same OBJID_WINDOW/CHILDID_SELF events for child windows, and the
  * portable core cannot tell a child from a top-level window without a Win32 call, so every such hint is
- * accepted. A burst of more than WindowObserverDirtyCapacity distinct child handles (closing or resizing
- * a window with hundreds of controls) overflows the table; the recovery is one full refresh (see pump),
- * not a retirement of the exported windows. Below the capacity each child key costs one pump query.
+ * accepted. A burst of more than WindowObserverDirtyCapacity distinct non-Destroy child handles
+ * overflows the table; the recovery is one full refresh (see pump), not a retirement of exported
+ * windows. Recovery preserves every Destroy payload, applies protected entries and discards only
+ * ordinary hints without a Destroy payload.
  *
  * Process-wide in-flight counter. Every call increments an atomic counter before it loads the
- * active-observer slot and decrements it when it has finished with the observer; start's rollback,
- * stop and destroy wait (yielding the processor each iteration) for the counter to reach zero after
- * clearing the slot, so the call can never touch a freed observer. This is the only synchronization
+ * callback-target slot and decrements it when it has finished with the observer; start's rollback
+ * and stop wait (yielding the processor each iteration) for the counter to reach zero after clearing
+ * the slot. Normal destroy requires the target absent and the counter already zero. This is the only synchronization
  * note_hint performs and it never blocks.
  *
  * It MAY: read the active slot, call api->current_thread_id, update the dirty table and counters on

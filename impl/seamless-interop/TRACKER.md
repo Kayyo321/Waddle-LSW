@@ -37,7 +37,7 @@ acceptance remain pending.
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 30% | Shared protocol25% + Linux connected-byte-owner5% accepted; Lease/VSOCK and GuestReady components qualified without entry credit; actual session entry, mapping/Wayland, module extraction and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
-| #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 35% | Pure graph25% + C ABI10% accepted after reviewed73bc833 import; snapshot/native fact fixes and full Linux/Windows CI40129670493 green. O5 preservation blocks observer credit; coordinator and installed session remain open |
+| #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 35% | Pure graph25% + C ABI10% accepted after reviewed73bc833 import; snapshot/native fact fixes and full Linux/Windows CI40129670493 green. O5 observer preservation passes local full gates; exact updated Windows CI, coordinator and installed session remain open |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
 | #13 | Minimize/maximize/fullscreen/restore/close state machine | Pending | 3% | 0% | Waits on #11 |
@@ -1182,7 +1182,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     ran. [Evidence](native_vsock_evidence_2026_10_24/qualification.json) corrects
     earlier sandbox-only missing-device observations. Native acceptance stays open.
 
-- **Commit `HEAD`**: `test(interop): isolate runner unit fixtures from installed VM tools`
+- **Commit `e4d42de`**: `test(interop): isolate runner unit fixtures from installed VM tools`
   - **Task Impact**: +0% to TODO #34 (+0% overall; total18.00%).
   - **Summary**: CI40142666161 at bd91b0c exposed three runner unit cases that
     accidentally depended on installed swtpm or a local QEMU build directory.
@@ -1190,3 +1190,16 @@ its uncompiled draft earns no credit until current acceptance passes.
     All34 tests pass both normally and from a source-only temporary tree with
     no build directory and PATH=/nonexistent. No production runner requirement
     is relaxed, no test is skipped; fresh remote qualification is pending.
+
+- **Commit `HEAD`**: `fix(interop): preserve delivered Destroy evidence across observer lifecycles`
+  - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total18.00%).
+  - **Summary**: Implements immutable graph binding,129-key protected Destroy
+    mailbox, callback/admission reservation, exact-stamp clearing, lossless dirty
+    promotion, bounded reentrant transitions, explicit stop invalidation/retry and
+    quiesced quarantine handoff. Final review also rejects Failed-state sync and
+    configuration mutation. All89 portable tests, graph/fault suites,22-export ABI
+    check, leak-enabled ASan/LSan/UBSan and Zig/MinGW Windows cross-builds pass.
+    Production observer1188/1245 lines95.42%,851/944 taken arcs90.15%, no exclusions.
+    [Qualification](o5_evidence_2026_10_24/qualification.json) retains failed/interrupted
+    attempts. Updated Windows runtime CI, coordinator/capture staging and installed
+    native acceptance remain pending; no new feature credit before those gates.

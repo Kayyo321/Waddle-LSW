@@ -73,6 +73,10 @@ WgObsSrc := src/interop/window_observer_windows.c
 WgObsHdr := src/interop/window_observer_windows.h
 WgTestAbi := tests/interop/window_graph.c
 WgTestObs := tests/interop/window_observer_windows.c
+WgTestPrivate := tests/interop/window_observer_private.c
+WgTestFault := tests/interop/window_observer_graph_faults.c
+# Linux-only fault boundaries; these preserve genuine graph and observer ownership.
+WgFaultWrap := -Wl,--wrap=interop_window_graph_stamp_high_water,--wrap=interop_window_graph_get_stats,--wrap=interop_window_graph_invalidate_all,--wrap=interop_window_graph_list_tracked_windows,--wrap=interop_window_graph_note_destroyed,--wrap=interop_window_graph_observe,--wrap=interop_window_graph_refresh_begin,--wrap=interop_window_graph_refresh_abort,--wrap=interop_window_graph_refresh_offer,--wrap=interop_window_graph_refresh_keep,--wrap=interop_window_graph_refresh_unseen,--wrap=interop_window_graph_refresh_commit
 WgTestDbl := tests/interop/window_observer_api_double.h
 # The exact set of global text symbols of the ABI object: the 22 functions of include/waddle/interop_window_graph.h.
 WgAbiSymbols := interop_window_graph_check_action interop_window_graph_classify interop_window_graph_complete_retire \
@@ -102,13 +106,14 @@ $(WgBuild) $(WgSanDir) $(WgCovDir):
 	mkdir -p $@
 
 # Zig unit tests, the ReleaseSafe ABI object, and both C consumers (built, then run).
-window-graph-test: $(WgBuild)/window_graph_abi.o $(WgBuild)/window_graph_c_test $(WgBuild)/window_observer_test
+window-graph-test: $(WgBuild)/window_graph_abi.o $(WgBuild)/window_graph_c_test $(WgBuild)/window_observer_test $(WgBuild)/window_observer_graph_fault_test
 	$(ZIG) test $(WgZigCore) $(WgZigFlags)
 	$(ZIG) test $(WgZigAbi) $(WgZigFlags)
 	$(ZIG) test $(WgZigCore) $(WgZigFlags) -O ReleaseSafe
 	$(ZIG) test $(WgZigAbi) $(WgZigFlags) -O ReleaseSafe
 	$(WgBuild)/window_graph_c_test
 	$(WgBuild)/window_observer_test
+	$(WgBuild)/window_observer_graph_fault_test
 
 # Symbol check: the global text symbols (nm type T) of the ABI object are exactly WgAbiSymbols (22 names) and
 # exactly the functions the public header declares. Weak compiler-rt symbols (type W) are not T and are ignored.
@@ -130,15 +135,21 @@ $(WgBuild)/window_graph_c_test: $(wildcard $(WgTestAbi) $(WgHdrApi)) $(WgBuild)/
 	$(CC) $(WgCFlags) $(WgCThreads) -Iinclude $(WgTestAbi) $(WgBuild)/window_graph_abi.o -o $@
 
 # Observer lifecycle tests driven through the API double. The REAL graph object is linked in.
-$(WgBuild)/window_observer_test: $(wildcard $(WgObsSrc) $(WgObsHdr) $(WgTestObs) $(WgTestDbl)) $(WgBuild)/window_graph_abi.o | $(WgBuild)
-	$(CC) $(WgCFlags) $(WgCThreads) $(WgObsWrap) -Isrc/interop -Iinclude $(WgObsSrc) $(WgTestObs) $(WgBuild)/window_graph_abi.o -o $@
+$(WgBuild)/window_observer_test: $(wildcard $(WgObsSrc) $(WgObsHdr) $(WgTestObs) $(WgTestDbl) $(WgTestPrivate)) $(WgBuild)/window_graph_abi.o | $(WgBuild)
+	$(CC) $(WgCFlags) $(WgCThreads) $(WgObsWrap) -DWgObsPrivateGuards=1 -Isrc/interop -Iinclude $(WgTestPrivate) $(WgTestObs) $(WgBuild)/window_graph_abi.o -o $@
 
-# Sanitizer rebuilds of the same two C tests into $(WgSanDir). The Zig object is not instrumented.
+# Public-API graph boundary faults use the ordinary production observer translation unit.
+$(WgBuild)/window_observer_graph_fault_test: $(wildcard $(WgObsSrc) $(WgObsHdr) $(WgTestFault) $(WgTestDbl)) $(WgBuild)/window_graph_abi.o | $(WgBuild)
+	$(CC) $(WgCFlags) $(WgCThreads) $(WgFaultWrap) -Isrc/interop -Iinclude $(WgObsSrc) $(WgTestFault) $(WgBuild)/window_graph_abi.o -o $@
+
+# Sanitizer rebuilds of the C clients. The Zig object is not instrumented.
 window-graph-sanitizers: $(WgBuild)/window_graph_abi.o | $(WgSanDir)
 	$(CC) $(WgCFlags) $(WgSanFlags) $(WgCThreads) -Iinclude $(WgTestAbi) $(WgBuild)/window_graph_abi.o -o $(WgSanDir)/window_graph_c_test
-	$(CC) $(WgCFlags) $(WgSanFlags) $(WgCThreads) $(WgObsWrap) -Isrc/interop -Iinclude $(WgObsSrc) $(WgTestObs) $(WgBuild)/window_graph_abi.o -o $(WgSanDir)/window_observer_test
+	$(CC) $(WgCFlags) $(WgSanFlags) $(WgCThreads) $(WgObsWrap) -DWgObsPrivateGuards=1 -Isrc/interop -Iinclude $(WgTestPrivate) $(WgTestObs) $(WgBuild)/window_graph_abi.o -o $(WgSanDir)/window_observer_test
+	$(CC) $(WgCFlags) $(WgSanFlags) $(WgCThreads) $(WgFaultWrap) -Isrc/interop -Iinclude $(WgObsSrc) $(WgTestFault) $(WgBuild)/window_graph_abi.o -o $(WgSanDir)/window_observer_graph_fault_test
 	$(WgSanEnv) $(WgSanDir)/window_graph_c_test
 	$(WgSanEnv) $(WgSanDir)/window_observer_test
+	$(WgSanEnv) $(WgSanDir)/window_observer_graph_fault_test
 
 # (a) Zig modules: a sed copy of tests/av/coverage.py that adds the two window_graph modes to
 #     InteropModes. The tracked script is never edited. The sed must change exactly one line.
@@ -151,13 +162,7 @@ window-graph-coverage: $(WgBuild)/window_graph_abi.o | $(WgBuild) $(WgCovDir)
 	mv $(WgCovPy).tmp $(WgCovPy)
 	PYTHONPATH=tests/av python3 $(WgCovPy) window_graph
 	PYTHONPATH=tests/av python3 $(WgCovPy) window_graph_abi
-	rm -rf $(WgCovObs) && mkdir -p $(WgCovObs)
-	$(WgCovCC) $(WgCFlags) $(WgCovFlags) -Isrc/interop -Iinclude -c $(WgObsSrc) -o $(WgCovObs)/window_observer_windows.o
-	$(CC) $(WgCFlags) $(WgCThreads) $(WgObsWrapDef) -Isrc/interop -Iinclude -c $(WgTestObs) -o $(WgCovObs)/window_observer_test.o
-	$(WgCovCC) $(WgCovFlags) $(WgCThreads) $(WgObsWrapLd) $(WgCovObs)/window_observer_test.o $(WgCovObs)/window_observer_windows.o $(WgBuild)/window_graph_abi.o -o $(WgCovObs)/window_observer_test
-	$(WgCovObs)/window_observer_test
-	cd $(WgCovObs) && $(WgCovGcov) --json-format -b -c window_observer_windows.gcno > /dev/null
-	python3 -c "import gzip,json,sys; r=json.loads(gzip.decompress(open(sys.argv[1],'rb').read())); fs=[x for x in r['files'] if x['file'].endswith('src/interop/window_observer_windows.c')]; assert len(fs)==1, 'expected exactly one gcov record for src/interop/window_observer_windows.c'; L=fs[0]['lines']; B=[b for l in L for b in l.get('branches',[])]; lc=sum(1 for l in L if l['count']>0); bc=sum(1 for b in B if b['count']>0); lt=len(L); bt=len(B); m=int(sys.argv[2]); print('line %d/%d branch %d/%d' % (lc,lt,bc,bt)); sys.exit(0 if lt>0 and bt>0 and 100*lc>=m*lt and 100*bc>=m*bt else 1)" $(WgCovObs)/window_observer_windows.gcov.json.gz $(WgCovMinPercent)
+	python3 tests/interop/window_observer_coverage.py $(WgBuild)/window_graph_abi.o
 
 # Cross-compile and link checks only. Nothing here is executed (no Windows runtime is available).
 window-graph-windows: $(WgBuild)/window_graph_c_test.exe $(WgBuild)/window_observer_test.exe $(WgBuild)/window_observer_native_test.exe $(WgBuild)/window_observer_native_failures_test.exe $(WgBuild)/window_graph_unit_test.exe $(WgBuild)/window_graph_abi_unit_test.exe $(WgBuild)/observer_native_zig.o $(WgBuild)/observer_native_mingw.o
@@ -178,8 +183,8 @@ $(WgBuild)/window_graph_c_test.exe: $(wildcard $(WgTestAbi) $(WgHdrApi)) $(WgBui
 	$(WgWinZigCC) $(WgCFlags) -Iinclude $(WgTestAbi) $(WgBuild)/window_graph_abi_windows.lib -o $@
 
 # The observer double test compiles the native _WIN32 section too, so WinDefs and -ldwmapi apply here.
-$(WgBuild)/window_observer_test.exe: $(wildcard $(WgObsSrc) $(WgObsHdr) $(WgTestObs) $(WgTestDbl)) $(WgBuild)/window_graph_abi_windows.lib | $(WgBuild)
-	$(WgWinZigCC) $(WgCFlags) $(WgWinDefs) -Isrc/interop -Iinclude $(WgObsSrc) $(WgTestObs) $(WgBuild)/window_graph_abi_windows.lib $(WgWinLibs) -o $@
+$(WgBuild)/window_observer_test.exe: $(wildcard $(WgObsSrc) $(WgObsHdr) $(WgTestObs) $(WgTestDbl) $(WgTestPrivate)) $(WgBuild)/window_graph_abi_windows.lib | $(WgBuild)
+	$(WgWinZigCC) $(WgCFlags) $(WgWinDefs) -DWgObsPrivateGuards=1 -Isrc/interop -Iinclude $(WgTestPrivate) $(WgTestObs) $(WgBuild)/window_graph_abi_windows.lib $(WgWinLibs) -o $@
 
 # Real native adapter smoke, executed by the separate Windows CI job only.
 $(WgBuild)/window_observer_native_test.exe: tests/interop/window_observer_native_windows.c $(wildcard $(WgObsSrc) $(WgObsHdr)) $(WgBuild)/window_graph_abi_windows.lib | $(WgBuild)

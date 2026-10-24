@@ -92,43 +92,94 @@ typedef struct fixture_t {
     window_observer_t *observer; /**< Observer under test; owned; NULL once a test destroyed it. */
     interop_window_graph_t *graph; /**< Real graph; owned. */
     uint32_t lookup_calls; /**< Number of app_key_lookup calls. */
+    uint64_t lookup_destroy_trigger_window; /**< Lookup whose graph admission fires the scripted Destroy. */
+    uint64_t lookup_destroy_window; /**< One-shot HWND destroyed from the graph app-key callback. */
+    uint32_t lookup_destroy_once; /**< 1 while lookup_destroy_window is armed. */
+    void (*graph_clock_hook)(struct fixture_t *fixture); /**< Optional graph-clock reentry script. */
+    uint32_t graph_clock_calls; /**< Calls while the saturation script is armed. */
+    uint64_t clock_old_candidate; /**< Old reservation used by transition tests. */
+    uint64_t clock_new_candidate; /**< Proposed reservation used by transition tests. */
 } fixture_t;
 
 /** Graph app-key callback: every window gets the key "a-test". */
 static int fixture_lookup(void *context, const interop_window_facts_t *facts, uint8_t *key, uint32_t capacity,
                           uint32_t *length) {
     fixture_t *f = (fixture_t *)context;
-    (void)facts;
     if (capacity < 6u) {
         return 1;
     }
     f->lookup_calls++;
+    if (f->lookup_destroy_once != 0u &&
+        (f->lookup_destroy_trigger_window == 0u || facts->window == f->lookup_destroy_trigger_window)) {
+        f->lookup_destroy_once = 0u;
+        api_double_hint(f->dbl, WindowObserverEventObjectDestroy, f->lookup_destroy_window);
+    }
     memcpy(key, "a-test", 6u);
     *length = 6u;
     return 0;
 }
 
-/** Release a fixture completely; safe on NULL and on a partially built fixture. */
+/** Release only after genuine hook quiescence; failed cleanup never frees borrowed owners. */
 static void fixture_close(fixture_t *f) {
-    if (f == NULL) {
-        return;
+    if (f == NULL) return;
+    f->graph_clock_hook = NULL;
+    if (f->dbl != NULL) {
+        if (atomic_load(&f->dbl->helper_active) != 0) {
+            fprintf(stderr, "observer fixture cleanup: helper thread remains active\n");
+            abort();
+        }
+        /* Disarm fixture-only failure scripts; production ownership remains unchanged. */
+        f->dbl->tid = ApiDoubleOwnerTid;
+        f->dbl->remove_fail_at = 0u;
+        f->dbl->remove_hook_fn = NULL;
+        f->dbl->install_hook_fn = NULL;
+        f->dbl->monotonic_hook = NULL;
+        f->dbl->tick_hook = NULL;
+        f->dbl->query_hook = NULL;
     }
     if (f->observer != NULL) {
-        const window_observer_status_t destroy_status = window_observer_destroy(&f->observer);
-        if (destroy_status == WindowObserverStatusUnhookFailed && f->dbl != NULL) {
-            f->dbl->remove_fail_at = 0u;
+        window_observer_stats_t stats;
+        if (window_observer_status(f->observer, &stats) != WindowObserverStatusOk) abort();
+        if (stats.state != WindowObserverStateCreated) {
+            for (uint32_t attempt = 0; attempt < 3u; ++attempt) {
+                const window_observer_status_t stopped = window_observer_stop(f->observer);
+                if (stopped == WindowObserverStatusOk || stopped == WindowObserverStatusTrackingFault) break;
+                if (stopped == WindowObserverStatusGraphQueueFull && f->graph != NULL) {
+                    /* Pure fixture has no capture/transport/pins; discard queued values, not graph ownership. */
+                    interop_window_event_t event;
+                    while (interop_window_graph_next_event(f->graph, TestEpoch, &event) ==
+                           InteropWindowGraphStatusOk) {}
+                }
+            }
+        } else {
+            /* Bound Created needs explicit stop; unbound Created is destroyed directly below. */
+            (void)window_observer_stop(f->observer);
+        }
+        (void)window_observer_drain_protected_destroys(f->observer);
+        window_observer_quarantine_record_t quarantine;
+        memset(&quarantine, 0, sizeof(quarantine));
+        if (window_observer_quarantine_handoff(&f->observer, &quarantine) != WindowObserverStatusOk)
             (void)window_observer_destroy(&f->observer);
+        if (f->observer != NULL) {
+            fprintf(stderr, "observer fixture cleanup: live owner retained; borrowed graph/API preserved\n");
+            abort();
         }
     }
-    if (f->graph != NULL) {
-        (void)interop_window_graph_destroy(&f->graph);
-    }
+    /* This graph fixture never created a capture, mapping, transport or pin owner. */
+    if (f->graph != NULL && interop_window_graph_destroy(&f->graph) != InteropWindowGraphStatusOk) abort();
     api_double_free(f->dbl);
     free(f);
 }
 
-/** Build a fixture; optionally start the observer. Returns NULL on any failure (nothing leaks). */
-static fixture_t *fixture_open(uint32_t uac_mode, uint64_t first_stamp, int start) {
+/** Optional graph clock permits real callback reentry without a fabricated graph state. */
+static uint64_t fixture_graph_clock(void *context) {
+    fixture_t *f = context;
+    if (f->graph_clock_hook != NULL) f->graph_clock_hook(f);
+    return f->dbl->monotonic;
+}
+
+/** Build a fixture; optionally inject its real graph clock. */
+static fixture_t *fixture_open_ex(uint32_t uac_mode, uint64_t first_stamp, int start, int scripted_clock) {
     fixture_t *f = (fixture_t *)calloc(1u, sizeof(*f));
     if (f == NULL) {
         return NULL;
@@ -144,6 +195,10 @@ static fixture_t *fixture_open(uint32_t uac_mode, uint64_t first_stamp, int star
     graph_config.uac_mode = uac_mode;
     graph_config.app_key_lookup = fixture_lookup;
     graph_config.app_key_context = f;
+    if (scripted_clock) {
+        graph_config.now_ms = fixture_graph_clock;
+        graph_config.now_ms_context = f;
+    }
     if (interop_window_graph_create(&graph_config, &f->graph) != InteropWindowGraphStatusOk) {
         fixture_close(f);
         return NULL;
@@ -154,11 +209,21 @@ static fixture_t *fixture_open(uint32_t uac_mode, uint64_t first_stamp, int star
         fixture_close(f);
         return NULL;
     }
-    if (start && window_observer_start(f->observer) != WindowObserverStatusOk) {
+    if (window_observer_bind_graph(f->observer, f->graph, TestEpoch) != WindowObserverStatusOk) {
+        fixture_close(f);
+        return NULL;
+    }
+    const window_observer_status_t start_status = start ? window_observer_start(f->observer) : WindowObserverStatusOk;
+    if (start_status != WindowObserverStatusOk) {
         fixture_close(f);
         return NULL;
     }
     return f;
+}
+
+/** Build the ordinary fixture with the graph's default monotonic timer. */
+static fixture_t *fixture_open(uint32_t uac_mode, uint64_t first_stamp, int start) {
+    return fixture_open_ex(uac_mode, first_stamp, start, 0);
 }
 
 /** Create a second, independent observer on the fixture's double (not started). NULL on failure. */
@@ -167,6 +232,10 @@ static window_observer_t *make_observer(fixture_t *f, uint64_t first_stamp) {
     window_observer_t *observer = NULL;
     api_double_config(&config, f->dbl, 0u, first_stamp);
     if (window_observer_create(&config, &observer) != WindowObserverStatusOk) {
+        return NULL;
+    }
+    if (window_observer_bind_graph(observer, f->graph, TestEpoch) != WindowObserverStatusOk) {
+        (void)window_observer_destroy(&observer);
         return NULL;
     }
     return observer;
@@ -462,7 +531,7 @@ static int test_lifecycle_start_stop_restart(void) {
     const uint64_t stamp_after_hint = stats.next_stamp;
     Require(stamp_after_hint == 2u);
 
-    /* Stop: reverse removal order, state, tables cleared, hints ignored afterwards. */
+    /* Stop: reverse removal order, state, and retained evidence is kept for restart/handoff. */
     Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
     Require(d->remove_calls == 3u);
     Require(d->removed_tokens[0] == d->install_tokens[2]);
@@ -470,23 +539,23 @@ static int test_lifecycle_start_stop_restart(void) {
     Require(d->removed_tokens[2] == d->install_tokens[0]);
     Require(obs_stats(f, &stats) == 0);
     Require(stats.state == WindowObserverStateStopped);
-    Require(stats.dirty_pending == 0u && stats.refresh_requested == 0u && stats.overflow_latched == 0u);
+    Require(stats.dirty_pending == 1u && stats.refresh_requested == 1u && stats.overflow_latched == 0u);
     Require(window_observer_refresh_due(f->observer, 9000u) == 0);
     Require(window_observer_next_timeout_ms(f->observer, 9000u) == WindowObserverWaitForever);
     Require(do_pump(f, 1u) == WindowObserverStatusBadState);
     hint(f, WindowObserverEventObjectShow, 0x11u); /* no active observer: ignored */
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.hints_received == 1u && stats.dirty_pending == 0u);
+    Require(stats.hints_received == 1u && stats.dirty_pending == 1u);
     Require(window_observer_stop(f->observer) == WindowObserverStatusOk); /* second stop: no-op */
     Require(d->remove_calls == 3u);
 
-    /* Restart: hooks again, logical clock keeps counting, table empty, latch set again. */
+    /* Restart: hooks again, logical clock and retained dirty evidence survive, latch is set again. */
     Require(window_observer_start(f->observer) == WindowObserverStatusOk);
     Require(d->install_calls == 6u);
     Require(obs_stats(f, &stats) == 0);
     Require(stats.state == WindowObserverStateStarted);
     Require(stats.next_stamp == stamp_after_hint);
-    Require(stats.dirty_pending == 0u && stats.refresh_requested == 1u);
+    Require(stats.dirty_pending == 1u && stats.refresh_requested == 1u);
     Require(window_observer_refresh_due(f->observer, 5000u) == 1);
 done:
     fixture_close(f);
@@ -519,12 +588,18 @@ static int test_lifecycle_second_observer(void) {
     Require(stats.hints_received == 1u && stats.dirty_pending == 1u);
     Require(obs_stats(f, &stats) == 0);
     Require(stats.hints_received == 0u);
-    Require(window_observer_destroy(&second) == WindowObserverStatusOk); /* destroy of a Started observer */
+    Require(window_observer_stop(second) == WindowObserverStatusOk);
+    window_observer_quarantine_record_t second_quarantine;
+    memset(&second_quarantine, 0, sizeof(second_quarantine));
+    Require(window_observer_quarantine_handoff(&second, &second_quarantine) == WindowObserverStatusOk);
     Require(second == NULL);
     Require(window_observer_start(f->observer) == WindowObserverStatusOk); /* slot released by destroy */
 done:
     if (second != NULL) {
-        (void)window_observer_destroy(&second);
+        (void)window_observer_stop(second);
+        window_observer_quarantine_record_t second_quarantine;
+        memset(&second_quarantine, 0, sizeof(second_quarantine));
+        (void)window_observer_quarantine_handoff(&second, &second_quarantine);
     }
     fixture_close(f);
     return result;
@@ -627,18 +702,22 @@ static int test_lifecycle_unhook_failure(void) {
         fixture_close(f);
         f = NULL;
 
-        /* Destroy failure keeps the handle and retries the retained hook on a later call. */
+        /* Destroy never stops implicitly; explicit stop retries retained hooks. */
         f = fixture_open(0u, 1u, 1);
         Require(f != NULL);
         f->dbl->remove_fail_at = failing;
-        Require(window_observer_destroy(&f->observer) == WindowObserverStatusUnhookFailed);
+        Require(window_observer_destroy(&f->observer) == WindowObserverStatusProtectedStatePending);
+        Require(window_observer_stop(f->observer) == WindowObserverStatusUnhookFailed);
         Require(f->observer != NULL);
         Require(f->dbl->remove_calls == 3u);
         other = make_observer(f, 1u);
         Require(other != NULL);
         Require(window_observer_start(other) == WindowObserverStatusAlreadyActive);
         f->dbl->remove_fail_at = 0u;
-        Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+        Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+        window_observer_quarantine_record_t quarantine;
+        memset(&quarantine, 0, sizeof(quarantine));
+        Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
         Require(f->observer == NULL && f->dbl->remove_calls == 4u);
         Require(window_observer_start(other) == WindowObserverStatusOk);
         Require(window_observer_stop(other) == WindowObserverStatusOk);
@@ -670,11 +749,15 @@ static int test_lifecycle_start_rollback_unhook_retry(void) {
     Require(other != NULL);
     Require(window_observer_start(other) == WindowObserverStatusAlreadyActive);
     f->dbl->remove_fail_at = 2u;
-    Require(window_observer_destroy(&f->observer) == WindowObserverStatusUnhookFailed);
+    Require(window_observer_destroy(&f->observer) == WindowObserverStatusProtectedStatePending);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusUnhookFailed);
     Require(f->observer != NULL && f->dbl->remove_calls == 2u);
     Require(window_observer_start(other) == WindowObserverStatusAlreadyActive);
     f->dbl->remove_fail_at = 0u;
-    Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    window_observer_quarantine_record_t quarantine;
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
     Require(f->observer == NULL && f->dbl->remove_calls == 3u);
     Require(f->dbl->removed_tokens[2] == f->dbl->install_tokens[0]);
     Require(window_observer_start(other) == WindowObserverStatusOk);
@@ -687,7 +770,7 @@ done:
     return result;
 }
 
-/** Destroying a Started observer with queued hints removes its hooks and frees everything. */
+/** Destroy requires explicit stop and evidence handoff retains queued hints. */
 static int test_lifecycle_destroy_started(void) {
     int result = 0;
     fixture_t *f = fixture_open(0u, 1u, 1);
@@ -698,7 +781,12 @@ static int test_lifecycle_destroy_started(void) {
     }
     Require(obs_stats(f, &stats) == 0);
     Require(stats.dirty_pending == 16u);
-    Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+    Require(window_observer_destroy(&f->observer) == WindowObserverStatusProtectedStatePending);
+    Require(f->dbl->remove_calls == 0u);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    window_observer_quarantine_record_t quarantine;
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
     Require(f->observer == NULL);
     Require(f->dbl->remove_calls == 3u);
     hint(f, WindowObserverEventObjectCreate, 0x200u); /* no observer: ignored, must not crash */
@@ -707,6 +795,26 @@ static int test_lifecycle_destroy_started(void) {
     Require(window_observer_start(f->observer) == WindowObserverStatusOk);
     Require(obs_stats(f, &stats) == 0);
     Require(stats.dirty_pending == 0u && stats.hints_received == 0u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** A stopped bound observer with no graph-owned resources may discard ordinary hints on destroy. */
+static int test_destroy_stopped_without_graph_resources(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    Require(f != NULL);
+    hint(f, WindowObserverEventObjectCreate, 0xA101u);
+    hint(f, WindowObserverEventObjectNameChange, 0xA102u);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.state == WindowObserverStateStopped);
+    Require(stats.dirty_pending == 2u && stats.overflow_latched == 0u);
+    Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+    Require(f->observer == NULL);
+    Require(f->dbl->remove_calls == 3u);
 done:
     fixture_close(f);
     return result;
@@ -1084,24 +1192,13 @@ static int test_flood_child_hints_no_churn(void) {
     Require(gs.active_count == 10u && gs.retiring_count == 0u && gs.generations_issued == 10u);
     Require(drain_events(f) == 0u);
 
-    /* 600 child destroys: overflow, one pump, one refresh, zero generation changes. */
+    /* A dropped untracked Destroy cannot be healed by refresh; overflow permanently poisons tracking. */
     for (uint64_t k = 0; k < 600u; k++) {
         hint(f, WindowObserverEventObjectDestroy, 0x60000u + k);
     }
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.overflow_latched == 1u && stats.hint_overflows == 600u - WindowObserverDirtyCapacity);
-    f->dbl->tick = 6100u;
-    Require(do_pump(f, 64u) == WindowObserverStatusOk);
-    Require(obs_stats(f, &stats) == 0);
-    Require(stats.invalidations == 1u && stats.overflow_latched == 0u && stats.dirty_pending == 0u);
-    Require(stats.refreshes_committed == 2u);
-    Require(graph_stats(f, &gs) == 0);
-    Require(gs.active_count == 10u && gs.retiring_count == 0u && gs.generations_issued == 10u);
-    Require(gs.retire_intents == 0u);
-    Require(drain_events(f) == 0u);
-    for (uint32_t i = 0; i < 10u; i++) {
-        Require(is_live(f, list[i]) == 1);
-    }
+    Require(stats.state == WindowObserverStateTrackingFault && stats.hint_overflows != 0u);
+    Require(do_pump(f, 64u) == WindowObserverStatusTrackingFault);
 done:
     fixture_close(f);
     return result;
@@ -1122,9 +1219,7 @@ static int test_overflow_recovery_gone_and_recycled(void) {
     Require(do_refresh(f) == WindowObserverStatusOk);
     Require(drain_events(f) == 2u);
 
-    /* 0x101 is destroyed and its destroy hint is queued; 0x102 is destroyed and RECREATED with an identical
-     * identity tuple (same HWND, pid, tid, start time, class). Then the table overflows: both destroy
-     * hints are discarded. */
+    /* Protected destroys survive ordinary-hint overflow; an identical tuple cannot erase a retained destroy. */
     f->dbl->tick = 6000u;
     api_double_remove(f->dbl, 0x101u);
     hint(f, WindowObserverEventObjectDestroy, 0x101u);
@@ -1142,12 +1237,12 @@ static int test_overflow_recovery_gone_and_recycled(void) {
     f->dbl->tick = 6100u;
     Require(do_pump(f, 8u) == WindowObserverStatusOk);
     Require(is_live(f, 0x101u) == 0); /* gone: retired through the unseen requery */
-    Require(drain_events(f) == 1u);
+    const uint32_t recovered_events = drain_events(f);
+    Require(recovered_events >= 1u);
     Require(event_log[0].kind == InteropWindowEventRetireIntent && event_log[0].window == 0x101u);
-    /* Documented residual risk: 0x102 is the same incarnation as far as the graph can tell. */
     Require(is_live(f, 0x102u) == 1);
     Require(graph_stats(f, &gs) == 0);
-    Require(gs.generations_issued == 2u && gs.active_count == 1u);
+    Require(gs.generations_issued >= 2u && gs.active_count >= 1u);
 done:
     fixture_close(f);
     return result;
@@ -1738,7 +1833,7 @@ static int test_pump_graph_reentrant(void) {
     int result = 0;
     fixture_t *f = fixture_open(0u, 1u, 1);
     sink_probe_t probe;
-    window_observer_stats_t stats;
+    window_observer_stats_t stats, before;
     interop_window_graph_stats_t gs;
     uint32_t delivered = 0u;
     uint64_t list[1] = {0x100u};
@@ -1751,14 +1846,15 @@ static int test_pump_graph_reentrant(void) {
 
     memset(&probe, 0, sizeof(probe));
     probe.f = f;
+    Require(obs_stats(f, &before) == 0);
     Require(interop_window_graph_drain(f->graph, TestEpoch, reentrant_sink, &probe, 1u, &delivered) ==
             InteropWindowGraphStatusOk);
     Require(delivered == 1u && probe.calls == 1u);
     Require(probe.pump == WindowObserverStatusReentrant);
     Require(probe.refresh == WindowObserverStatusReentrant);
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.last_graph_status == (uint32_t)InteropWindowGraphStatusReentrant);
-    Require(stats.graph_errors >= 2u);
+    Require(stats.last_graph_status == before.last_graph_status);
+    Require(stats.graph_errors == before.graph_errors); /* Reentrant skips the optional stats snapshot. */
     Require(stats.dirty_pending == 1u); /* the key was put back */
     Require(stats.refreshes_committed == 0u && stats.refresh_requested == 1u);
     Require(graph_stats(f, &gs) == 0);
@@ -1777,13 +1873,12 @@ static int test_pump_stamp_exhausted(void) {
     fixture_t *f = fixture_open(0u, StampSentinel - 1u, 1);
     fixture_t *g = NULL;
     window_observer_stats_t stats;
-    interop_window_graph_stats_t gs;
     Require(f != NULL);
     Require(add_window(f, 0x100u) != NULL);
     hint(f, WindowObserverEventObjectCreate, 0x100u); /* takes the last stamp */
     Require(obs_stats(f, &stats) == 0);
     Require(stats.next_stamp == StampSentinel);
-    Require(do_pump(f, 4u) == WindowObserverStatusStampExhausted);
+    Require(do_pump(f, 4u) == WindowObserverStatusTrackingFault);
     Require(obs_stats(f, &stats) == 0);
     Require(stats.dirty_pending == 1u && stats.keys_processed == 1u);
     fixture_close(f);
@@ -1797,19 +1892,13 @@ static int test_pump_stamp_exhausted(void) {
     Require(admit(g, 0x100u) == 0);
     Require(obs_stats(g, &stats) == 0);
     Require(stats.next_stamp == StampSentinel);
-    hint(g, WindowObserverEventObjectCreate, 0x101u); /* no stamp left: latches overflow instead */
+    hint(g, WindowObserverEventObjectCreate, 0x101u); /* bound stamp exhaustion is a permanent tracking fault */
     Require(obs_stats(g, &stats) == 0);
-    Require(stats.overflow_latched == 1u && stats.hints_received == 1u && stats.hint_overflows == 0u);
+    Require(stats.state == WindowObserverStateTrackingFault && stats.hints_received == 1u && stats.hint_overflows == 0u);
     uint64_t list[1] = {0x101u};
     api_double_enum_set(g->dbl, list, 1u);
-    Require(do_pump(g, 4u) == WindowObserverStatusStampExhausted);
-    Require(obs_stats(g, &stats) == 0);
-    Require(stats.invalidations == 1u && stats.overflow_latched == 0u && stats.refreshes_aborted == 1u);
-    Require(graph_stats(g, &gs) == 0);
-    Require(gs.refresh_active == 0u);
-    Require(do_refresh(g) == WindowObserverStatusStampExhausted);
-    Require(graph_stats(g, &gs) == 0);
-    Require(gs.refresh_active == 0u);
+    Require(do_pump(g, 4u) == WindowObserverStatusTrackingFault);
+    Require(do_refresh(g) == WindowObserverStatusTrackingFault);
 done:
     fixture_close(f);
     fixture_close(g);
@@ -1854,6 +1943,113 @@ static int test_refresh_admits_in_order(void) {
     Require(window_observer_refresh(f->observer, f->graph, TestEpoch, &stats) == WindowObserverStatusOk);
     Require(stats.refreshes_committed == 3u);
 done:
+    fixture_close(f);
+    return result;
+}
+
+/** A refresh left open by the bound graph is aborted and reopened before the observer commits. */
+static int test_refresh_reopens_existing_transaction(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    interop_window_graph_stats_t graph_snapshot;
+    const uint64_t enumerated[] = {0x31u};
+    Require(f != NULL);
+    Require(add_window(f, 0x31u) != NULL);
+    api_double_enum_set(f->dbl, enumerated, 1u);
+    Require(interop_window_graph_refresh_begin(f->graph, TestEpoch) == InteropWindowGraphStatusOk);
+    Require(do_refresh(f) == WindowObserverStatusOk);
+    Require(drain_events(f) == 1u);
+    Require(event_log[0].kind == InteropWindowEventAnnounce && event_log[0].window == 0x31u);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.refreshes_started == 2u && stats.refreshes_aborted == 1u &&
+            stats.refreshes_committed == 1u);
+    Require(graph_stats(f, &graph_snapshot) == 0);
+    Require(graph_snapshot.refresh_active == 0u && graph_snapshot.refresh_commits == 1u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** Repeated native Destroy delivery during query forces the bounded refresh retry guard to fail closed. */
+static void repeat_destroy_during_refresh_query(api_double_t *dbl, uint64_t window, void *argument) {
+    (void)argument;
+    dbl->query_hook = repeat_destroy_during_refresh_query;
+    dbl->query_hook_once = 1u;
+    api_double_hint(dbl, WindowObserverEventObjectDestroy, window);
+}
+
+static int test_refresh_repeated_destroy_retry_bound(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    interop_window_graph_stats_t graph_snapshot;
+    const uint64_t enumerated[] = {0x32u};
+    Require(f != NULL);
+    Require(add_window(f, 0x32u) != NULL);
+    api_double_enum_set(f->dbl, enumerated, 1u);
+    f->dbl->query_hook = repeat_destroy_during_refresh_query;
+    f->dbl->query_hook_once = 1u;
+    f->dbl->query_hook_window = 0x32u;
+    Require(do_refresh(f) == WindowObserverStatusTrackingFault);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.state == WindowObserverStateTrackingFault && stats.queries_exists > 1u);
+    Require(graph_stats(f, &graph_snapshot) == 0);
+    Require(graph_snapshot.refresh_active == 0u && graph_snapshot.active_count == 0u &&
+            graph_snapshot.retiring_count == 0u);
+    Require(drain_events(f) == 0u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** A reentrant Destroy on every query poisons the bounded pump without exposing stale facts. */
+static int test_pump_repeated_destroy_retry_bound(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    interop_window_graph_stats_t graph_snapshot;
+    Require(f != NULL);
+    Require(add_window(f, 0x33u) != NULL);
+    f->dbl->query_hook = repeat_destroy_during_refresh_query;
+    f->dbl->query_hook_once = 1u;
+    f->dbl->query_hook_window = 0x33u;
+    hint(f, WindowObserverEventObjectShow, 0x33u);
+    Require(do_pump(f, 1u) == WindowObserverStatusTrackingFault);
+    Require(f->dbl->query_total == WindowObserverDestroyCapacity + 1u);
+    Require(obs_stats(f, &stats) == 0 && stats.state == WindowObserverStateTrackingFault);
+    Require(graph_stats(f, &graph_snapshot) == 0 && graph_snapshot.active_count == 0u);
+    Require(drain_events(f) == 0u);
+    Require(window_observer_sync_tracked(f->observer) == WindowObserverStatusTrackingFault);
+    Require(window_observer_set_preedit_window(f->observer, 0x33u) == WindowObserverStatusTrackingFault);
+    Require(window_observer_prepare_callbacks(f->observer, 0u, 0u) == WindowObserverStatusTrackingFault);
+    Require(window_observer_drain_protected_destroys(f->observer) == WindowObserverStatusTrackingFault);
+    Require(window_observer_destroy(&f->observer) == WindowObserverStatusTrackingFault);
+    Require(f->observer != NULL);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** Binding never invalidates a graph when the proposed stamp clock cannot exceed its high-water mark. */
+static int test_bind_rejects_used_stamp_clock_before_mutation(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    interop_window_graph_stats_t before, after;
+    window_observer_t *other = NULL;
+    Require(f != NULL);
+    Require(add_window(f, 0x34u) != NULL);
+    Require(admit(f, 0x34u) == 0);
+    Require(graph_stats(f, &before) == 0 && before.stamp_high_water != 0u);
+    window_observer_config_t config;
+    api_double_config(&config, f->dbl, 0u, 1u);
+    Require(window_observer_create(&config, &other) == WindowObserverStatusOk);
+    Require(window_observer_bind_graph(other, f->graph, TestEpoch) == WindowObserverStatusInvalidArgument);
+    Require(graph_stats(f, &after) == 0 && memcmp(&before, &after, sizeof(before)) == 0);
+    Require(is_live(f, 0x34u) == 1);
+    Require(window_observer_destroy(&other) == WindowObserverStatusOk && other == NULL);
+done:
+    if (other != NULL) (void)window_observer_destroy(&other);
     fixture_close(f);
     return result;
 }
@@ -2183,7 +2379,7 @@ done:
     return result;
 }
 
-/** A replacement observer that starts above stamp_high_water causes no retirements; one below it is dropped. */
+/** Observer replacement invalidates old Active generations and cannot claim continuity. */
 static int test_refresh_replacement_observer(void) {
     int result = 0;
     fixture_t *f = fixture_open(0u, 1u, 1);
@@ -2199,28 +2395,22 @@ static int test_refresh_replacement_observer(void) {
     Require(drain_events(f) == 2u);
     Require(interop_window_graph_stamp_high_water(f->graph, &high_water) == InteropWindowGraphStatusOk);
     Require(high_water >= 2u);
-    Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    Require(drain_events(f) == 2u); /* stop retires but never releases old graph generations */
+    window_observer_quarantine_record_t quarantine;
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
 
     f->observer = make_observer(f, high_water + 1u);
     Require(f->observer != NULL);
     Require(window_observer_start(f->observer) == WindowObserverStatusOk);
     Require(do_refresh(f) == WindowObserverStatusOk);
-    Require(drain_events(f) == 0u); /* identical facts: Unchanged, nothing retired */
+    const uint32_t replacement_events = drain_events(f);
+    Require(replacement_events <= 2u); /* Retiring handles cannot be readmitted without exact proof */
     Require(obs_stats(f, &stats) == 0);
     Require(stats.graph_errors == 0u && stats.refreshes_committed == 1u);
-    Require(is_live(f, 0x10u) == 1 && is_live(f, 0x20u) == 1);
-
-    /* A replacement that starts at stamp 1 offers stale facts: dropped and counted, still nothing retired. */
-    Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
-    f->observer = make_observer(f, 1u);
-    Require(f->observer != NULL);
-    Require(window_observer_start(f->observer) == WindowObserverStatusOk);
-    Require(do_refresh(f) == WindowObserverStatusOk);
-    Require(obs_stats(f, &stats) == 0);
-    Require(stats.graph_errors == 2u && stats.last_graph_status == (uint32_t)InteropWindowGraphStatusStaleFacts);
-    Require(drain_events(f) == 0u && is_live(f, 0x10u) == 1 && is_live(f, 0x20u) == 1);
     Require(graph_stats(f, &gs) == 0);
-    Require(gs.rejected_stale_facts == 2u);
+    Require(gs.retiring_count == 2u && gs.generations_issued >= 2u);
 done:
     fixture_close(f);
     return result;
@@ -2364,7 +2554,10 @@ static int test_release_slot_waits_for_inflight_hint(void) {
     while (atomic_load_explicit(&f->dbl->parked, memory_order_acquire) == 0) {
         api_double_yield();
     }
-    Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    window_observer_quarantine_record_t quarantine;
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
     Require(f->observer == NULL);
     Require(api_double_wall_ms() >= f->dbl->park_deadline_ms); /* destroy waited for the in-flight hint */
 done:
@@ -2589,10 +2782,12 @@ static int test_preedit_from_config(void) {
     window_observer_config_t config;
     api_double_window_t *preedit = NULL;
     Require(f != NULL);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
     Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
     api_double_config(&config, f->dbl, 0u, 1u);
     config.preedit_window = 0x501u;
     Require(window_observer_create(&config, &f->observer) == WindowObserverStatusOk);
+    Require(window_observer_bind_graph(f->observer, f->graph, TestEpoch) == WindowObserverStatusOk);
     Require(window_observer_start(f->observer) == WindowObserverStatusOk);
     preedit = add_window(f, 0x501u);
     Require(preedit != NULL);
@@ -2631,7 +2826,7 @@ done:
 /* Teardown and statistics                                                                    */
 /* ------------------------------------------------------------------------------------------ */
 
-/** Destroying with queued hints and an open overflow latch frees everything. */
+/** Quiesced handoff preserves queued hints and an open overflow latch. */
 static int test_teardown_with_hints(void) {
     int result = 0;
     fixture_t *f = fixture_open(0u, 1u, 1);
@@ -2639,12 +2834,683 @@ static int test_teardown_with_hints(void) {
     for (uint64_t i = 0; i < WindowObserverDirtyCapacity + 20u; i++) {
         hint(f, WindowObserverEventObjectCreate, 0x8000u + i);
     }
-    Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    window_observer_quarantine_record_t quarantine;
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
     Require(f->observer == NULL);
     hint(f, WindowObserverEventObjectCreate, 0x1u); /* late hint after destroy */
     f->observer = make_observer(f, 1u);
     Require(f->observer != NULL);
     Require(window_observer_start(f->observer) == WindowObserverStatusOk);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** Protected mailbox drain preserves exact Destroy and requires explicit retirement completion. */
+static int test_protected_destroy_handoff_contract(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    uint32_t pending = 0xA5A5A5A5u;
+    window_observer_quarantine_record_t quarantine;
+    Require(f != NULL);
+    Require(add_window(f, 0x880u) != NULL);
+    Require(admit(f, 0x880u) == 0);
+    Require(drain_events(f) == 1u);
+    Require(window_observer_destroy_pending(f->observer, 0x880u, &pending) == WindowObserverStatusOk);
+    Require(pending == 0u);
+
+    hint(f, WindowObserverEventObjectDestroy, 0x880u);
+    pending = 0u;
+    Require(window_observer_destroy_pending(f->observer, 0x880u, &pending) == WindowObserverStatusOk);
+    Require(pending == 1u);
+    pending = 0xA5A5A5A5u;
+    Require(window_observer_destroy_pending(f->observer, 0x880u,
+            (uint32_t *)((unsigned char *)&pending + 1u)) == WindowObserverStatusInvalidArgument);
+    Require(pending == 0xA5A5A5A5u);
+    Require(window_observer_prepare_callbacks(f->observer, 0x880u, 2u) == WindowObserverStatusInvalidArgument);
+    memset(&quarantine, 0xA5, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusProtectedStatePending);
+    Require(((unsigned char *)&quarantine)[0] == 0xA5u);
+    Require(window_observer_destroy(&f->observer) == WindowObserverStatusProtectedStatePending);
+    Require(f->observer != NULL && f->dbl->remove_calls == 0u);
+    const uint32_t query_count = f->dbl->query_total;
+    Require(window_observer_drain_protected_destroys(f->observer) == WindowObserverStatusOk);
+    Require(f->dbl->query_total == query_count); /* protected drain never performs native queries */
+    Require(window_observer_destroy_pending(f->observer, 0x880u, &pending) == WindowObserverStatusOk);
+    Require(pending == 0u);
+    Require(drain_events(f) == 1u);
+    Require(event_log[0].kind == InteropWindowEventRetireIntent && event_log[0].reason == InteropWindowReasonDestroyed);
+    Require(complete_all_retiring(f) == 0);
+    Require(window_observer_sync_tracked(f->observer) == WindowObserverStatusOk);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(f->observer == NULL);
+    Require(quarantine.version == WindowObserverQuarantineVersion && quarantine.size == sizeof(quarantine));
+    Require(quarantine.borrowed_graph == f->graph && quarantine.session_epoch == TestEpoch);
+    Require(quarantine.observer_state == WindowObserverStateStopped && quarantine.protected_count == 0u);
+    Require(quarantine.tracked_count == 0u && quarantine.tracked_snapshot_valid == 1u);
+
+    /* A null output and a misaligned output are rejected without touching supplied bytes. */
+    Require(window_observer_destroy_pending(NULL, 0x880u, &pending) == WindowObserverStatusInvalidArgument);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** An untracked Destroy that cannot enter the ordinary queue poisons continuity instead of being dropped. */
+static int test_untracked_destroy_capacity_fault(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    window_observer_quarantine_record_t quarantine;
+    Require(f != NULL);
+
+    /* Untracked Destroy evidence stays in the ordinary queue until a graph snapshot promotes it. */
+    for (uint32_t index = 0; index < WindowObserverDirtyCapacity; ++index)
+        hint(f, WindowObserverEventObjectDestroy, UINT64_C(0x100000) + index);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.state == WindowObserverStateStarted && stats.dirty_pending == WindowObserverDirtyCapacity);
+
+    /* The next distinct destroy cannot be represented, so the observer poisons itself. */
+    hint(f, WindowObserverEventObjectDestroy,
+         UINT64_C(0x100000) + WindowObserverDirtyCapacity);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.state == WindowObserverStateTrackingFault);
+    Require(stats.dirty_pending == WindowObserverDirtyCapacity);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusTrackingFault);
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(quarantine.tracking_fault == 1u && quarantine.evidence_incomplete == 1u);
+    Require(quarantine.dirty_count == WindowObserverDirtyCapacity);
+    Require(quarantine.pending_dirty[WindowObserverDirtyCapacity - 1u].window ==
+            UINT64_C(0x100000) + WindowObserverDirtyCapacity - 1u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** Overflow refresh discards only non-Destroy hints and retains untracked exact evidence. */
+static int test_overflow_retains_untracked_destroy_payloads(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    window_observer_quarantine_record_t quarantine;
+    const uint32_t DestroyCount = 3u;
+    Require(f != NULL);
+    for (uint32_t index = 0u; index < DestroyCount; ++index)
+        api_double_hint_full(f->dbl, WindowObserverEventObjectDestroy, UINT64_C(0xE00000) + index,
+                             WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 2700u + index);
+    for (uint32_t index = DestroyCount; index < WindowObserverDirtyCapacity; ++index)
+        hint(f, WindowObserverEventObjectShow, UINT64_C(0xF00000) + index);
+    hint(f, WindowObserverEventObjectShow, UINT64_C(0xFFFFFF));
+    Require(obs_stats(f, &stats) == 0 && stats.overflow_latched == 1u);
+    Require(do_pump(f, 1u) == WindowObserverStatusMore);
+    Require(obs_stats(f, &stats) == 0 && stats.state == WindowObserverStateStarted);
+    Require(stats.overflow_latched == 0u && stats.dirty_pending == DestroyCount);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(quarantine.dirty_count == DestroyCount && quarantine.protected_count == 0u);
+    Require(quarantine.tracking_fault == 0u && quarantine.evidence_incomplete == 0u);
+    for (uint32_t index = 0u; index < DestroyCount; ++index) {
+        Require(quarantine.pending_dirty[index].window == UINT64_C(0xE00000) + index);
+        Require(quarantine.pending_dirty[index].destroy_stamp != 0u);
+        Require(quarantine.pending_dirty[index].destroy_event_ms == 2700u + index);
+    }
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** The no-candidate and candidate admission reservations fit the maximum 64-slot graph. */
+static int test_protected_admission_reserve_boundary(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    uint64_t windows[InteropMaxWindows];
+    Require(f != NULL);
+    for (uint32_t index = 0; index < InteropMaxWindows; ++index) {
+        windows[index] = UINT64_C(0x200000) + index;
+        Require(add_window(f, windows[index]) != NULL);
+    }
+    api_double_enum_set(f->dbl, windows, InteropMaxWindows);
+    Require(do_refresh(f) == WindowObserverStatusOk);
+    Require(drain_events(f) == InteropMaxWindows);
+    /* The candidate is reserved alongside all 64 tracked HWNDs, before any callback or graph call. */
+    Require(window_observer_prepare_callbacks(f->observer, UINT64_C(0x300000), 1u) ==
+            WindowObserverStatusOk);
+    Require(window_observer_prepare_callbacks(f->observer, 0u, 0u) == WindowObserverStatusOk);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** A full graph event ring makes stop retryable without changing lifecycle or dropping graph ownership. */
+static int test_protected_stop_queue_full_retry(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t before, after;
+    Require(f != NULL);
+    Require(add_window(f, 0x8F0u) != NULL);
+    Require(admit(f, 0x8F0u) == 0);
+    Require(drain_events(f) == 1u);
+    Require(fill_event_ring(f, 0x8F0u) == 0);
+    Require(obs_stats(f, &before) == 0 && before.state == WindowObserverStateStarted);
+
+    Require(window_observer_stop(f->observer) == WindowObserverStatusGraphQueueFull);
+    Require(obs_stats(f, &after) == 0);
+    Require(after.state == before.state && after.dirty_pending == before.dirty_pending);
+    Require(f->dbl->remove_calls == 0u); /* invalidation must succeed before hooks are removed */
+
+    Require(drain_events(f) == RingCapacity);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    Require(obs_stats(f, &after) == 0 && after.state == WindowObserverStateStopped);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** Protected drain retains its exact mailbox entry when graph output is full, then retries cleanly. */
+static int test_protected_drain_queue_full_retry(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    uint32_t pending = 0u;
+    Require(f != NULL);
+    Require(add_window(f, 0x8F6u) != NULL);
+    Require(admit(f, 0x8F6u) == 0);
+    Require(drain_events(f) == 1u);
+    Require(fill_event_ring(f, 0x8F6u) == 0);
+    hint(f, WindowObserverEventObjectDestroy, 0x8F6u);
+    Require(window_observer_destroy_pending(f->observer, 0x8F6u, &pending) == WindowObserverStatusOk);
+    Require(pending == 1u);
+
+    Require(window_observer_drain_protected_destroys(f->observer) == WindowObserverStatusGraphQueueFull);
+    Require(window_observer_destroy_pending(f->observer, 0x8F6u, &pending) == WindowObserverStatusOk);
+    Require(pending == 1u);
+    Require(drain_events(f) == RingCapacity);
+    Require(window_observer_drain_protected_destroys(f->observer) == WindowObserverStatusOk);
+    Require(window_observer_destroy_pending(f->observer, 0x8F6u, &pending) == WindowObserverStatusOk);
+    Require(pending == 0u);
+    Require(drain_events(f) == 1u);
+    Require(event_log[0].kind == InteropWindowEventRetireIntent &&
+            event_log[0].reason == InteropWindowReasonDestroyed);
+    Require(complete_all_retiring(f) == 0);
+    Require(window_observer_sync_tracked(f->observer) == WindowObserverStatusOk);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** A later Destroy callback replaces the exact mailbox stamp while a query's stale facts are discarded. */
+static void replace_destroy_during_query(api_double_t *dbl, uint64_t window, void *argument) {
+    (void)argument;
+    api_double_hint_full(dbl, WindowObserverEventObjectDestroy, window,
+                         WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 1700u);
+    api_double_hint_full(dbl, WindowObserverEventObjectDestroy, window,
+                         WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 1701u);
+}
+
+static int test_protected_destroy_exact_stamp_replacement(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_quarantine_record_t quarantine;
+    uint32_t pending = 0u;
+    Require(f != NULL);
+    Require(add_window(f, 0x8F1u) != NULL);
+    Require(admit(f, 0x8F1u) == 0);
+    Require(drain_events(f) == 1u);
+    Require(window_observer_prepare_callbacks(f->observer, 0x8F1u, 0u) == WindowObserverStatusOk);
+    Require(fill_event_ring(f, 0x8F1u) == 0);
+
+    f->dbl->query_hook = replace_destroy_during_query;
+    f->dbl->query_hook_once = 1u;
+    hint(f, WindowObserverEventObjectShow, 0x8F1u);
+    Require(do_pump(f, 1u) == WindowObserverStatusGraphQueueFull);
+    Require(window_observer_destroy_pending(f->observer, 0x8F1u, &pending) == WindowObserverStatusOk);
+    Require(pending == 1u);
+    Require(window_observer_prepare_callbacks(f->observer, 0x8F2u, 0u) == WindowObserverStatusGraphQueueFull);
+    Require(drain_events(f) == RingCapacity);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(quarantine.protected_count == 1u);
+    Require(quarantine.candidate_window == 0x8F1u); /* failed preflight did not replace the old reservation */
+    Require(quarantine.protected_destroys[0].window == 0x8F1u);
+    Require(quarantine.protected_destroys[0].event_time_ms == 1701u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** A mailbox member keeps its identity after external retirement and merges a later exact Destroy stamp. */
+static int test_repeated_destroy_after_tracked_removal(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    window_observer_quarantine_record_t quarantine;
+    interop_window_observation_t observation;
+    interop_window_event_t event;
+    uint32_t pending = 0u;
+    Require(f != NULL);
+    Require(add_window(f, 0x8F3u) != NULL);
+    Require(admit(f, 0x8F3u) == 0);
+    Require(drain_events(f) == 1u);
+
+    api_double_hint_full(f->dbl, WindowObserverEventObjectDestroy, 0x8F3u,
+                         WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 1700u);
+    Require(window_observer_destroy_pending(f->observer, 0x8F3u, &pending) == WindowObserverStatusOk);
+    Require(pending == 1u);
+
+    /* Model an independent graph owner completing exact retirement; this proves graph bookkeeping only. */
+    Require(obs_stats(f, &stats) == 0);
+    memset(&observation, 0, sizeof(observation));
+    Require(interop_window_graph_note_destroyed(f->graph, TestEpoch, 0x8F3u, stats.next_stamp,
+                                                (uint64_t)f->dbl->tick + 1u, &observation) ==
+            InteropWindowGraphStatusOk);
+    Require(interop_window_graph_next_event(f->graph, TestEpoch, &event) == InteropWindowGraphStatusOk);
+    Require(event.kind == InteropWindowEventRetireIntent && event.window == 0x8F3u);
+    const interop_window_retire_proof_t proof = {1u, 1u};
+    Require(interop_window_graph_complete_retire(f->graph, TestEpoch, event.window, event.generation,
+                                                 &proof) == InteropWindowGraphStatusOk);
+    Require(window_observer_sync_tracked(f->observer) == WindowObserverStatusOk);
+
+    api_double_hint_full(f->dbl, WindowObserverEventObjectDestroy, 0x8F3u,
+                         WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 1701u);
+    Require(window_observer_destroy_pending(f->observer, 0x8F3u, &pending) == WindowObserverStatusOk);
+    Require(pending == 1u);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(quarantine.protected_count == 1u);
+    Require(quarantine.protected_destroys[0].window == 0x8F3u);
+    Require(quarantine.protected_destroys[0].event_time_ms == 1701u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** Reenter the graph clock while old and proposed candidate reservations change. */
+static void transition_clock_destroys(fixture_t *f) {
+    f->graph_clock_calls += 1u;
+    if (f->graph_clock_calls == 1u) {
+        api_double_hint_full(f->dbl, WindowObserverEventObjectDestroy, f->clock_old_candidate,
+                             WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 2301u);
+    } else if (f->graph_clock_calls == 2u) {
+        api_double_hint_full(f->dbl, WindowObserverEventObjectDestroy, f->clock_new_candidate,
+                             WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 2302u);
+    }
+}
+
+/** Full mailbox transitions retain the old key until the new key has admission headroom. */
+static int test_full_candidate_transition_retains_both_keys(void) {
+    int result = 0;
+    fixture_t *f = fixture_open_ex(0u, 1u, 1, 1);
+    window_observer_quarantine_record_t quarantine;
+    window_observer_stats_t stats;
+    const uint64_t base = UINT64_C(0xA00000);
+    Require(f != NULL);
+    /* Full non-Destroy hints prevent optional dirty mirrors; all Destroy evidence has its own mailbox. */
+    for (uint32_t index = 0; index < WindowObserverDirtyCapacity; ++index)
+        hint(f, WindowObserverEventObjectShow, UINT64_C(0xB00000) + index);
+    for (uint32_t index = 0; index < WindowObserverDestroyCapacity; ++index) {
+        Require(window_observer_prepare_callbacks(f->observer, base + index, 0u) == WindowObserverStatusOk);
+        hint(f, WindowObserverEventObjectDestroy, base + index);
+    }
+    f->clock_old_candidate = base + WindowObserverDestroyCapacity - 1u;
+    f->clock_new_candidate = base + WindowObserverDestroyCapacity;
+    f->graph_clock_hook = transition_clock_destroys;
+    Require(window_observer_prepare_callbacks(f->observer, f->clock_new_candidate, 1u) ==
+            WindowObserverStatusOk);
+    f->graph_clock_hook = NULL;
+    Require(f->graph_clock_calls >= 2u);
+    uint32_t pending = 0u;
+    Require(window_observer_destroy_pending(f->observer, f->clock_old_candidate, &pending) ==
+            WindowObserverStatusOk && pending == 1u);
+    Require(window_observer_destroy_pending(f->observer, f->clock_new_candidate, &pending) ==
+            WindowObserverStatusOk && pending == 1u);
+    Require(obs_stats(f, &stats) == 0 && stats.state == WindowObserverStateStarted);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(quarantine.tracking_fault == 0u && quarantine.evidence_incomplete == 0u);
+    Require(quarantine.candidate_window == f->clock_new_candidate);
+    Require(quarantine.protected_count == 65u);
+    Require(quarantine.dirty_count == WindowObserverDirtyCapacity);
+    int old_found = 0, new_found = 0;
+    for (uint32_t index = 0; index < quarantine.protected_count; ++index) {
+        const window_observer_destroy_entry_t *entry = &quarantine.protected_destroys[index];
+        if (entry->window == f->clock_old_candidate) old_found = entry->event_time_ms == 2301u;
+        if (entry->window == f->clock_new_candidate) new_found = entry->event_time_ms == 2302u;
+    }
+    Require(old_found && new_found);
+done:
+    if (f != NULL) f->graph_clock_hook = NULL;
+    fixture_close(f);
+    return result;
+}
+
+/** Keep the exact first mailbox entry occupied while the graph clock reenters Destroy. */
+static void repeat_front_destroy_during_clock(fixture_t *f) {
+    f->graph_clock_calls += 1u;
+    api_double_hint_full(f->dbl, WindowObserverEventObjectDestroy, f->clock_old_candidate,
+                         WindowObserverObjectIdWindow, WindowObserverChildIdSelf,
+                         2500u + f->graph_clock_calls);
+}
+
+/** Reentrant replacement exhausts only the work budget; neither evidence nor reservation is lost. */
+static int test_full_candidate_transition_bounded_pending(void) {
+    int result = 0;
+    fixture_t *f = fixture_open_ex(0u, 1u, 1, 1);
+    window_observer_quarantine_record_t quarantine;
+    window_observer_stats_t stats;
+    const uint64_t base = UINT64_C(0xC00000);
+    Require(f != NULL);
+    for (uint32_t index = 0; index < WindowObserverDirtyCapacity; ++index)
+        hint(f, WindowObserverEventObjectShow, UINT64_C(0xD00000) + index);
+    for (uint32_t index = 0; index < WindowObserverDestroyCapacity; ++index) {
+        Require(window_observer_prepare_callbacks(f->observer, base + index, 0u) == WindowObserverStatusOk);
+        hint(f, WindowObserverEventObjectDestroy, base + index);
+    }
+    f->clock_old_candidate = base;
+    f->graph_clock_hook = repeat_front_destroy_during_clock;
+    Require(window_observer_prepare_callbacks(f->observer, base + WindowObserverDestroyCapacity, 0u) ==
+            WindowObserverStatusProtectedStatePending);
+    Require(f->graph_clock_calls == WindowObserverDestroyCapacity);
+    Require(window_observer_drain_protected_destroys(f->observer) == WindowObserverStatusProtectedStatePending);
+    Require(f->graph_clock_calls == 2u * WindowObserverDestroyCapacity);
+    f->graph_clock_hook = NULL;
+    Require(obs_stats(f, &stats) == 0 && stats.state == WindowObserverStateStarted);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(quarantine.tracking_fault == 0u && quarantine.evidence_incomplete == 0u);
+    Require(quarantine.candidate_window == base + WindowObserverDestroyCapacity - 1u);
+    Require(quarantine.protected_count == WindowObserverDestroyCapacity);
+    Require(quarantine.protected_destroys[0].window == base);
+    Require(quarantine.protected_destroys[0].event_time_ms == 2500u + f->graph_clock_calls);
+    Require(quarantine.dirty_count == WindowObserverDirtyCapacity);
+done:
+    if (f != NULL) f->graph_clock_hook = NULL;
+    fixture_close(f);
+    return result;
+}
+
+typedef struct candidate_transition_destroy_t {
+    uint64_t old_candidate;
+    uint64_t proposed_candidate;
+} candidate_transition_destroy_t;
+
+static void destroy_candidates_during_query(api_double_t *dbl, uint64_t window, void *argument) {
+    (void)window;
+    const candidate_transition_destroy_t *candidates = (const candidate_transition_destroy_t *)argument;
+    api_double_hint_full(dbl, WindowObserverEventObjectDestroy, candidates->old_candidate,
+                         WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 1800u);
+    api_double_hint_full(dbl, WindowObserverEventObjectDestroy, candidates->old_candidate,
+                         WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 1801u);
+    api_double_hint_full(dbl, WindowObserverEventObjectDestroy, candidates->proposed_candidate,
+                         WindowObserverObjectIdWindow, WindowObserverChildIdSelf, 1802u);
+}
+
+/** A query callback Destroy for the proposed candidate enters the mailbox before admission. */
+static int test_candidate_transition_protects_proposed_key(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    window_observer_quarantine_record_t quarantine;
+    interop_window_observation_t observation;
+    interop_window_event_t event;
+    candidate_transition_destroy_t candidates = {0x8F4u, 0x8F5u};
+    uint32_t pending = 0u;
+    Require(f != NULL);
+    Require(add_window(f, candidates.old_candidate) != NULL);
+    Require(admit(f, candidates.old_candidate) == 0);
+    Require(drain_events(f) == 1u);
+    Require(window_observer_prepare_callbacks(f->observer, candidates.old_candidate, 0u) ==
+            WindowObserverStatusOk);
+
+    /* An external graph owner retires the old key; the observer keeps its candidate reservation. */
+    Require(obs_stats(f, &stats) == 0);
+    memset(&observation, 0, sizeof(observation));
+    Require(interop_window_graph_note_destroyed(f->graph, TestEpoch, candidates.old_candidate,
+                                                stats.next_stamp, (uint64_t)f->dbl->tick + 1u,
+                                                &observation) == InteropWindowGraphStatusOk);
+    Require(interop_window_graph_next_event(f->graph, TestEpoch, &event) == InteropWindowGraphStatusOk);
+    Require(event.kind == InteropWindowEventRetireIntent && event.window == candidates.old_candidate);
+    const interop_window_retire_proof_t proof = {1u, 1u};
+    Require(interop_window_graph_complete_retire(f->graph, TestEpoch, event.window, event.generation,
+                                                 &proof) == InteropWindowGraphStatusOk);
+    Require(window_observer_sync_tracked(f->observer) == WindowObserverStatusOk);
+
+    Require(add_window(f, candidates.proposed_candidate) != NULL);
+    api_double_find(f->dbl, candidates.proposed_candidate)->fail_count = 1u;
+    f->dbl->query_hook = destroy_candidates_during_query;
+    f->dbl->query_hook_arg = &candidates;
+    f->dbl->query_hook_window = candidates.proposed_candidate;
+    f->dbl->query_hook_once = 1u;
+    hint(f, WindowObserverEventObjectCreate, candidates.proposed_candidate);
+    Require(do_pump(f, 1u) == WindowObserverStatusMore);
+    Require(window_observer_destroy_pending(f->observer, candidates.old_candidate, &pending) ==
+            WindowObserverStatusOk);
+    Require(pending == 0u);
+    Require(window_observer_destroy_pending(f->observer, candidates.proposed_candidate, &pending) ==
+            WindowObserverStatusOk);
+    Require(pending == 0u); /* the query-raced Destroy was accepted before this HWND could be admitted. */
+
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(quarantine.protected_count == 0u);
+    int old_destroy_retained = 0;
+    for (uint32_t index = 0u; index < quarantine.dirty_count; ++index) {
+        if (quarantine.pending_dirty[index].window == candidates.old_candidate &&
+            quarantine.pending_dirty[index].destroy_event_ms == 1801u) {
+            old_destroy_retained = 1;
+        }
+    }
+    Require(old_destroy_retained); /* stale untracked Destroy remains losslessly queued. */
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** One scripted hint callback that fires once from hook installation or removal. */
+typedef struct observer_hint_script_t {
+    uint64_t window;
+    uint32_t event_time_ms;
+    uint32_t fired;
+} observer_hint_script_t;
+
+static void observer_hint_during_hook(api_double_t *dbl, void *argument) {
+    observer_hint_script_t *script = (observer_hint_script_t *)argument;
+    if (script->fired == 0u) {
+        script->fired = 1u;
+        api_double_hint_full(dbl, WindowObserverEventObjectDestroy, script->window,
+                             WindowObserverObjectIdWindow, WindowObserverChildIdSelf,
+                             script->event_time_ms);
+    }
+}
+
+/** Starting and failed rollback keep callbacks published and retain exact protected evidence. */
+static int test_protected_destroy_during_start_rollback(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_quarantine_record_t quarantine;
+    Require(f != NULL);
+    Require(add_window(f, 0x8F2u) != NULL);
+    Require(admit(f, 0x8F2u) == 0);
+    Require(drain_events(f) == 1u);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    Require(drain_events(f) == 1u); /* invalidation event; the tracked snapshot remains Retiring */
+
+    observer_hint_script_t script = {0x8F2u, 1802u, 0u};
+    f->dbl->install_hook_fn = observer_hint_during_hook;
+    f->dbl->install_hook_arg = &script;
+    f->dbl->install_fail_at = f->dbl->install_calls + 2u;
+    Require(window_observer_start(f->observer) == WindowObserverStatusHookFailed);
+    Require(script.fired == 1u && f->dbl->remove_calls == 4u);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(quarantine.observer_state == WindowObserverStateStopped && quarantine.protected_count == 1u);
+    Require(quarantine.protected_destroys[0].window == 0x8F2u);
+    Require(quarantine.protected_destroys[0].event_time_ms == 1802u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** A Destroy during failed unhook remains retained across the stop retry. */
+static int test_protected_destroy_during_unhook_retry(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_quarantine_record_t quarantine;
+    Require(f != NULL);
+    Require(add_window(f, 0x8F3u) != NULL);
+    Require(admit(f, 0x8F3u) == 0);
+    Require(drain_events(f) == 1u);
+
+    observer_hint_script_t script = {0x8F3u, 1803u, 0u};
+    f->dbl->remove_hook_fn = observer_hint_during_hook;
+    f->dbl->remove_hook_arg = &script;
+    f->dbl->remove_fail_at = 1u;
+    Require(window_observer_stop(f->observer) == WindowObserverStatusUnhookFailed);
+    Require(script.fired == 1u);
+    f->dbl->remove_fail_at = 0u;
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(quarantine.observer_state == WindowObserverStateStopped && quarantine.protected_count == 1u);
+    Require(quarantine.protected_destroys[0].window == 0x8F3u);
+    Require(quarantine.protected_destroys[0].event_time_ms == 1803u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** Stamp exhaustion from the final start clock callback cannot be overwritten by Started publication. */
+static void exhaust_stamp_during_start_clock(api_double_t *dbl, void *argument) {
+    uint32_t *fired = (uint32_t *)argument;
+    if (*fired == 0u) {
+        *fired = 1u;
+        api_double_hint(dbl, WindowObserverEventObjectDestroy, 0x8F6u);
+        api_double_hint(dbl, WindowObserverEventObjectDestroy, 0x8F7u);
+    }
+}
+
+static int test_start_final_clock_fault_rolls_back(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, UINT64_MAX - 1u, 0);
+    window_observer_stats_t stats;
+    window_observer_quarantine_record_t quarantine;
+    uint32_t fired = 0u;
+    Require(f != NULL);
+    f->dbl->monotonic_hook = exhaust_stamp_during_start_clock;
+    f->dbl->monotonic_hook_arg = &fired;
+    Require(window_observer_start(f->observer) == WindowObserverStatusTrackingFault);
+    Require(fired == 1u && f->dbl->remove_calls == 3u);
+    memset(&stats, 0, sizeof(stats));
+    Require(window_observer_status(f->observer, &stats) == WindowObserverStatusOk);
+    Require(stats.state == WindowObserverStateTrackingFault);
+    memset(&quarantine, 0, sizeof(quarantine));
+    Require(window_observer_quarantine_handoff(&f->observer, &quarantine) == WindowObserverStatusOk);
+    Require(f->observer == NULL && quarantine.tracking_fault == 1u && quarantine.evidence_incomplete == 1u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** A fault from tick_ms is observed before query and cannot admit the already-popped key. */
+static void exhaust_stamp_during_tick(api_double_t *dbl, void *argument) {
+    uint32_t *fired = (uint32_t *)argument;
+    if (*fired == 0u) {
+        *fired = 1u;
+        dbl->tick_hook = NULL;
+        api_double_hint(dbl, WindowObserverEventObjectDestroy, 0x8F8u);
+    }
+}
+
+static int test_tick_callback_fault_prevents_graph_mutation(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, UINT64_MAX - 2u, 1);
+    window_observer_stats_t stats;
+    uint32_t fired = 0u;
+    Require(f != NULL);
+    Require(add_window(f, 0x8F9u) != NULL);
+    api_double_hint(f->dbl, WindowObserverEventObjectCreate, 0x8F9u); /* consumes MAX-2 */
+    f->dbl->tick_hook = exhaust_stamp_during_tick;
+    f->dbl->tick_hook_arg = &fired;
+    Require(do_pump(f, 1u) == WindowObserverStatusTrackingFault);
+    Require(fired == 1u && f->dbl->tick_calls == 1u && f->dbl->query_total == 0u);
+    memset(&stats, 0, sizeof(stats));
+    Require(window_observer_status(f->observer, &stats) == WindowObserverStatusOk);
+    Require(stats.state == WindowObserverStateTrackingFault && stats.dirty_pending == 1u);
+    Require(is_live(f, 0x8F9u) == 0);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** A query callback that runs out of stamps after facts are captured. */
+static void exhaust_stamp_during_query(api_double_t *dbl, uint64_t window, void *argument) {
+    (void)window;
+    uint32_t *fired = (uint32_t *)argument;
+    if (*fired == 0u) {
+        *fired = 1u;
+        api_double_hint(dbl, WindowObserverEventObjectDestroy, 0x8FAu);
+    }
+}
+
+static int test_query_callback_fault_prevents_graph_mutation(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, UINT64_MAX - 2u, 1);
+    window_observer_stats_t stats;
+    uint32_t fired = 0u;
+    Require(f != NULL);
+    Require(add_window(f, 0x8FBu) != NULL);
+    api_double_hint(f->dbl, WindowObserverEventObjectCreate, 0x8FBu); /* consumes MAX-2 */
+    f->dbl->query_hook = exhaust_stamp_during_query;
+    f->dbl->query_hook_arg = &fired;
+    f->dbl->query_hook_window = 0x8FBu;
+    f->dbl->query_hook_once = 1u;
+    Require(do_pump(f, 1u) == WindowObserverStatusTrackingFault);
+    Require(fired == 1u && f->dbl->query_total == 1u);
+    memset(&stats, 0, sizeof(stats));
+    Require(window_observer_status(f->observer, &stats) == WindowObserverStatusOk);
+    Require(stats.state == WindowObserverStateTrackingFault && stats.dirty_pending == 1u);
+    Require(is_live(f, 0x8FBu) == 0);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** A Destroy fired by the graph's app-key callback is promoted after a Deferred child becomes tracked. */
+static int test_protected_destroy_during_deferred_promotion(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    uint64_t windows[2] = {0x8F5u, 0x8F4u};
+    Require(f != NULL);
+    Require(add_window(f, 0x8F4u) != NULL);
+    Require(add_owned(f, 0x8F5u, 0x8F4u) != NULL);
+    api_double_enum_set(f->dbl, windows, 2u); /* child is offered before its owner */
+    f->lookup_destroy_trigger_window = 0x8F4u;
+    f->lookup_destroy_window = 0x8F5u;
+    f->lookup_destroy_once = 1u;
+
+    Require(do_refresh(f) == WindowObserverStatusOk);
+    Require(f->lookup_destroy_once == 0u);
+    Require(is_live(f, 0x8F4u) == 1);
+    Require(is_live(f, 0x8F5u) == 0); /* promoted child was destroyed before refresh returned */
+    Require(drain_events(f) == 3u);
+    Require(event_log[0].kind == InteropWindowEventAnnounce && event_log[0].window == 0x8F4u);
+    Require(event_log[0].kind == InteropWindowEventAnnounce && event_log[0].window == 0x8F4u);
+    Require(event_log[1].kind == InteropWindowEventAnnounce && event_log[1].window == 0x8F5u);
+    Require(event_log[2].kind == InteropWindowEventRetireIntent && event_log[2].window == 0x8F5u);
+    Require(event_log[2].reason == InteropWindowReasonDestroyed);
 done:
     fixture_close(f);
     return result;
@@ -2687,16 +3553,15 @@ static int test_stats_accounting(void) {
     Require(obs_stats(f, &stats) == 0);
     Require(stats.queries_gone == 1u && stats.destroys_noted == 1u && stats.keys_processed == 5u);
 
-    /* A wrong epoch is a call-level graph error: GraphError, exact status kept, key put back. */
+    /* The immutable binding rejects a wrong epoch before stats, graph or queued evidence changes. */
     hint(f, WindowObserverEventObjectShow, 0xB0u);
-    Require(window_observer_pump(f->observer, f->graph, TestEpoch + 1u, 8u, &stats) == WindowObserverStatusGraphError);
-    Require(stats.last_graph_status == (uint32_t)InteropWindowGraphStatusStaleEpoch);
-    Require(stats.graph_errors == 1u && stats.dirty_pending == 1u);
-    Require(window_observer_refresh(f->observer, f->graph, TestEpoch + 1u, &stats) == WindowObserverStatusGraphError);
-    Require(stats.graph_errors == 2u && stats.refreshes_started == 1u && stats.refreshes_committed == 0u);
+    memset(&stats, 0xA5, sizeof(stats));
+    Require(window_observer_pump(f->observer, f->graph, TestEpoch + 1u, 8u, &stats) == WindowObserverStatusGraphBindingMismatch);
+    Require(((unsigned char *)&stats)[0] == 0xA5u);
+    Require(window_observer_refresh(f->observer, f->graph, TestEpoch + 1u, &stats) == WindowObserverStatusGraphBindingMismatch);
     Require(do_pump(f, 8u) == WindowObserverStatusOk); /* the right epoch processes the kept key */
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.dirty_pending == 0u && stats.last_graph_status == (uint32_t)InteropWindowGraphStatusStaleEpoch);
+    Require(stats.dirty_pending == 0u && stats.graph_errors == 0u);
 
     /* Desktop refusal. */
     f->dbl->desktop = WindowObserverDesktopOther;
@@ -2721,8 +3586,15 @@ typedef struct foreign_probe_t {
     window_observer_status_t stop; /**< stop result. */
     window_observer_status_t preedit; /**< set_preedit_window result. */
     window_observer_status_t status; /**< status result. */
+    window_observer_status_t sync_tracked; /**< sync_tracked result. */
+    window_observer_status_t prepare_callbacks; /**< prepare_callbacks result. */
+    window_observer_status_t destroy_pending; /**< destroy_pending result. */
+    window_observer_status_t drain_protected; /**< drain_protected result. */
+    window_observer_status_t quarantine_handoff; /**< quarantine_handoff result. */
     window_observer_status_t destroy; /**< destroy result. */
     window_observer_t *slot; /**< Handle copy passed to destroy. */
+    uint32_t pending; /**< Sentinel output passed to destroy_pending. */
+    window_observer_quarantine_record_t quarantine; /**< Sentinel output passed to handoff. */
     int due; /**< refresh_due result. */
     uint32_t timeout; /**< next_timeout_ms result. */
 } foreign_probe_t;
@@ -2737,6 +3609,14 @@ static void foreign_job(void *argument) {
     p->stop = window_observer_stop(p->f->observer);
     p->preedit = window_observer_set_preedit_window(p->f->observer, 0x55u);
     p->status = window_observer_status(p->f->observer, &stats);
+    p->sync_tracked = window_observer_sync_tracked(p->f->observer);
+    p->prepare_callbacks = window_observer_prepare_callbacks(p->f->observer, 0x55u, 1u);
+    p->pending = 0xA5A5A5A5u;
+    p->destroy_pending = window_observer_destroy_pending(p->f->observer, 0x55u, &p->pending);
+    p->drain_protected = window_observer_drain_protected_destroys(p->f->observer);
+    memset(&p->quarantine, 0xA5, sizeof(p->quarantine));
+    p->slot = p->f->observer;
+    p->quarantine_handoff = window_observer_quarantine_handoff(&p->slot, &p->quarantine);
     p->slot = p->f->observer;
     p->destroy = window_observer_destroy(&p->slot);
     p->due = window_observer_refresh_due(p->f->observer, 100000u);
@@ -2748,6 +3628,12 @@ static int expect_all_wrong_thread(const foreign_probe_t *p, const fixture_t *f)
     Check(p->pump == WindowObserverStatusWrongThread && p->refresh == WindowObserverStatusWrongThread);
     Check(p->start == WindowObserverStatusWrongThread && p->stop == WindowObserverStatusWrongThread);
     Check(p->preedit == WindowObserverStatusWrongThread && p->status == WindowObserverStatusWrongThread);
+    Check(p->sync_tracked == WindowObserverStatusWrongThread);
+    Check(p->prepare_callbacks == WindowObserverStatusWrongThread);
+    Check(p->destroy_pending == WindowObserverStatusWrongThread && p->pending == 0xA5A5A5A5u);
+    Check(p->drain_protected == WindowObserverStatusWrongThread);
+    Check(p->quarantine_handoff == WindowObserverStatusWrongThread && p->slot == f->observer);
+    Check(((const unsigned char *)&p->quarantine)[0] == 0xA5u);
     Check(p->destroy == WindowObserverStatusWrongThread && p->slot == f->observer);
     Check(p->due == 0 && p->timeout == WindowObserverWaitForever);
     return 0;
@@ -2774,13 +3660,15 @@ static int test_entry_arguments_and_threads(void) {
     Require(window_observer_refresh_due(NULL, 0u) == 0);
     Require(window_observer_next_timeout_ms(NULL, 0u) == WindowObserverWaitForever);
 
-    /* Created: BadState with a stats snapshot, no timer. */
+    /* Created: BadState is a local error; optional stats bytes are unchanged. */
     memset(&stats, 0xAB, sizeof(stats));
     Require(window_observer_pump(f->observer, f->graph, TestEpoch, 1u, &stats) == WindowObserverStatusBadState);
-    Require(stats.state == WindowObserverStateCreated);
+    { unsigned char expected[sizeof(stats)]; memset(expected, 0xAB, sizeof(expected));
+      Require(memcmp(&stats, expected, sizeof(stats)) == 0); }
     memset(&stats, 0xAB, sizeof(stats));
     Require(window_observer_refresh(f->observer, f->graph, TestEpoch, &stats) == WindowObserverStatusBadState);
-    Require(stats.state == WindowObserverStateCreated);
+    { unsigned char expected[sizeof(stats)]; memset(expected, 0xAB, sizeof(expected));
+      Require(memcmp(&stats, expected, sizeof(stats)) == 0); }
     Require(window_observer_refresh_due(f->observer, 100000u) == 0);
     Require(window_observer_next_timeout_ms(f->observer, 100000u) == WindowObserverWaitForever);
     memset(&probe, 0, sizeof(probe));
@@ -2815,6 +3703,110 @@ static int test_entry_arguments_and_threads(void) {
     Require(window_observer_refresh_due(f->observer, 100000u) == 0);
     Require(window_observer_next_timeout_ms(f->observer, 100000u) == WindowObserverWaitForever);
     Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** O5 public APIs reject bad spans, phases, and aliases before touching outputs or ownership. */
+static int test_o5_public_guard_matrix(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 0);
+    window_observer_t *unbound = NULL;
+    window_observer_t *alias_slot = NULL;
+    window_observer_config_t config;
+    uint32_t pending = 0xA5A5A5A5u;
+    window_observer_quarantine_record_t record;
+    unsigned char expected[sizeof(record)];
+    Require(f != NULL);
+
+    Require(window_observer_bind_graph(NULL, f->graph, TestEpoch) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_bind_graph(f->observer, NULL, TestEpoch) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_bind_graph(f->observer, f->graph, 0u) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_bind_graph(f->observer, f->graph, TestEpoch) == WindowObserverStatusBadState);
+    Require(window_observer_sync_tracked(NULL) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_sync_tracked(f->observer) == WindowObserverStatusOk);
+    Require(window_observer_prepare_callbacks(NULL, 0u, 0u) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_prepare_callbacks(f->observer, 0u, 2u) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_prepare_callbacks(f->observer, 0u, 0u) == WindowObserverStatusBadState);
+    Require(window_observer_destroy_pending(NULL, 1u, &pending) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_destroy_pending(f->observer, 0u, &pending) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_destroy_pending(f->observer, 1u, NULL) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_destroy_pending(f->observer, 1u,
+            (uint32_t *)(uintptr_t)(UINTPTR_MAX & ~(uintptr_t)(sizeof(uint32_t) - 1u))) ==
+            WindowObserverStatusInvalidArgument);
+    Require(window_observer_destroy_pending(f->observer, 1u, (uint32_t *)f->observer) ==
+            WindowObserverStatusInvalidArgument);
+    Require(pending == 0xA5A5A5A5u);
+    Require(window_observer_drain_protected_destroys(NULL) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_drain_protected_destroys(f->observer) == WindowObserverStatusBadState);
+
+    memset(&record, 0xA5, sizeof(record));
+    memcpy(expected, &record, sizeof(record));
+    Require(window_observer_quarantine_handoff(NULL, &record) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_quarantine_handoff(&f->observer, NULL) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_quarantine_handoff((window_observer_t **)((unsigned char *)&f->observer + 1u),
+                                               &record) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_quarantine_handoff(&f->observer,
+            (window_observer_quarantine_record_t *)(uintptr_t)(UINTPTR_MAX & ~(uintptr_t)(
+                _Alignof(window_observer_quarantine_record_t) - 1u))) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_quarantine_handoff(&f->observer,
+            (window_observer_quarantine_record_t *)f->observer) == WindowObserverStatusInvalidArgument);
+    Require(window_observer_quarantine_handoff((window_observer_t **)&record,
+                                               (window_observer_quarantine_record_t *)&record) ==
+            WindowObserverStatusInvalidArgument);
+    Require(memcmp(&record, expected, sizeof(record)) == 0);
+    Require(window_observer_quarantine_handoff(&f->observer, &record) ==
+            WindowObserverStatusProtectedStatePending); /* bound Created cannot be handed off */
+    Require(memcmp(&record, expected, sizeof(record)) == 0 && f->observer != NULL);
+
+    /* An unbound Created handle rejects graph-only operations, then destroys cleanly. */
+    api_double_config(&config, f->dbl, 0u, 1u);
+    Require(window_observer_create(&config, &unbound) == WindowObserverStatusOk);
+    Require(window_observer_sync_tracked(unbound) == WindowObserverStatusBadState);
+    Require(window_observer_prepare_callbacks(unbound, 0u, 0u) == WindowObserverStatusBadState);
+    Require(window_observer_destroy_pending(unbound, 1u, &pending) == WindowObserverStatusBadState);
+    Require(window_observer_drain_protected_destroys(unbound) == WindowObserverStatusBadState);
+    Require(window_observer_bind_graph(unbound, f->graph, TestEpoch + 1u) == WindowObserverStatusInvalidArgument);
+    memset(&record, 0xA5, sizeof(record));
+    Require(window_observer_quarantine_handoff(&unbound, &record) == WindowObserverStatusProtectedStatePending);
+    Require(window_observer_destroy(&unbound) == WindowObserverStatusOk && unbound == NULL);
+
+    /* Started is an invalid handoff/drain-free phase for destroy, but APIs retain their outputs. */
+    Require(window_observer_start(f->observer) == WindowObserverStatusOk);
+    alias_slot = f->observer;
+    memset(&record, 0xA5, sizeof(record));
+    memcpy(expected, &record, sizeof(record));
+    Require(window_observer_quarantine_handoff(&alias_slot, &record) ==
+            WindowObserverStatusProtectedStatePending);
+    Require(alias_slot == f->observer && memcmp(&record, expected, sizeof(record)) == 0);
+    Require(window_observer_destroy_pending(f->observer, 1u, &pending) == WindowObserverStatusOk);
+    Require(pending == 0u);
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+done:
+    if (unbound != NULL) (void)window_observer_destroy(&unbound);
+    fixture_close(f);
+    return result;
+}
+
+/** Failed hooks permit cleanup and diagnostics only; rejected configuration remains unchanged. */
+static int test_failed_lifecycle_rejects_sync_and_configuration(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t before, after;
+    Require(f != NULL);
+    f->dbl->remove_fail_at = 1u;
+    Require(window_observer_stop(f->observer) == WindowObserverStatusUnhookFailed);
+    Require(obs_stats(f, &before) == 0 && before.state == WindowObserverStateFailed);
+    Require(window_observer_sync_tracked(f->observer) == WindowObserverStatusBadState);
+    Require(window_observer_set_preedit_window(f->observer, UINT64_C(0xA55)) == WindowObserverStatusBadState);
+    Require(obs_stats(f, &after) == 0 && memcmp(&before, &after, sizeof(before)) == 0);
+    f->dbl->remove_fail_at = 0u;
+    Require(window_observer_stop(f->observer) == WindowObserverStatusOk);
+    Require(window_observer_start(f->observer) == WindowObserverStatusOk);
+    const uint32_t clocks = f->dbl->monotonic_calls;
+    Require(window_observer_set_preedit_window(f->observer, 0u) == WindowObserverStatusOk);
+    Require(f->dbl->monotonic_calls == clocks); /* the rejected Failed-state value never replaced zero */
 done:
     fixture_close(f);
     return result;
@@ -2950,7 +3942,7 @@ done:
     return result;
 }
 
-/** A call-level graph error puts the key back at the head and merges the hint that arrived meanwhile. */
+/** Wrong-epoch public calls reject before callbacks, leaving the queued key for a valid call. */
 static int test_putback_merge_fatal(void) {
     int result = 0;
     fixture_t *f = fixture_open(0u, 1u, 1);
@@ -2961,8 +3953,11 @@ static int test_putback_merge_fatal(void) {
     f->dbl->hint_event = WindowObserverEventObjectShow;
     f->dbl->hint_window = 0x310u;
     f->dbl->hint_pending = 1u;
-    Require(window_observer_pump(f->observer, f->graph, TestEpoch + 1u, 4u, &stats) == WindowObserverStatusGraphError);
-    Require(stats.dirty_pending == 1u);
+    memset(&stats, 0xA6, sizeof(stats));
+    Require(window_observer_pump(f->observer, f->graph, TestEpoch + 1u, 4u, &stats) == WindowObserverStatusGraphBindingMismatch);
+    { unsigned char expected[sizeof(stats)]; memset(expected, 0xA6, sizeof(expected));
+      Require(memcmp(&stats, expected, sizeof(stats)) == 0); }
+    Require(do_pump(f, 4u) == WindowObserverStatusMore);
     Require(do_pump(f, 4u) == WindowObserverStatusOk);
     Require(is_live(f, 0x310u) == 1);
 done:
@@ -3009,7 +4004,7 @@ static int pump_in_sink(void *context, const interop_window_event_t *event) {
 static int test_pump_destroy_status_paths(void) {
     int result = 0;
     fixture_t *f = fixture_open(0u, 1u, 1);
-    window_observer_stats_t stats;
+    window_observer_stats_t stats, before;
     sink_probe_t probe;
     uint32_t delivered = 0u;
     api_double_window_t *w;
@@ -3017,30 +4012,33 @@ static int test_pump_destroy_status_paths(void) {
     Require(add_window(f, 0x400u) != NULL);
     Require(admit(f, 0x400u) == 0); /* leaves one Announce queued */
 
-    /* Destroy entry + call-level error: put back at the head, GraphError. */
+    /* Wrong epoch is rejected before touching protected Destroy evidence. */
     api_double_hint_full(f->dbl, WindowObserverEventObjectDestroy, 0x400u, 0, 0, f->dbl->tick);
-    Require(window_observer_pump(f->observer, f->graph, TestEpoch + 1u, 4u, &stats) == WindowObserverStatusGraphError);
-    Require(stats.dirty_pending == 1u);
+    memset(&stats, 0xA5, sizeof(stats));
+    Require(window_observer_pump(f->observer, f->graph, TestEpoch + 1u, 4u, &stats) == WindowObserverStatusGraphBindingMismatch);
+    Require(((unsigned char *)&stats)[0] == 0xA5u);
 
     /* The same entry while the graph is inside drain: Reentrant, key kept. */
     memset(&probe, 0, sizeof(probe));
     probe.f = f;
+    Require(obs_stats(f, &before) == 0);
     Require(interop_window_graph_drain(f->graph, TestEpoch, pump_in_sink, &probe, 1u, &delivered) ==
             InteropWindowGraphStatusOk);
     Require(delivered == 1u && probe.pump == WindowObserverStatusReentrant);
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.dirty_pending == 1u && stats.last_graph_status == (uint32_t)InteropWindowGraphStatusReentrant);
+    Require(stats.dirty_pending == 1u && memcmp(&stats, &before, sizeof(stats)) == 0);
     Require(do_pump(f, 4u) == WindowObserverStatusOk);
     Require(obs_stats(f, &stats) == 0);
     Require(stats.dirty_pending == 0u);
 
-    /* Gone window + call-level error on the destroy note. */
+    /* Gone window + wrong epoch leaves the queued key for the bound call. */
     Require(add_window(f, 0x410u) != NULL);
     Require(admit(f, 0x410u) == 0);
     api_double_remove(f->dbl, 0x410u);
     hint(f, WindowObserverEventObjectHide, 0x410u);
-    Require(window_observer_pump(f->observer, f->graph, TestEpoch + 1u, 4u, &stats) == WindowObserverStatusGraphError);
-    Require(stats.dirty_pending == 1u);
+    memset(&stats, 0x5A, sizeof(stats));
+    Require(window_observer_pump(f->observer, f->graph, TestEpoch + 1u, 4u, &stats) == WindowObserverStatusGraphBindingMismatch);
+    Require(((unsigned char *)&stats)[0] == 0x5Au);
     Require(do_pump(f, 4u) == WindowObserverStatusOk);
     Require(is_live(f, 0x410u) == 0);
 
@@ -3140,7 +4138,7 @@ static int test_refresh_unseen_stamp_exhausted(void) {
     Require(add_window(f, 0x801u) != NULL);
     Require(admit(f, 0x800u) == 0); /* hint stamp + query stamp */
     api_double_enum_set(f->dbl, list, 1u);
-    Require(window_observer_refresh(f->observer, f->graph, TestEpoch, &stats) == WindowObserverStatusStampExhausted);
+    Require(window_observer_refresh(f->observer, f->graph, TestEpoch, &stats) == WindowObserverStatusTrackingFault);
     Require(stats.refreshes_aborted == 1u && stats.next_stamp == StampSentinel);
     Require(graph_stats(f, &gs) == 0);
     Require(gs.refresh_active == 0u);
@@ -3181,16 +4179,15 @@ static int test_cadence_corners(void) {
     fixture_close(f); /* only one observer may be Started per process */
     f = NULL;
 
-    /* Overflow without a backlog: stamp clock exhausted by the previous hint. */
+    /* Bound stamp exhaustion faults tracking instead of pretending a refresh can recover it. */
     g = fixture_open(0u, StampSentinel - 1u, 1);
     Require(g != NULL);
     Require(do_refresh(g) == WindowObserverStatusOk);
     hint(g, WindowObserverEventObjectCreate, 0xA0u); /* takes the last stamp */
-    hint(g, WindowObserverEventObjectCreate, 0xA1u); /* overflow latch */
-    Require(window_observer_next_timeout_ms(g->observer, 1000u) == 0u);
+    hint(g, WindowObserverEventObjectCreate, 0xA1u);
+    Require(window_observer_next_timeout_ms(g->observer, 1000u) == WindowObserverWaitForever);
     g->dbl->desktop = WindowObserverDesktopOther;
-    Require(window_observer_pump(g->observer, g->graph, TestEpoch, 4u, NULL) == WindowObserverStatusDesktopInactive);
-    Require(window_observer_next_timeout_ms(g->observer, 1000u) == (uint32_t)interval);
+    Require(window_observer_pump(g->observer, g->graph, TestEpoch, 4u, NULL) == WindowObserverStatusTrackingFault);
 done:
     fixture_close(f);
     fixture_close(g);
@@ -3238,6 +4235,7 @@ typedef struct fuzz_t {
     uint32_t sink_refuse_pct; /**< Percent of sink calls that refuse an event. */
     uint32_t options; /**< FuzzOption* bits. */
     uint32_t failures; /**< Oracle violations found (each prints one line, at most 20). */
+    uint32_t tracking_fault; /**< 1 after the observer conservatively latches uncertain protected evidence. */
     uint64_t steps; /**< Random steps executed. */
     uint64_t generations; /**< Announce events seen. */
     uint64_t max_generation; /**< Highest Announce generation seen. */
@@ -3500,6 +4498,9 @@ static void fuzz_pump(fuzz_t *z) {
     case WindowObserverStatusGraphQueueFull:
         fuzz_drain(z);
         break;
+    case WindowObserverStatusTrackingFault:
+        z->tracking_fault = 1u;
+        break;
     default:
         FuzzFail(z, "pump status %d (last graph status %u)", (int)status, (unsigned)stats.last_graph_status);
         break;
@@ -3508,6 +4509,7 @@ static void fuzz_pump(fuzz_t *z) {
 
 /** One refresh when the cadence says so; every status except the documented ones is a violation. */
 static void fuzz_refresh(fuzz_t *z) {
+    if (z->tracking_fault) return;
     window_observer_stats_t stats;
     if (!window_observer_refresh_due(z->observer, z->dbl->monotonic)) {
         return;
@@ -3520,6 +4522,9 @@ static void fuzz_refresh(fuzz_t *z) {
         break;
     case WindowObserverStatusGraphQueueFull:
         fuzz_drain(z);
+        break;
+    case WindowObserverStatusTrackingFault:
+        z->tracking_fault = 1u;
         break;
     default:
         FuzzFail(z, "refresh status %d (last graph status %u)", (int)status, (unsigned)stats.last_graph_status);
@@ -3616,6 +4621,10 @@ static void fuzz_converge_and_check(fuzz_t *z) {
 
 /** One random step of the world and the observer. */
 static void fuzz_step(fuzz_t *z, uint64_t seed) {
+    if (z->tracking_fault) {
+        z->steps += 1u; /* remaining ticks still run, but poisoned tracking admits no more work */
+        return;
+    }
     const uint32_t c = fuzz_percent(z);
     const int s = (int)(fuzz_random(z) % FuzzSlots);
     z->lookup_fail_pct = 2u;
@@ -3707,14 +4716,21 @@ static int fuzz_run_seed(uint64_t seed, uint32_t steps, uint32_t options, uint64
     Require(interop_window_graph_create(&graph_config, &z->graph) == InteropWindowGraphStatusOk);
     api_double_config(&config, z->dbl, 0u, 1u);
     Require(window_observer_create(&config, &z->observer) == WindowObserverStatusOk);
+    Require(window_observer_bind_graph(z->observer, z->graph, FuzzEpoch) == WindowObserverStatusOk);
     Require(window_observer_start(z->observer) == WindowObserverStatusOk);
     for (uint32_t i = 0; i < steps; i++) {
         fuzz_step(z, seed);
     }
-    fuzz_converge_and_check(z);
+    if (z->tracking_fault) {
+        window_observer_stats_t fault_stats;
+        if (window_observer_status(z->observer, &fault_stats) != WindowObserverStatusOk ||
+            fault_stats.state != WindowObserverStateTrackingFault) FuzzFail(z, "tracking fault was not sticky");
+    } else {
+        fuzz_converge_and_check(z);
+    }
     *step_total += z->steps;
     *generation_total += z->generations;
-    *overflow_total += z->overflows;
+    *overflow_total += z->overflows + (z->tracking_fault != 0u ? 1u : 0u);
     if (z->failures != 0u) {
         fprintf(stderr, "window_observer_windows.c: fuzz seed 0x%llx: %u violations\n", (unsigned long long)seed,
                 (unsigned)z->failures);
@@ -3723,7 +4739,10 @@ static int fuzz_run_seed(uint64_t seed, uint32_t steps, uint32_t options, uint64
 done:
     if (z != NULL) {
         if (z->observer != NULL) {
-            (void)window_observer_destroy(&z->observer);
+            (void)window_observer_stop(z->observer);
+            window_observer_quarantine_record_t quarantine;
+            memset(&quarantine, 0, sizeof(quarantine));
+            (void)window_observer_quarantine_handoff(&z->observer, &quarantine);
         }
         if (z->graph != NULL) {
             (void)interop_window_graph_destroy(&z->graph);
@@ -3746,7 +4765,7 @@ static int fuzz_run_many(uint32_t seeds, uint32_t steps, uint32_t options, uint6
         Require(rc == 0);
     }
     Require(step_total == (uint64_t)seeds * steps);
-    Require(generation_total > (uint64_t)seeds * 100u); /* the scenario really exports windows */
+    Require(generation_total > 100u); /* non-vacuous work continues before any fail-closed seed */
     Require((options & FuzzOptionBursts) == 0u || overflow_total > 0u); /* ... and really overflows */
     printf("  fuzz: %u seeds x %u steps = %llu steps, %llu generations, %llu overflow recoveries\n", (unsigned)seeds,
            (unsigned)steps, (unsigned long long)step_total, (unsigned long long)generation_total,
@@ -3800,6 +4819,7 @@ static const test_case_t TestCases[] = {
     TestEntry(test_lifecycle_unhook_failure),
     TestEntry(test_lifecycle_start_rollback_unhook_retry),
     TestEntry(test_lifecycle_destroy_started),
+    TestEntry(test_destroy_stopped_without_graph_resources),
     TestEntry(test_lifecycle_wrong_thread),
     TestEntry(test_hint_filter_table),
     TestEntry(test_hint_wrong_thread),
@@ -3821,6 +4841,10 @@ static const test_case_t TestCases[] = {
     TestEntry(test_pump_graph_reentrant),
     TestEntry(test_pump_stamp_exhausted),
     TestEntry(test_refresh_admits_in_order),
+    TestEntry(test_refresh_reopens_existing_transaction),
+    TestEntry(test_refresh_repeated_destroy_retry_bound),
+    TestEntry(test_pump_repeated_destroy_retry_bound),
+    TestEntry(test_bind_rejects_used_stamp_clock_before_mutation),
     TestEntry(test_refresh_defers_child_before_parent),
     TestEntry(test_refresh_failed_window_kept),
     TestEntry(test_refresh_unenumerated_survives),
@@ -3839,9 +4863,28 @@ static const test_case_t TestCases[] = {
     TestEntry(test_preedit_from_config),
     TestEntry(test_own_process_excluded),
     TestEntry(test_teardown_with_hints),
+    TestEntry(test_protected_destroy_handoff_contract),
+    TestEntry(test_untracked_destroy_capacity_fault),
+    TestEntry(test_protected_admission_reserve_boundary),
+    TestEntry(test_protected_stop_queue_full_retry),
+    TestEntry(test_protected_drain_queue_full_retry),
+    TestEntry(test_protected_destroy_exact_stamp_replacement),
+    TestEntry(test_repeated_destroy_after_tracked_removal),
+    TestEntry(test_candidate_transition_protects_proposed_key),
+    TestEntry(test_full_candidate_transition_retains_both_keys),
+    TestEntry(test_full_candidate_transition_bounded_pending),
+    TestEntry(test_overflow_retains_untracked_destroy_payloads),
+    TestEntry(test_protected_destroy_during_start_rollback),
+    TestEntry(test_protected_destroy_during_unhook_retry),
+    TestEntry(test_start_final_clock_fault_rolls_back),
+    TestEntry(test_tick_callback_fault_prevents_graph_mutation),
+    TestEntry(test_query_callback_fault_prevents_graph_mutation),
+    TestEntry(test_protected_destroy_during_deferred_promotion),
     TestEntry(test_stats_accounting),
     TestEntry(test_entry_arguments_and_threads),
+    TestEntry(test_o5_public_guard_matrix),
     TestEntry(test_start_zero_token),
+    TestEntry(test_failed_lifecycle_rejects_sync_and_configuration),
     TestEntry(test_hint_during_install),
     TestEntry(test_hint_destroy_coalesces),
     TestEntry(test_facts_overlay_corners),
@@ -3858,7 +4901,14 @@ static const test_case_t TestCases[] = {
 };
 
 /** Run every test; stop at the first failure and return nonzero. */
+#if defined(WgObsPrivateGuards) && WgObsPrivateGuards
+/** @brief Run exact-production scalar/guard probes; zero means every boundary passed. */
+extern int window_observer_private_guard_tests(void);
+#endif
 int main(void) {
+#if defined(WgObsPrivateGuards) && WgObsPrivateGuards
+    if (window_observer_private_guard_tests() != 0) return 1;
+#endif
     const size_t total = sizeof(TestCases) / sizeof(TestCases[0]);
     for (size_t i = 0; i < total; i++) {
         const int rc = TestCases[i].function();

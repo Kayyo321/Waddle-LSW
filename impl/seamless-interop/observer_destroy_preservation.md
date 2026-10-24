@@ -209,3 +209,37 @@ contract alone does not finish O5 or award progress.
   Never infer native release from suppression. The forthcoming coordinator
   contract must specify its complete fresh-query/capture/queue lifecycle before
   this observer contract can earn coordinator or installed-session credit.
+
+## Candidate-transition correction from implementation review
+
+Before a successful reservation returns, the previously reserved candidate must
+remain protected even inside graph clock callbacks. Use private temporary
+transition-candidate storage; outside the serialized prepare operation it is
+zero. Before promoting the proposed candidate or invoking a callback-capable
+drain, establish callback-only capacity for mailbox∪tracked∪old candidate∪new
+candidate. If adding the new key cannot fit, first drain under the still-valid
+old reservation with the new candidate unpublished; bound all work by the same
+129-operation budget. Return ProtectedStatePending/GraphQueueFull with both
+stored evidence and the old persistent candidate retained if no bounded progress
+can establish the transition reserve. Do not manufacture an incomplete-evidence
+fault merely because the bounded budget ended while all tuples are retained.
+
+Once the transition reserve fits, callbacks preserve Destroy for mailbox members,
+tracked keys and both candidates. Promote/apply any queued candidate Destroy
+before native queries, then compute the final new-candidate reserve plus exact
+Free count for admission. Commit persistent candidate only on Ok; clear temporary
+transition state on every exit. Every direct candidate assignment (including a
+popped ordinary Destroy in process_key) must use this safe transition rather than
+replace the persistent key before graph callbacks. Repeated Destroy for any
+existing mailbox key always merges there even if it left the tracked set.
+
+A bind graph-read failure before invalidation has no irreversible mutation:
+return the exact WrongThread/Reentrant local guard or GraphError for another
+unexpected read status, preserving binding/state. TrackingFault is reserved for
+an actually latched permanent fault, including a possible-mutation snapshot
+failure. A malformed preflight snapshot fails closed, without installing its
+partial data; distinguish retryable graph Reentrant from permanent invalid
+snapshot facts. Normal destroy of a healthy bound Stopped observer may discard
+ordinary hints once hooks/target/lifecycle/inflight are absent, mailbox empty,
+and a fresh complete graph snapshot has no Active/Retiring entries; no graph or
+backing resource is released by that observer-only free.

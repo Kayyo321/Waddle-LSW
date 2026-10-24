@@ -3544,3 +3544,15 @@ supersede older advisory proposals and grant no progress by themselves.
 [Exact readiness contract](daemon_guest_ready.md) freezes bounded incremental
 framing, correlated client transactions and per-client nonblocking configured
 guest-exec probes. This supplies no mapping or native acceptance authority.
+
+### 8.26 O5 observer implementation qualification
+
+`observer_destroy_preservation.md` specifies the implemented immutable binding,
+129-key mailbox, candidate transition, lifecycle and quarantine rules. Public
+stats remain176 bytes and graph ABI remains22 exports. The observer produces no
+capture, pin-drain or backing-release proof. The local all-gates receipt is
+`o5_evidence_2026_10_24/qualification.json`; Windows cross-build is distinguished
+from native execution. Coordinator staging and the installed session remain
+separate required work. Failed observers reject tracked-snapshot synchronization
+and preedit changes before graph/time/configuration mutation; sticky faults also
+reject preedit changes. Only cleanup and diagnostics remain available there.

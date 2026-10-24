@@ -1,0 +1,144 @@
+{
+  "source_sha256": {
+    "tests/interop/window_observer_coverage.py": "e942f4d64300f5428e26b074b3cb03d5a15ffffd54d3924880f05e92b92b373a",
+    "src/interop/window_observer_windows.c": "b43b736580e7aeeb5a9a0c2c938fda5198f1083dda26fd0d6d2262262c7c5521",
+    "tests/interop/window_observer_windows.c": "f01b8cf6cfed2bed324489ddfff32caa48a213c919d7f8c1fd52428bfd12f46a",
+    "tests/interop/window_observer_private.c": "fd8335c5943064bca08bb5e4ea038edef91ee63057275896c48413f68e5dcc68",
+    "tests/interop/window_observer_graph_faults.c": "e07dc929b31e60046ae7c4fc628b3f0dbdd478a5034cbb28c003f8f695a78bf1",
+    "src/interop/window_observer_windows.h": "c949bf04f69c95cd2e62683ca17add4ade30e4fa276bff538dacda76347ea897",
+    "tests/interop/window_observer_api_double.h": "08dc4726bc3db0c79c785455d9d12c0a32b5d3d0c7704aa899ee21c11f6024d9",
+    "include/waddle/interop_window_graph.h": "38676108ba7f6bc923ddbb8262e2a1aca5d950cd6ac57afb83b83aef7c5834b3",
+    "src/interop/window_graph.zig": "800e9976c028284be4134716182f176437b56a3a3bac725c336a6bb87e55c388",
+    "src/interop/window_graph_abi.zig": "0224568693cb3e3ccb7e318d8847b2d072ce4a73586d42fc22f871d40b524bb3",
+    "impl/seamless-interop/observer_destroy_preservation.md": "3d1ed9250fadee6f000aa8af0d691344565fd1094ca08ecb3dd637620bacfe00",
+    "/tmp/seamless_o5_worker_gate/window_graph_abi.o": "f682284fa0c1ebfa7d078bf56fbd6561bdf95fd263557bd36d09953c69cdfb13"
+  },
+  "commands": [
+    [
+      "cc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-Iinclude",
+      "-Isrc/interop",
+      "-pthread",
+      "--coverage",
+      "-fprofile-update=atomic",
+      "-fprofile-abs-path",
+      "-c",
+      "/home/dev/Waddle-LSW/tests/interop/window_observer_private.c",
+      "-o",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/observer.o"
+    ],
+    [
+      "cc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-Iinclude",
+      "-Isrc/interop",
+      "-pthread",
+      "-DWgObsWrapCalloc=1",
+      "-DWgObsPrivateGuards=1",
+      "-c",
+      "/home/dev/Waddle-LSW/tests/interop/window_observer_windows.c",
+      "-o",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/fixture.o"
+    ],
+    [
+      "cc",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/observer.o",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/fixture.o",
+      "/tmp/seamless_o5_worker_gate/window_graph_abi.o",
+      "--coverage",
+      "-pthread",
+      "-Wl,--wrap=calloc",
+      "-o",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/runner"
+    ],
+    [
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/runner"
+    ],
+    [
+      "cc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-Iinclude",
+      "-Isrc/interop",
+      "-pthread",
+      "-c",
+      "/home/dev/Waddle-LSW/tests/interop/window_observer_graph_faults.c",
+      "-o",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/fault_fixture.o"
+    ],
+    [
+      "cc",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/observer.o",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/fault_fixture.o",
+      "/tmp/seamless_o5_worker_gate/window_graph_abi.o",
+      "--coverage",
+      "-pthread",
+      "-Wl,--wrap=interop_window_graph_get_stats",
+      "-Wl,--wrap=interop_window_graph_invalidate_all",
+      "-Wl,--wrap=interop_window_graph_list_tracked_windows",
+      "-Wl,--wrap=interop_window_graph_note_destroyed",
+      "-Wl,--wrap=interop_window_graph_observe",
+      "-Wl,--wrap=interop_window_graph_refresh_abort",
+      "-Wl,--wrap=interop_window_graph_refresh_begin",
+      "-Wl,--wrap=interop_window_graph_refresh_commit",
+      "-Wl,--wrap=interop_window_graph_refresh_keep",
+      "-Wl,--wrap=interop_window_graph_refresh_offer",
+      "-Wl,--wrap=interop_window_graph_refresh_unseen",
+      "-Wl,--wrap=interop_window_graph_stamp_high_water",
+      "-o",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/fault_runner"
+    ],
+    [
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/fault_runner"
+    ],
+    [
+      "gcov",
+      "--json-format",
+      "-b",
+      "-c",
+      "/home/dev/Waddle-LSW/build/coverage/interop/window_observer/run-20261024T234541-60bb1913/observer.gcno"
+    ]
+  ],
+  "wrappers": [
+    "calloc"
+  ],
+  "fault_wrappers": [
+    "interop_window_graph_get_stats",
+    "interop_window_graph_invalidate_all",
+    "interop_window_graph_list_tracked_windows",
+    "interop_window_graph_note_destroyed",
+    "interop_window_graph_observe",
+    "interop_window_graph_refresh_abort",
+    "interop_window_graph_refresh_begin",
+    "interop_window_graph_refresh_commit",
+    "interop_window_graph_refresh_keep",
+    "interop_window_graph_refresh_offer",
+    "interop_window_graph_refresh_unseen",
+    "interop_window_graph_stamp_high_water"
+  ],
+  "toolchain": {
+    "cc": "cc (Debian 14.2.0-19) 14.2.0",
+    "gcov": "gcov (Debian 14.2.0-19) 14.2.0"
+  }
+}

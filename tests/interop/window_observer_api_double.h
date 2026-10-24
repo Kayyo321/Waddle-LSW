@@ -109,12 +109,18 @@ struct api_double_t {
     uint32_t remove_calls; /**< Number of remove_hook calls (failed ones included). */
     uint32_t remove_fail_at; /**< 1-based remove call number that fails; 0 = none. */
     uintptr_t removed_tokens[ApiDoubleMaxHooks]; /**< Token passed to remove call i (0-based). */
+    void (*remove_hook_fn)(api_double_t *dbl, void *arg); /**< Callback fired during remove_hook; NULL = none. */
+    void *remove_hook_arg; /**< Passed to remove_hook_fn. */
     window_observer_t *start_during_remove; /**< One-shot observer start attempted from remove_hook. */
     window_observer_status_t start_during_remove_status; /**< Result of the one-shot lifecycle interleave. */
 
     uint32_t tid; /**< Fake thread id returned for every thread except a registered helper. */
     uint64_t monotonic; /**< Value returned by monotonic_ms. */
+    void (*monotonic_hook)(api_double_t *dbl, void *arg); /**< One-shot callback inside monotonic_ms. */
+    void *monotonic_hook_arg; /**< Passed to monotonic_hook. */
     uint32_t tick; /**< Value returned by tick_ms; also the event time of emulated hints. */
+    void (*tick_hook)(api_double_t *dbl, void *arg); /**< One-shot callback inside tick_ms. */
+    void *tick_hook_arg; /**< Passed to tick_hook. */
     uint32_t monotonic_calls; /**< Number of monotonic_ms calls. */
     uint32_t tick_calls; /**< Number of tick_ms calls. */
 
@@ -363,6 +369,7 @@ static uint32_t api_double_current_thread_id(void *context) {
 static uint64_t api_double_monotonic_ms(void *context) {
     api_double_t *dbl = (api_double_t *)context;
     dbl->monotonic_calls++;
+    if (dbl->monotonic_hook != NULL) dbl->monotonic_hook(dbl, dbl->monotonic_hook_arg);
     return dbl->monotonic;
 }
 
@@ -370,6 +377,7 @@ static uint64_t api_double_monotonic_ms(void *context) {
 static uint32_t api_double_tick_ms(void *context) {
     api_double_t *dbl = (api_double_t *)context;
     dbl->tick_calls++;
+    if (dbl->tick_hook != NULL) dbl->tick_hook(dbl, dbl->tick_hook_arg);
     return dbl->tick;
 }
 
@@ -407,6 +415,9 @@ static int api_double_install_hook(void *context, uint32_t event_min, uint32_t e
 /** @brief api table entry: remove_hook. Fails at remove_fail_at; records the token. */
 static int api_double_remove_hook(void *context, uintptr_t hook) {
     api_double_t *dbl = (api_double_t *)context;
+    if (dbl->remove_hook_fn != NULL) {
+        dbl->remove_hook_fn(dbl, dbl->remove_hook_arg);
+    }
     const uint32_t index = dbl->remove_calls;
     dbl->remove_calls++;
     if (index < ApiDoubleMaxHooks) {

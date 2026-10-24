@@ -33,9 +33,10 @@
  *    full-refresh latch is set. refresh_due is true iff Started and (no attempt yet, or 250 ms
  *    elapsed, or a latch event not yet consumed by an attempt, tracked by latch_unconsumed), so a frozen clock with a persistently
  *    failing refresh runs at most one refresh per latch event.
- *  - Overflow. A full dirty table latches overflow; pump recovers with one full refresh (never
- *    invalidate_all): the table is discarded and refresh steps 2 to 6 run in place. A Truncated
- *    enumeration is applied but aborted instead of committed.
+ *  - Overflow. A full dirty table of ordinary hints latches overflow; protected Destroy evidence is
+ *    copied to its bounded mailbox and applied before recovery. Pump then discards only ordinary
+ *    dirty hints and runs one full refresh (never invalidate_all). A Truncated enumeration is
+ *    applied but aborted instead of committed.
  *  - Native table. create returns Unsupported when GetDpiForWindow is missing or the calling
  *    thread is not DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. The native query clamps width and
  *    height to InteropWindowGraphMaxExtent, never reads the title of a window of the current
@@ -44,8 +45,9 @@
  * Decisions where the header is silent:
  *  - Hints and dirty entries: hints_received counts every accepted hint (new entry or merge),
  *    hints_coalesced the merged subset. A hint that cannot obtain a stamp (clock exhausted)
- *    latches overflow. A hint delivered while the observer is not Started (including from inside
- *    install_hook) is ignored without a counter; start() latches a full refresh that covers it.
+ *    latches overflow. During Starting, Started, and Stopping callbacks, matching Destroy events
+ *    for tracked keys or the reserved candidate enter the protected mailbox. Other hints are
+ *    ignored outside Started; successful start latches a full refresh.
  *  - Destroy information already applied to the graph is cleared from a key before the key is
  *    put back, so a retry never repeats an applied destroy. The put-back helpers keep a defensive
  *    overflow latch for a full table; with the popped_in_flight reservation it cannot be reached.
@@ -153,6 +155,9 @@ typedef struct dirty_entry_t {
     uint32_t reserved0; /**< Padding, zero. */
 } dirty_entry_t;
 
+/** @brief Protected Destroy event retained until graph acceptance. */
+typedef window_observer_destroy_entry_t destroy_entry_t;
+
 /** @brief Private observer state; one calloc'd block owns everything below. */
 struct window_observer_t {
     window_observer_api_t api; /**< Copy of the native or injected table. */
@@ -163,6 +168,20 @@ struct window_observer_t {
     uint32_t dirty_count; /**< Entries in dirty[0..dirty_count), first-seen order. */
     uint32_t own_process_id; /**< Agent process id. */
     uint32_t uac_mode; /**< interop_window_uac_mode_t used to classify owner windows. */
+    interop_window_graph_t *bound_graph; /**< Borrowed immutable graph binding, or NULL. */
+    uint64_t bound_epoch; /**< Immutable graph epoch after bind, or zero. */
+    uint32_t graph_bound; /**< 1 after successful binding. */
+    uint32_t tracking_fault; /**< Sticky fail-closed ownership/evidence fault. */
+    uint32_t evidence_incomplete; /**< 1 when a delivered Destroy could not be retained. */
+    uint32_t tracked_snapshot_valid; /**< 1 when tracked_windows is the last complete graph snapshot. */
+    uint32_t tracked_count; /**< Active/Retiring unique HWND count, at most 64. */
+    uint64_t tracked_windows[WindowObserverTrackedCapacity]; /**< Sorted Active/Retiring HWND keys. */
+    uint32_t destroy_count; /**< Unique protected Destroy entries. */
+    uint32_t mailbox_inflight_index; /**< UINT32_MAX outside graph note_destroyed. */
+    destroy_entry_t destroys[WindowObserverDestroyCapacity]; /**< Protected mailbox. */
+    uint64_t candidate_window; /**< Current callback-reserved candidate, or zero. */
+    uint64_t transition_candidate_window; /**< Temporary second key while changing candidate reservations. */
+    uint32_t stop_invalidation_done; /**< Stop graph invalidation committed before hook retry. */
     uint32_t popped_in_flight; /**< 1 while pump holds a popped key (one slot stays reserved for it). */
     uint64_t next_stamp; /**< Next logical stamp; UINT64_MAX = exhausted. */
     uint64_t preedit_window; /**< Preedit HWND or 0. */
@@ -224,6 +243,311 @@ static int on_owner_thread(const window_observer_t *observer) {
     return observer->api.current_thread_id(observer->api_context) == observer->owner_thread;
 }
 
+static int dirty_find(const window_observer_t *observer, uint64_t window);
+
+/** @brief Latch a permanent tracking failure without touching graph/native ownership. */
+static void latch_tracking_fault(window_observer_t *observer, int evidence_incomplete) {
+    observer->tracking_fault = 1u;
+    if (evidence_incomplete) observer->evidence_incomplete = 1u;
+    observer->state = WindowObserverStateTrackingFault;
+}
+
+/** @brief Return whether one HWND is in the last complete tracked snapshot. */
+static int tracked_contains(const window_observer_t *observer, uint64_t window) {
+    for (uint32_t index = 0; index < observer->tracked_count; ++index) {
+        if (observer->tracked_windows[index] == window) return 1;
+    }
+    return 0;
+}
+
+/** @brief Find one protected mailbox key. */
+static int destroy_find(const window_observer_t *observer, uint64_t window) {
+    for (uint32_t index = 0; index < observer->destroy_count; ++index) {
+        if (observer->destroys[index].window == window) return (int)index;
+    }
+    return -1;
+}
+
+/** @brief Remove one mailbox record while preserving FIFO order. */
+static void destroy_remove(window_observer_t *observer, uint32_t index) {
+    if (index >= observer->destroy_count) return;
+    if (index + 1u < observer->destroy_count) {
+        memmove(&observer->destroys[index], &observer->destroys[index + 1u],
+                (observer->destroy_count - index - 1u) * sizeof(observer->destroys[0]));
+    }
+    observer->destroy_count -= 1u;
+    memset(&observer->destroys[observer->destroy_count], 0, sizeof(observer->destroys[0]));
+    if (observer->mailbox_inflight_index != UINT32_MAX) {
+        if (observer->mailbox_inflight_index == index) observer->mailbox_inflight_index = UINT32_MAX;
+        else if (observer->mailbox_inflight_index > index) observer->mailbox_inflight_index -= 1u;
+    }
+}
+
+/** @brief Validate and atomically install the frozen Active/Retiring graph snapshot. */
+static int refresh_tracked_snapshot_ex(window_observer_t *observer, int fault_on_error,
+                                       interop_window_graph_status_t *out_status) {
+    uint64_t windows[WindowObserverTrackedCapacity];
+    uint32_t count = 0u;
+    uint32_t free_count = 0u;
+    const interop_window_graph_status_t status = interop_window_graph_list_tracked_windows(
+        observer->bound_graph, observer->bound_epoch, windows, WindowObserverTrackedCapacity,
+        &count, &free_count);
+    if (out_status != NULL) *out_status = status;
+    if (status != InteropWindowGraphStatusOk) {
+        if (fault_on_error) {
+            observer->stats.last_graph_status = (uint32_t)status;
+            bump(&observer->stats.graph_errors);
+        }
+        if (fault_on_error) latch_tracking_fault(observer, 0);
+        return 0;
+    }
+    int valid = count <= WindowObserverTrackedCapacity && free_count <= WindowObserverTrackedCapacity &&
+                count + free_count <= WindowObserverTrackedCapacity;
+    for (uint32_t index = 0; valid && index < count; ++index) {
+        if (windows[index] == 0u || (index != 0u && windows[index - 1u] >= windows[index])) valid = 0;
+    }
+    if (!valid) {
+        /* An Ok result with malformed snapshot facts can never authorize callback admission. */
+        latch_tracking_fault(observer, 0);
+        return 0;
+    }
+    memcpy(observer->tracked_windows, windows, (size_t)count * sizeof(windows[0]));
+    if (count < WindowObserverTrackedCapacity) {
+        memset(observer->tracked_windows + count, 0,
+               (WindowObserverTrackedCapacity - count) * sizeof(windows[0]));
+    }
+    observer->tracked_count = count;
+    observer->tracked_snapshot_valid = 1u;
+    return 1;
+}
+
+static int refresh_tracked_snapshot(window_observer_t *observer, int fault_on_error) {
+    return refresh_tracked_snapshot_ex(observer, fault_on_error, NULL);
+}
+
+/** @brief Count the unique protected union including up to two candidate keys. */
+static uint32_t protected_union_count(const window_observer_t *observer, uint64_t candidate_a,
+                                     uint64_t candidate_b) {
+    uint32_t count = observer->destroy_count;
+    for (uint32_t index = 0; index < observer->tracked_count; ++index) {
+        if (destroy_find(observer, observer->tracked_windows[index]) < 0) count += 1u;
+    }
+    if (candidate_a != 0u && !tracked_contains(observer, candidate_a) &&
+        destroy_find(observer, candidate_a) < 0) count += 1u;
+    if (candidate_b != 0u && candidate_b != candidate_a &&
+        !tracked_contains(observer, candidate_b) && destroy_find(observer, candidate_b) < 0) count += 1u;
+    return count;
+}
+
+static int candidate_protected(const window_observer_t *observer, uint64_t window) {
+    return window != 0u && (observer->candidate_window == window ||
+                            observer->transition_candidate_window == window);
+}
+
+/** Promote Destroy payloads whose HWND became Active/Retiring after a graph mutation. */
+static int promote_tracked_dirty_destroys(window_observer_t *observer, uint64_t *out_windows,
+                                         uint32_t out_capacity) {
+    int promoted = 0;
+    for (uint32_t index = 0u; index < observer->dirty_count;) {
+        dirty_entry_t *entry = &observer->dirty[index];
+        if (entry->destroy_stamp == 0u ||
+            (!tracked_contains(observer, entry->window) && !candidate_protected(observer, entry->window))) {
+            index += 1u;
+            continue;
+        }
+        int mailbox_index = destroy_find(observer, entry->window);
+        if (mailbox_index < 0) {
+            if (observer->destroy_count >= WindowObserverDestroyCapacity) {
+                latch_tracking_fault(observer, 1);
+                return -1;
+            }
+            mailbox_index = (int)observer->destroy_count++;
+            memset(&observer->destroys[mailbox_index], 0, sizeof(observer->destroys[0]));
+            observer->destroys[mailbox_index].window = entry->window;
+        }
+        destroy_entry_t *protected_entry = &observer->destroys[mailbox_index];
+        if (entry->destroy_stamp >= protected_entry->destroy_stamp) {
+            protected_entry->destroy_stamp = entry->destroy_stamp;
+            protected_entry->event_time_ms = entry->destroy_event_ms;
+            protected_entry->reserved_zero = 0u;
+        }
+
+        /* Keep the dirty copy until graph acceptance; QueueFull must retain both copies. */
+        if ((uint32_t)promoted >= out_capacity) {
+            latch_tracking_fault(observer, 1);
+            return -1;
+        }
+        out_windows[promoted] = entry->window;
+        promoted += 1;
+        index += 1u;
+    }
+    return promoted;
+}
+
+/** @brief Apply one exact mailbox entry, retaining it unless graph acceptance and snapshot succeed. */
+static window_observer_status_t apply_protected_destroy(window_observer_t *observer,
+                                                        uint32_t index) {
+    if (index >= observer->destroy_count || observer->tracking_fault)
+        return observer->tracking_fault ? WindowObserverStatusTrackingFault : WindowObserverStatusBadState;
+    const destroy_entry_t saved = observer->destroys[index];
+    interop_window_observation_t observation;
+    memset(&observation, 0, sizeof(observation));
+    observer->mailbox_inflight_index = index;
+    const interop_window_graph_status_t status = interop_window_graph_note_destroyed(
+        observer->bound_graph, observer->bound_epoch, saved.window, saved.destroy_stamp,
+        saved.event_time_ms, &observation);
+    bump(&observer->stats.destroys_noted);
+    if (status != InteropWindowGraphStatusOk) {
+        observer->mailbox_inflight_index = UINT32_MAX;
+        observer->stats.last_graph_status = (uint32_t)status;
+        bump(&observer->stats.graph_errors);
+        if (status == InteropWindowGraphStatusQueueFull) return WindowObserverStatusGraphQueueFull;
+        if (status == InteropWindowGraphStatusReentrant) return WindowObserverStatusReentrant;
+        latch_tracking_fault(observer, 0);
+        return WindowObserverStatusTrackingFault;
+    }
+    if (!refresh_tracked_snapshot(observer, 1)) {
+        observer->mailbox_inflight_index = UINT32_MAX;
+        return WindowObserverStatusTrackingFault;
+    }
+    const int live_index = destroy_find(observer, saved.window);
+    if (live_index >= 0 && observer->destroys[live_index].destroy_stamp == saved.destroy_stamp)
+        destroy_remove(observer, (uint32_t)live_index);
+    const int dirty_index = dirty_find(observer, saved.window);
+    if (dirty_index >= 0 && observer->dirty[dirty_index].destroy_stamp == saved.destroy_stamp) {
+        observer->dirty[dirty_index].destroy_stamp = 0u;
+        observer->dirty[dirty_index].destroy_event_ms = 0u;
+        observer->dirty[dirty_index].kinds &= ~(uint32_t)DirtyKindDestroy;
+    }
+    observer->mailbox_inflight_index = UINT32_MAX;
+    return WindowObserverStatusOk;
+}
+
+/** @brief Establish callback/admission headroom; may apply retained mailbox entries. */
+static window_observer_status_t prepare_callbacks_locked(window_observer_t *observer,
+                                                        uint64_t candidate, int may_admit,
+                                                        int drain_all) {
+    if (!observer->graph_bound) return WindowObserverStatusBadState;
+    if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
+    const uint64_t previous_candidate = observer->candidate_window;
+    observer->transition_candidate_window = 0u;
+    uint32_t processed = 0u;
+    for (;;) {
+        interop_window_graph_status_t read_status = InteropWindowGraphStatusOk;
+        if (!refresh_tracked_snapshot_ex(observer, 0, &read_status)) {
+            observer->transition_candidate_window = 0u;
+            if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
+            if (read_status == InteropWindowGraphStatusReentrant) return WindowObserverStatusReentrant;
+            if (read_status == InteropWindowGraphStatusWrongThread) return WindowObserverStatusWrongThread;
+            return WindowObserverStatusGraphError;
+        }
+        const uint32_t old_union = protected_union_count(observer, previous_candidate, 0u);
+        if (old_union > WindowObserverDestroyCapacity) {
+            observer->transition_candidate_window = 0u;
+            latch_tracking_fault(observer, 1);
+            return WindowObserverStatusTrackingFault;
+        }
+        const uint32_t transition_union = protected_union_count(observer, previous_candidate, candidate);
+        if (candidate != previous_candidate && transition_union > WindowObserverDestroyCapacity) {
+            /* The new candidate is not published yet; callback work here is protected by old only. */
+            if (observer->destroy_count == 0u || processed == WindowObserverDestroyCapacity) {
+                observer->transition_candidate_window = 0u;
+                return WindowObserverStatusProtectedStatePending;
+            }
+            const window_observer_status_t applied = apply_protected_destroy(observer, 0u);
+            if (applied != WindowObserverStatusOk) {
+                observer->transition_candidate_window = 0u;
+                return applied;
+            }
+            processed += 1u;
+            continue;
+        }
+        if (candidate != previous_candidate) observer->transition_candidate_window = candidate;
+
+        uint64_t promoted_windows[WindowObserverTrackedCapacity + 2u];
+        const int promoted = promote_tracked_dirty_destroys(observer, promoted_windows,
+                                                             WindowObserverTrackedCapacity + 2u);
+        if (promoted < 0) {
+            observer->transition_candidate_window = 0u;
+            return WindowObserverStatusTrackingFault;
+        }
+        const uint32_t union_count = protected_union_count(observer,
+            candidate != previous_candidate ? candidate : previous_candidate, 0u);
+        uint32_t free_count;
+        /* The snapshot's exact Free count can be less than 64-count when Retiring entries occupy slots. */
+        uint64_t snapshot[WindowObserverTrackedCapacity];
+        uint32_t snapshot_count = 0u;
+        uint32_t snapshot_free = 0u;
+        const interop_window_graph_status_t status = interop_window_graph_list_tracked_windows(
+            observer->bound_graph, observer->bound_epoch, snapshot, WindowObserverTrackedCapacity,
+            &snapshot_count, &snapshot_free);
+        if (status != InteropWindowGraphStatusOk) {
+            observer->transition_candidate_window = 0u;
+            if (status == InteropWindowGraphStatusReentrant) return WindowObserverStatusReentrant;
+            if (status == InteropWindowGraphStatusWrongThread) return WindowObserverStatusWrongThread;
+            return WindowObserverStatusGraphError;
+        }
+        if (snapshot_count != observer->tracked_count || snapshot_free > WindowObserverTrackedCapacity ||
+            snapshot_count + snapshot_free > WindowObserverTrackedCapacity) {
+            observer->transition_candidate_window = 0u;
+            latch_tracking_fault(observer, 1);
+            return WindowObserverStatusTrackingFault;
+        }
+        free_count = snapshot_free;
+        const uint32_t reserve = union_count + (may_admit ? free_count : 0u);
+        if (promoted != 0) {
+            for (int index = 0; index < promoted; ++index) {
+                const int mailbox_index = destroy_find(observer, promoted_windows[index]);
+                if (mailbox_index < 0) continue; /* an earlier exact apply consumed this key */
+                if (processed == WindowObserverDestroyCapacity) {
+                    observer->transition_candidate_window = 0u;
+                    return WindowObserverStatusProtectedStatePending;
+                }
+                const window_observer_status_t applied = apply_protected_destroy(
+                    observer, (uint32_t)mailbox_index);
+                if (applied != WindowObserverStatusOk) {
+                    observer->transition_candidate_window = 0u;
+                    return applied;
+                }
+                processed += 1u;
+            }
+            continue;
+        }
+        if (drain_all && observer->destroy_count != 0u) {
+            if (processed == WindowObserverDestroyCapacity) {
+                observer->transition_candidate_window = 0u;
+                return WindowObserverStatusProtectedStatePending;
+            }
+            const window_observer_status_t applied = apply_protected_destroy(observer, 0u);
+            if (applied != WindowObserverStatusOk) {
+                observer->transition_candidate_window = 0u;
+                return applied;
+            }
+            processed += 1u;
+            continue;
+        }
+        if (union_count <= WindowObserverDestroyCapacity && reserve <= WindowObserverDestroyCapacity) {
+            observer->candidate_window = candidate;
+            observer->transition_candidate_window = 0u;
+            return WindowObserverStatusOk;
+        }
+        if (observer->destroy_count == 0u) {
+            observer->transition_candidate_window = 0u;
+            return WindowObserverStatusProtectedStatePending;
+        }
+        if (processed == WindowObserverDestroyCapacity) {
+            observer->transition_candidate_window = 0u;
+            return WindowObserverStatusProtectedStatePending;
+        }
+        const window_observer_status_t applied = apply_protected_destroy(observer, 0u);
+        if (applied != WindowObserverStatusOk) {
+            observer->transition_candidate_window = 0u;
+            return applied;
+        }
+        processed += 1u;
+    }
+}
+
 /* Gate of every owner-thread entry point: Ok, WrongThread or Reentrant; changes nothing. */
 static window_observer_status_t entry_gate(const window_observer_t *observer) {
     if (!on_owner_thread(observer)) {
@@ -232,6 +556,183 @@ static window_observer_status_t entry_gate(const window_observer_t *observer) {
     if (observer->busy != 0u) {
         return WindowObserverStatusReentrant;
     }
+    return WindowObserverStatusOk;
+}
+
+static int observer_span_valid(const void *pointer, size_t size, size_t alignment) {
+    const uintptr_t start = (uintptr_t)pointer;
+    return pointer != NULL && (start % alignment) == 0u && start <= UINTPTR_MAX - size;
+}
+
+static int observer_spans_overlap(const void *left, size_t left_size, const void *right,
+                                 size_t right_size) {
+    const uintptr_t left_start = (uintptr_t)left;
+    const uintptr_t right_start = (uintptr_t)right;
+    return left_start < right_start + right_size && right_start < left_start + left_size;
+}
+
+window_observer_status_t window_observer_bind_graph(window_observer_t *observer,
+                                                    interop_window_graph_t *graph,
+                                                    uint64_t session_epoch) {
+    if (observer == NULL || graph == NULL || session_epoch == 0u) return WindowObserverStatusInvalidArgument;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) return gate;
+    if (observer->state != WindowObserverStateCreated || observer->graph_bound || observer->tracking_fault)
+        return WindowObserverStatusBadState;
+    observer->busy = 1u;
+    uint64_t high_water = 0u;
+    interop_window_graph_stats_t graph_stats;
+    interop_window_graph_status_t graph_status = interop_window_graph_stamp_high_water(graph, &high_water);
+    if (graph_status == InteropWindowGraphStatusOk)
+        graph_status = interop_window_graph_get_stats(graph, &graph_stats);
+    if (graph_status != InteropWindowGraphStatusOk) {
+        observer->busy = 0u;
+        if (graph_status == InteropWindowGraphStatusWrongThread) return WindowObserverStatusWrongThread;
+        if (graph_status == InteropWindowGraphStatusReentrant) return WindowObserverStatusReentrant;
+        return WindowObserverStatusGraphError;
+    }
+    if (observer->next_stamp <= high_water || graph_stats.session_epoch != session_epoch) {
+        observer->busy = 0u;
+        return WindowObserverStatusInvalidArgument;
+    }
+    uint32_t retired = 0u;
+    graph_status = interop_window_graph_invalidate_all(graph, session_epoch, &retired);
+    if (graph_status == InteropWindowGraphStatusQueueFull) {
+        observer->busy = 0u;
+        return WindowObserverStatusGraphQueueFull;
+    }
+    observer->bound_graph = graph;
+    observer->bound_epoch = session_epoch;
+    if (graph_status != InteropWindowGraphStatusOk) {
+        observer->graph_bound = 0u;
+        observer->tracking_fault = 1u;
+        observer->state = WindowObserverStateTrackingFault;
+        observer->stats.last_graph_status = (uint32_t)graph_status;
+        bump(&observer->stats.graph_errors);
+        observer->busy = 0u;
+        return WindowObserverStatusTrackingFault;
+    }
+    if (!refresh_tracked_snapshot(observer, 1)) {
+        observer->busy = 0u;
+        return WindowObserverStatusTrackingFault;
+    }
+    observer->graph_bound = 1u;
+    observer->busy = 0u;
+    return WindowObserverStatusOk;
+}
+
+window_observer_status_t window_observer_sync_tracked(window_observer_t *observer) {
+    if (observer == NULL) return WindowObserverStatusInvalidArgument;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) return gate;
+    if (!observer->graph_bound) return WindowObserverStatusBadState;
+    if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
+    if (observer->state == WindowObserverStateFailed) return WindowObserverStatusBadState;
+    observer->busy = 1u;
+    const int ok = refresh_tracked_snapshot(observer, 1);
+    observer->busy = 0u;
+    return ok ? WindowObserverStatusOk : WindowObserverStatusTrackingFault;
+}
+
+window_observer_status_t window_observer_prepare_callbacks(window_observer_t *observer,
+                                                           uint64_t candidate_window,
+                                                           uint32_t admission_may_add_entries) {
+    if (observer == NULL || admission_may_add_entries > 1u) return WindowObserverStatusInvalidArgument;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) return gate;
+    if (!observer->graph_bound) return WindowObserverStatusBadState;
+    if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
+    if (observer->state != WindowObserverStateStarted && observer->state != WindowObserverStateStopped)
+        return WindowObserverStatusBadState;
+    observer->busy = 1u;
+    const window_observer_status_t result = prepare_callbacks_locked(observer, candidate_window,
+                                                                     admission_may_add_entries != 0u, 0);
+    observer->busy = 0u;
+    return result;
+}
+
+window_observer_status_t window_observer_destroy_pending(const window_observer_t *observer,
+                                                         uint64_t window,
+                                                         uint32_t *out_pending) {
+    if (observer == NULL || window == 0u || !observer_span_valid(out_pending, sizeof(*out_pending),
+                                                                  _Alignof(uint32_t)) ||
+        observer_spans_overlap(observer, sizeof(*observer), out_pending, sizeof(*out_pending)))
+        return WindowObserverStatusInvalidArgument;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) return gate;
+    if (!observer->graph_bound) return WindowObserverStatusBadState;
+    *out_pending = destroy_find(observer, window) >= 0 ? 1u : 0u;
+    return WindowObserverStatusOk;
+}
+
+window_observer_status_t window_observer_drain_protected_destroys(window_observer_t *observer) {
+    if (observer == NULL) return WindowObserverStatusInvalidArgument;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) return gate;
+    if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
+    if (!observer->graph_bound || (observer->state != WindowObserverStateStarted &&
+                                   observer->state != WindowObserverStateStopped))
+        return WindowObserverStatusBadState;
+    observer->busy = 1u;
+    const window_observer_status_t reserved = prepare_callbacks_locked(observer, 0u, 0, 1);
+    observer->busy = 0u;
+    return reserved;
+}
+
+window_observer_status_t window_observer_quarantine_handoff(
+    window_observer_t **observer_slot, window_observer_quarantine_record_t *record) {
+    if (!observer_span_valid(observer_slot, sizeof(*observer_slot), _Alignof(window_observer_t *)) ||
+        !observer_span_valid(record, sizeof(*record), _Alignof(window_observer_quarantine_record_t)) ||
+        observer_spans_overlap(observer_slot, sizeof(*observer_slot), record, sizeof(*record)))
+        return WindowObserverStatusInvalidArgument;
+    window_observer_t *observer = *observer_slot;
+    if (observer == NULL) return WindowObserverStatusInvalidArgument;
+    if (observer_spans_overlap(observer, sizeof(*observer), record, sizeof(*record)) ||
+        observer_spans_overlap(observer, sizeof(*observer), observer_slot, sizeof(*observer_slot)))
+        return WindowObserverStatusInvalidArgument;
+    const window_observer_status_t gate = entry_gate(observer);
+    if (gate != WindowObserverStatusOk) return gate;
+    if ((observer->state != WindowObserverStateStopped && observer->state != WindowObserverStateTrackingFault) ||
+        observer->hooks[0] != 0u || observer->hooks[1] != 0u || observer->hooks[2] != 0u ||
+        atomic_load(&g_active_observer) == observer || atomic_load(&g_hint_inflight) != 0u)
+        return WindowObserverStatusProtectedStatePending;
+    if (observer->dirty_count > WindowObserverDirtyCapacity ||
+        observer->destroy_count > WindowObserverDestroyCapacity ||
+        observer->tracked_count > WindowObserverTrackedCapacity)
+        return WindowObserverStatusTrackingFault;
+    window_observer_quarantine_record_t staged;
+    memset(&staged, 0, sizeof(staged));
+    staged.version = WindowObserverQuarantineVersion;
+    staged.size = (uint32_t)sizeof(staged);
+    staged.borrowed_graph = observer->bound_graph;
+    staged.session_epoch = observer->bound_epoch;
+    staged.observer_state = observer->state;
+    staged.last_graph_status = observer->stats.last_graph_status;
+    staged.tracking_fault = observer->tracking_fault;
+    staged.evidence_incomplete = observer->evidence_incomplete;
+    staged.protected_count = observer->destroy_count;
+    staged.dirty_count = observer->dirty_count;
+    staged.tracked_count = observer->tracked_count;
+    staged.tracked_snapshot_valid = observer->tracked_snapshot_valid;
+    staged.candidate_window = observer->candidate_window;
+    staged.mailbox_inflight_index = observer->mailbox_inflight_index;
+    memcpy(staged.protected_destroys, observer->destroys, sizeof(observer->destroys));
+    for (uint32_t index = 0; index < observer->dirty_count; ++index) {
+        const dirty_entry_t *source = &observer->dirty[index];
+        window_observer_dirty_record_t *target = &staged.pending_dirty[index];
+        target->window = source->window;
+        target->kinds = source->kinds;
+        target->retries = source->retries;
+        target->first_stamp = source->first_stamp;
+        target->last_stamp = source->last_stamp;
+        target->destroy_stamp = source->destroy_stamp;
+        target->destroy_event_ms = source->destroy_event_ms;
+        target->reserved_zero = 0u;
+    }
+    memcpy(staged.last_known_tracked_windows, observer->tracked_windows, sizeof(observer->tracked_windows));
+    memcpy(record, &staged, sizeof(staged));
+    *observer_slot = NULL;
+    free(observer);
     return WindowObserverStatusOk;
 }
 
@@ -517,28 +1018,50 @@ window_observer_status_t window_observer_create(const window_observer_config_t *
     observer->preedit_window = cfg.preedit_window;
     observer->own_process_id = cfg.own_process_id;
     observer->uac_mode = cfg.uac_mode;
+    observer->mailbox_inflight_index = UINT32_MAX;
     *out_observer = observer;
     return WindowObserverStatusOk;
 }
 
 /* Body of stop; the caller holds the busy flag and has checked thread and argument. */
 static window_observer_status_t stop_locked(window_observer_t *observer) {
-    if (observer->state != WindowObserverStateStarted && observer->state != WindowObserverStateFailed) {
+    if (observer->state == WindowObserverStateCreated) {
+        if (!observer->graph_bound) return WindowObserverStatusBadState;
+        observer->state = WindowObserverStateStopped;
         return WindowObserverStatusOk;
     }
-    release_slot(observer);
+    if (observer->state == WindowObserverStateStopped) return WindowObserverStatusOk;
+    if (observer->state != WindowObserverStateStarted && observer->state != WindowObserverStateFailed &&
+        observer->state != WindowObserverStateStopping && observer->state != WindowObserverStateTrackingFault)
+        return WindowObserverStatusBadState;
+    if (!observer->tracking_fault && !observer->stop_invalidation_done) {
+        uint32_t retired = 0u;
+        const interop_window_graph_status_t graph_status = interop_window_graph_invalidate_all(
+            observer->bound_graph, observer->bound_epoch, &retired);
+        if (graph_status == InteropWindowGraphStatusQueueFull) {
+            observer->stats.last_graph_status = (uint32_t)graph_status;
+            bump(&observer->stats.graph_errors);
+            return WindowObserverStatusGraphQueueFull;
+        }
+        if (graph_status != InteropWindowGraphStatusOk) {
+            observer->stats.last_graph_status = (uint32_t)graph_status;
+            bump(&observer->stats.graph_errors);
+            latch_tracking_fault(observer, 0);
+        } else {
+            observer->stop_invalidation_done = 1u;
+            if (!refresh_tracked_snapshot(observer, 1)) observer->tracking_fault = 1u;
+        }
+    }
+    observer->state = observer->tracking_fault ? WindowObserverStateTrackingFault : WindowObserverStateStopping;
     const int failed = remove_owned_hooks(observer);
-    observer->dirty_count = 0u;
-    observer->popped_in_flight = 0u;
-    observer->overflow = 0u;
-    observer->refresh_requested = 0u;
     if (failed) {
-        observer->state = WindowObserverStateFailed;
+        if (!observer->tracking_fault) observer->state = WindowObserverStateFailed;
         return WindowObserverStatusUnhookFailed;
     }
-    observer->state = WindowObserverStateStopped;
+    release_slot(observer);
     release_lifecycle(observer);
-    return WindowObserverStatusOk;
+    observer->state = observer->tracking_fault ? WindowObserverStateTrackingFault : WindowObserverStateStopped;
+    return observer->tracking_fault ? WindowObserverStatusTrackingFault : WindowObserverStatusOk;
 }
 
 /** @copydoc window_observer_stop */
@@ -570,14 +1093,37 @@ window_observer_status_t window_observer_destroy(window_observer_t **observer_sl
         return gate;
     }
     observer->busy = 1u;
-    if (observer->state == WindowObserverStateStarted || observer->state == WindowObserverStateFailed) {
-        const window_observer_status_t result = stop_locked(observer);
-        if (result != WindowObserverStatusOk) {
-            observer->busy = 0u;
-            return result;
-        }
+    if (observer->tracking_fault) { observer->busy = 0u; return WindowObserverStatusTrackingFault; }
+    if (observer->hooks[0] != 0u || observer->hooks[1] != 0u || observer->hooks[2] != 0u ||
+        atomic_load(&g_active_observer) == observer || atomic_load(&g_lifecycle_observer) == observer ||
+        atomic_load(&g_hint_inflight) != 0u) {
+        observer->busy = 0u;
+        return WindowObserverStatusProtectedStatePending;
     }
-    release_slot(observer);
+    if (observer->state == WindowObserverStateStarted || observer->state == WindowObserverStateFailed ||
+        observer->state == WindowObserverStateStopping || observer->state == WindowObserverStateTrackingFault ||
+        observer->destroy_count != 0u) {
+        observer->busy = 0u;
+        return WindowObserverStatusProtectedStatePending;
+    }
+    if (observer->graph_bound) {
+        if (observer->state != WindowObserverStateStopped) {
+            observer->busy = 0u;
+            return WindowObserverStatusProtectedStatePending;
+        }
+        uint64_t windows[WindowObserverTrackedCapacity];
+        uint32_t count = 0u, free_count = 0u;
+        const interop_window_graph_status_t status = interop_window_graph_list_tracked_windows(
+            observer->bound_graph, observer->bound_epoch, windows, WindowObserverTrackedCapacity,
+            &count, &free_count);
+        if (status != InteropWindowGraphStatusOk || count != 0u) {
+            observer->busy = 0u;
+            return WindowObserverStatusProtectedStatePending;
+        }
+    } else if (observer->state != WindowObserverStateCreated || observer->dirty_count != 0u) {
+        observer->busy = 0u;
+        return WindowObserverStatusProtectedStatePending;
+    }
     free(observer);
     *observer_slot = NULL;
     return WindowObserverStatusOk;
@@ -585,20 +1131,25 @@ window_observer_status_t window_observer_destroy(window_observer_t **observer_sl
 
 /* Body of start; the caller holds the busy flag and has checked thread and argument. */
 static window_observer_status_t start_locked(window_observer_t *observer) {
-    if (observer->state != WindowObserverStateCreated && observer->state != WindowObserverStateStopped) {
+    if (!observer->graph_bound || observer->tracking_fault ||
+        (observer->state != WindowObserverStateCreated && observer->state != WindowObserverStateStopped)) {
         return WindowObserverStatusBadState;
     }
-    if (!reserve_lifecycle(observer)) {
-        return WindowObserverStatusAlreadyActive;
+    if (!reserve_lifecycle(observer)) return WindowObserverStatusAlreadyActive;
+    const window_observer_status_t reservation = prepare_callbacks_locked(observer, 0u, 0, 1);
+    if (reservation != WindowObserverStatusOk) {
+        release_lifecycle(observer);
+        return reservation;
     }
+    const window_observer_state_t prior_state = (window_observer_state_t)observer->state;
+    observer->state = WindowObserverStateStarting;
     window_observer_t *expected = NULL;
     if (!atomic_compare_exchange_strong(&g_active_observer, &expected, observer)) {
+        observer->state = prior_state;
         release_lifecycle(observer);
         return WindowObserverStatusAlreadyActive;
     }
-    observer->dirty_count = 0u;
-    observer->popped_in_flight = 0u;
-    observer->overflow = 0u;
+    observer->stop_invalidation_done = 0u;
 
     for (uint32_t i = 0; i < ObserverHookCount; i++) {
         uintptr_t token = 0u;
@@ -608,20 +1159,28 @@ static window_observer_status_t start_locked(window_observer_t *observer) {
             observer->hooks[i] = token;
         }
         if (rc != 0 || token == 0u) {
-            release_slot(observer);
+            observer->stop_invalidation_done = 1u; /* failed-start rollback never mutates the graph */
             if (remove_owned_hooks(observer)) {
-                observer->state = WindowObserverStateFailed;
+                observer->state = observer->tracking_fault ? WindowObserverStateTrackingFault : WindowObserverStateFailed;
             } else {
-                observer->state = WindowObserverStateStopped;
+                release_slot(observer);
+                observer->state = observer->tracking_fault ? WindowObserverStateTrackingFault : WindowObserverStateStopped;
                 release_lifecycle(observer);
             }
-            return WindowObserverStatusHookFailed;
+            return observer->tracking_fault ? WindowObserverStatusTrackingFault : WindowObserverStatusHookFailed;
         }
+        if (observer->tracking_fault) break;
     }
-    observer->dirty_count = 0u; /* hints that raced the install were ignored; the latch below covers them */
-    observer->overflow = 0u;
+    if (observer->tracking_fault) {
+        observer->state = WindowObserverStateTrackingFault;
+        return stop_locked(observer);
+    }
     observer->refresh_requested = 1u;
     observer->latch_ms = observer->api.monotonic_ms(observer->api_context);
+    if (observer->tracking_fault) {
+        observer->state = WindowObserverStateTrackingFault;
+        return stop_locked(observer);
+    }
     observer->latch_unconsumed = 1u;
     observer->have_attempt = 0u;
     observer->last_attempt_ms = 0u;
@@ -655,12 +1214,23 @@ window_observer_status_t window_observer_set_preedit_window(window_observer_t *o
     if (gate != WindowObserverStatusOk) {
         return gate;
     }
+    /* Starting/Stopping are serialized by busy; Failed permits cleanup/diagnostics only. */
+    if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
+    if (observer->state == WindowObserverStateFailed) return WindowObserverStatusBadState;
     observer->busy = 1u;
     if (observer->preedit_window != window) {
+        uint64_t now_ms = 0u;
+        if (observer->state == WindowObserverStateStarted) {
+            now_ms = observer->api.monotonic_ms(observer->api_context);
+            if (observer->tracking_fault) {
+                observer->busy = 0u;
+                return WindowObserverStatusTrackingFault;
+            }
+        }
         observer->preedit_window = window;
         if (observer->state == WindowObserverStateStarted) {
             observer->refresh_requested = 1u;
-            observer->latch_ms = observer->api.monotonic_ms(observer->api_context);
+            observer->latch_ms = now_ms;
             observer->latch_unconsumed = 1u;
         }
     }
@@ -693,7 +1263,9 @@ static void note_hint_active(window_observer_t *observer, uint32_t event, uint64
         bump_atomic(&observer->hints_wrong_thread);
         return;
     }
-    if (observer->state != WindowObserverStateStarted) {
+    if (observer->state != WindowObserverStateStarted && observer->state != WindowObserverStateStarting &&
+        observer->state != WindowObserverStateStopping && observer->state != WindowObserverStateFailed &&
+        observer->state != WindowObserverStateTrackingFault) {
         return;
     }
     if (object_id != WindowObserverObjectIdWindow || child_id != WindowObserverChildIdSelf || window == 0u ||
@@ -701,12 +1273,55 @@ static void note_hint_active(window_observer_t *observer, uint32_t event, uint64
         bump(&observer->stats.hints_filtered);
         return;
     }
-    uint64_t stamp = 0;
-    if (!stamp_next(observer, &stamp)) {
-        observer->overflow = 1u;
+    const uint32_t kind = dirty_kind_for_event(event);
+    if (observer->state != WindowObserverStateStarted && event != WindowObserverEventObjectDestroy) {
+        observer->refresh_requested = 1u;
         return;
     }
-    const uint32_t kind = dirty_kind_for_event(event);
+    uint64_t stamp = 0;
+    if (!stamp_next(observer, &stamp)) {
+        if (observer->graph_bound) latch_tracking_fault(observer, 1);
+        else observer->overflow = 1u;
+        return;
+    }
+    if (event == WindowObserverEventObjectDestroy && observer->graph_bound &&
+        (destroy_find(observer, window) >= 0 || tracked_contains(observer, window) ||
+         candidate_protected(observer, window))) {
+        int protected_index = destroy_find(observer, window);
+        if (protected_index < 0) {
+            if (observer->destroy_count >= WindowObserverDestroyCapacity) {
+                latch_tracking_fault(observer, 1);
+                return;
+            }
+            protected_index = (int)observer->destroy_count++;
+            memset(&observer->destroys[protected_index], 0, sizeof(observer->destroys[0]));
+            observer->destroys[protected_index].window = window;
+        } else {
+            bump(&observer->stats.hints_coalesced);
+        }
+        observer->destroys[protected_index].destroy_stamp = stamp;
+        observer->destroys[protected_index].event_time_ms = event_time_ms;
+        int dirty_index = dirty_find(observer, window);
+        if (dirty_index >= 0) {
+            dirty_entry_t *entry = &observer->dirty[dirty_index];
+            entry->kinds |= kind;
+            entry->last_stamp = stamp;
+            entry->destroy_stamp = stamp;
+            entry->destroy_event_ms = event_time_ms;
+            bump(&observer->stats.hints_coalesced);
+        } else if (observer->dirty_count + observer->popped_in_flight < WindowObserverDirtyCapacity) {
+            dirty_entry_t *entry = &observer->dirty[observer->dirty_count++];
+            memset(entry, 0, sizeof(*entry));
+            entry->window = window;
+            entry->kinds = kind;
+            entry->first_stamp = stamp;
+            entry->last_stamp = stamp;
+            entry->destroy_stamp = stamp;
+            entry->destroy_event_ms = event_time_ms;
+        }
+        bump(&observer->stats.hints_received);
+        return;
+    }
     int index = dirty_find(observer, window);
     if (index >= 0) {
         dirty_entry_t *entry = &observer->dirty[index];
@@ -722,7 +1337,11 @@ static void note_hint_active(window_observer_t *observer, uint32_t event, uint64
     }
     /* A popped key keeps one slot reserved for its put-back, so a put-back never forces an overflow. */
     if (observer->dirty_count + observer->popped_in_flight >= WindowObserverDirtyCapacity) {
-        observer->overflow = 1u;
+        if (event == WindowObserverEventObjectDestroy && observer->graph_bound) {
+            latch_tracking_fault(observer, 1);
+        } else {
+            observer->overflow = 1u;
+        }
         bump(&observer->stats.hint_overflows);
         return;
     }
@@ -893,15 +1512,22 @@ static void refresh_abort_quiet(window_observer_t *observer, interop_window_grap
 /* Pump                                                                                       */
 /* ------------------------------------------------------------------------------------------ */
 
-/* Apply a note_destroyed call and fold its status. */
-static fold_t apply_destroy(window_observer_t *observer, interop_window_graph_t *graph, uint64_t epoch,
-                            uint64_t window, uint64_t stamp, uint32_t event_ms) {
-    interop_window_observation_t observation;
-    memset(&observation, 0, sizeof(observation));
-    const interop_window_graph_status_t status =
-        interop_window_graph_note_destroyed(graph, epoch, window, stamp, event_ms, &observation);
-    bump(&observer->stats.destroys_noted);
-    return fold_status(observer, status);
+/* Apply a query-confirmed Gone through the same protected, exact-stamp mailbox path as a hint. */
+static window_observer_status_t apply_fresh_destroy(window_observer_t *observer, uint64_t window,
+                                                   uint64_t stamp, uint32_t event_ms) {
+    int index = destroy_find(observer, window);
+    if (index < 0) {
+        if (observer->destroy_count >= WindowObserverDestroyCapacity) {
+            latch_tracking_fault(observer, 1);
+            return WindowObserverStatusTrackingFault;
+        }
+        index = (int)observer->destroy_count++;
+        memset(&observer->destroys[index], 0, sizeof(observer->destroys[0]));
+        observer->destroys[index].window = window;
+    }
+    observer->destroys[index].destroy_stamp = stamp;
+    observer->destroys[index].event_time_ms = event_ms;
+    return apply_protected_destroy(observer, (uint32_t)index);
 }
 
 /* Put a stopped key back: QueueFull goes to the tail, any other stop to the head (first-seen order). */
@@ -918,34 +1544,90 @@ static window_observer_status_t process_key(window_observer_t *observer, interop
                                             uint64_t epoch, dirty_entry_t *entry) {
     fold_t fold = FoldContinue;
     if (entry->destroy_stamp != 0u) {
-        fold = apply_destroy(observer, graph, epoch, entry->window, entry->destroy_stamp, entry->destroy_event_ms);
-        if (fold == FoldQueueFull || fold == FoldReentrant || fold == FoldFatal) {
-            put_back(observer, entry, fold);
-            return stop_status(fold);
+        /* Reserve the popped Destroy key before its graph clock callback can reenter note_hint. */
+        const window_observer_status_t transition = prepare_callbacks_locked(observer, entry->window, 0, 0);
+        if (transition != WindowObserverStatusOk) {
+            put_back(observer, entry, transition == WindowObserverStatusGraphQueueFull ?
+                     FoldQueueFull : FoldFatal);
+            return transition;
         }
-        if (fold == FoldDrop) {
-            return WindowObserverStatusOk; /* key dropped */
+        int destroy_index = destroy_find(observer, entry->window);
+        if (destroy_index < 0) {
+            if (observer->destroy_count >= WindowObserverDestroyCapacity) {
+                latch_tracking_fault(observer, 1);
+                put_back(observer, entry, FoldFatal);
+                return WindowObserverStatusTrackingFault;
+            }
+            destroy_index = (int)observer->destroy_count++;
+            observer->destroys[destroy_index].window = entry->window;
+            observer->destroys[destroy_index].reserved_zero = 0u;
+        }
+        if (entry->destroy_stamp >= observer->destroys[destroy_index].destroy_stamp) {
+            observer->destroys[destroy_index].destroy_stamp = entry->destroy_stamp;
+            observer->destroys[destroy_index].event_time_ms = entry->destroy_event_ms;
+        }
+        const window_observer_status_t drained = apply_protected_destroy(observer, (uint32_t)destroy_index);
+        if (drained != WindowObserverStatusOk) {
+            put_back(observer, entry, drained == WindowObserverStatusGraphQueueFull ? FoldQueueFull : FoldFatal);
+            return drained;
         }
         entry->destroy_stamp = 0u;
         entry->destroy_event_ms = 0u;
         entry->kinds &= ~(uint32_t)DirtyKindDestroy;
     }
 
-    uint64_t stamp = 0;
-    if (!stamp_next(observer, &stamp)) {
-        dirty_push_front(observer, entry);
-        return WindowObserverStatusStampExhausted;
+    const window_observer_status_t reserve = prepare_callbacks_locked(observer, entry->window, 1, 0);
+    if (reserve != WindowObserverStatusOk) {
+        put_back(observer, entry, reserve == WindowObserverStatusGraphQueueFull ? FoldQueueFull : FoldFatal);
+        return reserve;
     }
-    const uint32_t captured_ms = observer->api.tick_ms(observer->api_context);
     interop_window_facts_t facts;
-    const window_observer_query_result_t result = query_window(observer, entry->window, &facts, stamp, captured_ms);
+    window_observer_query_result_t result = WindowObserverQueryFailed;
+    uint64_t stamp = 0u;
+    uint32_t captured_ms = 0u;
+    for (uint32_t attempt = 0; attempt <= WindowObserverDestroyCapacity; ++attempt) {
+        if (!stamp_next(observer, &stamp)) {
+            latch_tracking_fault(observer, 1);
+            dirty_push_front(observer, entry);
+            return WindowObserverStatusTrackingFault;
+        }
+        captured_ms = observer->api.tick_ms(observer->api_context);
+        if (observer->tracking_fault) {
+            dirty_push_front(observer, entry);
+            return WindowObserverStatusTrackingFault;
+        }
+        result = query_window(observer, entry->window, &facts, stamp, captured_ms);
+        if (observer->tracking_fault) {
+            dirty_push_front(observer, entry);
+            return WindowObserverStatusTrackingFault;
+        }
+        const int raced_destroy = destroy_find(observer, entry->window);
+        if (raced_destroy < 0) break;
+        if (attempt == WindowObserverDestroyCapacity) {
+            latch_tracking_fault(observer, 1);
+            dirty_push_front(observer, entry);
+            return WindowObserverStatusTrackingFault;
+        }
+        const window_observer_status_t drained = apply_protected_destroy(observer, (uint32_t)raced_destroy);
+        if (drained != WindowObserverStatusOk) {
+            put_back(observer, entry, drained == WindowObserverStatusGraphQueueFull ? FoldQueueFull : FoldFatal);
+            return drained;
+        }
+    }
 
     if (result == WindowObserverQueryExists) {
         interop_window_observation_t observation;
         memset(&observation, 0, sizeof(observation));
         const interop_window_graph_status_t status = interop_window_graph_observe(graph, epoch, &facts, &observation);
         fold = fold_status(observer, status);
+        if (fold == FoldContinue && observer->tracking_fault) {
+            dirty_push_front(observer, entry);
+            return WindowObserverStatusTrackingFault;
+        }
         if (fold == FoldContinue) {
+            if (!refresh_tracked_snapshot(observer, 1)) return WindowObserverStatusTrackingFault;
+            const window_observer_status_t drained = prepare_callbacks_locked(observer, entry->window, 0, 1);
+            if (drained != WindowObserverStatusOk) return drained;
             count_uac_hidden(observer, &observation);
             if (observation.disposition == InteropWindowDispositionSuspended) {
                 /* Defensive: the core always sets OnInputDesktop, so the graph cannot answer Suspended. */
@@ -956,10 +1638,13 @@ static window_observer_status_t process_key(window_observer_t *observer, interop
             return WindowObserverStatusOk;
         }
     } else if (result == WindowObserverQueryGone) {
-        fold = apply_destroy(observer, graph, epoch, entry->window, stamp, captured_ms);
-        if (fold == FoldContinue) {
+        const window_observer_status_t destroyed = apply_fresh_destroy(observer, entry->window, stamp, captured_ms);
+        if (destroyed == WindowObserverStatusOk) {
             return WindowObserverStatusOk;
         }
+        if (destroyed == WindowObserverStatusGraphQueueFull) fold = FoldQueueFull;
+        else if (destroyed == WindowObserverStatusReentrant) fold = FoldReentrant;
+        else return destroyed;
     } else {
         if (entry->retries < WindowObserverQueryRetries) {
             entry->retries += 1u;
@@ -984,23 +1669,63 @@ static window_observer_status_t refresh_body(window_observer_t *observer, intero
 /* Body of pump after argument, thread, busy and state checks; the busy flag is held. */
 static window_observer_status_t pump_locked(window_observer_t *observer, interop_window_graph_t *graph,
                                             uint64_t epoch, uint32_t budget) {
-    if (!desktop_is_default(observer)) {
-        desktop_refuse(observer, observer->api.monotonic_ms(observer->api_context));
+    const int desktop_default = desktop_is_default(observer);
+    if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
+    if (!desktop_default) {
+        const uint64_t now_ms = observer->api.monotonic_ms(observer->api_context);
+        if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
+        desktop_refuse(observer, now_ms);
         return WindowObserverStatusDesktopInactive;
     }
+    const window_observer_status_t pending = prepare_callbacks_locked(observer, 0u, 0, 1);
+    if (pending != WindowObserverStatusOk) return pending;
     if (observer->overflow != 0u) {
         /*
          * Overflow recovery is a full refresh, never invalidate_all: the refresh offers every enumerated
          * window (unchanged windows produce no event), requeries the unseen ones and retires only what
          * is gone, so a flood of hints for unrelated (child) windows costs one refresh and no churn.
-         * The queued hints, destroy information included, are discarded; the refresh latch stays set
-         * until a refresh commits, so a failed recovery is retried at the cadence.
+         * Protected Destroy entries are applied before this path. Ordinary dirty hints are discarded;
+         * the refresh latch stays set until a refresh commits, so a failed recovery is retried at the
+         * cadence.
          */
         bump(&observer->stats.invalidations); /* counts overflow recoveries; no invalidate_all is issued */
-        observer->dirty_count = 0u;
+        uint32_t retained = 0u;
+        for (uint32_t index = 0; index < observer->dirty_count; ++index) {
+            if (observer->dirty[index].destroy_stamp != 0u) {
+                if (tracked_contains(observer, observer->dirty[index].window) ||
+                    observer->dirty[index].window == observer->candidate_window) {
+                    const dirty_entry_t saved = observer->dirty[index];
+                    int mailbox_index = destroy_find(observer, saved.window);
+                    if (mailbox_index < 0 && observer->destroy_count < WindowObserverDestroyCapacity) {
+                        mailbox_index = (int)observer->destroy_count++;
+                        memset(&observer->destroys[mailbox_index], 0, sizeof(observer->destroys[0]));
+                        observer->destroys[mailbox_index].window = saved.window;
+                    }
+                    if (mailbox_index < 0) {
+                        latch_tracking_fault(observer, 1);
+                        return WindowObserverStatusTrackingFault;
+                    }
+                    observer->destroys[mailbox_index].destroy_stamp = saved.destroy_stamp;
+                    observer->destroys[mailbox_index].event_time_ms = saved.destroy_event_ms;
+                } else {
+                    observer->dirty[retained++] = observer->dirty[index];
+                }
+            }
+        }
+        observer->dirty_count = retained;
         observer->overflow = 0u;
+        for (uint32_t processed = 0u; observer->destroy_count != 0u &&
+             processed < WindowObserverDestroyCapacity; ++processed) {
+            const window_observer_status_t drained = apply_protected_destroy(observer, 0u);
+            if (drained != WindowObserverStatusOk) return drained;
+        }
+        if (observer->destroy_count != 0u) {
+            latch_tracking_fault(observer, 1);
+            return WindowObserverStatusTrackingFault;
+        }
         /* One clock read stamps both the latch and the attempt, so this refresh consumes its own latch event. */
         const uint64_t now_ms = observer->api.monotonic_ms(observer->api_context);
+        if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
         observer->refresh_requested = 1u;
         observer->latch_ms = now_ms;
         observer->latch_unconsumed = 0u;
@@ -1041,11 +1766,22 @@ window_observer_status_t window_observer_pump(window_observer_t *observer, inter
     if (gate != WindowObserverStatusOk) {
         return gate;
     }
+    if (!observer->graph_bound || observer->bound_graph != graph || observer->bound_epoch != session_epoch) {
+        return WindowObserverStatusGraphBindingMismatch;
+    }
+    if (observer->tracking_fault) {
+        return WindowObserverStatusTrackingFault;
+    }
     if (observer->state != WindowObserverStateStarted) {
-        snapshot_stats(observer, stats);
         return WindowObserverStatusBadState;
     }
     observer->busy = 1u;
+    const window_observer_status_t reservation = prepare_callbacks_locked(observer, 0u, 0, 0);
+    if (reservation != WindowObserverStatusOk) {
+        observer->busy = 0u;
+        if (reservation != WindowObserverStatusReentrant) snapshot_stats(observer, stats);
+        return reservation;
+    }
     native_call_begin();
     const window_observer_status_t status = pump_locked(observer, graph, session_epoch, budget);
     native_call_end();
@@ -1088,20 +1824,59 @@ static window_observer_status_t refresh_open(window_observer_t *observer, intero
  */
 static window_observer_status_t refresh_visit(window_observer_t *observer, interop_window_graph_t *graph,
                                               uint64_t epoch, uint64_t window, int unseen_pass) {
-    uint64_t stamp = 0;
-    if (!stamp_next(observer, &stamp)) {
+    const window_observer_status_t reserved = prepare_callbacks_locked(observer, window, 1, 0);
+    if (reserved != WindowObserverStatusOk) {
         refresh_abort_quiet(observer, graph, epoch);
-        return WindowObserverStatusStampExhausted;
+        return reserved;
     }
-    const uint32_t captured_ms = observer->api.tick_ms(observer->api_context);
     interop_window_facts_t facts;
-    const window_observer_query_result_t result = query_window(observer, window, &facts, stamp, captured_ms);
+    window_observer_query_result_t result = WindowObserverQueryFailed;
+    uint64_t stamp = 0u;
+    uint32_t captured_ms = 0u;
+    for (uint32_t attempt = 0u; attempt <= WindowObserverDestroyCapacity; ++attempt) {
+        if (!stamp_next(observer, &stamp)) {
+            refresh_abort_quiet(observer, graph, epoch);
+            latch_tracking_fault(observer, 1);
+            return WindowObserverStatusTrackingFault;
+        }
+        captured_ms = observer->api.tick_ms(observer->api_context);
+        if (observer->tracking_fault) {
+            refresh_abort_quiet(observer, graph, epoch);
+            return WindowObserverStatusTrackingFault;
+        }
+        result = query_window(observer, window, &facts, stamp, captured_ms);
+        if (observer->tracking_fault) {
+            refresh_abort_quiet(observer, graph, epoch);
+            return WindowObserverStatusTrackingFault;
+        }
+        const int raced_destroy = destroy_find(observer, window);
+        if (raced_destroy < 0) break;
+        if (attempt == WindowObserverDestroyCapacity) {
+            refresh_abort_quiet(observer, graph, epoch);
+            latch_tracking_fault(observer, 1);
+            return WindowObserverStatusTrackingFault;
+        }
+        const window_observer_status_t drained = apply_protected_destroy(observer, (uint32_t)raced_destroy);
+        if (drained != WindowObserverStatusOk) {
+            refresh_abort_quiet(observer, graph, epoch);
+            return drained;
+        }
+    }
     fold_t fold = FoldContinue;
     if (result == WindowObserverQueryExists) {
         interop_window_observation_t observation;
         memset(&observation, 0, sizeof(observation));
         fold = fold_status(observer, interop_window_graph_refresh_offer(graph, epoch, &facts, &observation));
         if (fold == FoldContinue) {
+            if (!refresh_tracked_snapshot(observer, 1)) {
+                refresh_abort_quiet(observer, graph, epoch);
+                return WindowObserverStatusTrackingFault;
+            }
+            const window_observer_status_t drained = prepare_callbacks_locked(observer, window, 0, 1);
+            if (drained != WindowObserverStatusOk) {
+                refresh_abort_quiet(observer, graph, epoch);
+                return drained;
+            }
             count_uac_hidden(observer, &observation);
             if (observation.disposition == InteropWindowDispositionSuspended) {
                 refresh_abort_quiet(observer, graph, epoch);
@@ -1113,7 +1888,18 @@ static window_observer_status_t refresh_visit(window_observer_t *observer, inter
         if (!unseen_pass) {
             return WindowObserverStatusOk; /* stays unseen; the unseen pass requeries it if it is Active */
         }
-        fold = apply_destroy(observer, graph, epoch, window, stamp, captured_ms);
+        const window_observer_status_t destroyed = apply_fresh_destroy(observer, window, stamp, captured_ms);
+        if (destroyed == WindowObserverStatusOk) {
+            if (!refresh_tracked_snapshot(observer, 1)) return WindowObserverStatusTrackingFault;
+            const window_observer_status_t drained = prepare_callbacks_locked(observer, window, 0, 1);
+            if (drained != WindowObserverStatusOk) return drained;
+        } else if (destroyed == WindowObserverStatusGraphQueueFull) {
+            fold = FoldQueueFull;
+        } else if (destroyed == WindowObserverStatusReentrant) {
+            fold = FoldReentrant;
+        } else {
+            return destroyed;
+        }
     } else {
         fold = fold_status(observer, interop_window_graph_refresh_keep(graph, epoch, window));
     }
@@ -1135,6 +1921,7 @@ static window_observer_status_t refresh_body(window_observer_t *observer, intero
     uint32_t count = 0;
     const window_observer_enum_result_t enumerated = observer->api.enum_top_level_windows(
         observer->api_context, observer->enum_buffer, WindowObserverMaxEnumerated, &count);
+    if (observer->tracking_fault) return WindowObserverStatusTrackingFault;
     if ((enumerated != WindowObserverEnumOk && enumerated != WindowObserverEnumTruncated) ||
         count > WindowObserverMaxEnumerated) {
         return WindowObserverStatusEnumFailed; /* nothing was begun */
@@ -1189,6 +1976,7 @@ static window_observer_status_t refresh_body(window_observer_t *observer, intero
     const fold_t fold = fold_status(observer, interop_window_graph_refresh_commit(graph, epoch, &retired));
     if (fold == FoldContinue) {
         bump(&observer->stats.refreshes_committed);
+        if (!refresh_tracked_snapshot(observer, 1)) return WindowObserverStatusTrackingFault;
         observer->refresh_requested = 0u;
         return WindowObserverStatusOk;
     }
@@ -1208,23 +1996,42 @@ window_observer_status_t window_observer_refresh(window_observer_t *observer, in
     if (gate != WindowObserverStatusOk) {
         return gate;
     }
+    if (!observer->graph_bound || observer->bound_graph != graph || observer->bound_epoch != session_epoch) {
+        return WindowObserverStatusGraphBindingMismatch;
+    }
+    if (observer->tracking_fault) {
+        return WindowObserverStatusTrackingFault;
+    }
     if (observer->state != WindowObserverStateStarted) {
-        snapshot_stats(observer, stats);
         return WindowObserverStatusBadState;
     }
     observer->busy = 1u;
+    const window_observer_status_t reservation = prepare_callbacks_locked(observer, 0u, 1, 0);
+    if (reservation != WindowObserverStatusOk) {
+        observer->busy = 0u;
+        if (reservation != WindowObserverStatusReentrant) snapshot_stats(observer, stats);
+        return reservation;
+    }
     native_call_begin();
     /* Step 1: stamp the attempt BEFORE anything can fail, then check the desktop. */
     const uint64_t now_ms = observer->api.monotonic_ms(observer->api_context);
-    observer->latch_unconsumed = 0u;
-    observer->last_attempt_ms = now_ms;
-    observer->have_attempt = 1u;
     window_observer_status_t status;
-    if (!desktop_is_default(observer)) {
-        desktop_refuse(observer, now_ms);
-        status = WindowObserverStatusDesktopInactive;
+    if (observer->tracking_fault) {
+        status = WindowObserverStatusTrackingFault;
     } else {
-        status = refresh_body(observer, graph, session_epoch);
+        observer->latch_unconsumed = 0u;
+        observer->last_attempt_ms = now_ms;
+        observer->have_attempt = 1u;
+        const int desktop_default = desktop_is_default(observer);
+        if (observer->tracking_fault) {
+            status = WindowObserverStatusTrackingFault;
+        } else if (!desktop_default) {
+            desktop_refuse(observer, now_ms);
+            status = WindowObserverStatusDesktopInactive;
+        } else {
+            status = prepare_callbacks_locked(observer, 0u, 0, 1);
+            if (status == WindowObserverStatusOk) status = refresh_body(observer, graph, session_epoch);
+        }
     }
     native_call_end();
     observer->busy = 0u;
