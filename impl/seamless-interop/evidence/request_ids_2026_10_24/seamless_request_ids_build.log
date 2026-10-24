@@ -1,0 +1,10 @@
+zig test src/interop/request_ids.zig -lc
+1/7 request_ids.test.reserve starts at one and release creates a hole without resetting order...OK
+2/7 request_ids.test.reservation skips occupied identifiers across uint32 wrap...OK
+3/7 request_ids.test.full capacity and invalid releases preserve complete state...OK
+4/7 request_ids.test.unknown and repeated release are unchanged...OK
+5/7 request_ids.test.runtime sentinel input is never an occupied or releasable request...OK
+6/7 request_ids.test.retire clears occupancy and preserves sequence cursor...OK
+7/7 request_ids.test.bounded deterministic reserve release stress preserves uniqueness...OK
+All 7 tests passed.
+zig test src/interop/request_ids.zig -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=build/interop_request_ids_test.exe

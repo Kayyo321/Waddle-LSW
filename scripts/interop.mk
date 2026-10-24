@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -20,7 +20,7 @@ interop-codec-test: build/interop_codec_abi_test
 	./build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
-interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test
+interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage: build/interop_codec.o
@@ -34,6 +34,7 @@ interop-coverage: build/interop_codec.o
 	python3 tests/av/coverage.py session_liveness
 	python3 tests/av/coverage.py session_handshake
 	python3 tests/av/coverage.py agent_version
+	python3 tests/av/coverage.py request_ids
 	python3 tests/av/coverage.py manifest
 	python3 tests/av/coverage.py interop_layout_abi
 	python3 tests/interop/native_atomic_coverage.py
@@ -176,4 +177,11 @@ build/interop_session_handshake_test.exe: src/interop/session_handshake.zig incl
 interop-agent-version-test:
 	$(ZIG) test src/interop/agent_version.zig -lc
 build/interop_agent_version_test.exe: src/interop/agent_version.zig | build
+	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
+
+.PHONY: interop-request-ids-test
+# Common fixed request namespace; response/resource lifetimes remain external.
+interop-request-ids-test:
+	$(ZIG) test src/interop/request_ids.zig -lc
+build/interop_request_ids_test.exe: src/interop/request_ids.zig | build
 	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@

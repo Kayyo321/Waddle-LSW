@@ -707,12 +707,22 @@ its uncompiled draft earns no credit until current acceptance passes.
     extra credit for this correction.
     [Qualification](agent_version_qualification_2026_10_24.json). Source commit0035379 contains this implementation.
 
-- **Commit `HEAD`**: `refactor(interop): conform session namespace aliases to type naming`
+- **Commit `317d307`**: `refactor(interop): conform session namespace aliases to type naming`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Applies only mechanical std/c namespace alias normalization
     to the four new session modules to honor the type/module naming invariant.
     Transformation equality against prior source is checked; all51 focused
     tests pass. Earlier coverage receipts retain their exact original hashes;
     combined native CI requalifies the normalized sources before task credit.
-    [Qualification](session_namespace_qualification_2026_10_24.json). HEAD identifies
-    this containing conformance commit.
+    [Qualification](session_namespace_qualification_2026_10_24.json). Source commit317d307 contains this conformance change.
+
+- **Commit `HEAD`**: `feat(interop): bound shared request identifier occupancy`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Adds one fixed4096-record request namespace per direction,
+    sequential nonzero wrap skipping live IDs, explicit release and retirement
+    without cursor reset. Independent review finds no defect; lead strengthens
+    stress to64 retained IDs with varied interior churn across wrap and adds
+    runtime zero-sentinel guards. Seven tests pass,96.43% production lines/90%
+    branches; native Windows CI is wired after successful cross-build.
+    [Qualification](request_ids_qualification_2026_10_24.json). HEAD identifies
+    this containing implementation commit.

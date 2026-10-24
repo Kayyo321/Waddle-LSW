@@ -1,0 +1,23 @@
+preserved request_ids coverage: /home/dev/Waddle-LSW/build/coverage/interop/request_ids/run-20261024T170459514587Z-325199
+request_ids instrumentation: 138 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 692/524288 bytes; 138 sites
+1/7 request_ids.test.reserve starts at one and release creates a hole without resetting order...OK
+2/7 request_ids.test.reservation skips occupied identifiers across uint32 wrap...OK
+3/7 request_ids.test.full capacity and invalid releases preserve complete state...OK
+4/7 request_ids.test.unknown and repeated release are unchanged...OK
+5/7 request_ids.test.runtime sentinel input is never an occupied or releasable request...OK
+6/7 request_ids.test.retire clears occupancy and preserves sequence cursor...OK
+7/7 request_ids.test.bounded deterministic reserve release stress preserves uniqueness...OK
+All 7 tests passed.
+request_ids production branch coverage: 90.00% (18/20); 9 compiler panic/stack-canary guards excluded
+request_ids production line coverage: 96.43% (27/28); 9 compiler panic/stack-canary guards excluded

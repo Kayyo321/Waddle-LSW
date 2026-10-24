@@ -1,0 +1,45 @@
+{
+  "source": "src/interop/request_ids.zig",
+  "source_sha256": "9db803d23b9f231f76b0d62a1b22d36b81ec22da2983037b91f87841198a0ef9",
+  "recorded_utc": "2026-10-24T17:06:45.663520+00:00",
+  "commands": [
+    {
+      "command": "make interop-request-ids-test build/interop_request_ids_test.exe",
+      "exit_code": 0,
+      "tests_passed": 7
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py request_ids",
+      "exit_code": 0,
+      "line": [
+        27,
+        28
+      ],
+      "branch": [
+        18,
+        20
+      ]
+    }
+  ],
+  "review": [
+    "Independent semantic review found no allocator defect.",
+    "Lead replaced count-one stress with 64 live IDs, mixed interior releases and wrap while retaining ID1. Runtime sentinel fixture calls public entries without compile-time folding."
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/request_ids_2026_10_24/seamless_request_ids_build.log",
+      "sha256": "3947ec938117579ab5db00f3fcdb01f3961a059ed3000847da1ba882bbb25ba6"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/request_ids_2026_10_24/seamless_request_ids_accepted_coverage.log",
+      "sha256": "42aec9bb305e9241d30da403af3cb0ed160080cab2b4e1cea92e581dc42e40d5"
+    }
+  ],
+  "limits": [
+    "Pure allocation-free local 4096-request admission bound, not a wire field or peer limit.",
+    "Feature dispatcher owns response correlation, timeouts and cancellation; retire_all does not free feature resources or prove mapping drain.",
+    "Windows cross-build passes; actual Windows execution pending next CI.",
+    "No extra endpoint credit beyond previously allocated milestones."
+  ],
+  "progress_credit": 0
+}
