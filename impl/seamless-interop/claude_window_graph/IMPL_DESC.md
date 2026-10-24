@@ -1380,8 +1380,8 @@ qualification credit.
 ### 9.6 Codex required correction: invalidate cached descendants on discontinuity
 
 This section supersedes the stale-deferred-child residual in O25/m5 and the
-old plan/apply steps that allow it. Implementation is pending at this contract
-commit. No classification or native lifetime proof is added.
+old plan/apply steps that allow it. The contract preceded implementation; the later correctness commit implements
+this rule, with145 Debug/ReleaseSafe tests before full qualification. No classification or native lifetime proof is added.
 
 A deferred record has no parent incarnation proof. On accepted destruction,
 exclusion or identity replacement, it must not be promoted using only a recycled
@@ -1473,3 +1473,19 @@ obtaining the immutable table pointer is thread-safe. This preserves at most two
 snapshot attempts per enclosing call or standalone query. No native behavior is
 inferred from portable doubles. Strict native SDK cross-compilation and portable
 observer regression are required before commit; Windows execution remains pending.
+
+### 9.9 Descendant-correction review disposition
+
+The implementation uses a read-only64-slot mask, applied only after the path's
+preflight and applicable lookup outcome. It roots every retiring Active cascade
+member, masks stale records during cycle/flush planning, and preserves surviving
+seen/order fields. Root review additionally rejects retaining a changed Deferred
+parent on replacement failure: this now produces Excluded/IncarnationChanged
+with zero generation and exact drops. Existing normal errors preserve state;
+the documented Cycle exception may drop stale deferrals, and QueueFull remains
+transactional. Active and Deferred cannot share a window key by invariant; root
+arrays nevertheless include a spare slot. Nine additional builtins cover the
+accepted-discontinuity paths, QueueFull retries and failed replacement. Initial
+Debug/ReleaseSafe145 tests pass; full coverage, leak-enabled C clients and native
+Windows qualification are still required before acceptance. O5 observer queue
+loss and equal-tick native uncertainty remain separate open integration items.

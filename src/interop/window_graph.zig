@@ -1769,17 +1769,84 @@ pub const chain_end_t = struct {
 ///         deferred walk cannot see.
 /// @note Owner thread only; pure read.
 pub fn deferred_chain_end(graph: *const graph_t, window: u64, parent: u64) chain_end_t {
+    return deferred_chain_end_masked(graph, window, parent, null);
+}
+
+/// Follow a deferred parent chain while ignoring records scheduled for invalidation.
+///
+/// @param[in] graph Non-null graph; never written.
+/// @param[in] window The window being offered.
+/// @param[in] parent Its candidate parent HWND (nonzero).
+/// @param[in] drop_mask Deferred slots that are being transactionally removed, or NULL.
+/// @return The same result as `deferred_chain_end`, treating masked records as absent.
+/// @note Owner thread only; pure read.
+fn deferred_chain_end_masked(graph: *const graph_t, window: u64, parent: u64, drop_mask: ?*const [MaxDeferred]bool) chain_end_t {
     if (parent == window) return .{ .cycle = true, .terminal_window = 0 };
     var cursor = parent;
     var steps: u32 = 0;
     while (steps <= 65) : (steps += 1) {
         if (find_active(graph, cursor) != null) return .{ .cycle = false, .terminal_window = cursor };
         const slot = find_deferred(graph, cursor) orelse return .{ .cycle = false, .terminal_window = 0 };
+        if (drop_mask) |mask| {
+            if (mask[slot]) return .{ .cycle = false, .terminal_window = 0 };
+        }
         const next = graph.deferred[slot].record.parent_window;
         if (next == window) return .{ .cycle = true, .terminal_window = 0 };
         cursor = next;
     }
     return .{ .cycle = true, .terminal_window = 0 };
+}
+
+/// Plan all cached deferred descendants of a set of parent HWNDs for deletion.
+///
+/// The direct children are seeded from `roots`; descendants are found by following each selected
+/// deferred record's `window`. Every slot is selected at most once, so work is bounded by
+/// `MaxDeferred * MaxDeferred`. Roots themselves are not selected by this helper: callers that
+/// replace or remove a deferred root drop that record explicitly.
+///
+/// @param[in] graph Non-null graph; never written.
+/// @param[in] roots Non-null array of root HWNDs; zero values are ignored.
+/// @param[out] out_mask Non-null fixed-size mask; fully written.
+/// @note Owner thread only; no allocation, callbacks or graph mutation.
+fn plan_deferred_descendants(graph: *const graph_t, roots: []const u64, out_mask: *[MaxDeferred]bool) void {
+    out_mask.* = [_]bool{false} ** MaxDeferred;
+    var queue: [MaxDeferred]u8 = undefined;
+    var queue_len: usize = 0;
+
+    for (&graph.deferred, 0..) |*slot, index| {
+        if (!slot.used) continue;
+        for (roots) |root| {
+            if (root != 0 and slot.record.parent_window == root) {
+                out_mask[index] = true;
+                queue[queue_len] = @intCast(index);
+                queue_len += 1;
+                break;
+            }
+        }
+    }
+
+    var head: usize = 0;
+    while (head < queue_len) : (head += 1) {
+        const parent_window = graph.deferred[queue[head]].record.window;
+        for (&graph.deferred, 0..) |*slot, index| {
+            if (!slot.used or out_mask[index] or slot.record.parent_window != parent_window) continue;
+            out_mask[index] = true;
+            queue[queue_len] = @intCast(index);
+            queue_len += 1;
+        }
+    }
+}
+
+/// Apply a previously planned deferred-descendant mask using ordinary drop accounting.
+///
+/// @param[in,out] graph Non-null graph.
+/// @param[in] drop_mask Non-null fixed-size mask produced before mutation.
+/// @param[in,out] tally Non-null; dropped count increases once per selected used slot.
+/// @note Owner thread only; no allocation or callback.
+fn apply_deferred_descendants(graph: *graph_t, drop_mask: *const [MaxDeferred]bool, tally: *tally_t) void {
+    for (drop_mask, 0..) |drop, slot| {
+        if (drop and graph.deferred[slot].used) drop_deferred(graph, slot, tally);
+    }
 }
 
 /// Follow the owner chain of a candidate parent through deferred records.
@@ -1870,9 +1937,9 @@ const flush_scan_t = struct {
     deferred_taken: [MaxDeferred]bool = [_]bool{false} ** MaxDeferred,
     cascade_taken: [MaxEntries]bool = [_]bool{false} ** MaxEntries,
 
-    fn push_children(self: *flush_scan_t, graph: *const graph_t, cascade: ?*const cascade_t, parent_window: u64, parent_item: u8) void {
+    fn push_children(self: *flush_scan_t, graph: *const graph_t, cascade: ?*const cascade_t, drop_mask: *const [MaxDeferred]bool, parent_window: u64, parent_item: u8) void {
         for (self.order[0..self.order_length]) |index| {
-            if (self.deferred_taken[index]) continue;
+            if (self.deferred_taken[index] or drop_mask[index]) continue;
             if (graph.deferred[index].record.parent_window != parent_window) continue;
             self.deferred_taken[index] = true;
             self.queue[self.length] = .{ .source = .Deferred, .index = index, .parent_item = parent_item };
@@ -1898,11 +1965,12 @@ const flush_scan_t = struct {
 /// primary window in ascending `seq`, followed by the cascade descendants (when given) whose stored
 /// parent is that window in ascending original generation. Each admitted candidate appends its
 /// own children to the tail. At most `budget` candidates are admitted; the rest of the worklist
-/// is the cut. Deferred records of the primary window itself are never candidates.
-fn plan_flush(graph: *const graph_t, primary_window: u64, cascade: ?*const cascade_t, budget: u32, out: *flush_plan_t) void {
+/// is the cut. Records in `drop_mask` are omitted as if absent, and deferred records of the primary
+/// window itself are never candidates.
+fn plan_flush(graph: *const graph_t, primary_window: u64, cascade: ?*const cascade_t, drop_mask: *const [MaxDeferred]bool, budget: u32, out: *flush_plan_t) void {
     var scan = flush_scan_t{};
     for (&graph.deferred, 0..) |*slot, index| {
-        if (!slot.used or slot.record.window == primary_window) {
+        if (!slot.used or drop_mask[index] or slot.record.window == primary_window) {
             scan.deferred_taken[index] = true;
             continue;
         }
@@ -1913,7 +1981,7 @@ fn plan_flush(graph: *const graph_t, primary_window: u64, cascade: ?*const casca
         scan.order[hole] = @intCast(index);
         scan.order_length += 1;
     }
-    scan.push_children(graph, cascade, primary_window, PrimaryParent);
+    scan.push_children(graph, cascade, drop_mask, primary_window, PrimaryParent);
     var head: u32 = 0;
     while (head < scan.length) : (head += 1) {
         const candidate = scan.queue[head];
@@ -1928,7 +1996,7 @@ fn plan_flush(graph: *const graph_t, primary_window: u64, cascade: ?*const casca
             .Cascade => &graph.entries[candidate.index].record,
         };
         if (candidate.source == .Cascade) out.cascade_admitted[candidate.index] = true;
-        scan.push_children(graph, cascade, record.window, @intCast(out.count - 1));
+        scan.push_children(graph, cascade, drop_mask, record.window, @intCast(out.count - 1));
     }
 }
 
@@ -2059,9 +2127,20 @@ fn observe_not_exported(call: *call_t, reason: u32, out: *observation_t) status_
     const graph = call.graph;
     var retired_generation: u64 = 0;
     var disposition: u32 = DispositionExcluded;
+    var cascade = cascade_t{};
+    var roots: [MaxEntries + 1]u64 = undefined;
+    var root_count: usize = 1;
+    roots[0] = call.facts.window;
     if (call.l_slot) |slot| {
-        var cascade = cascade_t{};
         collect_cascade(graph, slot, &cascade);
+        for (cascade.slots[0..cascade.count]) |member| {
+            roots[root_count] = graph.entries[member].record.window;
+            root_count += 1;
+        }
+    }
+    var drop_mask: [MaxDeferred]bool = undefined;
+    plan_deferred_descendants(graph, roots[0..root_count], &drop_mask);
+    if (call.l_slot) |slot| {
         if (cascade.count > ring_room(graph)) return reject_queue_full(graph);
         retired_generation = graph.entries[slot].record.generation;
         retire_cascade(graph, &cascade, reason, &call.tally);
@@ -2069,6 +2148,7 @@ fn observe_not_exported(call: *call_t, reason: u32, out: *observation_t) status_
     } else if (call.d_slot) |slot| {
         drop_deferred(graph, slot, &call.tally);
     }
+    apply_deferred_descendants(graph, &drop_mask, &call.tally);
     commit_ok(graph, call.facts.stamp, call.t64, call.now);
     write_observation(out, call.facts.window, &call.tally, disposition, 0, 0, retired_generation, reason);
     return .Ok;
@@ -2157,6 +2237,7 @@ const plan_t = struct {
     key_source: key_source_t = .Lookup,
     drop_d: bool = false,
     cascade: cascade_t = .{},
+    deferred_drop_mask: [MaxDeferred]bool = [_]bool{false} ** MaxDeferred,
     flush: flush_plan_t = .{},
 };
 
@@ -2181,6 +2262,21 @@ fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) sta
     }
     // Stage 4b: a deferred record of another incarnation is dropped; its key is never reused.
     if (call.d_slot) |slot| plan.drop_d = !identity_equal(&graph.deferred[slot].record, facts);
+    if ((plan.retire and plan.cause == ReasonIncarnationChanged) or plan.drop_d) {
+        var roots: [MaxEntries]u64 = undefined;
+        var root_count: usize = 0;
+        if (plan.retire and plan.cause == ReasonIncarnationChanged) {
+            for (plan.cascade.slots[0..plan.cascade.count]) |member| {
+                roots[root_count] = graph.entries[member].record.window;
+                root_count += 1;
+            }
+        }
+        if (plan.drop_d) {
+            roots[root_count] = facts.window;
+            root_count += 1;
+        }
+        plan_deferred_descendants(graph, roots[0..root_count], &plan.deferred_drop_mask);
+    }
 
     // Stage 5a: cycle check, including the cascade-set rule.
     // The cascade rule follows the new parent chain through deferred records to the Active entry
@@ -2190,7 +2286,7 @@ fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) sta
     var chain_cycle = false;
     var cascade_cycle = false;
     if (verdict.parent_window != 0) {
-        const end = deferred_chain_end(graph, facts.window, verdict.parent_window);
+        const end = deferred_chain_end_masked(graph, facts.window, verdict.parent_window, &plan.deferred_drop_mask);
         chain_cycle = end.cycle;
         cascade_cycle = !chain_cycle and plan.retire and
             (cascade_has_window(graph, &plan.cascade, verdict.parent_window) or
@@ -2201,6 +2297,7 @@ fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) sta
         if (!forced) {
             bump(&graph.stats.rejected_cycle);
             if (call.d_slot) |slot| drop_deferred(graph, slot, &call.tally);
+            apply_deferred_descendants(graph, &plan.deferred_drop_mask, &call.tally);
             return .Cycle;
         }
         plan.cycle_forced = true;
@@ -2216,7 +2313,7 @@ fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) sta
     const generations_left: u64 = std_t.math.maxInt(u64) - graph.generations_issued;
     if (plan.want == .Admit and (free == 0 or generations_left == 0)) {
         const by_slots = free == 0;
-        if (!plan.retire) {
+        if (!plan.retire and !plan.drop_d) {
             if (by_slots) {
                 note_at_capacity(graph, 1);
                 return .AtCapacity;
@@ -2225,6 +2322,7 @@ fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) sta
             return .GenerationExhausted;
         }
         plan.shortfall = if (by_slots) .AtCapacity else .Generations;
+        if (!plan.retire and plan.drop_d) plan.cause = ReasonIncarnationChanged;
         plan.want = .None;
     }
     if (plan.want == .Admit) {
@@ -2232,7 +2330,7 @@ fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) sta
         const generations_after: u64 = generations_left - 1;
         plan.flush.cut_by_slots = slots_after <= generations_after;
         const budget: u32 = @intCast(@min(@as(u64, slots_after), generations_after));
-        plan_flush(graph, facts.window, if (plan.redefer) &plan.cascade else null, budget, &plan.flush);
+        plan_flush(graph, facts.window, if (plan.redefer) &plan.cascade else null, &plan.deferred_drop_mask, budget, &plan.flush);
     }
 
     // Stage 5c: room for the whole plan in the event ring (QueueFull changes nothing).
@@ -2261,8 +2359,9 @@ fn observe_eligible(call: *call_t, verdict: eligible_t, out: *observation_t) sta
                 key = rec.app_key;
             },
             .Lookup => if (run_lookup(graph, facts, &key, &key_length)) |failure| {
-                if (!plan.retire) return failure;
+                if (!plan.retire and !plan.drop_d) return failure;
                 plan.shortfall = .Lookup;
+                if (!plan.retire and plan.drop_d) plan.cause = ReasonIncarnationChanged;
                 plan.want = .None;
                 plan.flush = .{};
             },
@@ -2288,6 +2387,7 @@ fn apply_eligible(call: *call_t, plan: *plan_t, verdict: eligible_t, key: *const
         retire_cascade(graph, &plan.cascade, plan.cause, tally);
     }
     if (plan.drop_d) drop_deferred(graph, call.d_slot orelse unreachable, tally);
+    apply_deferred_descendants(graph, &plan.deferred_drop_mask, tally);
 
     var generation: u64 = 0;
     switch (plan.want) {
@@ -2332,7 +2432,10 @@ fn apply_eligible(call: *call_t, plan: *plan_t, verdict: eligible_t, key: *const
     if (plan.redefer) redefer_descendants(graph, &plan.cascade, &plan.flush.cascade_admitted, tally);
 
     commit_ok(graph, facts.stamp, call.t64, call.now);
-    var disposition: u32 = DispositionRetired;
+    var disposition: u32 = if (!plan.retire and plan.drop_d and plan.cause == ReasonIncarnationChanged)
+        DispositionExcluded
+    else
+        DispositionRetired;
     var reason: u32 = plan.cause;
     var role: u32 = 0;
     switch (plan.want) {
@@ -2368,7 +2471,9 @@ fn apply_eligible(call: *call_t, plan: *plan_t, verdict: eligible_t, key: *const
 ///                  the one passed to the lookup callback.
 /// @param[out] out Non-null; fully written on Ok, unchanged otherwise.
 /// @return Ok; InvalidFacts; StaleFacts; Cycle; AtCapacity; GenerationExhausted; QueueFull;
-///         LookupFailed; AppKeyInvalid. A shortfall met while a retirement is forced is not returned.
+///         LookupFailed; AppKeyInvalid. A shortfall met while an Active retirement is forced is not
+///         returned; a Deferred-only identity mismatch instead drops its old subtree and returns Ok
+///         Excluded with reason IncarnationChanged when replacement capacity, generation or lookup fails.
 /// @note Owner thread only; the callbacks are `app_key_lookup` and the clock (`now_ms`, read once per
 ///       call with valid facts); no allocation.
 pub fn observe_locked(graph: *graph_t, facts: *const facts_t, out: *observation_t) status_t {
@@ -2431,8 +2536,10 @@ pub fn observe(graph: *graph_t, epoch: u64, facts: *const facts_t, out: *observa
 /// (reason Destroyed, descendants ParentRetired, never re-deferred) iff
 /// `hint_stamp > admit_stamp` and not `e64 < admit_captured_ms` (plain 64-bit compare; equal
 /// ticks count as destroyed). The deferred record of the window is dropped iff
-/// `hint_stamp > last_stamp` and not `e64 < last_captured_ms`. Retiring entries are never touched.
-/// Ring room for the RetireIntent events is proven first (QueueFull changes nothing).
+/// `hint_stamp > last_stamp` and not `e64 < last_captured_ms`. On an accepted match, deferred
+/// descendants waiting on every HWND in the retiring Active cascade, or on the removed Deferred
+/// record, are dropped transitively. Retiring entries are never touched. Ring room for all RetireIntent
+/// events is proven before mutation (QueueFull changes nothing).
 ///
 /// @param[in,out] graph Non-null graph.
 /// @param[in] epoch Captured session epoch.
@@ -2454,24 +2561,41 @@ pub fn note_destroyed(graph: *graph_t, epoch: u64, window: u64, hint_stamp: u64,
     var tally = tally_t{};
     var cascade = cascade_t{};
     var retire_slot: ?usize = null;
+    var deferred_drop_slot: ?usize = null;
     const live = find_active(graph, window);
     if (live) |slot| {
         const rec = &graph.entries[slot].record;
         if (hint_stamp > rec.admit_stamp and !(e64 < rec.admit_captured_ms)) {
             retire_slot = slot;
             collect_cascade(graph, slot, &cascade);
-            if (cascade.count > ring_room(graph)) return reject_queue_full(graph);
         }
     }
+    if (find_deferred(graph, window)) |slot| {
+        const rec = &graph.deferred[slot].record;
+        if (hint_stamp > rec.last_stamp and !(e64 < rec.last_captured_ms)) deferred_drop_slot = slot;
+    }
+    var roots: [MaxEntries]u64 = undefined;
+    var root_count: usize = 0;
+    if (retire_slot != null) {
+        for (cascade.slots[0..cascade.count]) |member| {
+            roots[root_count] = graph.entries[member].record.window;
+            root_count += 1;
+        }
+    }
+    if (deferred_drop_slot != null) {
+        roots[root_count] = window;
+        root_count += 1;
+    }
+    var drop_mask = [_]bool{false} ** MaxDeferred;
+    if (root_count > 0) plan_deferred_descendants(graph, roots[0..root_count], &drop_mask);
+    if (cascade.count > ring_room(graph)) return reject_queue_full(graph);
     var retired_generation: u64 = 0;
     if (retire_slot) |slot| {
         retired_generation = graph.entries[slot].record.generation;
         retire_cascade(graph, &cascade, ReasonDestroyed, &tally);
     }
-    if (find_deferred(graph, window)) |slot| {
-        const rec = &graph.deferred[slot].record;
-        if (hint_stamp > rec.last_stamp and !(e64 < rec.last_captured_ms)) drop_deferred(graph, slot, &tally);
-    }
+    if (deferred_drop_slot) |slot| drop_deferred(graph, slot, &tally);
+    apply_deferred_descendants(graph, &drop_mask, &tally);
     commit_ok(graph, hint_stamp, e64, now);
     if (retire_slot != null) {
         write_observation(out, window, &tally, DispositionRetired, 0, 0, retired_generation, ReasonDestroyed);
@@ -2617,7 +2741,8 @@ pub fn refresh_unseen(graph: *graph_t, epoch: u64, windows: ?[*]u64, capacity: u
     return .Ok;
 }
 
-/// Close the refresh: retire every unseen Active entry, drop every unseen deferred record.
+/// Close the refresh: retire every unseen Active entry, drop every unseen deferred record and
+/// deferred descendants of doomed Active entries.
 ///
 /// Plan (read-only): the victims are every Active entry whose mark is clear plus all descendants of
 /// those (a seen child cannot outlive its retiring parent). The ring must hold one RetireIntent per
@@ -2626,7 +2751,8 @@ pub fn refresh_unseen(graph: *graph_t, epoch: u64, windows: ?[*]u64, capacity: u
 /// `retire_cascade` with reason RefreshUnseen, taking its still-Active descendants along with reason
 /// ParentRetired (those descendants are seen ones, since every unseen descendant has a higher
 /// generation and was visited first). The event order is therefore children first. Nothing is
-/// re-deferred. Then every unseen deferred record is dropped (`deferred_dropped`), `refresh_open` is
+/// re-deferred. Then every unseen deferred record and each selected deferred descendant is dropped
+/// once (`deferred_dropped`), `refresh_open` is
 /// cleared and `refresh_commits` is bumped.
 ///
 /// @param[in,out] graph Non-null graph.
@@ -2648,6 +2774,15 @@ pub fn refresh_commit(graph: *graph_t, epoch: u64, retired_out: ?*u32) status_t 
         collect_cascade(graph, slot, &cascade);
         for (cascade.slots[0..cascade.count]) |member| doomed[member] = true;
     }
+    var roots: [MaxEntries]u64 = undefined;
+    var root_count: usize = 0;
+    for (order[0..active]) |slot| {
+        if (!doomed[slot]) continue;
+        roots[root_count] = graph.entries[slot].record.window;
+        root_count += 1;
+    }
+    var drop_mask = [_]bool{false} ** MaxDeferred;
+    if (root_count > 0) plan_deferred_descendants(graph, roots[0..root_count], &drop_mask);
     var needed: u32 = 0;
     for (doomed) |flag| {
         if (flag) needed += 1;
@@ -2663,7 +2798,7 @@ pub fn refresh_commit(graph: *graph_t, epoch: u64, retired_out: ?*u32) status_t 
         retire_cascade(graph, &cascade, ReasonRefreshUnseen, &tally);
     }
     for (&graph.deferred, 0..) |*record, index| {
-        if (record.used and !record.seen) drop_deferred(graph, index, &tally);
+        if (record.used and (!record.seen or drop_mask[index])) drop_deferred(graph, index, &tally);
     }
     graph.refresh_open = false;
     bump(&graph.stats.refresh_commits);
@@ -5759,9 +5894,12 @@ test "identity change keeps the retirement when the replacement cannot be admitt
         var facts = owned_facts(0x100, 0x600, 14);
         facts.process_id = 9999;
         const obs = try offer(graph, &facts);
-        try expect_obs(obs, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
+        try expect_obs(obs, DispositionDeferred, RoleDialog, 0, 1, ReasonIncarnationChanged);
+        try expect_counts(obs, 1, 0, 1, 1);
         try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
-        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_cycle);
+        try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x600));
+        try testing_t.expectEqual(@as(?usize, 0), call_find_deferred(graph, 0x100));
+        try testing_t.expectEqual(@as(u64, 0), current_stats(graph).rejected_cycle);
     }
 }
 
@@ -5781,6 +5919,370 @@ test "identity change whose replacement must wait for its parent is deferred wit
     try testing_t.expectEqualStrings(expected_key(&key_buffer, 0x100, 2), record.app_key[0..record.app_key_length]);
     const ev = try next_ev(graph);
     try expect_ev(ev, EventRetireIntent, 0x100, 1, 0, 0, ReasonIncarnationChanged);
+}
+
+test "identity replacement drops the full deferred child chain before flushing" {
+    const graph = try probe_graph(testing_t.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    // These are legal capacity-cut leftovers: cached descendants can wait on an Active parent.
+    inject_deferred(graph, 0, 0x200);
+    var child_facts = owned_facts(0x200, 0x100, 2000);
+    graph.deferred[0].record = record_from_facts(&child_facts, TickBaseStart + 2000, RoleDialog, 0x100);
+    graph.deferred[0].record.seq = 1;
+    graph.deferred[0].record.app_key_length = 3;
+    @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
+    inject_deferred(graph, 1, 0x300);
+    graph.deferred[1].record.parent_window = 0x200;
+    graph.deferred[1].record.app_key_length = 3;
+    @memcpy(graph.deferred[1].record.app_key[0..3], "a-y");
+    _ = discard_events(graph);
+
+    var replacement = window_facts(0x100, 13);
+    replacement.process_id = 9999;
+    const replaced = try offer(graph, &replacement);
+    try expect_obs(replaced, DispositionAdmitted, RoleToplevel, 2, 1, ReasonIncarnationChanged);
+    try expect_counts(replaced, 2, 1, 1, 2);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try expect_ev(try next_ev(graph), EventRetireIntent, 0x100, 1, 0, 0, ReasonIncarnationChanged);
+    try expect_ev(try next_ev(graph), EventAnnounce, 0x100, 2, 0, 0, 0);
+
+    // Freshly queried children can be admitted under the replacement; cached child facts cannot.
+    try expect_obs(try admit_dialog(graph, 0x200, 0x100, 14), DispositionAdmitted, RoleDialog, 3, 0, ReasonNone);
+    try expect_obs(try admit_dialog(graph, 0x300, 0x200, 15), DispositionAdmitted, RoleDialog, 4, 0, ReasonNone);
+    try testing_t.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
+}
+
+test "identity replacement drops deferred children of every Active cascade member" {
+    const graph = try probe_graph(testing_t.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    _ = try admit_dialog(graph, 0x200, 0x100, 11);
+    // A capacity-cut flush can leave deferred children keyed to an Active descendant.
+    inject_deferred(graph, 0, 0x300);
+    graph.deferred[0].record.parent_window = 0x200;
+    graph.deferred[0].record.app_key_length = 3;
+    @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
+    _ = discard_events(graph);
+
+    var replacement = window_facts(0x100, 12);
+    replacement.process_id = 9999;
+    const replaced = try offer(graph, &replacement);
+    try expect_obs(replaced, DispositionAdmitted, RoleToplevel, 3, 1, ReasonIncarnationChanged);
+    try expect_counts(replaced, 3, 1, 2, 1);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try expect_ev(try next_ev(graph), EventRetireIntent, 0x200, 2, 0x100, 1, ReasonParentRetired);
+    try expect_ev(try next_ev(graph), EventRetireIntent, 0x100, 1, 0, 0, ReasonIncarnationChanged);
+    try expect_ev(try next_ev(graph), EventAnnounce, 0x100, 3, 0, 0, 0);
+}
+
+test "deferred parent identity replacement drops its deferred descendant chain" {
+    const graph = try probe_graph(testing_t.allocator);
+    defer call_destroy(graph);
+    try expect_obs(try admit_dialog(graph, 0x100, 0x900, 10), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    try expect_obs(try admit_dialog(graph, 0x200, 0x100, 11), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    try expect_obs(try admit_dialog(graph, 0x300, 0x200, 12), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    _ = discard_events(graph);
+
+    var replacement = owned_facts(0x100, 0x900, 13);
+    replacement.process_id = 9999;
+    const replaced = try offer(graph, &replacement);
+    try expect_obs(replaced, DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+    try expect_counts(replaced, 0, 0, 0, 3);
+    try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
+    try testing_t.expect(call_find_deferred(graph, 0x100) != null);
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x200));
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x300));
+
+    _ = try admit_top(graph, 0x900, 14);
+    try testing_t.expect(call_find_active(graph, 0x100) != null);
+    try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x200));
+    try expect_obs(try admit_dialog(graph, 0x200, 0x100, 15), DispositionAdmitted, RoleDialog, 3, 0, ReasonNone);
+    try expect_obs(try admit_dialog(graph, 0x300, 0x200, 16), DispositionAdmitted, RoleDialog, 4, 0, ReasonNone);
+}
+
+test "Deferred-only identity shortfalls drop the old subtree and exclude the replacement" {
+    // Capacity shortfall with the replacement now under an Active parent.
+    {
+        const graph = try probe_graph(testing_t.allocator);
+        defer call_destroy(graph);
+        try expect_obs(try admit_dialog(graph, 0x100, 0x900, 10), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        try expect_obs(try admit_dialog(graph, 0x200, 0x100, 11), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        try expect_obs(try admit_dialog(graph, 0x300, 0x200, 12), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        _ = try admit_top(graph, 0x901, 20);
+        _ = discard_events(graph);
+        try fill_graph(graph, MaxEntries - 1);
+
+        var replacement = owned_facts(0x100, 0x901, 40);
+        replacement.process_id = 9999;
+        const shortfall_result = try offer(graph, &replacement);
+        try expect_obs(shortfall_result, DispositionExcluded, 0, 0, 0, ReasonIncarnationChanged);
+        try expect_counts(shortfall_result, 0, 0, 0, 3);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x100));
+        try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x200));
+        try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x300));
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_at_capacity);
+        try testing_t.expectEqual(@as(u32, MaxEntries), call_count_state(graph, .Active));
+
+        try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x200));
+        try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x300));
+    }
+
+    // Generation shortfall with the replacement under an Active parent.
+    {
+        const graph = try probe_graph(testing_t.allocator);
+        defer call_destroy(graph);
+        try expect_obs(try admit_dialog(graph, 0x100, 0x900, 10), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        try expect_obs(try admit_dialog(graph, 0x200, 0x100, 11), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        try expect_obs(try admit_dialog(graph, 0x300, 0x200, 12), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        _ = try admit_top(graph, 0x901, 20);
+        _ = discard_events(graph);
+        set_generations_issued(graph, std_t.math.maxInt(u64));
+
+        var replacement = owned_facts(0x100, 0x901, 40);
+        replacement.process_id = 9999;
+        const shortfall_result = try offer(graph, &replacement);
+        try expect_obs(shortfall_result, DispositionExcluded, 0, 0, 0, ReasonIncarnationChanged);
+        try expect_counts(shortfall_result, 0, 0, 0, 3);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).rejected_generation_exhausted);
+        try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
+    }
+
+    // Lookup failure while the replacement still has an absent parent.
+    {
+        const graph = try probe_graph(testing_t.allocator);
+        defer call_destroy(graph);
+        try expect_obs(try admit_dialog(graph, 0x100, 0x900, 10), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        try expect_obs(try admit_dialog(graph, 0x200, 0x100, 11), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        try expect_obs(try admit_dialog(graph, 0x300, 0x200, 12), DispositionDeferred, RoleDialog, 0, 0, ReasonParentPending);
+        _ = discard_events(graph);
+
+        lookup_probe.mode = .Fail;
+        var replacement = owned_facts(0x100, 0x901, 40);
+        replacement.process_id = 9999;
+        const shortfall_result = try offer(graph, &replacement);
+        try expect_obs(shortfall_result, DispositionExcluded, 0, 0, 0, ReasonIncarnationChanged);
+        try expect_counts(shortfall_result, 0, 0, 0, 3);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).lookup_failures);
+        try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
+
+        lookup_probe.mode = .Ok;
+        _ = try admit_top(graph, 0x900, 41);
+        replacement = owned_facts(0x100, 0x900, 42);
+        replacement.process_id = 9999;
+        try expect_obs(try offer(graph, &replacement), DispositionAdmitted, RoleDialog, 2, 0, ReasonNone);
+        try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x200));
+        try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x300));
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try expect_obs(try admit_dialog(graph, 0x200, 0x100, 43), DispositionAdmitted, RoleDialog, 3, 0, ReasonNone);
+        try expect_obs(try admit_dialog(graph, 0x300, 0x200, 44), DispositionAdmitted, RoleDialog, 4, 0, ReasonNone);
+    }
+}
+
+test "accepted destruction and NotExported parents invalidate cached descendants" {
+    // A stale destroy hint is not discontinuity evidence; an accepted hint is.
+    {
+        const graph = try probe_graph(testing_t.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        inject_deferred(graph, 0, 0x200);
+        graph.deferred[0].record.parent_window = 0x100;
+        graph.deferred[0].record.app_key_length = 3;
+        @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
+        inject_deferred(graph, 1, 0x300);
+        graph.deferred[1].record.parent_window = 0x200;
+        graph.deferred[1].record.app_key_length = 3;
+        @memcpy(graph.deferred[1].record.app_key[0..3], "a-y");
+        _ = discard_events(graph);
+        try expect_obs(try destroy_hint(graph, 0x100, 9, 999), DispositionUnchanged, RoleToplevel, 1, 0, ReasonNone);
+        try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
+
+        fill_ring(graph, EventCapacity);
+        const before = state_digest(graph);
+        var rejected = sentinel_observation();
+        try testing_t.expectEqual(status_t.QueueFull, call_note_destroyed(graph, TestEpoch, 0x100, 13, 1000, &rejected));
+        try testing_t.expect(std_t.mem.allEqual(u8, std_t.mem.asBytes(&rejected), 0xA5));
+        try testing_t.expectEqual(before, state_digest(graph));
+        try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
+        _ = discard_events(graph);
+
+        const destroyed = try destroy_hint(graph, 0x100, 13, 1000);
+        try expect_obs(destroyed, DispositionRetired, 0, 0, 1, ReasonDestroyed);
+        try expect_counts(destroyed, 1, 0, 1, 2);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try expect_ev(try next_ev(graph), EventRetireIntent, 0x100, 1, 0, 0, ReasonDestroyed);
+        _ = try admit_top(graph, 0x100, 14);
+        try testing_t.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
+    }
+
+    // An unknown NotExported parent still invalidates records waiting on that numeric HWND.
+    {
+        const graph = try probe_graph(testing_t.allocator);
+        defer call_destroy(graph);
+        _ = try admit_dialog(graph, 0x200, 0x100, 10);
+        _ = try admit_dialog(graph, 0x300, 0x200, 11);
+        var excluded_parent = window_facts(0x100, 12);
+        set_class(&excluded_parent, "Shell_TrayWnd");
+        const excluded_obs = try offer(graph, &excluded_parent);
+        try expect_obs(excluded_obs, DispositionExcluded, 0, 0, 0, ReasonExcludedClass);
+        try expect_counts(excluded_obs, 0, 0, 0, 2);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        _ = try admit_top(graph, 0x100, 13);
+        try testing_t.expectEqual(@as(u32, 1), call_count_state(graph, .Active));
+    }
+
+    // Excluding a known Active parent invalidates descendants of it as well.
+    {
+        const graph = try probe_graph(testing_t.allocator);
+        defer call_destroy(graph);
+        _ = try admit_top(graph, 0x100, 10);
+        _ = try admit_dialog(graph, 0x200, 0x777, 11);
+        graph.deferred[call_find_deferred(graph, 0x200).?].record.parent_window = 0x100;
+        _ = discard_events(graph);
+        var excluded_parent = window_facts(0x100, 12);
+        set_class(&excluded_parent, "Shell_TrayWnd");
+        fill_ring(graph, EventCapacity);
+        try offer_fails(graph, &excluded_parent, .QueueFull);
+        try testing_t.expectEqual(@as(u32, 1), call_count_deferred(graph));
+        _ = discard_events(graph);
+        const excluded_obs = try offer(graph, &excluded_parent);
+        try expect_obs(excluded_obs, DispositionRetired, 0, 0, 1, ReasonExcludedClass);
+        try expect_counts(excluded_obs, 1, 0, 1, 1);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    }
+}
+
+test "refresh commit invalidates seen deferred descendants of unseen Active parents" {
+    const graph = try probe_graph(testing_t.allocator);
+    defer call_destroy(graph);
+    try fill_graph(graph, MaxEntries - 1);
+    _ = try admit_top(graph, 0x100, 1000);
+    inject_deferred(graph, 0, 0x200);
+    var child_facts = owned_facts(0x200, 0x100, 2000);
+    graph.deferred[0].record = record_from_facts(&child_facts, TickBaseStart + 2000, RoleDialog, 0x100);
+    graph.deferred[0].record.seq = 1;
+    graph.deferred[0].record.app_key_length = 3;
+    @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
+    _ = discard_events(graph);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_begin(graph, TestEpoch));
+    var index: u32 = 0;
+    while (index < MaxEntries - 1) : (index += 1) {
+        try testing_t.expectEqual(status_t.Ok, call_refresh_keep(graph, TestEpoch, 0x8000 + index));
+    }
+    child_facts.stamp = 2001;
+    try refresh_offer_fails(graph, &child_facts, .AtCapacity);
+    try testing_t.expect(graph.deferred[call_find_deferred(graph, 0x200).?].seen);
+
+    var retired: u32 = 0;
+    fill_ring(graph, EventCapacity);
+    const before_queuefull = state_digest(graph);
+    try testing_t.expectEqual(status_t.QueueFull, call_refresh_commit(graph, TestEpoch, &retired));
+    try testing_t.expectEqual(before_queuefull, state_digest(graph));
+    try testing_t.expect(graph.deferred[call_find_deferred(graph, 0x200).?].used);
+    _ = discard_events(graph);
+    try testing_t.expectEqual(status_t.Ok, call_refresh_commit(graph, TestEpoch, &retired));
+    try testing_t.expectEqual(@as(u32, 1), retired);
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).deferred_dropped);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try expect_ev(try next_ev(graph), EventRetireIntent, 0x100, MaxEntries, 0, 0, ReasonRefreshUnseen);
+    const proof = proof_t{ .capture_stopped = 1, .pins_drained = 1 };
+    try testing_t.expectEqual(status_t.Ok, call_complete_retire(graph, TestEpoch, 0x100, MaxEntries, &proof));
+    _ = try admit_top(graph, 0x100, 2001);
+    try testing_t.expectEqual(@as(u32, MaxEntries), call_count_state(graph, .Active));
+    try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x200));
+}
+
+test "QueueFull preserves planned deferred drops and replacement retry applies them once" {
+    const graph = try probe_graph(testing_t.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    inject_deferred(graph, 0, 0x200);
+    var child_facts = owned_facts(0x200, 0x100, 2000);
+    graph.deferred[0].record = record_from_facts(&child_facts, TickBaseStart + 2000, RoleDialog, 0x100);
+    graph.deferred[0].record.seq = 1;
+    graph.deferred[0].record.app_key_length = 3;
+    @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
+    inject_deferred(graph, 1, 0x300);
+    graph.deferred[1].record.parent_window = 0x200;
+    graph.deferred[1].record.app_key_length = 3;
+    @memcpy(graph.deferred[1].record.app_key[0..3], "a-y");
+    _ = discard_events(graph);
+
+    var replacement = window_facts(0x100, 13);
+    replacement.process_id = 9999;
+    fill_ring(graph, EventCapacity);
+    const before = state_digest(graph);
+    try offer_fails(graph, &replacement, .QueueFull);
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    _ = discard_events(graph);
+
+    const retried = try offer(graph, &replacement);
+    try expect_obs(retried, DispositionAdmitted, RoleToplevel, 2, 1, ReasonIncarnationChanged);
+    try expect_counts(retried, 2, 1, 1, 2);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+}
+
+test "QueueFull preserves a Deferred replacement subtree until its admission can commit" {
+    const graph = try probe_graph(testing_t.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    inject_deferred(graph, 0, 0x200);
+    var child_facts = owned_facts(0x200, 0x100, 2000);
+    graph.deferred[0].record = record_from_facts(&child_facts, TickBaseStart + 2000, RoleDialog, 0x100);
+    graph.deferred[0].record.seq = 1;
+    graph.deferred[0].record.app_key_length = 3;
+    @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
+    inject_deferred(graph, 1, 0x300);
+    graph.deferred[1].record.parent_window = 0x200;
+    graph.deferred[1].record.app_key_length = 3;
+    @memcpy(graph.deferred[1].record.app_key[0..3], "a-y");
+    _ = discard_events(graph);
+
+    var replacement = owned_facts(0x200, 0x100, 2001);
+    replacement.process_id = 9999;
+    fill_ring(graph, EventCapacity);
+    const before = state_digest(graph);
+    try offer_fails(graph, &replacement, .QueueFull);
+    try testing_t.expectEqual(before, state_digest(graph));
+    try testing_t.expectEqual(@as(u32, 2), call_count_deferred(graph));
+    _ = discard_events(graph);
+
+    const retried = try offer(graph, &replacement);
+    try expect_obs(retried, DispositionAdmitted, RoleDialog, 2, 0, ReasonNone);
+    try expect_counts(retried, 1, 1, 0, 2);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try expect_ev(try next_ev(graph), EventAnnounce, 0x200, 2, 0x100, 1, 0);
+}
+
+test "identity replacement lookup failure still drops cached descendants" {
+    const graph = try probe_graph(testing_t.allocator);
+    defer call_destroy(graph);
+    _ = try admit_top(graph, 0x100, 10);
+    inject_deferred(graph, 0, 0x200);
+    var child_facts = owned_facts(0x200, 0x100, 2000);
+    graph.deferred[0].record = record_from_facts(&child_facts, TickBaseStart + 2000, RoleDialog, 0x100);
+    graph.deferred[0].record.seq = 1;
+    graph.deferred[0].record.app_key_length = 3;
+    @memcpy(graph.deferred[0].record.app_key[0..3], "a-x");
+    inject_deferred(graph, 1, 0x300);
+    graph.deferred[1].record.parent_window = 0x200;
+    graph.deferred[1].record.app_key_length = 3;
+    @memcpy(graph.deferred[1].record.app_key[0..3], "a-y");
+    _ = discard_events(graph);
+    lookup_probe.mode = .Fail;
+
+    var replacement = window_facts(0x100, 13);
+    replacement.process_id = 9999;
+    const retired = try offer(graph, &replacement);
+    try expect_obs(retired, DispositionRetired, 0, 0, 1, ReasonIncarnationChanged);
+    try expect_counts(retired, 1, 0, 1, 2);
+    try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+    try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x100));
+    try testing_t.expectEqual(@as(u64, 1), current_stats(graph).lookup_failures);
 }
 
 /// Q=0x50 (g1), P=0x100 (g2), C1=0x200 (g3) and C2=0x300 (g4) owned by P, G=0x400 (g5) owned by C1.
@@ -7237,7 +7739,7 @@ test "a deferred record of another incarnation is dropped and its key is never r
         try testing_t.expectEqual(@as(u64, 3), stats.deferred_added);
         try testing_t.expectEqual(@as(u64, 1), stats.deferred_dropped);
     }
-    // A lookup failure on the replacement leaves the old record untouched (nothing changed).
+    // A lookup failure after a positive mismatch drops the old record and returns Excluded.
     {
         const graph = try probe_graph(testing_t.allocator);
         defer call_destroy(graph);
@@ -7246,8 +7748,11 @@ test "a deferred record of another incarnation is dropped and its key is never r
         lookup_probe.mode = .Fail;
         facts.process_id = 9999;
         facts.stamp = 11;
-        try offer_fails(graph, &facts, .LookupFailed);
-        try testing_t.expectEqual(@as(u32, 4242), graph.deferred[call_find_deferred(graph, 0x200).?].record.process_id);
+        const obs = try offer(graph, &facts);
+        try expect_obs(obs, DispositionExcluded, 0, 0, 0, ReasonIncarnationChanged);
+        try expect_counts(obs, 0, 0, 0, 1);
+        try testing_t.expectEqual(@as(u32, 0), call_count_deferred(graph));
+        try testing_t.expectEqual(@as(u64, 1), current_stats(graph).lookup_failures);
     }
 }
 
@@ -7598,7 +8103,8 @@ test "random operation traces keep every graph invariant and the event stream or
     try testing_t.expect(totals.reclassified > 20);
     try testing_t.expect(totals.updates > 20);
     try testing_t.expect(totals.coalesced > 5);
-    try testing_t.expect(totals.evicted > 0);
+    // Deferred eviction remains covered by the deterministic 65th-record test above; the
+    // randomized traces need not hit that path after accepted incarnation changes now drop subtrees.
     try testing_t.expect(totals.at_capacity > 20);
     try testing_t.expect(totals.cycle > 5);
     try testing_t.expect(totals.queue_full > 0);
@@ -7863,7 +8369,7 @@ test "a commit drops unseen deferred records and keeps the seen ones" {
     try testing_t.expectEqual(@as(u32, 0), graph.ring_len);
 }
 
-test "offers that fail still mark the window seen so the commit keeps it" {
+test "offers that fail still mark windows seen; accepted Deferred mismatch drops its subtree" {
     const graph = try probe_graph(testing_t.allocator);
     defer call_destroy(graph);
     _ = try admit_top(graph, 0x100, 10); // StaleFacts
@@ -7890,9 +8396,11 @@ test "offers that fail still mark the window seen so the commit keeps it" {
     facts = owned_facts(0xB00, 0x888, 31);
     facts.process_id += 1;
     lookup_probe.mode = .Fail;
-    try refresh_offer_fails(graph, &facts, .LookupFailed);
+    const replacement = try refresh_offer_ok(graph, &facts);
+    try expect_obs(replacement, DispositionExcluded, 0, 0, 0, ReasonIncarnationChanged);
+    try expect_counts(replacement, 0, 0, 0, 1);
     lookup_probe.mode = .Ok;
-    try testing_t.expect(deferred_seen(graph, 0xB00));
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0xB00));
 
     facts = owned_facts(0x700, 0x800, 32);
     try refresh_offer_fails(graph, &facts, .Cycle);
@@ -7909,7 +8417,8 @@ test "offers that fail still mark the window seen so the commit keeps it" {
     try testing_t.expectEqual(@as(u32, 3), call_count_state(graph, .Active));
     try testing_t.expectEqual(@as(?usize, null), call_find_active(graph, 0x400));
     try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0x800));
-    try testing_t.expect(call_find_deferred(graph, 0xB00) != null);
+    try testing_t.expectEqual(@as(?usize, null), call_find_deferred(graph, 0xB00));
+    try testing_t.expectEqual(@as(u64, 1), stats.deferred_dropped);
     const ev = try next_ev(graph);
     try expect_ev(ev, EventRetireIntent, 0x400, 4, 0, 0, ReasonRefreshUnseen);
     try testing_t.expectEqual(@as(u32, 0), graph.ring_len);

@@ -142,10 +142,21 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     Strict Windows cross-link passes; native runtime evidence remains pending.
     HEAD identifies this containing smoke-test correction.
 
-- **Commit `HEAD`**: `docs(interop): record isolated Linux and real Windows review qualification`
+- **Commit `ff51808`**: `docs(interop): record isolated Linux and real Windows review qualification`
   - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local90.50%).
   - **Summary**: CI40123985933 succeeds on Linux and Windows at exact5aff081:
     C ABI27, observer doubles65 and actual native smoke execute. Records the
     aggregate-hint limitation and excludes newer snapshot cleanup, target
     correlation and pending graph fixes from this result. No installed-session
     credit or standard merge. HEAD identifies this evidence commit.
+
+- **Commit `HEAD`**: `fix(interop): invalidate cached descendants across parent discontinuity`
+  - **Task Impact**: +0% to local #1/#4; +0% global TODO #10 (local90.50%).
+  - **Summary**: Implements the bounded staged deletion mask for every Active
+    cascade root, changed Deferred parent, accepted destroy, exclusion and doomed
+    refresh entry. Masks cycle/flush scans, preserves QueueFull rollback and
+    same-object Reclassified behavior. Failed Deferred-only replacement prunes
+    stale cached facts and returns Ok/Excluded rather than reviving them later.
+    Nine new builtins bring Debug and ReleaseSafe to145 passing each. Public
+    comments describe exceptions; no ABI size/export change. Full leak/coverage/
+    Windows qualification remains pending. HEAD is this correctness commit.

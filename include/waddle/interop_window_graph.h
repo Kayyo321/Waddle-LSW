@@ -809,20 +809,34 @@ interop_window_graph_status_t interop_window_graph_classify(const interop_window
  *     thread_id, process_start_time, class hash) differs from the copy is scheduled to retire with
  *     reason IncarnationChanged. A deferred record D for the window whose identity tuple differs
  *     from the copy is dropped (deferred_dropped) and the window is treated as having no deferred
- *     record: the key lookup runs afresh and a new deferral takes a new age position. Both changes are
- *     applied together with the rest of the plan.
+ *     record: the key lookup runs afresh and a new deferral takes a new age position. Its deferred
+ *     descendants are invalidated as well. For an Active identity change, deferred descendants
+ *     waiting on every HWND in the retiring Active cascade are also dropped, transitively; stored
+ *     child facts cannot be promoted against a replacement that has only the same numeric HWND.
+ *     NotExported facts conservatively invalidate deferred descendants waiting on that HWND even
+ *     when no Active or Deferred parent record is present. These deletions are staged with the rest
+ *     of the plan and applied only after ring-room preflight and the applicable lookup outcome;
+ *     QueueFull changes nothing, while a forced retire-only outcome still applies them.
+ *     Same-incarnation Reclassified continues to re-defer and flush its live descendants. For a
+ *     Deferred-only positive identity mismatch (no Active entry), an AtCapacity, GenerationExhausted
+ *     or lookup failure drops the old Deferred parent and its selected subtree, then returns Ok with
+ *     disposition Excluded, reason IncarnationChanged and no generation/retirement/event. QueueFull
+ *     still preserves the full prior graph; ordinary errors without an identity mismatch do too.
  *  5. Cycle, capacity, generation, event-queue room for the whole plan (QueueFull), then the single
  *     lookup (LookupFailed, AppKeyInvalid).
  *
  * Outcomes on Ok (observation->disposition):
  *  - Suspended: OnInputDesktop was clear; no entry, deferred record or event changed.
  *  - Excluded: classification says not exported and no live entry existed; a deferred record for the
- *    window, if any, is dropped (deferred_dropped).
+ *    window, if any, and its deferred descendants are dropped (deferred_dropped). Waiting descendants
+ *    are also invalidated when no parent record exists, since the HWND cannot serve as their cached
+ *    parent.
  *  - Retired: classification says not exported (reason = the classification reason) or a
  *    replacement could not be admitted; the live entry and its descendants moved to Retiring
  *    (descendants first, descending generation), one RetireIntent each (reason ParentRetired for
  *    descendants, never re-deferred except as the Reclassified bullet states); a deferred record for
- *    the window is dropped.
+ *    the window is dropped. Deferred descendants waiting on every HWND in the retiring cascade are
+ *    also dropped transitively, including when the NotExported window had no Active or Deferred entry.
  *  - Unchanged / Updated: a live entry exists with the same identity tuple (process_id, thread_id,
  *    process_start_time, class hash), role and parent. Rect, derived state, dpi, title and
  *    min size are compared; no difference is Unchanged, otherwise an Update is queued or
@@ -837,7 +851,8 @@ interop_window_graph_status_t interop_window_graph_classify(const interop_window
  *    deferred and, being seen, survive a refresh commit. Every re-deferred record inherits the seen
  *    mark of the Active entry it replaces.
  *  - Admitted: no live entry existed (or the identity tuple differed, in which case the old entry
- *    retired first with retired_generation set and reason IncarnationChanged) and the window is
+ *    retired first with retired_generation set and reason IncarnationChanged, and cached deferred
+ *    descendants of the retiring cascade were dropped) and the window is
  *    eligible with no parent or an Active parent. app_key_lookup runs once; the Announce is
  *    queued; then deferred children of the new entry are flushed in age order, transitively,
  *    parent Announce strictly before child Announce, cut off by remaining capacity and
@@ -851,6 +866,12 @@ interop_window_graph_status_t interop_window_graph_classify(const interop_window
  *  Reclassified for a role/parent change, Deferred if the new parent is not yet announced,
  *  Retired if the new facts classify as not exported), retired_generation is nonzero, and
  *  reason names the cause (IncarnationChanged, Reclassified or the classification reason).
+ *  Deferred-only replacement shortfall: when a Deferred record's positive identity mismatch is
+ *  accepted but no Active entry exists, AtCapacity, GenerationExhausted or lookup failure returns
+ *  Ok with disposition Excluded, reason IncarnationChanged, zero generations/retirements/events and
+ *  the exact deferred_dropped count for that record and its selected subtree. This prevents a later
+ *  ancestor admission from flushing cached facts from the old incarnation. QueueFull preserves the
+ *  prior graph. Ordinary errors without an identity mismatch retain their existing no-change behavior.
  *  Replacement shortfall (forced retirement): if the retirement is required but the replacement
  *  cannot be admitted for a persistent reason (AtCapacity, GenerationExhausted, LookupFailed,
  *  AppKeyInvalid; and Cycle when the retirement is an identity change or the cascade cycle below),
@@ -899,7 +920,9 @@ interop_window_graph_status_t interop_window_graph_observe(interop_window_graph_
  * where admit_captured64 is the unwrapped captured_ms of the facts that admitted L and "<" is a plain
  * 64-bit comparison. A hint older than the facts that admitted L describes an earlier incarnation of a
  * recycled HWND and is ignored. Equal ticks are ambiguous and count as destroyed (conservative
- * churn, never a stuck stale surface). A deferred record D for the window is dropped iff
+ * churn, never a stuck stale surface). An accepted hint drops deferred descendants waiting on every
+ * HWND in the retiring Active cascade, transitively; if it matches a Deferred record, it drops that
+ * record and its deferred descendants. QueueFull leaves the complete graph state unchanged. A deferred record D for the window is dropped iff
  * hint_stamp > D.last_stamp AND NOT (e64 < D.last_captured64), where last_captured64 is the unwrapped
  * captured_ms of the newest facts accepted for D. Other hints (hide, show, name, location) carry no
  * authority; the observer requeries and calls observe instead. Retiring entries are never touched.
@@ -1087,14 +1110,17 @@ interop_window_graph_status_t interop_window_graph_refresh_unseen(interop_window
                                                                   uint32_t *count);
 
 /**
- * @brief Close the refresh: retire every Active entry not seen, drop every unseen deferred record.
+ * @brief Close the refresh: retire every Active entry not seen, drop every unseen deferred record and
+ *        deferred descendants of doomed Active entries.
  *
  * "Not seen" means no refresh_offer, refresh_keep or Ok observe named the window since refresh_begin.
  * Retirement is children first, reason RefreshUnseen (ParentRetired for descendants, never
  * re-deferred). The caller must not commit a refresh in which any offer returned Suspended or in
  * which its enumeration was partial: absence from the enumeration is treated as destruction. A window
  * whose query failed is kept with refresh_keep and a refresh containing failed queries may commit;
- * refresh_unseen lets the caller requery the would-be victims first.
+ * refresh_unseen lets the caller requery the would-be victims first. Deferred descendants of each
+ * doomed Active HWND are dropped even if they were seen in the refresh, because their cached parent
+ * facts cannot survive a confirmed parent discontinuity.
  *
  * @param[in,out] graph Non-NULL owner-thread handle.
  * @param[in] session_epoch Captured epoch; must equal the graph's.
