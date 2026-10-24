@@ -117,10 +117,7 @@
       "allocation_source": "user_override",
       "owned_files": [
         "src/interop/interop_mapping_windows.c",
-        "src/interop/interop_ivshmem_driver.h",
-        "tests/interop/mapping_windows.c",
-        "tests/interop/mapping_windows_api_double.h",
-        "tests/interop/win32_shim/initguid.h"
+        "src/interop/interop_ivshmem_driver.h"
       ],
       "task": "Implement raw retryable Windows mapping SDK owner against authoritative header and IMPL_DESC8.18",
       "acceptance": [
@@ -129,6 +126,26 @@
       ],
       "constraints": [
         "No shared build/Git/header changes/VM/driver installs/Claude or recursive agents"
+      ],
+      "runner_ownership": "isolated /tmp CPU only"
+    },
+    {
+      "agent": "luna_mounts",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "allocation_source": "user_override",
+      "owned_files": [
+        "tests/interop/mapping_windows.c",
+        "tests/interop/mapping_windows_api_double.h",
+        "tests/interop/win32_shim/initguid.h"
+      ],
+      "task": "Parallel portable/native-SDK fault fixture for raw mapping owner against fixed header and IMPL_DESC8.18",
+      "acceptance": [
+        "isolated ASan/LSan/UBSan and native Windows cross-build",
+        "lead production line/branch and actual native Windows CI"
+      ],
+      "constraints": [
+        "No production/public-header/shared-build/Git/VM/Claude or recursive agents"
       ],
       "runner_ownership": "isolated /tmp CPU only"
     }
@@ -206,5 +223,5 @@
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
   },
-  "lead_current_work": "Interop e5014ac CI green including actual Windows; Native AV transport still running. Review next raw SDK mapping owner while preparing accurate session-core credit."
+  "lead_current_work": "Shared endpoint core25% each accepted by exact-source interop Linux/Windows CI; total16.40%. Review parallel raw mapping implementation and fixtures; Native AV regression state is in current receipt."
 }

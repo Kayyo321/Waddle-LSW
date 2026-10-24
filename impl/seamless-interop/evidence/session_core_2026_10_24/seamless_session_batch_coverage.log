@@ -1,0 +1,450 @@
+python3 tests/av/coverage.py interop_codec
+preserved interop_codec coverage: /home/dev/Waddle-LSW/build/coverage/interop/interop_codec/run-20261024T170914172058Z-329866
+interop_codec instrumentation: 663 exact metadata-bound sites; 18/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 3316/524288 bytes; 663 sites
+1/23 interop_codec.test.AUMID keys reserve suffix space and preserve outputs on every error...OK
+2/23 interop_codec.test.window minimum sizes are independent of current geometry and bounded per axis...OK
+3/23 interop_codec.test.menu trigger serials are protocol references and local stop frames never cross VSOCK...OK
+4/23 interop_codec.test.Hello and HelloAck accept SemVer metadata through writer and receive validation...OK
+5/23 interop_codec.test.hello round trip, header decode and typed field access...OK
+6/23 interop_codec.test.header rejects magic, version, length and short input...OK
+7/23 interop_codec.test.structural defects: order, duplicates, padding, criticality, unknown tags...OK
+8/23 interop_codec.test.field present but not allowed for the message type is malformed...OK
+9/23 interop_codec.test.writer rejects order, values, capacity and poisons itself...OK
+10/23 interop_codec.test.window announce with every field, parent pairing and string rules...OK
+11/23 interop_codec.test.every field value rule accepts its boundary and rejects one past it...OK
+12/23 interop_codec.test.launch requests require exactly one target kind...OK
+13/23 interop_codec.test.icon requests pair window and generation...OK
+14/23 interop_codec.test.display config repeats outputs 1..8 times and nowhere else...OK
+15/23 interop_codec.test.field count limit is enforced by writer and validator...OK
+16/23 interop_codec.test.transfers: contiguity, bounds, digest and cancellation...OK
+17/23 interop_codec.test.every message type has a buildable minimal frame and rejects the wrong direction...OK
+18/23 interop_codec.test.deterministic mutation fuzz never crashes and keeps outputs unchanged on error...OK
+19/23 interop_codec.test.every registered tag reaches a value rule without hitting the unreachable default...OK
+20/23 interop_codec.test.runtime inputs exercise defensive branches of every export...OK
+21/23 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+22/23 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+23/23 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+All 23 tests passed.
+interop_codec production branch coverage: 97.13% (271/279); 129 compiler panic/stack-canary guards excluded
+interop_codec production line coverage: 96.56% (309/320); 129 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py interop_layout
+preserved interop_layout coverage: /home/dev/Waddle-LSW/build/coverage/interop/interop_layout/run-20261024T170923773273Z-329934
+interop_layout instrumentation: 106 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 532/524288 bytes; 106 sites
+1/8 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+2/8 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+3/8 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+4/8 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+5/8 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+6/8 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+7/8 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+8/8 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 8 tests passed.
+interop_layout production branch coverage: 98.44% (63/64); 0 compiler panic/stack-canary guards excluded
+interop_layout production line coverage: 98.57% (69/70); 0 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py interop_heap
+preserved interop_heap coverage: /home/dev/Waddle-LSW/build/coverage/interop/interop_heap/run-20261024T170932718876Z-329994
+interop_heap instrumentation: 75 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 376/524288 bytes; 75 sites
+1/17 interop_heap.test.initialization and capacity errors preserve outputs...OK
+2/17 interop_heap.test.first fit skips a partially occupied candidate...OK
+3/17 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+4/17 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+5/17 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+6/17 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+7/17 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+8/17 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+9/17 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+10/17 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+11/17 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+12/17 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+13/17 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+14/17 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+15/17 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+16/17 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+17/17 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 17 tests passed.
+interop_heap production branch coverage: 97.92% (47/48); 4 compiler panic/stack-canary guards excluded
+interop_heap production line coverage: 100.00% (44/44); 4 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py interop_slot_runtime
+preserved interop_slot_runtime coverage: /home/dev/Waddle-LSW/build/coverage/interop/interop_slot_runtime/run-20261024T170940352407Z-330521
+interop_slot_runtime instrumentation: 527 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 2636/524288 bytes; 527 sites
+1/40 interop_slot_runtime.test.admission, descriptor indices, identity and unchanged errors...OK
+2/40 interop_slot_runtime.test.provisional writer has distinct cancellation and exact release pin...OK
+3/40 interop_slot_runtime.test.growth waits on every pin and switches only free descriptors...OK
+4/40 interop_slot_runtime.test.retirement quarantines claims and releases on exact final pin...OK
+5/40 interop_slot_runtime.test.drain requires producer and host proofs and releases all pinned runs...OK
+6/40 interop_slot_runtime.test.all descriptor indices are assigned and generation never reuses...OK
+7/40 interop_slot_runtime.test.transactional allocation errors preserve output and allocator...OK
+8/40 interop_slot_runtime.test.shrink updates future geometry without replacing pinned runs...OK
+9/40 interop_slot_runtime.test.invalid writer evidence fails closed and explicit proof still drains...OK
+10/40 interop_slot_runtime.test.sequence is strictly increasing and exhausted sequence cannot wrap...OK
+11/40 interop_slot_runtime.test.long-running slot cycle preserves exact ownership across reuse...OK
+12/40 interop_slot_runtime.test.capture dimensions use frozen independent clamps...OK
+13/40 interop_slot_runtime.test.retirement cancels a provisional claim before releasing descriptors...OK
+14/40 interop_slot_runtime.test.drain releases mixed active replacement and retired runs...OK
+15/40 interop_slot_runtime.test.slot capacity corruption is rejected without claiming a writer...OK
+16/40 interop_slot_runtime.test.growth release corruption fails closed and retains reservations...OK
+17/40 interop_slot_runtime.test.retirement release corruption remains recoverable only with drain proof...OK
+18/40 interop_slot_runtime.test.host drain allocation failure does not partially release runtime runs...OK
+19/40 interop_slot_runtime.test.caller-owned runtime allocation has a complete leak-free lifecycle...OK
+20/40 interop_slot_runtime.test.writer identity guards and active-writer drain guard...OK
+21/40 interop_slot_runtime.test.pending growth accepts a smaller desired geometry without dropping replacement...OK
+22/40 interop_slot_runtime.test.corrupt post-publication bookkeeping fails closed and preserves all runs...OK
+23/40 interop_slot_runtime.test.stale asynchronous writer work cannot mutate a replacement session...OK
+24/40 interop_heap.test.initialization and capacity errors preserve outputs...OK
+25/40 interop_heap.test.first fit skips a partially occupied candidate...OK
+26/40 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+27/40 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+28/40 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+29/40 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+30/40 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+31/40 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+32/40 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+33/40 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+34/40 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+35/40 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+36/40 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+37/40 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+38/40 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+39/40 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+40/40 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 40 tests passed.
+interop_slot_runtime production branch coverage: 90.85% (149/164); 24 compiler panic/stack-canary guards excluded
+interop_slot_runtime production line coverage: 99.02% (202/204); 24 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py interop_slot_runtime_abi
+preserved interop_slot_runtime_abi coverage: /home/dev/Waddle-LSW/build/coverage/interop/interop_slot_runtime_abi/run-20261024T170949124943Z-330616
+interop_slot_runtime_abi instrumentation: 147 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 736/524288 bytes; 147 sites
+1/47 interop_slot_runtime_abi.test.runtime error status mapping is exhaustive and has frozen values...OK
+2/47 interop_slot_runtime_abi.test.C ABI address checks preserve outputs and session epochs gate every operation...OK
+3/47 interop_slot_runtime_abi.test.every exported operation rejects a null runtime before reading caller outputs...OK
+4/47 interop_slot_runtime_abi.test.exported writer and release errors preserve scalar output snapshots...OK
+5/47 interop_slot_runtime_abi.test.exported geometry growth capacity and lifecycle errors are observable...OK
+6/47 interop_slot_runtime_abi.test.exported heap exhaustion and window-table capacity leave outputs unchanged...OK
+7/47 interop_slot_runtime_abi.test.exported current-session corruption fails closed and remains drainable...OK
+8/47 interop_slot_runtime.test.admission, descriptor indices, identity and unchanged errors...OK
+9/47 interop_slot_runtime.test.provisional writer has distinct cancellation and exact release pin...OK
+10/47 interop_slot_runtime.test.growth waits on every pin and switches only free descriptors...OK
+11/47 interop_slot_runtime.test.retirement quarantines claims and releases on exact final pin...OK
+12/47 interop_slot_runtime.test.drain requires producer and host proofs and releases all pinned runs...OK
+13/47 interop_slot_runtime.test.all descriptor indices are assigned and generation never reuses...OK
+14/47 interop_slot_runtime.test.transactional allocation errors preserve output and allocator...OK
+15/47 interop_slot_runtime.test.shrink updates future geometry without replacing pinned runs...OK
+16/47 interop_slot_runtime.test.invalid writer evidence fails closed and explicit proof still drains...OK
+17/47 interop_slot_runtime.test.sequence is strictly increasing and exhausted sequence cannot wrap...OK
+18/47 interop_slot_runtime.test.long-running slot cycle preserves exact ownership across reuse...OK
+19/47 interop_slot_runtime.test.capture dimensions use frozen independent clamps...OK
+20/47 interop_slot_runtime.test.retirement cancels a provisional claim before releasing descriptors...OK
+21/47 interop_slot_runtime.test.drain releases mixed active replacement and retired runs...OK
+22/47 interop_slot_runtime.test.slot capacity corruption is rejected without claiming a writer...OK
+23/47 interop_slot_runtime.test.growth release corruption fails closed and retains reservations...OK
+24/47 interop_slot_runtime.test.retirement release corruption remains recoverable only with drain proof...OK
+25/47 interop_slot_runtime.test.host drain allocation failure does not partially release runtime runs...OK
+26/47 interop_slot_runtime.test.caller-owned runtime allocation has a complete leak-free lifecycle...OK
+27/47 interop_slot_runtime.test.writer identity guards and active-writer drain guard...OK
+28/47 interop_slot_runtime.test.pending growth accepts a smaller desired geometry without dropping replacement...OK
+29/47 interop_slot_runtime.test.corrupt post-publication bookkeeping fails closed and preserves all runs...OK
+30/47 interop_slot_runtime.test.stale asynchronous writer work cannot mutate a replacement session...OK
+31/47 interop_heap.test.initialization and capacity errors preserve outputs...OK
+32/47 interop_heap.test.first fit skips a partially occupied candidate...OK
+33/47 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+34/47 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+35/47 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+36/47 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+37/47 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+38/47 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+39/47 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+40/47 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+41/47 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+42/47 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+43/47 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+44/47 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+45/47 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+46/47 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+47/47 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 47 tests passed.
+interop_slot_runtime_abi production branch coverage: 98.33% (59/60); 10 compiler panic/stack-canary guards excluded
+interop_slot_runtime_abi production line coverage: 90.18% (101/112); 10 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py stream_reader
+preserved stream_reader coverage: /home/dev/Waddle-LSW/build/coverage/interop/stream_reader/run-20261024T170958385672Z-330672
+stream_reader instrumentation: 100 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 500/524288 bytes; 100 sites
+1/12 stream_reader.test.real codec ping frame is framed at every split and bytewise...OK
+2/12 stream_reader.test.coalesced frames stop at one boundary and require explicit consume...OK
+3/12 stream_reader.test.maximum frame is bounded and payload validation remains visible...OK
+4/12 stream_reader.test.bad header fails closed and retains exact codec error...OK
+5/12 stream_reader.test.initialization rejects unsupported producer directions...OK
+6/12 stream_reader.test.oversize and unaligned payload headers are rejected by codec...OK
+7/12 stream_reader.test.input alias is rejected before any reader state changes...OK
+8/12 stream_reader.test.EOF distinguishes partial header body and pending complete frame...OK
+9/12 stream_reader.test.payload schema and producer direction errors are returned without hiding frame...OK
+10/12 stream_reader.test.deterministic header mutation corpus never exceeds fixed storage...OK
+11/12 stream_reader.test.payload-only fragments preserve the boundary and clean EOF rejects later access...OK
+12/12 stream_reader.test.failed header refuses every consumer and EOF operation...OK
+All 12 tests passed.
+stream_reader production branch coverage: 94.44% (34/36); 16 compiler panic/stack-canary guards excluded
+stream_reader production line coverage: 100.00% (49/49); 16 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py stream_send_queue
+preserved stream_send_queue coverage: /home/dev/Waddle-LSW/build/coverage/interop/stream_send_queue/run-20261024T171005476933Z-330727
+stream_send_queue instrumentation: 167 exact metadata-bound sites; 3/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 836/524288 bytes; 167 sites
+1/10 stream_send_queue.test.enqueue owns copied frame and partial acknowledgements preserve exact FIFO bytes...OK
+2/10 stream_send_queue.test.data reservation control admission full capacity and ring wrap preserve FIFO...OK
+3/10 stream_send_queue.test.codec rejects malformed maximum-size and wrong-direction frames before allocation...OK
+4/10 stream_send_queue.test.maximum valid optional extension frame is copied and acknowledged without truncation...OK
+5/10 stream_send_queue.test.enqueue requires one exact frame and rejects invalid header lengths...OK
+6/10 stream_send_queue.test.allocation failure leaves existing frames offsets and counters unchanged...OK
+7/10 stream_send_queue.test.single frame allocation is covered by an allocator failure sweep...OK
+8/10 stream_send_queue.test.deinit frees partial frames idempotently and closes future operations...OK
+9/10 stream_send_queue.test.enqueue may borrow an already queued frame while copying another record...OK
+10/10 stream_send_queue.test.deterministic queue stress preserves acknowledgement byte totals...OK
+All 10 tests passed.
+stream_send_queue production branch coverage: 90.24% (37/41); 20 compiler panic/stack-canary guards excluded
+stream_send_queue production line coverage: 100.00% (49/49); 20 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py session_liveness
+preserved session_liveness coverage: /home/dev/Waddle-LSW/build/coverage/interop/session_liveness/run-20261024T171012405983Z-330805
+session_liveness instrumentation: 201 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 1008/524288 bytes; 201 sites
+1/13 session_liveness.test.host cadence registration and matched pong handoff...OK
+2/13 session_liveness.test.guest echoes only nonzero Ping and never asks to ping...OK
+3/13 session_liveness.test.exact any-frame deadline closes before a boundary frame...OK
+4/13 session_liveness.test.ping records expire independently during continuous ordinary traffic...OK
+5/13 session_liveness.test.registration limits are transactional and reused IDs require release...OK
+6/13 session_liveness.test.expired ID remains unavailable until an event returns its release...OK
+7/13 session_liveness.test.multiple pongs match out of order and unknown IDs remain harmless...OK
+8/13 session_liveness.test.Ping APIs close at connection deadline and wrong-role Pong is transactional...OK
+9/13 session_liveness.test.local errors and stale tokens preserve complete state...OK
+10/13 session_liveness.test.disconnect releases all pending IDs exactly once...OK
+11/13 session_liveness.test.role errors at future times do not mutate or trigger timeout...OK
+12/13 session_liveness.test.elapsed comparisons remain correct near uint64 maximum...OK
+13/13 session_liveness.test.deterministic long Ready traffic stays bounded and allocation free...OK
+All 13 tests passed.
+session_liveness production branch coverage: 90.00% (36/40); 46 compiler panic/stack-canary guards excluded
+session_liveness production line coverage: 97.09% (100/103); 46 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py session_handshake
+preserved session_handshake coverage: /home/dev/Waddle-LSW/build/coverage/interop/session_handshake/run-20261024T171019278307Z-330881
+session_handshake instrumentation: 366 exact metadata-bound sites; 3/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 1832/524288 bytes; 366 sites
+1/16 session_handshake.test.host validates Hello and mapping before Ack becomes Ready...OK
+2/16 session_handshake.test.guest waits for complete Hello and accepts capability subset...OK
+3/16 session_handshake.test.wire incompatibilities return frozen errors and clear readiness...OK
+4/16 session_handshake.test.Hello rejects zero identifiers epochs and unknown capabilities...OK
+5/16 session_handshake.test.guest rejects ack capability supersets and malformed version...OK
+6/16 session_handshake.test.guest ack protocol correlation and layout violations use their frozen errors...OK
+7/16 session_handshake.test.local failures preserve the complete value and reject stale tokens...OK
+8/16 session_handshake.test.deadline is overall and exact at uint64 boundary...OK
+9/16 session_handshake.test.drain transport loss and close are idempotent...OK
+10/16 session_handshake.test.Closed is terminal for wire receive and lifecycle callbacks...OK
+11/16 session_handshake.test.deadline guards precede each callback-specific validation...OK
+12/16 session_handshake.test.every asynchronous callback rejects stale tokens and backward time unchanged...OK
+13/16 session_handshake.test.wire handshake message in wrong role is fatal...OK
+14/16 session_handshake.test.initialization and host mapping proof guards...OK
+15/16 session_handshake.test.wrong Ack send ID and invalid local phases preserve state...OK
+16/16 session_handshake.test.role and phase guards distinguish local events from invalid wire phase...OK
+All 16 tests passed.
+session_handshake production branch coverage: 90.60% (106/117); 25 compiler panic/stack-canary guards excluded
+session_handshake production line coverage: 100.00% (108/108); 25 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py agent_version
+preserved agent_version coverage: /home/dev/Waddle-LSW/build/coverage/interop/agent_version/run-20261024T171026630679Z-330990
+agent_version instrumentation: 96 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 480/524288 bytes; 96 sites
+1/3 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+2/3 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+3/3 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+All 3 tests passed.
+agent_version production branch coverage: 94.12% (64/68); 6 compiler panic/stack-canary guards excluded
+agent_version production line coverage: 100.00% (43/43); 6 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py request_ids
+preserved request_ids coverage: /home/dev/Waddle-LSW/build/coverage/interop/request_ids/run-20261024T171033064206Z-331047
+request_ids instrumentation: 138 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 692/524288 bytes; 138 sites
+1/7 request_ids.test.reserve starts at one and release creates a hole without resetting order...OK
+2/7 request_ids.test.reservation skips occupied identifiers across uint32 wrap...OK
+3/7 request_ids.test.full capacity and invalid releases preserve complete state...OK
+4/7 request_ids.test.unknown and repeated release are unchanged...OK
+5/7 request_ids.test.runtime sentinel input is never an occupied or releasable request...OK
+6/7 request_ids.test.retire clears occupancy and preserves sequence cursor...OK
+7/7 request_ids.test.bounded deterministic reserve release stress preserves uniqueness...OK
+All 7 tests passed.
+request_ids production branch coverage: 90.00% (18/20); 9 compiler panic/stack-canary guards excluded
+request_ids production line coverage: 96.43% (27/28); 9 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py manifest
+preserved manifest coverage: /home/dev/Waddle-LSW/build/coverage/interop/manifest/run-20261024T171046842441Z-331129
+manifest instrumentation: 287 exact metadata-bound sites; 5/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 1436/524288 bytes; 287 sites
+1/12 manifest.test.schema one parses all host and guest record kinds with owned borrowed views...OK
+2/12 manifest.test.all frozen schema one kinds parse with their kind-specific fields...OK
+3/12 manifest.test.rejects malformed schema duplicate keys and duplicate record ids...OK
+4/12 manifest.test.rejects root type omissions and malformed JSON paths...OK
+5/12 manifest.test.rejects each required record field when missing or mistyped...OK
+6/12 manifest.test.validates prior variants and optional record values...OK
+7/12 manifest.test.rejects record kind field prior hash UTF8 and string bound violations...OK
+8/12 manifest.test.enforces input record string and nesting bounds...OK
+9/12 manifest.test.valid parse releases every arena allocation...OK
+10/12 manifest.test.document owns strings independently of input and deinit is idempotent...OK
+11/12 manifest.test.invalid parse frees partial allocations under allocation failure...OK
+12/12 manifest.test.allocation failures cover record and duplicate-index growth...OK
+All 12 tests passed.
+manifest production branch coverage: 92.75% (179/193); 24 compiler panic/stack-canary guards excluded
+manifest production line coverage: 100.00% (124/124); 24 compiler panic/stack-canary guards excluded
+python3 tests/av/coverage.py interop_layout_abi
+preserved interop_layout_abi coverage: /home/dev/Waddle-LSW/build/coverage/interop/interop_layout_abi/run-20261024T171054957089Z-331220
+interop_layout_abi instrumentation: 102 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 512/524288 bytes; 102 sites
+1/11 interop_layout_abi.test.header C ABI validates snapshot and preserves output for argument and layout errors...OK
+2/11 interop_layout_abi.test.descriptor C ABI validates a private snapshot and rejects forged header and alias...OK
+3/11 interop_layout_abi.test.frame and audio C ABI return exact values and preserve output on errors...OK
+4/11 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+5/11 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+6/11 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+7/11 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+8/11 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+9/11 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+10/11 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+11/11 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 11 tests passed.
+interop_layout_abi production branch coverage: 100.00% (48/48); 0 compiler panic/stack-canary guards excluded
+interop_layout_abi production line coverage: 97.37% (74/76); 0 compiler panic/stack-canary guards excluded
+python3 tests/interop/native_atomic_coverage.py
+native atomic production line: 96.81% (91/94); evidence /home/dev/Waddle-LSW/build/coverage/interop/native_atomic/run-20261024T171101-a34635d9
+native atomic production branch: 93.46% (100/107); evidence /home/dev/Waddle-LSW/build/coverage/interop/native_atomic/run-20261024T171101-a34635d9
+python3 tests/interop/canonical_coverage.py
+canonical path production line: 100.00% (143/143); evidence /home/dev/Waddle-LSW/build/coverage/interop/canonical_paths/run-20261024T171102-f01c027d
+canonical path production branch: 100.00% (170/170); evidence /home/dev/Waddle-LSW/build/coverage/interop/canonical_paths/run-20261024T171102-f01c027d
+python3 tests/interop/mapping_init_coverage.py
+mapping metadata initialization tests passed
+mapping initializer production line: 96.88% (31/32); evidence /home/dev/Waddle-LSW/build/coverage/interop/mapping_init/run-20261024T171102-8d810331
+mapping initializer production branch: 94.44% (17/18); evidence /home/dev/Waddle-LSW/build/coverage/interop/mapping_init/run-20261024T171102-8d810331

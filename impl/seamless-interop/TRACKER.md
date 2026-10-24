@@ -31,10 +31,10 @@ acceptance remain pending.
 | #1  | IMPL_DESC.md + TRACKER.md, contract freeze (protocol v2, layout v3, manifest schema, config keys) | Done | 2% | 100% | Versioned amendment 2026-10-23; CLI stop/force, serial mapping and minima explicit |
 | #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **native pipeline readiness and hardware run pending** (`scripts/interop_verify_m0.sh audio`) |
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE native hardware runs pending** |
-| #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 19 tests; 97.23% branch / 96.65% line; sanitizers clean; Windows ABI link; bounded app-key helper |
+| #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 23 codec/imported parser tests; 97.13% branch / 96.56% line; bounded SemVer2 and app-key helpers; native Windows/ASan/LSan gates pass |
 | #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 60% | Snapshot, heap, C ABI, native CPU atomics and pure slot pins/growth/drain accepted; live mapping/session integration and qualification remain open |
-| #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | In Progress | 4% | 0% | Portable session core being qualified; Win32 listener/mapping, signing/deploy and native acceptance remain open |
-| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 0% | Portable session core being qualified; host transport, singleton, module extraction and native acceptance remain open |
+| #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | In Progress | 4% | 25% | Shared framing/owned queue/handshake/liveness qualified on Linux and Windows; Win32 listener/mapping, signing/deploy and native acceptance remain open |
+| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 25% | Shared framing/owned queue/handshake/liveness qualified on Linux and Windows; host transport, singleton, module extraction and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `14.40%`
+**Total Feature Completion**: `16.40%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -73,8 +73,8 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pure pin/growth/drain bookkeeping 10%; live runtime integration 15%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; pure pin/growth/drain10%; Linux/Windows coverage and tests pass |
-| #6 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; Win32 listener/mapping loop25%; signing/deploy/update/autostart30%; native qualification20% | None of the new endpoint core accepted yet; module foundations are separate from a working agent |
-| #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | None of the new endpoint core accepted yet; no working host session claimed |
+| #6 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; Win32 listener/mapping loop25%; signing/deploy/update/autostart30%; native qualification20% | Shared framing5%; owned queue5%; handshake10%; liveness5%; native CPU units accepted; integrated agent remains open |
+| #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | Shared framing5%; owned queue5%; handshake10%; liveness5%; native CPU units accepted; integrated host client remains open |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
@@ -736,11 +736,23 @@ its uncompiled draft earns no credit until current acceptance passes.
     regression, leak-enabled sanitizer and production coverage gates passed.
     Source commit6f6b445 contains this research/coordination.
 
-- **Commit `HEAD`**: `docs(interop): freeze retryable Windows mapping owner API`
+- **Commit `8493582`**: `docs(interop): freeze retryable Windows mapping owner API`
   - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total14.40%).
   - **Summary**: Defines an opaque raw SDK lease owner with transactional outputs,
     retained primary/cleanup diagnostics, explicit map-release and close retries,
     publication/quiescence preconditions and guarded pinned driver ABI. Specifies
     portable leak-enabled API doubles and native SDK fixtures; neither can stand
-    in for live driver or compositor proof. HEAD identifies this containing
-    interface/specification commit.
+    in for live driver or compositor proof. Source commit8493582 contains this interface/specification.
+
+- **Commit `HEAD`**: `docs(interop): qualify shared session milestones on Linux and Windows`
+  - **Task Impact**: +25% to TODO #6 and +25% to TODO #7 (+2.00% overall; total16.40%).
+  - **Summary**: Accepts framing5% (9f921d9), owned queue5% (ab676a8),
+    handshake10% (ce9178d) and liveness5% (31fbea9) for each endpoint after
+    combined exact-source CI40114904773 passes Linux and actual Windows at
+    e5014ac, including namespace normalization, SemVer correction and common
+    request IDs. All local interop, leak-enabled C sanitizers and per-module
+    production line/branch gates pass. No OS loop, signed driver, live surface
+    or integrated endpoint/native acceptance is credited. Native AV regression
+    state and future disposable Windows runner plan are preserved separately.
+    [Qualification](session_core_qualification_2026_10_24.json). HEAD identifies
+    this containing milestone qualification commit.

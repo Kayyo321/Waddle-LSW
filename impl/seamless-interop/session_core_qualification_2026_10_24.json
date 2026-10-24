@@ -1,0 +1,231 @@
+{
+  "recorded_utc": "2026-10-24T17:17:21.653016+00:00",
+  "production_source_commit": "e5014ac91ee124726302b97a7811bc35f965e8f6",
+  "sources": [
+    {
+      "path": "src/interop/stream_reader.zig",
+      "sha256": "99f1079e6958800deef860d2a03699cae23fae5fb579b556b7b7c52a3428c77a"
+    },
+    {
+      "path": "src/interop/stream_send_queue.zig",
+      "sha256": "c7871040d2082e7e2b28c7d449de8d6619b3d1dc14f49b9c9eb142af85d6910a"
+    },
+    {
+      "path": "src/interop/session_handshake.zig",
+      "sha256": "44e01d6238d277edfcf5f1eb20767f982a6d17f008d35c2b42dc6e88d248db3e"
+    },
+    {
+      "path": "src/interop/session_liveness.zig",
+      "sha256": "23c3687fe099165b17f1ba43f46f3f1c9fe509dd77be41c8e338c4f3586576b1"
+    },
+    {
+      "path": "src/interop/agent_version.zig",
+      "sha256": "5d956923528e511ab3d16c2bc4f1da5bcb3879885f21967c8c35bfa4de4c6ff1"
+    },
+    {
+      "path": "src/interop/request_ids.zig",
+      "sha256": "9db803d23b9f231f76b0d62a1b22d36b81ec22da2983037b91f87841198a0ef9"
+    },
+    {
+      "path": "src/interop/interop_codec.zig",
+      "sha256": "3036da7f5463c4cd1ca2293a4ac37c294a533d0b96e59855d1db6ef258268c56"
+    }
+  ],
+  "local_commands": [
+    {
+      "command": "make interop-test",
+      "exit_code": 0
+    },
+    {
+      "command": "make interop-sanitizers",
+      "exit_code": 0,
+      "c_sanitizers": [
+        "address",
+        "leak",
+        "undefined"
+      ],
+      "detect_leaks": true,
+      "zig_testing_allocator": "All allocation-owning Zig suites pass; allocation-failure sweeps included."
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 make interop-coverage",
+      "exit_code": 0
+    }
+  ],
+  "coverage": {
+    "stream_reader": {
+      "line": {
+        "covered": 49,
+        "total": 49,
+        "percent": 100.0
+      },
+      "branch": {
+        "covered": 34,
+        "total": 36,
+        "percent": 94.44
+      }
+    },
+    "stream_send_queue": {
+      "line": {
+        "covered": 49,
+        "total": 49,
+        "percent": 100.0
+      },
+      "branch": {
+        "covered": 37,
+        "total": 41,
+        "percent": 90.24
+      }
+    },
+    "session_handshake": {
+      "line": {
+        "covered": 108,
+        "total": 108,
+        "percent": 100.0
+      },
+      "branch": {
+        "covered": 106,
+        "total": 117,
+        "percent": 90.6
+      }
+    },
+    "session_liveness": {
+      "line": {
+        "covered": 100,
+        "total": 103,
+        "percent": 97.09
+      },
+      "branch": {
+        "covered": 36,
+        "total": 40,
+        "percent": 90.0
+      }
+    },
+    "agent_version": {
+      "line": {
+        "covered": 43,
+        "total": 43,
+        "percent": 100.0
+      },
+      "branch": {
+        "covered": 64,
+        "total": 68,
+        "percent": 94.12
+      }
+    },
+    "request_ids": {
+      "line": {
+        "covered": 27,
+        "total": 28,
+        "percent": 96.43
+      },
+      "branch": {
+        "covered": 18,
+        "total": 20,
+        "percent": 90.0
+      }
+    },
+    "interop_codec": {
+      "line": {
+        "covered": 309,
+        "total": 320,
+        "percent": 96.56
+      },
+      "branch": {
+        "covered": 271,
+        "total": 279,
+        "percent": 97.13
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/session_core_2026_10_24/seamless_session_batch_test.log",
+      "sha256": "362bb7660928536f81b7402a116bb8895bf4754f16d0181d2928296a215787a8"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_core_2026_10_24/seamless_session_batch_sanitizers.log",
+      "sha256": "650c2dca73af308bba58764a562a7645c1de968229c366f2e8fe743e28285a38"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_core_2026_10_24/seamless_session_batch_coverage.log",
+      "sha256": "3c9e5c8f5d207a3ce1402de296b97f78dfa7085f0fd5fae0aa32af2b12581bff"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_core_2026_10_24/ci_interop.json",
+      "sha256": "8cff3375390d424bd00536adf19a7ab5f5eb8553009568274ae50d57e0e93033"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_core_2026_10_24/ci_native_av.json",
+      "sha256": "0e0aebd71e1a9bffe70bed391b532d9714634c846bf545d702e49ecd90b485c3"
+    }
+  ],
+  "native_ci": {
+    "interop": {
+      "conclusion": "success",
+      "headSha": "e5014ac91ee124726302b97a7811bc35f965e8f6",
+      "jobs": [
+        {
+          "completedAt": "2026-10-24T17:17:11Z",
+          "conclusion": "success",
+          "databaseId": 120934069411,
+          "name": "linux",
+          "startedAt": "2026-10-24T17:10:25Z",
+          "status": "completed",
+          "steps": [],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40114904773/job/120934069411"
+        },
+        {
+          "completedAt": "2026-10-24T17:17:18Z",
+          "conclusion": "success",
+          "databaseId": 120935600759,
+          "name": "windows",
+          "startedAt": "2026-10-24T17:17:13Z",
+          "status": "completed",
+          "steps": [],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40114904773/job/120935600759"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40114904773"
+    },
+    "native_av": {
+      "conclusion": "success",
+      "headSha": "e5014ac91ee124726302b97a7811bc35f965e8f6",
+      "jobs": [
+        {
+          "completedAt": "2026-10-24T17:15:39Z",
+          "conclusion": "success",
+          "databaseId": 120934069330,
+          "name": "windows",
+          "startedAt": "2026-10-24T17:10:25Z",
+          "status": "completed",
+          "steps": [],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40114904783/job/120934069330"
+        },
+        {
+          "completedAt": "2026-10-24T17:18:35Z",
+          "conclusion": "success",
+          "databaseId": 120935250888,
+          "name": "transport",
+          "startedAt": "2026-10-24T17:15:41Z",
+          "status": "completed",
+          "steps": [],
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40114904783/job/120935250888"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40114904783"
+    }
+  },
+  "limits": [
+    "Portable modules and CPU execution cannot prove installed signed drivers, live mapping teardown, compositor input/window/audio, or complete endpoints.",
+    "Host/guest OS loops, capability dispatch and facility integration remain open.",
+    "Claude window graph ownership remains reserved and unchanged."
+  ],
+  "progress_credit": {
+    "TODO6": 25,
+    "TODO7": 25,
+    "overall": 2.0
+  }
+}
