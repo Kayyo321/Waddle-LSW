@@ -58,6 +58,30 @@
 /** Capacity of the graph event ring, re-exported under a short test name. */
 #define RingCapacity InteropWindowGraphEventCapacity
 
+#ifdef WgObsWrapCalloc
+/*
+ * Allocation-failure injection (Linux, GNU ld/gold/lld): the makefile builds with -DWgObsWrapCalloc=1
+ * and -Wl,--wrap=calloc, so every calloc call of the linked objects reaches __wrap_calloc. The wrapper
+ * counts the calls and fails exactly the next one when armed; it forwards to the real calloc otherwise.
+ * Only window_observer_create calls calloc on the path under test.
+ */
+extern void *__real_calloc(size_t count, size_t size);
+/** Calls that reached the wrapper; proves the link-time wrap is in effect. */
+static _Atomic uint64_t g_wrapped_calloc_calls = 0;
+/** 1 = the next calloc call returns NULL (and clears this flag). */
+static _Atomic uint32_t g_wrapped_calloc_fail_next = 0;
+
+/** Linker wrapper for calloc (see above). */
+void *__wrap_calloc(size_t count, size_t size);
+void *__wrap_calloc(size_t count, size_t size) {
+    atomic_fetch_add(&g_wrapped_calloc_calls, 1u);
+    if (atomic_exchange(&g_wrapped_calloc_fail_next, 0u) != 0u) {
+        return NULL;
+    }
+    return __real_calloc(count, size);
+}
+#endif
+
 /* ------------------------------------------------------------------------------------------ */
 /* Fixture                                                                                    */
 /* ------------------------------------------------------------------------------------------ */
@@ -866,7 +890,7 @@ done:
     return result;
 }
 
-/** Table overflow latches at the 513th distinct window and recovers through invalidate_all + refresh. */
+/** Table overflow latches at the 513th distinct window and recovers through a full refresh (no invalidate_all). */
 static int test_dirty_overflow_recovery(void) {
     int result = 0;
     fixture_t *f = fixture_open(0u, 1u, 1);
@@ -895,24 +919,29 @@ static int test_dirty_overflow_recovery(void) {
     Require(stats.hints_coalesced == 1u && stats.hint_overflows == 1u && stats.hints_received == 514u);
     Require(window_observer_next_timeout_ms(f->observer, f->dbl->monotonic) == 0u);
 
-    /* Recovery: one pump invalidates the graph, clears the table and runs a full refresh. */
+    /* Recovery: one pump clears the table and runs a full refresh; the live window is not touched. */
     f->dbl->monotonic += 10u;
     Require(do_pump(f, 1u) == WindowObserverStatusOk);
     Require(obs_stats(f, &stats) == 0);
     Require(stats.invalidations == 1u && stats.overflow_latched == 0u && stats.dirty_pending == 0u);
     Require(stats.refreshes_started == 1u && stats.refreshes_committed == 1u && stats.refresh_requested == 0u);
     Require(stats.keys_processed == 1u); /* only the admission pump counted keys; recovery popped none */
-    Require(drain_events(f) == 2u);
-    Require(event_log[0].kind == InteropWindowEventRetireIntent && event_log[0].window == 0x101u);
-    Require(event_log[0].reason == InteropWindowReasonInvalidated);
-    Require(event_log[1].kind == InteropWindowEventAnnounce && event_log[1].window == 0x101u);
-    Require(event_log[1].generation == 2u);
+    Require(drain_events(f) == 0u); /* no RetireIntent, no second Announce */
+    Require(graph_stats(f, &gs) == 0);
+    Require(gs.generations_issued == 1u && gs.active_count == 1u && gs.retiring_count == 0u);
+    Require(is_live(f, 0x101u) == 1);
     Require(window_observer_refresh_due(f->observer, f->dbl->monotonic) == 0);
     Require(window_observer_next_timeout_ms(f->observer, f->dbl->monotonic) == InteropWindowGraphRefreshIntervalMs);
 
-    /* Recovery blocked by a full graph ring keeps the latch and the table, then succeeds after a drain. */
-    Require(complete_all_retiring(f) == 0);
+    /* Recovery blocked by a full graph ring (a new window needs room): GraphQueueFull, the hints are gone,
+     * the refresh latch stays set and the refresh succeeds at the cadence after the ring is drained. */
     Require(fill_event_ring(f, 0x101u) == 0);
+    Require(add_window(f, 0x102u) != NULL);
+    list[0] = 0x101u;
+    {
+        uint64_t both[2] = {0x101u, 0x102u};
+        api_double_enum_set(f->dbl, both, 2u);
+    }
     for (uint64_t i = 0; i <= WindowObserverDirtyCapacity; i++) {
         hint(f, WindowObserverEventObjectShow, 0x7000u + i);
     }
@@ -920,15 +949,185 @@ static int test_dirty_overflow_recovery(void) {
     Require(stats.overflow_latched == 1u);
     Require(do_pump(f, 1u) == WindowObserverStatusGraphQueueFull);
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.overflow_latched == 1u && stats.invalidations == 1u); /* unchanged: nothing was invalidated */
-    Require(stats.dirty_pending == WindowObserverDirtyCapacity);
+    Require(stats.overflow_latched == 0u && stats.dirty_pending == 0u && stats.invalidations == 2u);
+    Require(stats.refresh_requested == 1u && stats.refreshes_aborted == 1u);
     Require(stats.last_graph_status == (uint32_t)InteropWindowGraphStatusQueueFull);
     Require(graph_stats(f, &gs) == 0);
-    Require(gs.active_count == 1u); /* the window is still Active */
+    Require(gs.active_count == 1u && gs.refresh_active == 0u); /* 0x101 still Active, refresh closed */
+    Require(is_live(f, 0x102u) == 0);
     Require(drain_events(f) == RingCapacity);
-    Require(do_pump(f, 1u) == WindowObserverStatusOk);
+    f->dbl->monotonic += InteropWindowGraphRefreshIntervalMs;
+    Require(window_observer_refresh_due(f->observer, f->dbl->monotonic) == 1);
+    Require(do_refresh(f) == WindowObserverStatusOk);
+    Require(is_live(f, 0x102u) == 1);
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.invalidations == 2u && stats.overflow_latched == 0u && stats.dirty_pending == 0u);
+    Require(stats.refresh_requested == 0u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/**
+ * R1: a flood of DESTROY hints for child windows (unknown to the graph and already gone) must not touch
+ * the exported windows, below the table capacity (processed key by key) and above it (one refresh).
+ */
+static int test_flood_child_hints_no_churn(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    interop_window_graph_stats_t gs;
+    uint64_t list[10];
+    Require(f != NULL);
+    for (uint32_t i = 0; i < 10u; i++) {
+        list[i] = 0x100u + i;
+        Require(add_window(f, list[i]) != NULL);
+    }
+    api_double_enum_set(f->dbl, list, 10u);
+    f->dbl->tick = 5000u;
+    Require(do_refresh(f) == WindowObserverStatusOk);
+    Require(drain_events(f) == 10u);
+    Require(graph_stats(f, &gs) == 0);
+    Require(gs.active_count == 10u && gs.generations_issued == 10u);
+
+    /* 300 child destroys: below the capacity, drained by repeated pumps. */
+    f->dbl->tick = 6000u;
+    for (uint64_t k = 0; k < 300u; k++) {
+        hint(f, WindowObserverEventObjectDestroy, 0x50000u + k);
+    }
+    for (uint32_t guard = 0; guard < 16u; guard++) {
+        const window_observer_status_t status = do_pump(f, 64u);
+        Require(status == WindowObserverStatusOk || status == WindowObserverStatusMore);
+        if (status == WindowObserverStatusOk) {
+            break;
+        }
+    }
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.dirty_pending == 0u && stats.invalidations == 0u && stats.keys_processed == 300u);
+    Require(graph_stats(f, &gs) == 0);
+    Require(gs.active_count == 10u && gs.retiring_count == 0u && gs.generations_issued == 10u);
+    Require(drain_events(f) == 0u);
+
+    /* 600 child destroys: overflow, one pump, one refresh, zero generation changes. */
+    for (uint64_t k = 0; k < 600u; k++) {
+        hint(f, WindowObserverEventObjectDestroy, 0x60000u + k);
+    }
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.overflow_latched == 1u && stats.hint_overflows == 600u - WindowObserverDirtyCapacity);
+    f->dbl->tick = 6100u;
+    Require(do_pump(f, 64u) == WindowObserverStatusOk);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.invalidations == 1u && stats.overflow_latched == 0u && stats.dirty_pending == 0u);
+    Require(stats.refreshes_committed == 2u);
+    Require(graph_stats(f, &gs) == 0);
+    Require(gs.active_count == 10u && gs.retiring_count == 0u && gs.generations_issued == 10u);
+    Require(gs.retire_intents == 0u);
+    Require(drain_events(f) == 0u);
+    for (uint32_t i = 0; i < 10u; i++) {
+        Require(is_live(f, list[i]) == 1);
+    }
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** Overflow recovery still retires a window that is really gone, and documents the one undetected case. */
+static int test_overflow_recovery_gone_and_recycled(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    interop_window_graph_stats_t gs;
+    uint64_t list[2] = {0x101u, 0x102u};
+    Require(f != NULL);
+    Require(add_window(f, 0x101u) != NULL);
+    Require(add_window(f, 0x102u) != NULL);
+    api_double_enum_set(f->dbl, list, 2u);
+    f->dbl->tick = 5000u;
+    Require(do_refresh(f) == WindowObserverStatusOk);
+    Require(drain_events(f) == 2u);
+
+    /* 0x101 is destroyed and its destroy hint is queued; 0x102 is destroyed and RECREATED with an identical
+     * identity tuple (same HWND, pid, tid, start time, class). Then the table overflows: both destroy
+     * hints are discarded. */
+    f->dbl->tick = 6000u;
+    api_double_remove(f->dbl, 0x101u);
+    hint(f, WindowObserverEventObjectDestroy, 0x101u);
+    hint(f, WindowObserverEventObjectDestroy, 0x102u);
+    Require(add_window(f, 0x102u) != NULL); /* recreated: identical tuple */
+    {
+        uint64_t only[1] = {0x102u};
+        api_double_enum_set(f->dbl, only, 1u);
+    }
+    for (uint64_t k = 0; k < WindowObserverDirtyCapacity + 1u; k++) {
+        hint(f, WindowObserverEventObjectShow, 0x9000u + k);
+    }
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.overflow_latched == 1u);
+    f->dbl->tick = 6100u;
+    Require(do_pump(f, 8u) == WindowObserverStatusOk);
+    Require(is_live(f, 0x101u) == 0); /* gone: retired through the unseen requery */
+    Require(drain_events(f) == 1u);
+    Require(event_log[0].kind == InteropWindowEventRetireIntent && event_log[0].window == 0x101u);
+    /* Documented residual risk: 0x102 is the same incarnation as far as the graph can tell. */
+    Require(is_live(f, 0x102u) == 1);
+    Require(graph_stats(f, &gs) == 0);
+    Require(gs.generations_issued == 2u && gs.active_count == 1u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** query_facts hook: deliver one hint while the recovery refresh runs. */
+static void hint_during_refresh_hook(api_double_t *dbl, uint64_t window, void *argument) {
+    (void)argument;
+    (void)window;
+    api_double_hint(dbl, WindowObserverEventObjectShow, 0x7777u);
+}
+
+/**
+ * R5: the statuses of pump's overflow path. EnumFailed is returned (latch kept, nothing retired); Ok only
+ * when the table is empty on return, More when a hint arrived during the recovery refresh.
+ */
+static int test_overflow_pump_statuses(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    uint64_t list[1] = {0x101u};
+    Require(f != NULL);
+    Require(add_window(f, 0x101u) != NULL);
+    api_double_enum_set(f->dbl, list, 1u);
+    f->dbl->tick = 5000u;
+    Require(do_refresh(f) == WindowObserverStatusOk);
+    Require(drain_events(f) == 1u);
+
+    /* Overflow with a failing enumeration: pump reports EnumFailed; the refresh stays latched. */
+    for (uint64_t k = 0; k < WindowObserverDirtyCapacity + 1u; k++) {
+        hint(f, WindowObserverEventObjectShow, 0x9000u + k);
+    }
+    f->dbl->enum_result = WindowObserverEnumFailed;
+    f->dbl->monotonic += 10u;
+    Require(do_pump(f, 8u) == WindowObserverStatusEnumFailed);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.overflow_latched == 0u && stats.dirty_pending == 0u && stats.refresh_requested == 1u);
+    Require(stats.invalidations == 1u && stats.refreshes_started == 1u && stats.refreshes_committed == 1u);
+    Require(is_live(f, 0x101u) == 1 && drain_events(f) == 0u);
+    Require(window_observer_refresh_due(f->observer, f->dbl->monotonic) == 0);
+    Require(window_observer_refresh_due(f->observer, f->dbl->monotonic + InteropWindowGraphRefreshIntervalMs) == 1);
+
+    /* Overflow again, enumeration back: a hint delivered during the recovery's queries makes pump return More. */
+    f->dbl->enum_result = WindowObserverEnumOk;
+    for (uint64_t k = 0; k < WindowObserverDirtyCapacity + 1u; k++) {
+        hint(f, WindowObserverEventObjectShow, 0xA000u + k);
+    }
+    f->dbl->query_hook = hint_during_refresh_hook;
+    f->dbl->query_hook_once = 1u;
+    f->dbl->monotonic += 10u;
+    Require(do_pump(f, 8u) == WindowObserverStatusMore);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.dirty_pending == 1u && stats.overflow_latched == 0u && stats.refresh_requested == 0u);
+    Require(stats.refreshes_committed == 2u);
+    Require(do_pump(f, 8u) == WindowObserverStatusOk);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.dirty_pending == 0u);
 done:
     fixture_close(f);
     return result;
@@ -1716,7 +1915,7 @@ done:
     return result;
 }
 
-/** Truncated and Failed enumerations return EnumFailed before any graph call; nothing is retired. */
+/** A Failed enumeration returns EnumFailed before any graph call; a Truncated one is applied but never committed. */
 static int test_refresh_enum_failure(void) {
     int result = 0;
     fixture_t *f = fixture_open(0u, 1u, 1);
@@ -1734,12 +1933,14 @@ static int test_refresh_enum_failure(void) {
     Require(graph_stats(f, &gs) == 0);
     const uint64_t commits = gs.refresh_commits;
 
-    /* Truncated: the partial list lacks 0x11, which must stay live. */
+    /* Truncated: the partial list lacks 0x11, which must stay live (requeried individually). The refresh
+     * is begun, runs its offers and unseen requery, and is ABORTED instead of committed. */
     f->dbl->enum_result = WindowObserverEnumTruncated;
     f->dbl->monotonic += 300u;
     Require(do_refresh(f) == WindowObserverStatusEnumFailed);
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.refreshes_started == 1u); /* only the first refresh began */
+    Require(stats.refreshes_started == 2u && stats.refreshes_aborted == 1u && stats.refreshes_committed == 1u);
+    Require(stats.refresh_requested == 0u); /* the earlier commit cleared it; a truncated refresh sets nothing */
     Require(graph_stats(f, &gs) == 0);
     Require(gs.refresh_commits == commits && gs.refresh_active == 0u);
     Require(is_live(f, 0x11u) == 1 && drain_events(f) == 0u);
@@ -1751,7 +1952,7 @@ static int test_refresh_enum_failure(void) {
     Require(do_refresh(f) == WindowObserverStatusEnumFailed);
     Require(is_live(f, 0x10u) == 1 && is_live(f, 0x11u) == 1 && drain_events(f) == 0u);
     Require(obs_stats(f, &stats) == 0);
-    Require(stats.refreshes_started == 1u && stats.refreshes_committed == 1u);
+    Require(stats.refreshes_started == 2u && stats.refreshes_committed == 1u); /* Failed begins nothing */
     Require(f->dbl->enum_calls == 3u);
 
     /* Recovery. */
@@ -2027,6 +2228,195 @@ static int test_owner_hidden_gone_and_failed(void) {
     Require(is_live(f, 0x401u) == 1 && drain_events(f) == 0u);
 done:
     fixture_close(f);
+    return result;
+}
+
+/** create returns NoMemory and a NULL handle when its single allocation fails; nothing leaks (LSan). */
+static int test_create_no_memory(void) {
+    int result = 0;
+#ifdef WgObsWrapCalloc
+    api_double_t *dbl = api_double_new();
+    window_observer_config_t config;
+    window_observer_t *observer = NULL;
+    Require(dbl != NULL);
+    api_double_config(&config, dbl, 0u, 1u);
+
+    const uint64_t calls_before = atomic_load(&g_wrapped_calloc_calls);
+    observer = (window_observer_t *)dbl; /* non-NULL sentinel, never dereferenced */
+    atomic_store(&g_wrapped_calloc_fail_next, 1u);
+    Require(window_observer_create(&config, &observer) == WindowObserverStatusNoMemory);
+    Require(observer == NULL);
+    Require(atomic_load(&g_wrapped_calloc_fail_next) == 0u); /* the armed failure was consumed by create */
+    Require(atomic_load(&g_wrapped_calloc_calls) == calls_before + 1u);
+
+    /* Disarmed, the same config succeeds and the observer works. */
+    Require(window_observer_create(&config, &observer) == WindowObserverStatusOk);
+    Require(observer != NULL);
+    Require(window_observer_destroy(&observer) == WindowObserverStatusOk);
+done:
+    atomic_store(&g_wrapped_calloc_fail_next, 0u);
+    api_double_free(dbl);
+#else
+    printf("skip test_create_no_memory: built without -DWgObsWrapCalloc=1 and --wrap=calloc\n");
+#endif
+    return result;
+}
+
+/** Helper-thread body: one well-formed hint (the helper reports a foreign thread id). */
+static void inflight_hint_body(void *argument) {
+    fixture_t *f = (fixture_t *)argument;
+    api_double_hint(f->dbl, WindowObserverEventObjectCreate, 0x42u);
+}
+
+/**
+ * R7: the code that clears the process-wide slot waits (yielding) for a hint that is inside note_hint.
+ * The helper thread parks inside current_thread_id, i.e. after note_hint registered itself and loaded the
+ * slot, for 200 ms. destroy runs meanwhile on the owner thread; it must not return before the park
+ * ends, and the hint then touches the still-live observer (a use-after-free here would be an
+ * AddressSanitizer failure). This is the only test that runs the contended branch of release_slot.
+ */
+static int test_release_slot_waits_for_inflight_hint(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    api_double_helper_t helper;
+    int helper_started = 0;
+    Require(f != NULL);
+    f->dbl->park_ms = 200u;
+    Require(api_double_helper_start(f->dbl, 77u, inflight_hint_body, f, &helper) == 0);
+    helper_started = 1;
+    while (atomic_load_explicit(&f->dbl->parked, memory_order_acquire) == 0) {
+        api_double_yield();
+    }
+    Require(window_observer_destroy(&f->observer) == WindowObserverStatusOk);
+    Require(f->observer == NULL);
+    Require(api_double_wall_ms() >= f->dbl->park_deadline_ms); /* destroy waited for the in-flight hint */
+done:
+    if (helper_started) {
+        api_double_helper_join(&helper);
+    }
+    fixture_close(f);
+    return result;
+}
+
+/** R8: a window that is not visible is classified NotVisible first, so its owner is never queried. */
+static int test_hidden_window_skips_owner_query(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    api_double_window_t *hidden = NULL;
+    api_double_window_t *owner = NULL;
+    Require(f != NULL);
+    owner = add_window(f, 0x410u);
+    Require(owner != NULL);
+    owner->mode = ApiDoubleModeFailed; /* an owner query would make the window's query Failed */
+    hidden = add_owned(f, 0x411u, 0x410u);
+    Require(hidden != NULL);
+    set_visible(hidden, 0);
+    hint(f, WindowObserverEventObjectCreate, 0x411u);
+    Require(do_pump(f, 4u) == WindowObserverStatusOk);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.queries_exists == 1u && stats.queries_failed == 0u && stats.query_retries_exhausted == 0u);
+    Require(api_double_queries_of(f->dbl, 0x410u) == 0u); /* no owner sub-query */
+    Require(is_live(f, 0x411u) == 0 && drain_events(f) == 0u);
+
+    /* The same window, visible again, does query (and here fails on) its owner. */
+    set_visible(hidden, 1);
+    hint(f, WindowObserverEventObjectShow, 0x411u);
+    Require(do_pump(f, 4u) == WindowObserverStatusMore);
+    Require(api_double_queries_of(f->dbl, 0x410u) == 1u);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.queries_failed == 1u);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/**
+ * R6: a Truncated enumeration is not a dead end. The listed windows are offered (admissions and updates
+ * flow), unlisted Active windows are requeried one by one (updates and Gone notes flow), and the refresh
+ * is aborted instead of committed, so absence from the partial list retires nothing.
+ */
+static int test_refresh_truncated_degrades(void) {
+    int result = 0;
+    fixture_t *f = fixture_open(0u, 1u, 1);
+    window_observer_stats_t stats;
+    interop_window_graph_stats_t gs;
+    api_double_window_t *listed = NULL;
+    api_double_window_t *unlisted = NULL;
+    uint64_t list[WindowObserverMaxEnumerated];
+    Require(f != NULL);
+    listed = add_window(f, 0x10u);
+    unlisted = add_window(f, 0x11u);
+    Require(listed != NULL && unlisted != NULL);
+    Require(add_window(f, 0x12u) != NULL);
+    f->dbl->tick = 5000u;
+    Require(admit(f, 0x11u) == 0);
+    Require(admit(f, 0x12u) == 0);
+    Require(drain_events(f) == 2u);
+
+    /* 0x10 is new and listed (first in the truncated list, followed by filler handles that are Gone);
+     * 0x11 is Active, unlisted and moved; 0x12 is Active, unlisted, and vanished with a lost destroy hint. */
+    list[0] = 0x10u;
+    for (uint32_t i = 1; i < WindowObserverMaxEnumerated; i++) {
+        list[i] = 0x100000u + i;
+    }
+    api_double_enum_set(f->dbl, list, WindowObserverMaxEnumerated);
+    f->dbl->enum_result = WindowObserverEnumTruncated;
+    unlisted->facts.x = 400;
+    api_double_remove(f->dbl, 0x12u);
+    f->dbl->tick = 6000u;
+    f->dbl->monotonic += 300u;
+    Require(do_refresh(f) == WindowObserverStatusEnumFailed);
+    Require(obs_stats(f, &stats) == 0);
+    Require(stats.refreshes_started == 1u && stats.refreshes_aborted == 1u && stats.refreshes_committed == 0u);
+    Require(stats.queries_gone >= WindowObserverMaxEnumerated); /* 2047 fillers plus 0x12 */
+    Require(graph_stats(f, &gs) == 0);
+    Require(gs.refresh_active == 0u && gs.refresh_commits == 0u);
+    Require(drain_events(f) == 3u);
+    Require(find_event(InteropWindowEventAnnounce, 0x10u, 0u) >= 0); /* admitted without any hint */
+    Require(find_event(InteropWindowEventUpdate, 0x11u, 0u) >= 0); /* updated through the unseen requery */
+    Require(find_event(InteropWindowEventRetireIntent, 0x12u, 0u) >= 0); /* Gone note with a fresh tick */
+    Require(is_live(f, 0x10u) == 1 && is_live(f, 0x11u) == 1 && is_live(f, 0x12u) == 0);
+
+    /* A vanished window whose Gone note the destroy rule refuses stays (nothing is retired by absence). */
+    api_double_remove(f->dbl, 0x11u);
+    f->dbl->tick = 3000u; /* tick went backwards: the rule refuses */
+    f->dbl->monotonic += 300u;
+    Require(do_refresh(f) == WindowObserverStatusEnumFailed);
+    Require(is_live(f, 0x11u) == 1 && drain_events(f) == 0u);
+    f->dbl->enum_result = WindowObserverEnumOk; /* a complete enumeration commits and retires it */
+    api_double_enum_set(f->dbl, list, 1u);
+    f->dbl->monotonic += 300u;
+    Require(do_refresh(f) == WindowObserverStatusOk);
+    Require(is_live(f, 0x11u) == 0);
+done:
+    fixture_close(f);
+    return result;
+}
+
+/** R11: a config whose storage overlaps the out slot is copied before the slot is written. */
+static int test_create_config_overlaps_slot(void) {
+    int result = 0;
+    api_double_t *dbl = api_double_new();
+    window_observer_t *observer = NULL;
+    union {
+        window_observer_config_t config;
+        window_observer_t *slot_view[5]; /* slot_view[0] shares the bytes of config.api */
+    } overlap;
+    Require(dbl != NULL);
+    api_double_config(&overlap.config, dbl, 0u, 1u);
+    Require(window_observer_create(&overlap.config, &overlap.slot_view[0]) == WindowObserverStatusOk);
+    observer = overlap.slot_view[0];
+    Require(observer != NULL);
+    Require(window_observer_destroy(&observer) == WindowObserverStatusOk);
+
+    /* A failing create through an overlapping slot still reports NULL in the slot. */
+    api_double_config(&overlap.config, dbl, 0u, 1u);
+    overlap.config.own_process_id = 0u;
+    Require(window_observer_create(&overlap.config, &overlap.slot_view[0]) == WindowObserverStatusInvalidArgument);
+    Require(overlap.slot_view[0] == NULL);
+done:
+    api_double_free(dbl);
     return result;
 }
 
@@ -2730,6 +3120,582 @@ done:
 }
 
 /* ------------------------------------------------------------------------------------------ */
+/* Convergence fuzzer: real observer + real graph through the api double                      */
+/* ------------------------------------------------------------------------------------------ */
+
+/** Fake top-level windows of the fuzz world (hwnd = FuzzBaseHwnd + slot). */
+#define FuzzSlots 40
+/** Session epoch of the fuzz graph. */
+#define FuzzEpoch UINT64_C(7)
+/** HWND of slot 0. */
+#define FuzzBaseHwnd UINT64_C(0x1000)
+/** Generation numbers the stream model can track per seed (checked; a seed issues a few thousand). */
+#define FuzzMaxGenerations 65536u
+/** Fuzz option: hint bursts of 600 new handles (hint-table overflow) at random steps. */
+#define FuzzOptionBursts 1u
+/** Fuzz option: the consumer drains the graph queue only rarely (backpressure, GraphQueueFull). */
+#define FuzzOptionLazyDrain 2u
+/** Fuzz option: enumeration results Truncated (partial list) are mixed in. */
+#define FuzzOptionTruncated 4u
+
+/** Independent model of the guest windows. */
+typedef struct fuzz_world_t {
+    int exists[FuzzSlots]; /**< 1 while the window exists. */
+    int owner[FuzzSlots]; /**< Owner slot or -1. */
+    int visible[FuzzSlots]; /**< Visible fact. */
+    int excluded[FuzzSlots]; /**< Class "Progman" (excluded). */
+    int zero[FuzzSlots]; /**< Zero width (ZeroArea). */
+    uint32_t pid[FuzzSlots]; /**< Process id of the current incarnation (unique per creation). */
+} fuzz_world_t;
+
+/** Everything one fuzz seed owns; heap allocated (the generation tables are large). */
+typedef struct fuzz_t {
+    fuzz_world_t world; /**< Ground truth. */
+    api_double_t *dbl; /**< Scriptable api. */
+    interop_window_graph_t *graph; /**< Real graph. */
+    window_observer_t *observer; /**< Real observer. */
+    uint64_t rng; /**< xorshift64* state. */
+    uint32_t next_pid; /**< Next fresh process id. */
+    uint32_t lookup_fail_pct; /**< Percent of app_key_lookup calls that fail. */
+    uint32_t sink_refuse_pct; /**< Percent of sink calls that refuse an event. */
+    uint32_t options; /**< FuzzOption* bits. */
+    uint32_t failures; /**< Oracle violations found (each prints one line, at most 20). */
+    uint64_t steps; /**< Random steps executed. */
+    uint64_t generations; /**< Announce events seen. */
+    uint64_t max_generation; /**< Highest Announce generation seen. */
+    uint64_t overflows; /**< Observer overflow recoveries (stats.invalidations at the end). */
+    uint8_t live_generation[FuzzMaxGenerations]; /**< 1 while an announced generation is not retired. */
+    uint64_t generation_window[FuzzMaxGenerations]; /**< HWND of every announced generation. */
+    uint64_t generation_parent[FuzzMaxGenerations]; /**< Parent generation of every announced generation. */
+} fuzz_t;
+
+/** Record one oracle violation (the first 20 print). */
+#define FuzzFail(z, ...) \
+    do { \
+        if ((z)->failures < 20u) { \
+            fprintf(stderr, "window_observer_windows.c:%d: fuzz: ", __LINE__); \
+            fprintf(stderr, __VA_ARGS__); \
+            fprintf(stderr, "\n"); \
+        } \
+        (z)->failures++; \
+    } while (0)
+
+/** Next xorshift64* value. */
+static uint64_t fuzz_random(fuzz_t *z) {
+    z->rng ^= z->rng >> 12;
+    z->rng ^= z->rng << 25;
+    z->rng ^= z->rng >> 27;
+    return z->rng * UINT64_C(0x2545F4914F6CDD1D);
+}
+
+/** Random percentage 0..99. */
+static uint32_t fuzz_percent(fuzz_t *z) {
+    return (uint32_t)(fuzz_random(z) % 100u);
+}
+
+/** HWND of a slot. */
+static uint64_t fuzz_hwnd(int slot) {
+    return FuzzBaseHwnd + (uint64_t)slot;
+}
+
+/** Write the identity-derived application key of a process id into buf; returns its length. */
+static uint32_t fuzz_key_of(uint32_t process_id, char *buf, size_t capacity) {
+    const int n = snprintf(buf, capacity, "a-p%u", (unsigned)process_id);
+    return n > 0 ? (uint32_t)n : 0u;
+}
+
+/** Graph app-key callback: the key derives from the process id; fails at lookup_fail_pct. */
+static int fuzz_lookup(void *context, const interop_window_facts_t *facts, uint8_t *key, uint32_t capacity,
+                       uint32_t *length) {
+    fuzz_t *z = (fuzz_t *)context;
+    char buf[32];
+    if (z->lookup_fail_pct != 0u && fuzz_percent(z) < z->lookup_fail_pct) {
+        return 1;
+    }
+    const uint32_t n = fuzz_key_of(facts->process_id, buf, sizeof(buf));
+    if (n == 0u || n > capacity) {
+        return 1;
+    }
+    memcpy(key, buf, n);
+    *length = n;
+    return 0;
+}
+
+/** Graph event sink: refuses at sink_refuse_pct, otherwise checks the stream oracles. */
+static int fuzz_sink(void *context, const interop_window_event_t *event) {
+    fuzz_t *z = (fuzz_t *)context;
+    char buf[32];
+    if (z->sink_refuse_pct != 0u && fuzz_percent(z) < z->sink_refuse_pct) {
+        return 1;
+    }
+    if (event->generation >= FuzzMaxGenerations) {
+        FuzzFail(z, "generation %llu exceeds the model", (unsigned long long)event->generation);
+        return 0;
+    }
+    const uint32_t n = fuzz_key_of(event->process_id, buf, sizeof(buf));
+    if (event->app_key_length != n || memcmp(event->app_key, buf, n) != 0) {
+        FuzzFail(z, "fabricated app key for window 0x%llx generation %llu", (unsigned long long)event->window,
+                 (unsigned long long)event->generation);
+    }
+    if (event->kind == InteropWindowEventAnnounce) {
+        if (z->live_generation[event->generation] != 0u) {
+            FuzzFail(z, "generation %llu announced twice", (unsigned long long)event->generation);
+        }
+        if (event->generation <= z->max_generation) {
+            FuzzFail(z, "generation %llu does not grow (max %llu)", (unsigned long long)event->generation,
+                     (unsigned long long)z->max_generation);
+        }
+        z->max_generation = event->generation;
+        z->generations++;
+        if (event->parent_generation != 0u &&
+            (z->live_generation[event->parent_generation] == 0u ||
+             z->generation_window[event->parent_generation] != event->parent_window)) {
+            FuzzFail(z, "child generation %llu announced before its parent %llu",
+                     (unsigned long long)event->generation, (unsigned long long)event->parent_generation);
+        }
+        z->live_generation[event->generation] = 1u;
+        z->generation_window[event->generation] = event->window;
+        z->generation_parent[event->generation] = event->parent_generation;
+    } else if (event->kind == InteropWindowEventUpdate) {
+        if (z->live_generation[event->generation] == 0u) {
+            FuzzFail(z, "update for non-live generation %llu", (unsigned long long)event->generation);
+        }
+    } else {
+        if (z->live_generation[event->generation] == 0u) {
+            FuzzFail(z, "retire for non-live generation %llu", (unsigned long long)event->generation);
+        }
+        for (uint64_t g = 1; g <= z->max_generation; g++) {
+            if (z->live_generation[g] != 0u && z->generation_parent[g] == event->generation) {
+                FuzzFail(z, "generation %llu retired before its child %llu", (unsigned long long)event->generation,
+                         (unsigned long long)g);
+            }
+        }
+        z->live_generation[event->generation] = 0u;
+    }
+    return 0;
+}
+
+/** Copy the model state of a slot into its double window (identity, owner, visibility, class, width). */
+static void fuzz_sync_facts(fuzz_t *z, int slot) {
+    api_double_window_t *w = api_double_find(z->dbl, fuzz_hwnd(slot));
+    if (w == NULL) {
+        return;
+    }
+    interop_window_facts_t *facts = &w->facts;
+    facts->process_id = z->world.pid[slot];
+    facts->thread_id = z->world.pid[slot] + 1u;
+    facts->process_start_time = (uint64_t)z->world.pid[slot] * 10u;
+    if (z->world.owner[slot] >= 0) {
+        facts->owner = fuzz_hwnd(z->world.owner[slot]);
+        facts->owner_root = fuzz_hwnd(z->world.owner[slot]);
+    } else {
+        facts->owner = 0u;
+        facts->owner_root = 0u;
+    }
+    if (z->world.visible[slot]) {
+        facts->flags |= (uint32_t)InteropWindowFactVisible;
+    } else {
+        facts->flags &= ~(uint32_t)InteropWindowFactVisible;
+    }
+    api_double_set_text(facts->class_name, InteropWindowGraphMaxClassBytes, &facts->class_length,
+                        z->world.excluded[slot] ? "Progman" : "TestWindow");
+    facts->width = z->world.zero[slot] ? 0u : 800u;
+}
+
+/** Emit a hint, losing 8% of them (the OS may drop events; the refresh must still converge). */
+static void fuzz_hint(fuzz_t *z, uint32_t event, int slot) {
+    if (fuzz_percent(z) < 92u) {
+        api_double_hint(z->dbl, event, fuzz_hwnd(slot));
+    }
+}
+
+/** Destroy a slot and, recursively, the windows it owns. */
+static void fuzz_destroy_slot(fuzz_t *z, int slot) {
+    if (!z->world.exists[slot]) {
+        return;
+    }
+    z->world.exists[slot] = 0;
+    api_double_remove(z->dbl, fuzz_hwnd(slot));
+    fuzz_hint(z, WindowObserverEventObjectDestroy, slot);
+    for (int c = 0; c < FuzzSlots; c++) {
+        if (z->world.exists[c] && z->world.owner[c] == slot) {
+            fuzz_destroy_slot(z, c);
+        }
+    }
+}
+
+/** Create a slot with a fresh process id (an HWND reuse is always a new incarnation). */
+static void fuzz_create_slot(fuzz_t *z, int slot) {
+    z->world.exists[slot] = 1;
+    z->world.pid[slot] = z->next_pid++;
+    z->world.owner[slot] = -1;
+    if (slot > 0 && fuzz_percent(z) < 45u) {
+        const int owner = (int)(fuzz_random(z) % (uint64_t)slot);
+        if (z->world.exists[owner]) {
+            z->world.owner[slot] = owner;
+        }
+    }
+    z->world.visible[slot] = fuzz_percent(z) < 85u;
+    z->world.excluded[slot] = fuzz_percent(z) < 5u;
+    z->world.zero[slot] = fuzz_percent(z) < 5u;
+    (void)api_double_add(z->dbl, fuzz_hwnd(slot));
+    fuzz_sync_facts(z, slot);
+    fuzz_hint(z, WindowObserverEventObjectCreate, slot);
+    fuzz_hint(z, WindowObserverEventObjectShow, slot);
+}
+
+/** Publish the enumeration list (random order; with omit, 10% of the windows are left out). */
+static void fuzz_set_enum(fuzz_t *z, int omit) {
+    uint64_t list[FuzzSlots];
+    uint32_t n = 0;
+    for (int s = 0; s < FuzzSlots; s++) {
+        if (z->world.exists[s] && !(omit && fuzz_percent(z) < 10u)) {
+            list[n++] = fuzz_hwnd(s);
+        }
+    }
+    for (uint32_t i = n; i > 1u; i--) {
+        const uint32_t j = (uint32_t)(fuzz_random(z) % i);
+        const uint64_t t = list[i - 1u];
+        list[i - 1u] = list[j];
+        list[j] = t;
+    }
+    api_double_enum_set(z->dbl, list, n);
+}
+
+/** Drain the graph queue into the sink in random batch sizes. */
+static void fuzz_drain(fuzz_t *z) {
+    uint32_t delivered = 0;
+    for (int guard = 0; guard < 100; guard++) {
+        const interop_window_graph_status_t status = interop_window_graph_drain(
+            z->graph, FuzzEpoch, fuzz_sink, z, 1u + (uint32_t)(fuzz_random(z) % 256u), &delivered);
+        if (status == InteropWindowGraphStatusNone) {
+            return;
+        }
+        if (status != InteropWindowGraphStatusOk && status != InteropWindowGraphStatusSinkFailed) {
+            FuzzFail(z, "drain status %d", (int)status);
+            return;
+        }
+        if (status == InteropWindowGraphStatusSinkFailed && z->sink_refuse_pct != 0u) {
+            return;
+        }
+    }
+}
+
+/** Complete quarantined entries with a full proof (a random half when `fraction` is set). */
+static void fuzz_complete(fuzz_t *z, int fraction) {
+    interop_window_retiring_entry_t entries[InteropMaxWindows];
+    uint32_t count = 0;
+    const interop_window_retire_proof_t proof = {1u, 1u};
+    if (interop_window_graph_list_retiring(z->graph, entries, InteropMaxWindows, &count) !=
+        InteropWindowGraphStatusOk) {
+        FuzzFail(z, "list_retiring failed");
+        return;
+    }
+    for (uint32_t i = 0; i < count && i < InteropMaxWindows; i++) {
+        if (fraction && fuzz_percent(z) >= 50u) {
+            continue;
+        }
+        if (interop_window_graph_complete_retire(z->graph, FuzzEpoch, entries[i].window, entries[i].generation,
+                                                 &proof) != InteropWindowGraphStatusOk) {
+            FuzzFail(z, "complete_retire failed");
+        }
+    }
+}
+
+/** Move the double's clocks forward. */
+static void fuzz_advance(fuzz_t *z, uint32_t ms) {
+    z->dbl->monotonic += ms;
+    z->dbl->tick += ms;
+}
+
+/** One random pump; every status except the documented ones is a violation. */
+static void fuzz_pump(fuzz_t *z) {
+    window_observer_stats_t stats;
+    const window_observer_status_t status = window_observer_pump(
+        z->observer, z->graph, FuzzEpoch, 1u + (uint32_t)(fuzz_random(z) % 64u), &stats);
+    switch (status) {
+    case WindowObserverStatusOk:
+    case WindowObserverStatusMore:
+    case WindowObserverStatusDesktopInactive:
+    case WindowObserverStatusEnumFailed:
+        break;
+    case WindowObserverStatusGraphQueueFull:
+        fuzz_drain(z);
+        break;
+    default:
+        FuzzFail(z, "pump status %d (last graph status %u)", (int)status, (unsigned)stats.last_graph_status);
+        break;
+    }
+}
+
+/** One refresh when the cadence says so; every status except the documented ones is a violation. */
+static void fuzz_refresh(fuzz_t *z) {
+    window_observer_stats_t stats;
+    if (!window_observer_refresh_due(z->observer, z->dbl->monotonic)) {
+        return;
+    }
+    const window_observer_status_t status = window_observer_refresh(z->observer, z->graph, FuzzEpoch, &stats);
+    switch (status) {
+    case WindowObserverStatusOk:
+    case WindowObserverStatusDesktopInactive:
+    case WindowObserverStatusEnumFailed:
+        break;
+    case WindowObserverStatusGraphQueueFull:
+        fuzz_drain(z);
+        break;
+    default:
+        FuzzFail(z, "refresh status %d (last graph status %u)", (int)status, (unsigned)stats.last_graph_status);
+        break;
+    }
+}
+
+/** Own eligibility of a world window, ignoring its owner. */
+static int fuzz_own_eligible(const fuzz_t *z, int slot) {
+    return z->world.exists[slot] && z->world.visible[slot] && !z->world.excluded[slot] && !z->world.zero[slot];
+}
+
+/** Expected parent slot of an eligible window, -1 for none. */
+static int fuzz_expected_parent(const fuzz_t *z, int slot) {
+    const int owner = z->world.owner[slot];
+    if (owner >= 0 && z->world.exists[owner] && fuzz_own_eligible(z, owner)) {
+        return owner;
+    }
+    return -1;
+}
+
+/** Expected export state: eligible and every ancestor exported. */
+static int fuzz_expected_exported(const fuzz_t *z, int slot) {
+    if (!fuzz_own_eligible(z, slot)) {
+        return 0;
+    }
+    const int parent = fuzz_expected_parent(z, slot);
+    return parent < 0 ? 1 : fuzz_expected_exported(z, parent);
+}
+
+/** Stop all faults, run pumps and refreshes to quiescence and compare the graph with the model. */
+static void fuzz_converge_and_check(fuzz_t *z) {
+    z->lookup_fail_pct = 0u;
+    z->sink_refuse_pct = 0u;
+    z->dbl->desktop = WindowObserverDesktopDefault;
+    z->dbl->enum_result = WindowObserverEnumOk;
+    for (uint32_t i = 0; i < ApiDoubleMaxWindows; i++) {
+        z->dbl->windows[i].fail_count = 0u;
+    }
+    fuzz_set_enum(z, 0);
+    for (int round = 0; round < 8; round++) {
+        fuzz_advance(z, 300u);
+        for (int k = 0; k < 64; k++) {
+            window_observer_stats_t stats;
+            const window_observer_status_t status =
+                window_observer_pump(z->observer, z->graph, FuzzEpoch, 64u, &stats);
+            fuzz_drain(z);
+            if (status == WindowObserverStatusOk) {
+                break;
+            }
+        }
+        fuzz_refresh(z);
+        fuzz_drain(z);
+        fuzz_complete(z, 0);
+    }
+    uint32_t expected_count = 0;
+    for (int s = 0; s < FuzzSlots; s++) {
+        interop_window_live_t live;
+        const interop_window_graph_status_t status = interop_window_graph_find_live(z->graph, fuzz_hwnd(s), &live);
+        const int want = z->world.exists[s] && fuzz_expected_exported(z, s);
+        expected_count += want ? 1u : 0u;
+        if (want && status != InteropWindowGraphStatusOk) {
+            FuzzFail(z, "slot %d expected exported but not live", s);
+            continue;
+        }
+        if (!want && status == InteropWindowGraphStatusOk) {
+            FuzzFail(z, "slot %d live but not expected (exists %d)", s, z->world.exists[s]);
+            continue;
+        }
+        if (!want) {
+            continue;
+        }
+        const int parent = fuzz_expected_parent(z, s);
+        const uint32_t role = parent < 0 ? (uint32_t)InteropRoleToplevel : (uint32_t)InteropRoleDialog;
+        const uint64_t parent_window = parent < 0 ? 0u : fuzz_hwnd(parent);
+        if (live.role != role || live.parent_window != parent_window || live.process_id != z->world.pid[s]) {
+            FuzzFail(z, "slot %d role %u/%u parent 0x%llx/0x%llx pid %u/%u", s, (unsigned)live.role, (unsigned)role,
+                     (unsigned long long)live.parent_window, (unsigned long long)parent_window,
+                     (unsigned)live.process_id, (unsigned)z->world.pid[s]);
+        }
+    }
+    interop_window_graph_stats_t graph_state;
+    window_observer_stats_t observer_state;
+    if (interop_window_graph_get_stats(z->graph, &graph_state) != InteropWindowGraphStatusOk ||
+        window_observer_status(z->observer, &observer_state) != WindowObserverStatusOk) {
+        FuzzFail(z, "stats unavailable");
+        return;
+    }
+    z->overflows = observer_state.invalidations;
+    if (graph_state.active_count != expected_count) {
+        FuzzFail(z, "active %u, expected %u", (unsigned)graph_state.active_count, (unsigned)expected_count);
+    }
+}
+
+/** One random step of the world and the observer. */
+static void fuzz_step(fuzz_t *z, uint64_t seed) {
+    const uint32_t c = fuzz_percent(z);
+    const int s = (int)(fuzz_random(z) % FuzzSlots);
+    z->lookup_fail_pct = 2u;
+    z->sink_refuse_pct = 5u;
+    if (c < 14u) {
+        if (!z->world.exists[s]) {
+            fuzz_create_slot(z, s);
+        }
+    } else if (c < 22u) {
+        fuzz_destroy_slot(z, s);
+    } else if (c < 30u) {
+        if (z->world.exists[s]) {
+            z->world.visible[s] = !z->world.visible[s];
+            fuzz_sync_facts(z, s);
+            fuzz_hint(z, z->world.visible[s] ? WindowObserverEventObjectShow : WindowObserverEventObjectHide, s);
+        }
+    } else if (c < 34u) {
+        if (z->world.exists[s]) {
+            const int owner = s > 0 && fuzz_percent(z) < 60u ? (int)(fuzz_random(z) % (uint64_t)s) : -1;
+            z->world.owner[s] = (owner >= 0 && z->world.exists[owner]) ? owner : -1;
+            fuzz_sync_facts(z, s);
+            fuzz_hint(z, WindowObserverEventObjectParentChange, s);
+        }
+    } else if (c < 37u) {
+        if (z->world.exists[s]) {
+            z->world.excluded[s] = !z->world.excluded[s];
+            fuzz_sync_facts(z, s);
+            fuzz_hint(z, WindowObserverEventObjectNameChange, s);
+        }
+    } else if (c < 40u) {
+        if (z->world.exists[s]) {
+            z->world.zero[s] = !z->world.zero[s];
+            fuzz_sync_facts(z, s);
+            fuzz_hint(z, EventObjectLocationChange, s);
+        }
+    } else if (c < 43u) {
+        api_double_window_t *w = api_double_find(z->dbl, fuzz_hwnd(s));
+        if (w != NULL) {
+            w->fail_count = 1u + (uint32_t)(fuzz_random(z) % 3u);
+        }
+    } else if (c < 45u) {
+        z->dbl->desktop = fuzz_percent(z) < 50u ? WindowObserverDesktopDefault : WindowObserverDesktopOther;
+    } else if (c < 46u) {
+        if ((z->options & FuzzOptionBursts) != 0u || (seed & 2u) != 0u) {
+            for (uint32_t k = 0; k < 600u; k++) {
+                api_double_hint(z->dbl, WindowObserverEventObjectCreate, UINT64_C(0x90000) + k);
+            }
+        }
+    } else if (c < 52u) {
+        fuzz_advance(z, (uint32_t)(fuzz_random(z) % 300u));
+    } else if (c < 72u) {
+        fuzz_pump(z);
+    } else if (c < 82u) {
+        fuzz_set_enum(z, 1);
+        z->dbl->enum_result = WindowObserverEnumOk;
+        if (fuzz_percent(z) < 4u) {
+            z->dbl->enum_result = WindowObserverEnumFailed;
+        } else if ((z->options & FuzzOptionTruncated) != 0u && fuzz_percent(z) < 10u) {
+            z->dbl->enum_result = WindowObserverEnumTruncated;
+        }
+        fuzz_refresh(z);
+    } else if (c < 92u) {
+        if ((z->options & FuzzOptionLazyDrain) == 0u || fuzz_percent(z) < 15u) {
+            fuzz_drain(z);
+        }
+    } else {
+        fuzz_complete(z, 1);
+    }
+    z->steps++;
+}
+
+/** Run one seed: random steps, then convergence. Returns 0 when no oracle was violated. */
+static int fuzz_run_seed(uint64_t seed, uint32_t steps, uint32_t options, uint64_t *step_total,
+                         uint64_t *generation_total, uint64_t *overflow_total) {
+    int result = 0;
+    fuzz_t *z = (fuzz_t *)calloc(1u, sizeof(*z));
+    interop_window_graph_config_t graph_config;
+    window_observer_config_t config;
+    Require(z != NULL);
+    z->rng = seed | 1u;
+    z->next_pid = 5000u;
+    z->options = options;
+    z->dbl = api_double_new();
+    Require(z->dbl != NULL);
+    memset(&graph_config, 0, sizeof(graph_config));
+    graph_config.session_epoch = FuzzEpoch;
+    graph_config.app_key_lookup = fuzz_lookup;
+    graph_config.app_key_context = z;
+    Require(interop_window_graph_create(&graph_config, &z->graph) == InteropWindowGraphStatusOk);
+    api_double_config(&config, z->dbl, 0u, 1u);
+    Require(window_observer_create(&config, &z->observer) == WindowObserverStatusOk);
+    Require(window_observer_start(z->observer) == WindowObserverStatusOk);
+    for (uint32_t i = 0; i < steps; i++) {
+        fuzz_step(z, seed);
+    }
+    fuzz_converge_and_check(z);
+    *step_total += z->steps;
+    *generation_total += z->generations;
+    *overflow_total += z->overflows;
+    if (z->failures != 0u) {
+        fprintf(stderr, "window_observer_windows.c: fuzz seed 0x%llx: %u violations\n", (unsigned long long)seed,
+                (unsigned)z->failures);
+        result = 1;
+    }
+done:
+    if (z != NULL) {
+        if (z->observer != NULL) {
+            (void)window_observer_destroy(&z->observer);
+        }
+        if (z->graph != NULL) {
+            (void)interop_window_graph_destroy(&z->graph);
+        }
+        api_double_free(z->dbl);
+        free(z);
+    }
+    return result;
+}
+
+/** Run `seeds` seeds of `steps` steps with the given options; require non-vacuous coverage of the scenario. */
+static int fuzz_run_many(uint32_t seeds, uint32_t steps, uint32_t options, uint64_t base) {
+    int result = 0;
+    uint64_t step_total = 0;
+    uint64_t generation_total = 0;
+    uint64_t overflow_total = 0;
+    for (uint32_t k = 0; k < seeds; k++) {
+        const int rc = fuzz_run_seed(base * (uint64_t)(k + 1u), steps, options, &step_total, &generation_total,
+                                     &overflow_total);
+        Require(rc == 0);
+    }
+    Require(step_total == (uint64_t)seeds * steps);
+    Require(generation_total > (uint64_t)seeds * 100u); /* the scenario really exports windows */
+    Require((options & FuzzOptionBursts) == 0u || overflow_total > 0u); /* ... and really overflows */
+    printf("  fuzz: %u seeds x %u steps = %llu steps, %llu generations, %llu overflow recoveries\n", (unsigned)seeds,
+           (unsigned)steps, (unsigned long long)step_total, (unsigned long long)generation_total,
+           (unsigned long long)overflow_total);
+done:
+    return result;
+}
+
+/**
+ * Convergence fuzz, general: create, destroy with owned-window cascade, HWND reuse with a new process
+ * id, visibility, owner and class changes, zero area, transient Failed, desktop flips, overflow bursts on
+ * every second seed, lost hints (8%), omitted enumeration entries, enumeration failure, lookup failure
+ * (2%), sink refusal (5%). 40 seeds x 3000 steps. Oracles: parent Announce before child, child retire
+ * before parent, generations only grow, app key equals the identity-derived key, and after a final
+ * quiescence the Active set, roles, parents and process ids equal the independent model.
+ */
+static int test_fuzz_convergence(void) {
+    return fuzz_run_many(40u, 3000u, 0u, UINT64_C(0x9E3779B97F4A7C15));
+}
+
+/** Convergence fuzz, stressed: every seed has overflow bursts, lazy draining (GraphQueueFull) and truncated enumerations. */
+static int test_fuzz_convergence_stressed(void) {
+    return fuzz_run_many(8u, 3000u, FuzzOptionBursts | FuzzOptionLazyDrain | FuzzOptionTruncated,
+                         UINT64_C(0xD1B54A32D192ED03));
+}
+
+/* ------------------------------------------------------------------------------------------ */
 /* Runner                                                                                     */
 /* ------------------------------------------------------------------------------------------ */
 
@@ -2747,6 +3713,8 @@ typedef struct test_case_t {
 /** Every test, in execution order. */
 static const test_case_t TestCases[] = {
     TestEntry(test_create_validation),
+    TestEntry(test_create_config_overlaps_slot),
+    TestEntry(test_create_no_memory),
     TestEntry(test_lifecycle_start_stop_restart),
     TestEntry(test_lifecycle_second_observer),
     TestEntry(test_lifecycle_hook_failure_rollback),
@@ -2755,8 +3723,12 @@ static const test_case_t TestCases[] = {
     TestEntry(test_lifecycle_wrong_thread),
     TestEntry(test_hint_filter_table),
     TestEntry(test_hint_wrong_thread),
+    TestEntry(test_release_slot_waits_for_inflight_hint),
     TestEntry(test_dirty_coalesce_order_budget),
     TestEntry(test_dirty_overflow_recovery),
+    TestEntry(test_flood_child_hints_no_churn),
+    TestEntry(test_overflow_recovery_gone_and_recycled),
+    TestEntry(test_overflow_pump_statuses),
     TestEntry(test_dirty_reserved_slot),
     TestEntry(test_pump_admit_update_hide),
     TestEntry(test_pump_cloak),
@@ -2774,12 +3746,14 @@ static const test_case_t TestCases[] = {
     TestEntry(test_refresh_unenumerated_survives),
     TestEntry(test_refresh_vanished_retired),
     TestEntry(test_refresh_enum_failure),
+    TestEntry(test_refresh_truncated_degrades),
     TestEntry(test_refresh_cadence_latch),
     TestEntry(test_refresh_queue_full_abort),
     TestEntry(test_refresh_commit_queue_full),
     TestEntry(test_refresh_replacement_observer),
     TestEntry(test_owner_hidden_promotion),
     TestEntry(test_owner_hidden_gone_and_failed),
+    TestEntry(test_hidden_window_skips_owner_query),
     TestEntry(test_owner_hidden_uac),
     TestEntry(test_preedit_parenting),
     TestEntry(test_preedit_from_config),
@@ -2799,6 +3773,8 @@ static const test_case_t TestCases[] = {
     TestEntry(test_refresh_graph_refresh_lost),
     TestEntry(test_refresh_unseen_stamp_exhausted),
     TestEntry(test_cadence_corners),
+    TestEntry(test_fuzz_convergence),
+    TestEntry(test_fuzz_convergence_stressed),
 };
 
 /** Run every test; stop at the first failure and return nonzero. */

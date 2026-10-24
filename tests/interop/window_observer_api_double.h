@@ -9,7 +9,8 @@
  * counter, scripted transient failures), install/remove hook counters with scripted failure at the
  * Nth call, an enumeration list with Ok/Truncated/Failed modes, a scripted input desktop, frozen
  * monotonic and tick clocks that only move when the test moves them, a fake thread id, a way to run
- * a function on a second real thread that reports a different thread id, a hook-procedure emulator
+ * a function on a second real thread that reports a different thread id (run-and-join, or start and
+ * join separately with an optional park inside current_thread_id), a hook-procedure emulator
  * (api_double_hint*) that calls window_observer_note_hint, and two re-entry mechanisms that fire
  * inside query_facts (a scripted hint, and an arbitrary callback).
  *
@@ -18,10 +19,13 @@
  * _WIN32. It never calls the graph and owns no heap memory itself: api_double_new / api_double_free
  * are the only allocation pair.
  *
- * Threading: all state is plain data owned by the test thread. The only cross-thread data is the
- * helper-thread identity (an atomic flag published with release/acquire ordering) used by
- * api_double_current_thread_id; api_double_run_on_other_thread joins the helper before it returns,
- * so the test thread and the helper never run concurrently.
+ * Threading: all state is plain data owned by the test thread. The cross-thread data is the
+ * helper-thread identity and the parked flag (atomics published with release/acquire ordering) used
+ * by api_double_current_thread_id. api_double_run_on_other_thread joins the helper before it returns,
+ * so the test thread and the helper never run concurrently there. api_double_helper_start /
+ * api_double_helper_join let the test thread run observer entry points while the helper is parked
+ * inside current_thread_id (park_ms); that is the only concurrent use, and the test must touch
+ * nothing but the parked flag and observer entry points that are safe against note_hint meanwhile.
  */
 #include <stdatomic.h>
 #include <stdint.h>
@@ -35,6 +39,8 @@
 #include <windows.h>
 #else
 #include <pthread.h>
+#include <sched.h>
+#include <time.h>
 #endif
 
 #include "window_observer_windows.h"
@@ -126,6 +132,9 @@ struct api_double_t {
     void *install_hook_arg; /**< Passed to install_hook_fn. */
     uint32_t enum_report_count; /**< Nonzero: enum_top_level_windows reports this count (with result Ok) regardless of the list. */
 
+    uint32_t park_ms; /**< Nonzero: the next current_thread_id call of the helper thread parks for this many ms (one shot, then cleared). */
+    _Atomic int parked; /**< 1 once the helper entered its park, 0 otherwise. */
+    uint64_t park_deadline_ms; /**< api_double_wall_ms() value at which the park ends; valid once parked is 1 (read after an acquire load of parked). */
     _Atomic int helper_active; /**< 1 while a helper thread registered its identity. */
     uint32_t helper_tid; /**< Fake thread id reported to the helper thread. */
 #ifdef _WIN32
@@ -308,11 +317,41 @@ static int api_double_native_is_helper(const api_double_t *dbl) {
 }
 #endif
 
-/** @brief api table entry: current_thread_id. Returns the helper tid on the registered helper thread. */
+/** @brief Yield the processor to another thread (sched_yield / SwitchToThread). */
+static void api_double_yield(void) {
+#ifdef _WIN32
+    (void)SwitchToThread();
+#else
+    (void)sched_yield();
+#endif
+}
+
+/** @brief Monotonic wall clock in milliseconds (for the park deadline only). */
+static uint64_t api_double_wall_ms(void) {
+#ifdef _WIN32
+    return (uint64_t)GetTickCount64();
+#else
+    struct timespec now;
+    (void)clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
+#endif
+}
+
+/** @brief api table entry: current_thread_id. Returns the helper tid on the registered helper thread.
+ *         When park_ms is set, the helper thread parks here once (parked = 1) for park_ms and then answers. */
 static uint32_t api_double_current_thread_id(void *context) {
     api_double_t *dbl = (api_double_t *)context;
     if (atomic_load_explicit(&dbl->helper_active, memory_order_acquire) != 0 &&
         api_double_native_is_helper(dbl)) {
+        if (dbl->park_ms != 0u) {
+            const uint64_t deadline = api_double_wall_ms() + dbl->park_ms;
+            dbl->park_ms = 0u;
+            dbl->park_deadline_ms = deadline;
+            atomic_store_explicit(&dbl->parked, 1, memory_order_release);
+            while (api_double_wall_ms() < deadline) {
+                api_double_yield();
+            }
+        }
         return dbl->helper_tid;
     }
     return dbl->tid;
@@ -519,6 +558,52 @@ static void *api_double_thread_entry(void *parameter) {
 }
 #endif
 
+/** @brief A started helper thread; opaque to tests, filled by api_double_helper_start. */
+typedef struct api_double_helper_t {
+    api_double_job_t job; /**< Job description; must stay at a stable address until the join. */
+#ifdef _WIN32
+    HANDLE thread; /**< Native thread handle. */
+#else
+    pthread_t thread; /**< Native thread handle. */
+#endif
+} api_double_helper_t;
+
+/**
+ * @brief Start function(argument) on a second real thread whose current_thread_id is tid, without joining.
+ *
+ * @param[in,out] dbl Double whose api_double_current_thread_id reports tid on the helper; non-NULL.
+ * @param[in] tid Fake thread id of the helper; must differ from dbl->tid to look foreign.
+ * @param[in] function Non-NULL function to run on the helper.
+ * @param[in,out] argument Passed to function; may be NULL.
+ * @param[out] helper Non-NULL; must stay valid until api_double_helper_join returns.
+ * @return 0 when the thread was created, 1 otherwise (then no join is needed).
+ * @note The caller thread runs concurrently with the helper until the join; only the atomic parked flag
+ *       and the helper identity are shared safely, everything else is the test's responsibility.
+ */
+static int api_double_helper_start(api_double_t *dbl, uint32_t tid, void (*function)(void *argument),
+                                   void *argument, api_double_helper_t *helper) {
+    helper->job.dbl = dbl;
+    helper->job.tid = tid;
+    helper->job.function = function;
+    helper->job.argument = argument;
+#ifdef _WIN32
+    helper->thread = CreateThread(NULL, 0, api_double_thread_entry, &helper->job, 0, NULL);
+    return helper->thread == NULL ? 1 : 0;
+#else
+    return pthread_create(&helper->thread, NULL, api_double_thread_entry, &helper->job) != 0 ? 1 : 0;
+#endif
+}
+
+/** @brief Join a helper started by api_double_helper_start. @param[in,out] helper Started helper; invalid afterwards. */
+static void api_double_helper_join(api_double_helper_t *helper) {
+#ifdef _WIN32
+    WaitForSingleObject(helper->thread, INFINITE);
+    CloseHandle(helper->thread);
+#else
+    (void)pthread_join(helper->thread, NULL);
+#endif
+}
+
 /**
  * @brief Run function(argument) on a second real thread whose current_thread_id is tid, and join it.
  *
@@ -533,27 +618,12 @@ static void *api_double_thread_entry(void *parameter) {
  */
 static int api_double_run_on_other_thread(api_double_t *dbl, uint32_t tid, void (*function)(void *argument),
                                           void *argument) {
-    api_double_job_t job;
-    job.dbl = dbl;
-    job.tid = tid;
-    job.function = function;
-    job.argument = argument;
-#ifdef _WIN32
-    HANDLE thread = CreateThread(NULL, 0, api_double_thread_entry, &job, 0, NULL);
-    if (thread == NULL) {
+    api_double_helper_t helper;
+    if (api_double_helper_start(dbl, tid, function, argument, &helper) != 0) {
         return 1;
     }
-    WaitForSingleObject(thread, INFINITE);
-    CloseHandle(thread);
+    api_double_helper_join(&helper);
     return 0;
-#else
-    pthread_t thread;
-    if (pthread_create(&thread, NULL, api_double_thread_entry, &job) != 0) {
-        return 1;
-    }
-    (void)pthread_join(thread, NULL);
-    return 0;
-#endif
 }
 
 #endif
