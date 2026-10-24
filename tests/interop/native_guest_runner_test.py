@@ -386,7 +386,8 @@ class native_guest_runner_contract_tests_t(unittest.TestCase):
         (self.root / "tpm.sock").touch()
         child = fake_process_t()
         runner._popen = lambda *args, **kwargs: child
-        process, _socket_path = runner._start_swtpm()
+        with mock.patch("native_guest_runner.shutil.which", return_value="/fixture-only/swtpm"):
+            process, _socket_path = runner._start_swtpm()
         self.assertIs(process, child)
         runner._popen = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("mock QEMU spawn failure"))
         with self.assertRaisesRegex(OSError, "QEMU spawn failure"):
@@ -493,7 +494,7 @@ class native_guest_runner_contract_tests_t(unittest.TestCase):
                 native_guest_runner_t(config).prepare()
 
     def test_qemu_arguments_are_private_tcg_without_host_vsock_usb_or_audio(self) -> None:
-        runner = native_guest_runner_t(runner_config_t(run_parent=self.root))
+        runner = native_guest_runner_t(runner_config_t(run_parent=self.root, qemu_build_dir=self.root))
         runner.run_root = self.root
         argv = runner._qemu_argv(self.root / "tpm.sock")
         joined = " ".join(argv)
@@ -646,7 +647,7 @@ class native_guest_runner_contract_tests_t(unittest.TestCase):
         self.assertIsNone(runner._vhost_vsock_fd)
 
     def test_vhost_vsock_pair_and_qemu_arguments_are_explicit(self) -> None:
-        runner = native_guest_runner_t(runner_config_t(guest_vsock_cid=42, run_parent=self.root))
+        runner = native_guest_runner_t(runner_config_t(guest_vsock_cid=42, run_parent=self.root, qemu_build_dir=self.root))
         runner.run_root = self.root
         with self.assertRaisesRegex(runner_error_t, "requires an owned"):
             runner._qemu_argv(self.root / "tpm.sock")

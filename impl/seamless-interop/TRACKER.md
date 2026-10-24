@@ -1171,7 +1171,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     These runs do not qualify the later O5 working tree, inherited-FD runner,
     installed session or the full feature; tracker remains18.00%.
 
-- **Commit `HEAD`**: `docs(interop): record isolated native VSOCK boot and listener probe`
+- **Commit `fdf8202`**: `docs(interop): record isolated native VSOCK boot and listener probe`
   - **Task Impact**: +0% to TODO #6/#7/#10/#34 (+0% overall; total18.00%).
   - **Summary**: Creates an isolated private device profile; separately boots a
     supervised private Windows overlay with CID52942 and inherited VSOCK backend.
@@ -1181,3 +1181,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     port5242 probes fail to connect, so no guest command or installed feature test
     ran. [Evidence](native_vsock_evidence_2026_10_24/qualification.json) corrects
     earlier sandbox-only missing-device observations. Native acceptance stays open.
+
+- **Commit `HEAD`**: `test(interop): isolate runner unit fixtures from installed VM tools`
+  - **Task Impact**: +0% to TODO #34 (+0% overall; total18.00%).
+  - **Summary**: CI40142666161 at bd91b0c exposed three runner unit cases that
+    accidentally depended on installed swtpm or a local QEMU build directory.
+    Injects the fake swtpm path and uses owned temporary argv directories.
+    All34 tests pass both normally and from a source-only temporary tree with
+    no build directory and PATH=/nonexistent. No production runner requirement
+    is relaxed, no test is skipped; fresh remote qualification is pending.
