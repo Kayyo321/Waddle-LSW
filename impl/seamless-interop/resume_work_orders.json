@@ -1,0 +1,111 @@
+{
+  "phase_id": "seamless_resume_foundations",
+  "allocation_source": "lead",
+  "allocations": [
+    {
+      "role": "lead",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "reason": "Review ABI, build identity and lifecycle evidence",
+      "escalation_conditions": [
+        "Frozen contract conflict or repeated correctness failure",
+        "Missing native proof prevents acceptance"
+      ]
+    },
+    {
+      "role": "worker",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "reason": "User-selected parallel Luna implementation; standard worker/advisor remain inactive",
+      "escalation_conditions": [
+        "Frozen contract conflict or repeated correctness failure",
+        "Missing native proof prevents acceptance"
+      ]
+    },
+    {
+      "role": "explorer",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "reason": "Bounded Luna work with pointer, feature and lifecycle contracts",
+      "escalation_conditions": [
+        "Frozen contract conflict or repeated correctness failure",
+        "Missing native proof prevents acceptance"
+      ]
+    },
+    {
+      "role": "researcher",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "reason": "Bounded Luna work with pointer, feature and lifecycle contracts",
+      "escalation_conditions": [
+        "Frozen contract conflict or repeated correctness failure",
+        "Missing native proof prevents acceptance"
+      ]
+    },
+    {
+      "role": "advisor",
+      "model": "gpt-6-astra",
+      "effort": "high",
+      "reason": "User-selected parallel Luna implementation; standard worker/advisor remain inactive",
+      "escalation_conditions": [
+        "Frozen contract conflict or repeated correctness failure",
+        "Missing native proof prevents acceptance"
+      ]
+    }
+  ],
+  "baseline": "4079560",
+  "workers": [
+    {
+      "agent": "luna_layout",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "src/interop/interop_layout_abi.zig",
+        "tests/interop/layout_abi.c"
+      ],
+      "task": "Four pure C boundary wrappers; exact frozen header; outputs unchanged on errors; >=90% production line/branch coverage",
+      "acceptance": [
+        "isolated zig test/build-obj",
+        "isolated C ABI fixture",
+        "lead sanitizer/Windows/coverage gates"
+      ],
+      "credit_ceiling": "5% of TODO5"
+    },
+    {
+      "agent": "luna_qemu_build",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "scripts/qemu_build.py",
+        "tests/interop/qemu_build.py"
+      ],
+      "task": "Pinned explicit-feature QEMU source-build helper and invalidation/provenance fixtures",
+      "acceptance": [
+        "python3 tests/interop/qemu_build.py",
+        "lead actual pinned source build and feature smoke"
+      ],
+      "credit_ceiling": "15% of TODO8 only with real build proof"
+    },
+    {
+      "agent": "luna_mounts",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "src/daemon/daemon_qemu.c",
+        "src/daemon/daemon_qemu.h",
+        "tests/daemon/test_daemon_qemu.c"
+      ],
+      "task": "Additive bounded multi-mount QEMU APIs; deterministic drive-derived IDs/tags; preserve valid legacy API",
+      "acceptance": [
+        "isolated C argument/QMP fixture",
+        "lead ASan/LSan/UBSan and daemon integration"
+      ],
+      "credit_ceiling": "10% of TODO9; remaining all-mount lifecycle30% remains open"
+    }
+  ],
+  "constraints": [
+    "Lead alone owns Git/index, docs/tracker, shared build/workflow/header integration and native Windows/GPU runner",
+    "No recursive delegation, README edits, shared make/clean, VM actions or installs by workers",
+    "Worker tests use separate /tmp output/cache; no acceptance from mocked/native-unrun results"
+  ]
+}

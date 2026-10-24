@@ -74,15 +74,15 @@ Design assignments earn no credit; only accepted implementation is recorded.
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot primitives 20%; first-fit reservations 20%; focused coverage gates pass |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config 25%; typed CLI get/set/reset 5%; persistence 5%; QEMU argv 15%; focused normal/sanitizer gates pass |
-| #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal 10%; export-boundary fixtures pass |
+| #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal 10%; export-boundary fixtures pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
-Execution stopped at the user's request on 2026-10-23. All three Luna workers
-returned ownership and are stopped. Lead retains shared ABI, build/workflow,
-docs/tracker, Git and runner ownership. Resume instructions, saved unaccepted
-C wrapper draft, checks and native/build gaps are in
-[checkpoint_2026_10_23.md](checkpoint_2026_10_23.md). No progress is awarded for
-the draft or checkpoint. Shared build targets must remain serial.
+Execution resumed at the user's request from checkpoint4079560. Current
+exclusive Luna/high work orders and phase allocation are recorded in
+[resume_work_orders.json](resume_work_orders.json). Lead retains shared ABI,
+build/workflow, docs/tracker, Git and runner ownership. Shared builds are serial.
+The historical [checkpoint](checkpoint_2026_10_23.md) remains valid evidence;
+its uncompiled draft earns no credit until current acceptance passes.
 
 ## Commit History & Progress Log
 
@@ -339,7 +339,7 @@ the draft or checkpoint. Shared build targets must remain serial.
     retain ReleaseSafe bounds checks and testing-allocator tests. No complete
     source-QEMU build or guest device/audio qualification is claimed.
 
-- **Commit `HEAD`**: `docs(interop): save a verified recoverable implementation checkpoint`
+- **Commit `4079560`**: `docs(interop): save a verified recoverable implementation checkpoint`
   - **Task Impact**: +0% to TODO #1-#34 (+0% overall; total 12.85%).
   - **Summary**: Stops workers at user request, preserves the uncompiled C ABI
     draft as an unapplied patch, tightens mapping-overlap boundary documentation
@@ -348,4 +348,14 @@ the draft or checkpoint. Shared build targets must remain serial.
     Header ABI assertions compile on Linux/Windows; draft apply-check passes.
     No C wrapper/runtime implementation, source-QEMU build or additional native
     acceptance is credited. README is unchanged and the running Windows VM is preserved.
-    `HEAD` identifies this containing checkpoint commit.
+
+- **Commit `HEAD`**: `docs(interop): resume bounded parallel implementation from checkpoint`
+  - **Task Impact**: +0% to TODO #5/#8/#9/#34 (+0% overall; total12.85%).
+  - **Summary**: Resumes three exclusive Luna/high lanes for pure C ABI, pinned
+    source-build features and many-mount QEMU APIs. Specifies build provenance,
+    invalidation and socket/tag ownership before implementation. Refines #9's
+    existing40% allocation into API10% and lifecycle30% without credit changes.
+    Remote origin/origin remains89671de; checkpoint4079560's hosted interop and
+    Native AV workflows both succeeded (runs40020339744 and40020339384).
+    Current native runner/provisioning is rechecked before any VM changes.
+    `HEAD` identifies this containing resumption contract commit.

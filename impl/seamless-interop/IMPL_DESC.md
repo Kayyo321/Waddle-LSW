@@ -2216,3 +2216,43 @@ unique USB selectors before any published device mutation. This preserves old
 schema-1 backups while round-tripping new settings. Clone retains host mounts;
 import continues to suppress host mounts and unrelated host-local paths. The
 backup manifest is distinct from the integration ownership manifest in §3.12.
+
+### 8.5 Resumed source-build and many-mount boundaries
+
+The explicit qemu-source build target uses the pinned submodule commit as an
+expected identity and a caller-selected out-of-tree build directory. The build
+helper requires libpipewire-0.3>=0.3.60, slirp and libusb-1.0>=1.0.13 from base
+system development packages. It configures x86_64-softmmu/KVM/headless plus
+--enable-pipewire --enable-slirp --enable-libusb --disable-download. Missing
+features fail rather than silently changing the default audio/network/devices.
+No configure fallback downloads are allowed. The existing system-QEMU packaging
+path remains distinct; system smoke cannot qualify the pinned source build.
+
+Before reuse, a signature includes source commit/clean tracked state, exact
+configure options, helper revision, compiler/build-tool identity and selected
+dependency versions/compile/link inputs. Invalid/missing config outputs or
+required macros force reconfiguration. Invalidate prior success before an
+attempt; write an atomic cache/provenance stamp only after required macros,
+Ninja, output binary hash and a post-build source-identity check succeed.
+A stamp is cache metadata, not proof of Windows/audio/peripheral acceptance.
+Build directories cannot overlap source and are never recursively cleaned.
+
+The additive QEMU many-mount APIs borrow an ordered bounded array of fixed
+socket-path/drive values. Count zero requires NULL, count1..WaddleMaxMounts
+requires non-NULL, and larger counts fail. Validate all inputs before retaining
+argv allocations: NUL-terminated absolute paths, exact letter:slash/backslash
+root drives, no comma/control bytes in keyval paths, duplicate socket paths or
+case-insensitive duplicate drive letters. Failure returns EINVAL/E2BIG/ENOMEM,
+frees every partial argv string, and leaves argv[0] NULL. No input is retained.
+
+For drive D, lowercase d gives chardev waddle_fs_char_d, device waddle_fs_dev_d,
+and tag waddle_fs_d. Emit exactly one four-argument chardev/device group per
+mount in input order. Guest binding of that tag to D:\ is a separate required
+implementation/native gate. Existing single-socket APIs retain char0 and
+waddle_fs for valid inputs. New many-mount process records leave the legacy
+single-socket field empty; the supervisor owns all per-mount lifecycle objects.
+No QEMU builder owns, stops or unlinks a mount listener.
+
+Refine #9's40% all-mount allocation into QEMU many-mount API10% and owned
+supervisor lifecycle30%; the sum and current accepted10% root-fix credit do not
+change. Native drive binding and failure/restart qualification stay separate.
