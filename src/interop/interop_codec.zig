@@ -8,6 +8,7 @@
 //! Public ownership, nullability, return values and threading contracts are
 //! defined per export in include/waddle/interop_protocol.h.
 const std_t = @import("std");
+const agent_version_t = @import("agent_version.zig");
 const c_t = @cImport({
     @cInclude("waddle/interop_protocol.h");
 });
@@ -166,19 +167,8 @@ fn mime_list_valid(value: []const u8) bool {
     return entries >= 1;
 }
 fn version_valid(value: []const u8) bool {
-    var parts: usize = 0;
-    var digits: usize = 0;
-    for (value) |byte| {
-        if (byte == '.') {
-            if (digits == 0) return false;
-            parts += 1;
-            digits = 0;
-        } else if (byte >= '0' and byte <= '9') {
-            digits += 1;
-            if (digits > 9) return false;
-        } else return false;
-    }
-    return parts == 2 and digits > 0;
+    _ = agent_version_t.parse_major(value) catch return false;
+    return true;
 }
 fn app_key_valid(value: []const u8) bool {
     if (value.len < 3 or value[1] != '-' or (value[0] != 'a' and value[0] != 'p')) return false;
@@ -1126,6 +1116,16 @@ fn opaque_value(comptime value_t: type, value: value_t) value_t {
 
 const testing_t = std_t.testing;
 
+// Test-only fixtures.
+fn field_value_offset(payload: []const u8, tag: u16) ?usize {
+    var walker = field_walker_t{ .data = payload };
+    while (walker.next() catch return null) |field| {
+        if (field.tag & 0x7FFF == tag)
+            return @intFromPtr(field.value.ptr) - @intFromPtr(payload.ptr);
+    }
+    return null;
+}
+
 fn frame_buffer() [c_t.InteropMaxFrameBytes]u8 {
     return std_t.mem.zeroes([c_t.InteropMaxFrameBytes]u8);
 }
@@ -1137,14 +1137,60 @@ fn writer_for(buffer: []u8) c_t.interop_writer_t {
 }
 
 fn hello(buffer: []u8, epoch: u64) !usize {
+    return hello_with_version(buffer, epoch, "0.2.0");
+}
+
+fn hello_with_version(buffer: []u8, epoch: u64, version: []const u8) !usize {
     var writer = writer_for(buffer);
     try testing_t.expectEqual(error_codes_t.None, interop_put_uint(&writer, c_t.InteropTagCapabilities, c_t.InteropCapWindows | c_t.InteropCapInput));
-    try testing_t.expectEqual(error_codes_t.None, interop_put_bytes(&writer, c_t.InteropTagAgentVersion, "0.2.0", 5));
+    try testing_t.expectEqual(error_codes_t.None, interop_put_bytes(&writer, c_t.InteropTagAgentVersion, version.ptr, @intCast(version.len)));
     try testing_t.expectEqual(error_codes_t.None, interop_put_uint(&writer, c_t.InteropTagLayoutVersion, c_t.InteropLayoutVersion));
     try testing_t.expectEqual(error_codes_t.None, interop_put_uint(&writer, c_t.InteropTagSessionEpoch, epoch));
     var length: usize = 0;
     try testing_t.expectEqual(error_codes_t.None, interop_writer_finish(&writer, c_t.InteropMsgHello, 0, c_t.InteropFromGuest, &length));
     return length;
+}
+
+fn hello_ack(buffer: []u8, version: []const u8) !usize {
+    var writer = writer_for(buffer);
+    try testing_t.expectEqual(error_codes_t.None, interop_put_uint(&writer, c_t.InteropTagCapabilities, c_t.InteropCapWindows | c_t.InteropCapInput));
+    try testing_t.expectEqual(error_codes_t.None, interop_put_bytes(&writer, c_t.InteropTagAgentVersion, version.ptr, @intCast(version.len)));
+    try testing_t.expectEqual(error_codes_t.None, interop_put_uint(&writer, c_t.InteropTagLayoutVersion, c_t.InteropLayoutVersion));
+    var length: usize = 0;
+    try testing_t.expectEqual(error_codes_t.None, interop_writer_finish(&writer, c_t.InteropMsgHelloAck, 0, c_t.InteropFromHost, &length));
+    return length;
+}
+
+test "Hello and HelloAck accept SemVer metadata through writer and receive validation" {
+    var buffer = frame_buffer();
+    const hello_length = try hello_with_version(&buffer, 9, "1.22.3333333333-a.0+b.001");
+    var header: c_t.interop_header_t = undefined;
+    try testing_t.expectEqual(error_codes_t.None, interop_header_decode(&buffer, hello_length, &header));
+    try testing_t.expectEqual(error_codes_t.None, interop_payload_validate(c_t.InteropMsgHello, c_t.InteropFromGuest, buffer[16..hello_length].ptr, hello_length - 16));
+
+    const ack_length = try hello_ack(&buffer, "4294967295.123456789012.2-rc.1+m");
+    try testing_t.expectEqual(error_codes_t.None, interop_header_decode(&buffer, ack_length, &header));
+    try testing_t.expectEqual(error_codes_t.None, interop_payload_validate(c_t.InteropMsgHelloAck, c_t.InteropFromHost, buffer[16..ack_length].ptr, ack_length - 16));
+
+    var writer = writer_for(&buffer);
+    try testing_t.expectEqual(error_codes_t.Malformed, interop_put_bytes(&writer, c_t.InteropTagAgentVersion, "01.2.3", 6));
+    writer = writer_for(&buffer);
+    try testing_t.expectEqual(error_codes_t.Malformed, interop_put_bytes(&writer, c_t.InteropTagAgentVersion, "1.2.3-01", 8));
+
+    // Mutate valid frames without changing TLV widths to exercise receive-side validation.
+    const malformed_hello_length = try hello_with_version(&buffer, 9, "1.2.3-11");
+    const hello_payload = buffer[16..malformed_hello_length];
+    const hello_version_offset = field_value_offset(hello_payload, c_t.InteropTagAgentVersion) orelse return error.TestUnexpectedResult;
+    buffer[16 + hello_version_offset + 6] = '0';
+    buffer[16 + hello_version_offset + 7] = '1';
+    try testing_t.expectEqual(error_codes_t.Malformed, interop_payload_validate(c_t.InteropMsgHello, c_t.InteropFromGuest, hello_payload.ptr, hello_payload.len));
+
+    const malformed_ack_length = try hello_ack(&buffer, "1.2.3-11");
+    const ack_payload = buffer[16..malformed_ack_length];
+    const ack_version_offset = field_value_offset(ack_payload, c_t.InteropTagAgentVersion) orelse return error.TestUnexpectedResult;
+    buffer[16 + ack_version_offset + 6] = '0';
+    buffer[16 + ack_version_offset + 7] = '1';
+    try testing_t.expectEqual(error_codes_t.Malformed, interop_payload_validate(c_t.InteropMsgHelloAck, c_t.InteropFromHost, ack_payload.ptr, ack_payload.len));
 }
 
 test "hello round trip, header decode and typed field access" {
@@ -1393,7 +1439,7 @@ const BoundaryCases = [_]boundary_case_t{
     .{ .tag = c_t.InteropTagActivationToken, .good = "abc_123", .bad = "abc 123" },
     .{ .tag = c_t.InteropTagStatus, .good = &little_endian_t.u32_(9), .bad = &little_endian_t.u32_(10) },
     .{ .tag = c_t.InteropTagCapabilities, .good = &little_endian_t.u64_(c_t.InteropCapabilityMask), .bad = &little_endian_t.u64_(c_t.InteropCapabilityMask + 1) },
-    .{ .tag = c_t.InteropTagAgentVersion, .good = "10.20.30", .bad = "1.2.3.4" },
+    .{ .tag = c_t.InteropTagAgentVersion, .good = "10.20.30-alpha.1+build.001", .bad = "1.2.3.4" },
     .{ .tag = c_t.InteropTagLayoutVersion, .good = &little_endian_t.u32_(2), .bad = &little_endian_t.u32_(0) },
     .{ .tag = c_t.InteropTagOutput, .good = &(little_endian_t.u32_(0) ++ little_endian_t.u32_(3840) ++ little_endian_t.u32_(2160) ++ little_endian_t.u32_(480)), .bad = &(little_endian_t.u32_(0) ++ little_endian_t.u32_(3840) ++ little_endian_t.u32_(2160) ++ little_endian_t.u32_(119)) },
     .{ .tag = c_t.InteropTagStream, .good = &little_endian_t.u32_(7), .bad = &little_endian_t.u32_(8) },
@@ -1438,7 +1484,9 @@ test "every field value rule accepts its boundary and rejects one past it" {
     writer = writer_for(&buffer);
     try testing_t.expectEqual(error_codes_t.Malformed, interop_put_bytes(&writer, c_t.InteropTagAgentVersion, "1.2.", 4));
     writer = writer_for(&buffer);
-    try testing_t.expectEqual(error_codes_t.Malformed, interop_put_bytes(&writer, c_t.InteropTagAgentVersion, "1.2.3333333333", 14));
+    try testing_t.expectEqual(error_codes_t.None, interop_put_bytes(&writer, c_t.InteropTagAgentVersion, "1.2.3333333333", 14));
+    writer = writer_for(&buffer);
+    try testing_t.expectEqual(error_codes_t.Malformed, interop_put_bytes(&writer, c_t.InteropTagAgentVersion, "01.2.3", 6));
     writer = writer_for(&buffer);
     try testing_t.expectEqual(error_codes_t.Malformed, interop_put_bytes(&writer, c_t.InteropTagDamage, "0123456789", 10));
     writer = writer_for(&buffer);

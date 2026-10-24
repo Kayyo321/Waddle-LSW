@@ -689,10 +689,21 @@ its uncompiled draft earns no credit until current acceptance passes.
     Windows cross-build/CI added; handshake10% per endpoint awaits native CI.
     [Qualification](session_handshake_qualification_2026_10_24.json). Source commitce9178d contains this implementation.
 
-- **Commit `HEAD`**: `docs(interop): define common bounded request identifier ownership`
+- **Commit `18292b0`**: `docs(interop): define common bounded request identifier ownership`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Specifies a common per-direction sequence,4096-record local
     admission bound, wrap skipping only live IDs, explicit release and unchanged
     failures. Separates IDs from feature resource ownership and prevents a second
-    private Ping sequence when composing endpoint cores. HEAD identifies this
-    containing specification commit.
+    private Ping sequence when composing endpoint cores. Source commit18292b0 contains this specification.
+
+- **Commit `HEAD`**: `fix(interop): validate complete bounded semantic agent versions`
+  - **Task Impact**: +0% to TODO #4/#6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Replaces digits-only codec validation with shared bounded
+    SemVer2 grammar and checked uint32 major extraction. Accepts valid metadata
+    and long bounded minor/patch; rejects forbidden leading zeroes. Independent
+    review finds no defect. Direct parser and Hello/Ack writer/receive regressions
+    pass; parser100% lines/94.12% branches, whole codec96.56% lines/97.13% branches.
+    Windows cross-build and native CI added; existing #4 completion earns no
+    extra credit for this correction.
+    [Qualification](agent_version_qualification_2026_10_24.json). HEAD identifies
+    this containing implementation commit.

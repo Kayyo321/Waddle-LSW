@@ -1,0 +1,39 @@
+preserved interop_codec coverage: /home/dev/Waddle-LSW/build/coverage/interop/interop_codec/run-20261024T170056040994Z-320555
+interop_codec instrumentation: 663 exact metadata-bound sites; 18/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 3316/524288 bytes; 663 sites
+1/23 interop_codec.test.AUMID keys reserve suffix space and preserve outputs on every error...OK
+2/23 interop_codec.test.window minimum sizes are independent of current geometry and bounded per axis...OK
+3/23 interop_codec.test.menu trigger serials are protocol references and local stop frames never cross VSOCK...OK
+4/23 interop_codec.test.Hello and HelloAck accept SemVer metadata through writer and receive validation...OK
+5/23 interop_codec.test.hello round trip, header decode and typed field access...OK
+6/23 interop_codec.test.header rejects magic, version, length and short input...OK
+7/23 interop_codec.test.structural defects: order, duplicates, padding, criticality, unknown tags...OK
+8/23 interop_codec.test.field present but not allowed for the message type is malformed...OK
+9/23 interop_codec.test.writer rejects order, values, capacity and poisons itself...OK
+10/23 interop_codec.test.window announce with every field, parent pairing and string rules...OK
+11/23 interop_codec.test.every field value rule accepts its boundary and rejects one past it...OK
+12/23 interop_codec.test.launch requests require exactly one target kind...OK
+13/23 interop_codec.test.icon requests pair window and generation...OK
+14/23 interop_codec.test.display config repeats outputs 1..8 times and nowhere else...OK
+15/23 interop_codec.test.field count limit is enforced by writer and validator...OK
+16/23 interop_codec.test.transfers: contiguity, bounds, digest and cancellation...OK
+17/23 interop_codec.test.every message type has a buildable minimal frame and rejects the wrong direction...OK
+18/23 interop_codec.test.deterministic mutation fuzz never crashes and keeps outputs unchanged on error...OK
+19/23 interop_codec.test.every registered tag reaches a value rule without hitting the unreachable default...OK
+20/23 interop_codec.test.runtime inputs exercise defensive branches of every export...OK
+21/23 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+22/23 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+23/23 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+All 23 tests passed.
+interop_codec production branch coverage: 97.13% (271/279); 129 compiler panic/stack-canary guards excluded
+interop_codec production line coverage: 96.56% (309/320); 129 compiler panic/stack-canary guards excluded

@@ -1,0 +1,69 @@
+{
+  "recorded_utc": "2026-10-24T17:03:24.916963+00:00",
+  "sources": [
+    {
+      "path": "src/interop/agent_version.zig",
+      "sha256": "5d956923528e511ab3d16c2bc4f1da5bcb3879885f21967c8c35bfa4de4c6ff1"
+    },
+    {
+      "path": "src/interop/interop_codec.zig",
+      "sha256": "3036da7f5463c4cd1ca2293a4ac37c294a533d0b96e59855d1db6ef258268c56"
+    }
+  ],
+  "commands": [
+    {
+      "command": "make interop-codec-test interop-agent-version-test build/interop_codec_abi_test.exe build/interop_agent_version_test.exe",
+      "exit_code": 0,
+      "codec_suite_tests_passed": 23,
+      "parser_tests_passed": 3
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py agent_version",
+      "exit_code": 0,
+      "line": [
+        43,
+        43
+      ],
+      "branch": [
+        64,
+        68
+      ]
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py interop_codec",
+      "exit_code": 0,
+      "line": [
+        309,
+        320
+      ],
+      "branch": [
+        271,
+        279
+      ]
+    }
+  ],
+  "review": [
+    "Independent semantic review found no grammar/bounds/overflow defect.",
+    "Lead reset poisoned writer between independent rejection assertions and added mutated receive-side numeric-prerelease rejection on Hello and HelloAck."
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/agent_version_2026_10_24/seamless_agent_version_build.log",
+      "sha256": "57a12389dfc75fc1ade1a53c13f6fa611891c31015907a508b4a547521967e40"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/agent_version_2026_10_24/seamless_agent_version_final_coverage.log",
+      "sha256": "ff1d17bd8472dbf9aaf9aa68fb3bf20055b60ff657aa3f311cf0c6fbbc9137a3"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/agent_version_2026_10_24/seamless_version_codec_coverage.log",
+      "sha256": "77144c0abf7a12c5fab0b31564acb2b0d5aab7b3ac6149574eeb9d6172f446db"
+    }
+  ],
+  "limits": [
+    "Allocation-free bounded grammar and major extraction; not a version ordering or redeployment policy.",
+    "Host build and Windows cross-build pass; actual Windows CPU execution pending next CI.",
+    "No new task credit for correcting existing codec behavior."
+  ],
+  "progress_credit": 0
+}

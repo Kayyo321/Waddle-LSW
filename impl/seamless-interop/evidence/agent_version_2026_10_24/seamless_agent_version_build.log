@@ -1,0 +1,37 @@
+zig build-obj src/interop/interop_codec.zig -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=build/interop_codec.o
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG tests/interop/codec_abi.c build/interop_codec.o  -o build/interop_codec_abi_test
+zig test src/interop/interop_codec.zig -Iinclude -lc
+1/23 interop_codec.test.AUMID keys reserve suffix space and preserve outputs on every error...OK
+2/23 interop_codec.test.window minimum sizes are independent of current geometry and bounded per axis...OK
+3/23 interop_codec.test.menu trigger serials are protocol references and local stop frames never cross VSOCK...OK
+4/23 interop_codec.test.Hello and HelloAck accept SemVer metadata through writer and receive validation...OK
+5/23 interop_codec.test.hello round trip, header decode and typed field access...OK
+6/23 interop_codec.test.header rejects magic, version, length and short input...OK
+7/23 interop_codec.test.structural defects: order, duplicates, padding, criticality, unknown tags...OK
+8/23 interop_codec.test.field present but not allowed for the message type is malformed...OK
+9/23 interop_codec.test.writer rejects order, values, capacity and poisons itself...OK
+10/23 interop_codec.test.window announce with every field, parent pairing and string rules...OK
+11/23 interop_codec.test.every field value rule accepts its boundary and rejects one past it...OK
+12/23 interop_codec.test.launch requests require exactly one target kind...OK
+13/23 interop_codec.test.icon requests pair window and generation...OK
+14/23 interop_codec.test.display config repeats outputs 1..8 times and nowhere else...OK
+15/23 interop_codec.test.field count limit is enforced by writer and validator...OK
+16/23 interop_codec.test.transfers: contiguity, bounds, digest and cancellation...OK
+17/23 interop_codec.test.every message type has a buildable minimal frame and rejects the wrong direction...OK
+18/23 interop_codec.test.deterministic mutation fuzz never crashes and keeps outputs unchanged on error...OK
+19/23 interop_codec.test.every registered tag reaches a value rule without hitting the unreachable default...OK
+20/23 interop_codec.test.runtime inputs exercise defensive branches of every export...OK
+21/23 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+22/23 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+23/23 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+All 23 tests passed.
+./build/interop_codec_abi_test
+interop codec ABI: header, fields, writer and transfers agree across C and Zig
+zig test src/interop/agent_version.zig -lc
+1/3 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+2/3 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+3/3 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+All 3 tests passed.
+zig build-lib src/interop/interop_codec.zig -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=build/interop_codec_windows.lib
+zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/interop/codec_abi.c build/interop_codec_windows.lib -o build/interop_codec_abi_test.exe
+zig test src/interop/agent_version.zig -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=build/interop_agent_version_test.exe

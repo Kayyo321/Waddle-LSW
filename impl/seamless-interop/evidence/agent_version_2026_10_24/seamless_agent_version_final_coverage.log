@@ -1,0 +1,19 @@
+preserved agent_version coverage: /home/dev/Waddle-LSW/build/coverage/interop/agent_version/run-20261024T170133446857Z-322259
+agent_version instrumentation: 96 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 480/524288 bytes; 96 sites
+1/3 agent_version.test.SemVer major parser accepts core and metadata grammar...OK
+2/3 agent_version.test.SemVer parser rejects malformed core and metadata...OK
+3/3 agent_version.test.exact maximum size and repeated parsing stay allocation-free...OK
+All 3 tests passed.
+agent_version production branch coverage: 94.12% (64/68); 6 compiler panic/stack-canary guards excluded
+agent_version production line coverage: 100.00% (43/43); 6 compiler panic/stack-canary guards excluded
