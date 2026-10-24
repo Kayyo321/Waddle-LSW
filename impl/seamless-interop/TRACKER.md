@@ -349,7 +349,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     No C wrapper/runtime implementation, source-QEMU build or additional native
     acceptance is credited. README is unchanged and the running Windows VM is preserved.
 
-- **Commit `HEAD`**: `docs(interop): resume bounded parallel implementation from checkpoint`
+- **Commit `6cbc90e`**: `docs(interop): resume bounded parallel implementation from checkpoint`
   - **Task Impact**: +0% to TODO #5/#8/#9/#34 (+0% overall; total12.85%).
   - **Summary**: Resumes three exclusive Luna/high lanes for pure C ABI, pinned
     source-build features and many-mount QEMU APIs. Specifies build provenance,
@@ -358,4 +358,15 @@ its uncompiled draft earns no credit until current acceptance passes.
     Remote origin/origin remains89671de; checkpoint4079560's hosted interop and
     Native AV workflows both succeeded (runs40020339744 and40020339384).
     Current native runner/provisioning is rechecked before any VM changes.
-    `HEAD` identifies this containing resumption contract commit.
+
+- **Commit `HEAD`**: `feat(interop): expose validated layout snapshots through the C ABI`
+  - **Task Impact**: +0% to TODO #5 pending native Windows execution
+    (+0% overall; total12.85%).
+  - **Summary**: Implements all four frozen private-snapshot wrappers with
+    bounded pointer/alignment/range/alias checks and staged outputs. Lead
+    rejects initial79.17% branch coverage; revised tests pass100% (48/48),
+    97.37% production line (74/76), eleven Zig tests including imported layout
+    tests, C ABI consumers and ASan/LSan/UBSan. Windows C consumer cross-links;
+    workflow now runs it natively. The pure C ABI5% remains uncredited until
+    the native Windows gate passes; no live atomic/pin/runtime claim is made.
+    `HEAD` identifies this containing C boundary commit.

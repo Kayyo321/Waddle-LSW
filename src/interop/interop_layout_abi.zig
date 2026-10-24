@@ -1,0 +1,799 @@
+//! C ABI boundary for frozen layout-v3 snapshot validation.
+//!
+//! The exported calls accept private caller-owned snapshots only. They do not
+//! access live mappings or atomics, allocate memory, retain pointers, or own
+//! caller storage. C pointer ranges and alignment are checked before any slice
+//! construction or typed access; outputs are staged and published on success.
+const std = @import("std");
+const layout = @import("interop_layout.zig");
+const c = @cImport({
+    @cInclude("interop_layout.h");
+});
+
+const StatusOk: c_int = c.InteropLayoutStatusOk;
+const StatusInvalidArgument: c_int = c.InteropLayoutStatusInvalidArgument;
+const StatusInvalidLayout: c_int = c.InteropLayoutStatusInvalidLayout;
+
+const address_range_t = struct {
+    start: usize,
+    end: usize,
+};
+
+fn checked_range(start: usize, length: usize) ?address_range_t {
+    if (start == 0 or length == 0) return null;
+    const end = std.math.add(usize, start, length) catch return null;
+    return .{ .start = start, .end = end };
+}
+
+fn ranges_overlap(left: address_range_t, right: address_range_t) bool {
+    return left.start < right.end and right.start < left.end;
+}
+
+fn mapping_range(mapping_address: usize, mapping_length: u64) ?address_range_t {
+    if (mapping_length == 0) return null;
+    const length = std.math.cast(usize, mapping_length) orelse return null;
+    return checked_range(mapping_address, length);
+}
+
+fn valid_output_pointer(pointer: usize, alignment: usize, length: usize) ?address_range_t {
+    if (pointer == 0 or pointer % alignment != 0) return null;
+    return checked_range(pointer, length);
+}
+
+fn invalid_layout_status(_: anyerror) c_int {
+    return StatusInvalidLayout;
+}
+
+/// Validate a private 4096-byte header snapshot and actual mapping facts.
+///
+/// @param[in] header_bytes Optional C byte pointer; required non-NULL and readable
+///                         for exactly HeaderBytes. It must be private snapshot data.
+/// @param[in] header_length Must equal HeaderBytes before a slice is formed.
+/// @param[in] mapping_address Nonzero actual mapping base address; range-checked,
+///                            never dereferenced.
+/// @param[in] mapping_length Actual mapping size; the layout validator requires
+///                           MappingBytes, and uintptr range overflow is rejected.
+/// @param[in] expected_session_epoch Nonzero epoch negotiated by the caller.
+/// @param[out] snapshot Non-NULL aligned C output disjoint from header bytes and mapping.
+/// @return Ok on success, InvalidArgument for null/wrong-sized/unaligned/overflowing/
+///         aliased call arguments, or InvalidLayout for invalid layout facts.
+/// @note Allocation-free; no pointers are retained and no live mapping atomics are
+///       accessed. Caller owns all storage. Output is unchanged on every error.
+///       Concurrent calls are safe for disjoint inputs and outputs.
+export fn interop_layout_validate_shm_header(
+    header_bytes: ?[*]const u8,
+    header_length: usize,
+    mapping_address: usize,
+    mapping_length: u64,
+    expected_session_epoch: u64,
+    snapshot: ?*align(1) c.interop_shm_header_snapshot_t,
+) c_int {
+    if (header_length != layout.HeaderBytes) return StatusInvalidArgument;
+    const input_pointer = header_bytes orelse return StatusInvalidArgument;
+    const output_pointer = snapshot orelse return StatusInvalidArgument;
+    const input_address = @intFromPtr(input_pointer);
+    const output_address = @intFromPtr(output_pointer);
+    const input_range = checked_range(input_address, layout.HeaderBytes) orelse return StatusInvalidArgument;
+    const output_range = valid_output_pointer(
+        output_address,
+        @alignOf(c.interop_shm_header_snapshot_t),
+        @sizeOf(c.interop_shm_header_snapshot_t),
+    ) orelse return StatusInvalidArgument;
+    const mapped_range = mapping_range(mapping_address, mapping_length) orelse blk: {
+        if (mapping_length == 0) break :blk null;
+        return StatusInvalidArgument;
+    };
+    if (ranges_overlap(input_range, output_range)) return StatusInvalidArgument;
+    if (mapped_range) |range| {
+        if (ranges_overlap(input_range, range) or ranges_overlap(output_range, range))
+            return StatusInvalidArgument;
+    } else if (mapping_address == 0) {
+        return StatusInvalidArgument;
+    }
+
+    var result: layout.shm_header_snapshot_t = undefined;
+    layout.validate_shm_header(
+        input_pointer[0..layout.HeaderBytes],
+        mapping_address,
+        mapping_length,
+        expected_session_epoch,
+        &result,
+    ) catch |err| return invalid_layout_status(err);
+
+    const output_aligned: *c.interop_shm_header_snapshot_t = @ptrCast(@alignCast(output_pointer));
+    output_aligned.* = .{
+        .session_epoch = result.session_epoch,
+        .total_bytes = result.total_bytes,
+        .slot_count = result.slot_count,
+        .audio_ring_count = result.audio_ring_count,
+        .heap_offset = result.heap_offset,
+        .heap_bytes = result.heap_bytes,
+        .page_bytes = result.page_bytes,
+        .guest_heartbeat = result.guest_heartbeat,
+        .host_heartbeat = result.host_heartbeat,
+    };
+    return StatusOk;
+}
+
+/// Validate one private Ready descriptor against a validated header and identity.
+///
+/// @param[in] descriptor_bytes Optional C byte pointer; required non-NULL and
+///                             readable for exactly DescriptorBytes, private copy.
+/// @param[in] descriptor_length Must equal DescriptorBytes before slicing.
+/// @param[in] header Optional C snapshot pointer; required non-NULL and naturally aligned.
+///                    It must contain a previously validated immutable header snapshot.
+/// @param[in] descriptor_index Fixed descriptor-table index.
+/// @param[in] expected_window Nonzero expected HWND identity.
+/// @param[in] expected_generation Nonzero expected window generation.
+/// @param[out] snapshot Non-NULL aligned C output disjoint from both input ranges.
+/// @return Ok on success, InvalidArgument for null/wrong-sized/unaligned/overflowing/
+///         aliased call arguments, or InvalidLayout for invalid header/descriptor values.
+/// @note Allocation-free; caller acquires Ready and copies descriptor metadata before
+///       this call. It does not read live mapping bytes or perform atomics. Inputs are
+///       borrowed only for the call; caller owns output. Output is unchanged on error.
+export fn interop_layout_validate_slot_descriptor(
+    descriptor_bytes: ?[*]const u8,
+    descriptor_length: usize,
+    header: ?*align(1) const c.interop_shm_header_snapshot_t,
+    descriptor_index: u32,
+    expected_window: u64,
+    expected_generation: u64,
+    snapshot: ?*align(1) c.interop_slot_snapshot_t,
+) c_int {
+    if (descriptor_length != layout.DescriptorBytes) return StatusInvalidArgument;
+    const input_pointer = descriptor_bytes orelse return StatusInvalidArgument;
+    const header_pointer = header orelse return StatusInvalidArgument;
+    const output_pointer = snapshot orelse return StatusInvalidArgument;
+    const input_address = @intFromPtr(input_pointer);
+    const header_address = @intFromPtr(header_pointer);
+    const output_address = @intFromPtr(output_pointer);
+    const input_range = checked_range(input_address, layout.DescriptorBytes) orelse return StatusInvalidArgument;
+    const header_range = valid_output_pointer(
+        header_address,
+        @alignOf(c.interop_shm_header_snapshot_t),
+        @sizeOf(c.interop_shm_header_snapshot_t),
+    ) orelse return StatusInvalidArgument;
+    const output_range = valid_output_pointer(
+        output_address,
+        @alignOf(c.interop_slot_snapshot_t),
+        @sizeOf(c.interop_slot_snapshot_t),
+    ) orelse return StatusInvalidArgument;
+    if (ranges_overlap(input_range, output_range) or ranges_overlap(header_range, output_range))
+        return StatusInvalidArgument;
+
+    const header_aligned: *const c.interop_shm_header_snapshot_t = @ptrCast(@alignCast(header_pointer));
+    if (header_aligned.session_epoch == 0 or header_aligned.total_bytes != layout.MappingBytes or
+        header_aligned.slot_count != layout.SlotCount or header_aligned.audio_ring_count != layout.AudioRingCount or
+        header_aligned.heap_offset != layout.HeapOffset or header_aligned.heap_bytes != layout.HeapBytes or
+        header_aligned.page_bytes != layout.PageBytes)
+        return StatusInvalidLayout;
+
+    const validated_header = layout.shm_header_snapshot_t{
+        .session_epoch = header_aligned.session_epoch,
+        .total_bytes = header_aligned.total_bytes,
+        .slot_count = header_aligned.slot_count,
+        .audio_ring_count = header_aligned.audio_ring_count,
+        .heap_offset = header_aligned.heap_offset,
+        .heap_bytes = header_aligned.heap_bytes,
+        .page_bytes = header_aligned.page_bytes,
+        .guest_heartbeat = header_aligned.guest_heartbeat,
+        .host_heartbeat = header_aligned.host_heartbeat,
+    };
+    var result: layout.slot_snapshot_t = undefined;
+    layout.validate_slot_descriptor(
+        input_pointer[0..layout.DescriptorBytes],
+        &validated_header,
+        descriptor_index,
+        expected_window,
+        expected_generation,
+        &result,
+    ) catch |err| return invalid_layout_status(err);
+
+    const output_aligned: *c.interop_slot_snapshot_t = @ptrCast(@alignCast(output_pointer));
+    output_aligned.* = .{
+        .descriptor_index = result.descriptor_index,
+        .window = result.window,
+        .generation = result.generation,
+        .frame_sequence = result.frame_sequence,
+        .data_offset = result.data_offset,
+        .data_bytes = result.data_bytes,
+        .width = result.width,
+        .height = result.height,
+        .stride = result.stride,
+    };
+    return StatusOk;
+}
+
+/// Compute clamped capture geometry and page-rounded allocation capacity.
+///
+/// @param[in] requested_width Requested physical pixel width.
+/// @param[in] requested_height Requested physical pixel height.
+/// @param[out] frame_layout Optional C output pointer; required and naturally aligned.
+/// @return Ok on success, InvalidArgument for a null, unaligned, or overflowing
+///         output range, or InvalidLayout for invalid geometry/layout.
+/// @note Allocation-free and thread-safe for disjoint output storage. No input
+///       pointers are accepted or retained. Caller owns output; unchanged on error.
+export fn interop_layout_frame_layout_for_capture(
+    requested_width: u32,
+    requested_height: u32,
+    frame_layout: ?*align(1) c.interop_frame_layout_t,
+) c_int {
+    const output_pointer = frame_layout orelse return StatusInvalidArgument;
+    const output_range = valid_output_pointer(
+        @intFromPtr(output_pointer),
+        @alignOf(c.interop_frame_layout_t),
+        @sizeOf(c.interop_frame_layout_t),
+    ) orelse return StatusInvalidArgument;
+    _ = output_range;
+
+    const result = layout.frame_layout_for_capture(requested_width, requested_height) catch
+        return StatusInvalidLayout;
+    const output_aligned: *c.interop_frame_layout_t = @ptrCast(@alignCast(output_pointer));
+    output_aligned.* = .{
+        .width = result.width,
+        .height = result.height,
+        .stride = result.stride,
+        .pixel_bytes = result.pixel_bytes,
+        .data_bytes = result.data_bytes,
+    };
+    return StatusOk;
+}
+
+/// Return fixed mapping-relative PCM bounds for one layout-v3 audio ring.
+///
+/// @param[in] mapping_length Actual mapped length; required to match MappingBytes.
+/// @param[in] ring_index Audio ring index in the range 0..AudioRingCount.
+/// @param[out] bounds Optional C output pointer; required and naturally aligned.
+/// @return Ok on success, InvalidArgument for a null, unaligned, or overflowing
+///         output range, or InvalidLayout for invalid mapping length/ring index.
+/// @note Allocation-free and thread-safe for disjoint output storage. No pointers
+///       are retained. Caller owns output; it is unchanged on every error.
+export fn interop_layout_audio_ring_bounds(
+    mapping_length: u64,
+    ring_index: u32,
+    bounds: ?*align(1) c.interop_audio_ring_bounds_t,
+) c_int {
+    const output_pointer = bounds orelse return StatusInvalidArgument;
+    const output_range = valid_output_pointer(
+        @intFromPtr(output_pointer),
+        @alignOf(c.interop_audio_ring_bounds_t),
+        @sizeOf(c.interop_audio_ring_bounds_t),
+    ) orelse return StatusInvalidArgument;
+    _ = output_range;
+
+    var result: layout.audio_ring_bounds_t = undefined;
+    layout.audio_ring_bounds(mapping_length, ring_index, &result) catch return StatusInvalidLayout;
+    const output_aligned: *c.interop_audio_ring_bounds_t = @ptrCast(@alignCast(output_pointer));
+    output_aligned.* = .{
+        .ring_index = result.ring_index,
+        .header_offset = result.header_offset,
+        .pcm_offset = result.pcm_offset,
+        .pcm_bytes = result.pcm_bytes,
+        .capacity_frames = result.capacity_frames,
+    };
+    return StatusOk;
+}
+
+// Test-only fixtures.
+fn write_u32(bytes: []u8, offset: usize, value: u32) void {
+    std.mem.writeInt(u32, bytes[offset..][0..4], value, .little);
+}
+
+fn write_u64(bytes: []u8, offset: usize, value: u64) void {
+    std.mem.writeInt(u64, bytes[offset..][0..8], value, .little);
+}
+
+fn make_valid_header(bytes: []u8, epoch: u64) void {
+    @memset(bytes, 0);
+    write_u32(bytes, 0, layout.ShmMagic);
+    write_u32(bytes, 4, layout.LayoutVersion);
+    write_u64(bytes, 8, epoch);
+    write_u64(bytes, 16, layout.MappingBytes);
+    write_u32(bytes, 24, layout.SlotCount);
+    write_u32(bytes, 28, layout.AudioRingCount);
+    write_u64(bytes, 32, layout.HeapOffset);
+    write_u64(bytes, 40, layout.HeapBytes);
+    write_u32(bytes, 48, layout.PageBytes);
+}
+
+fn make_valid_descriptor(bytes: []u8, data_bytes: u32) void {
+    @memset(bytes, 0);
+    write_u32(bytes, 0, layout.SlotReady);
+    write_u32(bytes, 4, layout.PixelFormatBgra);
+    write_u64(bytes, 8, 0x1234);
+    write_u64(bytes, 16, 9);
+    write_u64(bytes, 24, 71);
+    write_u64(bytes, 32, layout.HeapOffset);
+    write_u32(bytes, 40, data_bytes);
+    write_u32(bytes, 44, 640);
+    write_u32(bytes, 48, 480);
+    write_u32(bytes, 52, 2560);
+}
+
+fn call_header_dynamic(
+    input: ?[*]const u8,
+    length: usize,
+    address: usize,
+    mapping_length: u64,
+    epoch: u64,
+    output: ?*align(1) c.interop_shm_header_snapshot_t,
+) c_int {
+    return @call(.never_inline, interop_layout_validate_shm_header, .{
+        input,
+        length,
+        address,
+        mapping_length,
+        epoch,
+        output,
+    });
+}
+
+fn call_slot_dynamic(
+    input: ?[*]const u8,
+    length: usize,
+    header: ?*align(1) const c.interop_shm_header_snapshot_t,
+    descriptor_index: u32,
+    expected_window: u64,
+    expected_generation: u64,
+    output: ?*align(1) c.interop_slot_snapshot_t,
+) c_int {
+    return @call(.never_inline, interop_layout_validate_slot_descriptor, .{
+        input,
+        length,
+        header,
+        descriptor_index,
+        expected_window,
+        expected_generation,
+        output,
+    });
+}
+
+fn call_audio_dynamic(
+    mapping_length: u64,
+    ring_index: u32,
+    output: ?*align(1) c.interop_audio_ring_bounds_t,
+) c_int {
+    return @call(.never_inline, interop_layout_audio_ring_bounds, .{
+        mapping_length,
+        ring_index,
+        output,
+    });
+}
+
+test "header C ABI validates snapshot and preserves output for argument and layout errors" {
+    var bytes: [layout.HeaderBytes]u8 align(64) = undefined;
+    make_valid_header(&bytes, 0xAABB_CCDD_EEFF_0011);
+    var output = c.interop_shm_header_snapshot_t{
+        .session_epoch = 11,
+        .total_bytes = 12,
+        .slot_count = 13,
+        .audio_ring_count = 14,
+        .heap_offset = 15,
+        .heap_bytes = 16,
+        .page_bytes = 17,
+        .guest_heartbeat = 18,
+        .host_heartbeat = 19,
+    };
+    const before = output;
+    const pointer: ?[*]const u8 = &bytes;
+    const output_pointer: ?*align(1) c.interop_shm_header_snapshot_t = &output;
+    try std.testing.expectEqual(StatusOk, interop_layout_validate_shm_header(
+        pointer,
+        bytes.len,
+        0x1000,
+        layout.MappingBytes,
+        0xAABB_CCDD_EEFF_0011,
+        output_pointer,
+    ));
+    try std.testing.expectEqual(@as(u64, 0xAABB_CCDD_EEFF_0011), output.session_epoch);
+    try std.testing.expectEqual(layout.HeapBytes, output.heap_bytes);
+
+    output = before;
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len - 1,
+        0x1000,
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        0,
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidLayout, call_header_dynamic(
+        pointer,
+        bytes.len,
+        0x1000,
+        0,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        0,
+        0,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        0x1000,
+        layout.MappingBytes,
+        1,
+        @ptrCast(&bytes),
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        null,
+        bytes.len,
+        0x1000,
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        std.math.maxInt(usize) - 15,
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        @ptrFromInt(std.math.maxInt(usize) - layout.HeaderBytes + 1),
+        bytes.len,
+        0x1000,
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        std.math.maxInt(usize) - 63,
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        @intFromPtr(&bytes),
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        @intFromPtr(&output),
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        @intFromPtr(&bytes),
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        0x1000,
+        layout.MappingBytes,
+        1,
+        @ptrFromInt(@intFromPtr(&output) + 1),
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_header_dynamic(
+        pointer,
+        bytes.len,
+        @intFromPtr(&output),
+        layout.MappingBytes,
+        1,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+
+    bytes[0] = 0;
+    try std.testing.expectEqual(StatusInvalidLayout, interop_layout_validate_shm_header(
+        pointer,
+        bytes.len,
+        0x1000,
+        layout.MappingBytes,
+        0xAABB_CCDD_EEFF_0011,
+        output_pointer,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+}
+
+test "descriptor C ABI validates a private snapshot and rejects forged header and alias" {
+    var header_bytes: [layout.HeaderBytes]u8 align(8) = undefined;
+    make_valid_header(&header_bytes, 42);
+    var header = c.interop_shm_header_snapshot_t{
+        .session_epoch = 0,
+        .total_bytes = 0,
+        .slot_count = 0,
+        .audio_ring_count = 0,
+        .heap_offset = 0,
+        .heap_bytes = 0,
+        .page_bytes = 0,
+        .guest_heartbeat = 0,
+        .host_heartbeat = 0,
+    };
+    const status = interop_layout_validate_shm_header(
+        &header_bytes,
+        header_bytes.len,
+        0x4000,
+        layout.MappingBytes,
+        42,
+        &header,
+    );
+    try std.testing.expectEqual(StatusOk, status);
+
+    var descriptor: [layout.DescriptorBytes]u8 align(8) = undefined;
+    make_valid_descriptor(&descriptor, 2 * layout.PageBytes);
+    var output = c.interop_slot_snapshot_t{
+        .descriptor_index = 99,
+        .window = 98,
+        .generation = 97,
+        .frame_sequence = 96,
+        .data_offset = 95,
+        .data_bytes = 94,
+        .width = 93,
+        .height = 92,
+        .stride = 91,
+    };
+    try std.testing.expectEqual(StatusOk, call_slot_dynamic(
+        &descriptor,
+        descriptor.len,
+        &header,
+        3,
+        0x1234,
+        9,
+        &output,
+    ));
+    try std.testing.expectEqual(@as(u32, 3), output.descriptor_index);
+    try std.testing.expectEqual(@as(u32, 640), output.width);
+    const before = output;
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        null,
+        descriptor.len,
+        &header,
+        3,
+        0x1234,
+        9,
+        &output,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        &descriptor,
+        descriptor.len,
+        null,
+        3,
+        0x1234,
+        9,
+        &output,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        &descriptor,
+        descriptor.len,
+        &header,
+        3,
+        0x1234,
+        9,
+        null,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        &descriptor,
+        descriptor.len,
+        @ptrFromInt(@intFromPtr(&header) + 1),
+        3,
+        0x1234,
+        9,
+        &output,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        &descriptor,
+        descriptor.len - 1,
+        &header,
+        3,
+        0x1234,
+        9,
+        &output,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        &descriptor,
+        descriptor.len,
+        &header,
+        3,
+        0x1234,
+        9,
+        @ptrFromInt(@intFromPtr(&output) + 1),
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        @ptrFromInt(std.math.maxInt(usize) - layout.DescriptorBytes + 1),
+        descriptor.len,
+        &header,
+        3,
+        0x1234,
+        9,
+        &output,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        &descriptor,
+        descriptor.len,
+        &header,
+        3,
+        0x1234,
+        9,
+        @ptrFromInt(std.math.maxInt(usize) - 7),
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        &descriptor,
+        descriptor.len,
+        &header,
+        3,
+        0x1234,
+        9,
+        @ptrCast(&header),
+    ));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqual(StatusInvalidArgument, call_slot_dynamic(
+        &descriptor,
+        descriptor.len,
+        &header,
+        3,
+        0x1234,
+        9,
+        @ptrCast(&descriptor),
+    ));
+    try std.testing.expectEqualDeep(before, output);
+
+    var forged_header = header;
+    forged_header.session_epoch = 0;
+    const invalid_headers = [_]c.interop_shm_header_snapshot_t{
+        forged_header,
+        blk: {
+            var value = header;
+            value.total_bytes -= 1;
+            break :blk value;
+        },
+        blk: {
+            var value = header;
+            value.slot_count -= 1;
+            break :blk value;
+        },
+        blk: {
+            var value = header;
+            value.audio_ring_count -= 1;
+            break :blk value;
+        },
+        blk: {
+            var value = header;
+            value.heap_offset += 1;
+            break :blk value;
+        },
+        blk: {
+            var value = header;
+            value.heap_bytes -= 1;
+            break :blk value;
+        },
+        blk: {
+            var value = header;
+            value.page_bytes -= 1;
+            break :blk value;
+        },
+    };
+    for (invalid_headers) |invalid_header| {
+        try std.testing.expectEqual(StatusInvalidLayout, call_slot_dynamic(
+            &descriptor,
+            descriptor.len,
+            &invalid_header,
+            3,
+            0x1234,
+            9,
+            &output,
+        ));
+        try std.testing.expectEqualDeep(before, output);
+    }
+    write_u32(&descriptor, 0, 1);
+    try std.testing.expectEqual(StatusInvalidLayout, call_slot_dynamic(
+        &descriptor,
+        descriptor.len,
+        &header,
+        3,
+        0x1234,
+        9,
+        &output,
+    ));
+    try std.testing.expectEqualDeep(before, output);
+}
+
+test "frame and audio C ABI return exact values and preserve output on errors" {
+    var frame = c.interop_frame_layout_t{
+        .width = 1,
+        .height = 2,
+        .stride = 3,
+        .pixel_bytes = 4,
+        .data_bytes = 5,
+    };
+    try std.testing.expectEqual(StatusOk, interop_layout_frame_layout_for_capture(8000, 5000, &frame));
+    try std.testing.expectEqual(layout.MaxCaptureWidth, frame.width);
+    try std.testing.expectEqual(layout.MaxCaptureHeight, frame.height);
+    try std.testing.expectEqual(@as(u32, 30720), frame.stride);
+    const frame_before = frame;
+    try std.testing.expectEqual(StatusInvalidLayout, interop_layout_frame_layout_for_capture(0, 1, &frame));
+    try std.testing.expectEqualDeep(frame_before, frame);
+    try std.testing.expectEqual(StatusInvalidArgument, interop_layout_frame_layout_for_capture(1, 1, null));
+    try std.testing.expectEqual(StatusInvalidArgument, interop_layout_frame_layout_for_capture(
+        1,
+        1,
+        @ptrFromInt(@intFromPtr(&frame) + 1),
+    ));
+    try std.testing.expectEqualDeep(frame_before, frame);
+    try std.testing.expectEqual(StatusInvalidArgument, interop_layout_frame_layout_for_capture(
+        1,
+        1,
+        @ptrFromInt(std.math.maxInt(usize) - @sizeOf(c.interop_frame_layout_t) + 1),
+    ));
+    try std.testing.expectEqualDeep(frame_before, frame);
+
+    var bounds = c.interop_audio_ring_bounds_t{
+        .ring_index = 99,
+        .header_offset = 98,
+        .pcm_offset = 97,
+        .pcm_bytes = 96,
+        .capacity_frames = 95,
+    };
+    try std.testing.expectEqual(StatusOk, call_audio_dynamic(layout.MappingBytes, 7, &bounds));
+    try std.testing.expectEqual(@as(u32, 7), bounds.ring_index);
+    try std.testing.expectEqual(@as(u64, 0xF0000), bounds.header_offset);
+    try std.testing.expectEqual(@as(u32, 65536), bounds.pcm_bytes);
+    const bounds_before = bounds;
+    try std.testing.expectEqual(StatusInvalidLayout, call_audio_dynamic(layout.MappingBytes, 8, &bounds));
+    try std.testing.expectEqualDeep(bounds_before, bounds);
+    try std.testing.expectEqual(StatusInvalidLayout, call_audio_dynamic(0, 0, &bounds));
+    try std.testing.expectEqualDeep(bounds_before, bounds);
+    try std.testing.expectEqual(StatusInvalidArgument, call_audio_dynamic(layout.MappingBytes, 0, null));
+    try std.testing.expectEqual(StatusInvalidArgument, call_audio_dynamic(
+        layout.MappingBytes,
+        0,
+        @ptrFromInt(@intFromPtr(&bounds) + 1),
+    ));
+    try std.testing.expectEqualDeep(bounds_before, bounds);
+    try std.testing.expectEqual(StatusInvalidArgument, call_audio_dynamic(
+        layout.MappingBytes,
+        0,
+        @ptrFromInt(std.math.maxInt(usize) - @sizeOf(c.interop_audio_ring_bounds_t) + 1),
+    ));
+    try std.testing.expectEqualDeep(bounds_before, bounds);
+}

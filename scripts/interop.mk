@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig include/waddle/interop_protocol.h | build
@@ -21,13 +21,14 @@ interop-codec-test: build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
 interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage:
 	python3 tests/av/coverage.py interop_codec
 	python3 tests/av/coverage.py interop_layout
 	python3 tests/av/coverage.py interop_heap
 	python3 tests/av/coverage.py manifest
+	python3 tests/av/coverage.py interop_layout_abi
 # Windows link check of the same C ABI test (executed by guest_windows CI).
 build/interop_codec_abi_test.exe: tests/interop/codec_abi.c build/interop_codec_windows.lib include/waddle/interop_memory.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/interop/codec_abi.c build/interop_codec_windows.lib -o $@
@@ -53,6 +54,7 @@ interop-manifest-test:
 	$(ZIG) test src/interop/manifest.zig -lc
 interop-manifest-coverage:
 	python3 tests/av/coverage.py manifest
+	python3 tests/av/coverage.py interop_layout_abi
 
 # Native Windows unit executables; cross-build is distinct from actual execution.
 build/interop_layout_test.exe: src/interop/interop_layout.zig | build
@@ -61,3 +63,17 @@ build/interop_heap_test.exe: src/interop/interop_heap.zig src/interop/interop_la
 	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
 build/interop_manifest_test.exe: src/interop/manifest.zig | build
 	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
+
+.PHONY: interop-layout-abi-test
+# Private snapshot C boundary; live mapping atomics remain separate.
+build/interop_layout_abi.o: src/interop/interop_layout_abi.zig src/interop/interop_layout.zig src/interop/interop_layout.h | build
+	$(ZIG) build-obj $< -Isrc/interop -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+build/interop_layout_abi_test: tests/interop/layout_abi.c build/interop_layout_abi.o src/interop/interop_layout.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG -Isrc/interop $< build/interop_layout_abi.o $(LDFLAGS) -o $@
+interop-layout-abi-test: build/interop_layout_abi_test
+	$(ZIG) test src/interop/interop_layout_abi.zig -Isrc/interop -lc
+	./build/interop_layout_abi_test
+build/interop_layout_abi_windows.lib: src/interop/interop_layout_abi.zig src/interop/interop_layout.zig src/interop/interop_layout.h | build
+	$(ZIG) build-lib $< -Isrc/interop -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
+build/interop_layout_abi_test.exe: tests/interop/layout_abi.c build/interop_layout_abi_windows.lib src/interop/interop_layout.h | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Isrc/interop $< build/interop_layout_abi_windows.lib -o $@
