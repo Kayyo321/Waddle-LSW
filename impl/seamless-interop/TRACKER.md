@@ -1077,7 +1077,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     receipt to its full SHA. Source, API and accepted progress unchanged.
     Exact implementation CI is still pending; HEAD identifies this evidence commit.
 
-- **Commit `HEAD`**: `docs(interop): record green socket owner Linux and Windows CI`
+- **Commit `6e5c119`**: `docs(interop): record green socket owner Linux and Windows CI`
   - **Task Impact**: +0% to TODO #7/#10/#34 (+0% overall; total18.00%).
   - **Summary**: Exact implementation3b50946 passes interop40133523501,
     graph40133523475 and Native AV40133523473, all Linux/Windows jobs green.
@@ -1087,3 +1087,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     and remaining tracker tasks stay open; the100% merge gate remains unmet. [Qualification](ci_qualification_3b50946.json).
     Saves [verified checkpoint](checkpoint_2026_10_24_after_claude.md); all
     worker ownership is released. HEAD identifies this CI/checkpoint commit.
+
+- **Commit `HEAD`**: `docs(interop): freeze O5 preservation and runtime admission boundaries`
+  - **Task Impact**: +0% to TODO #6/#7/#10/#34 (+0% overall; total18.00%).
+  - **Summary**: Freezes129-key Destroy preservation, lifecycle/quarantine cleanup,
+    bounded coordinator staging obligations, host lease/connector ownership and
+    ambiguous-admission retry rejection. Defines isolated native overlay harness
+    limits. Assigns disjoint Luna implementation lanes; source and native gates
+    remain required before any new credit. HEAD identifies this contract commit.

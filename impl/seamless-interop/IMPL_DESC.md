@@ -3528,3 +3528,13 @@ branch exclusions or coverage threshold reductions are permitted. These gates
 accept only the5% connected-byte-owner portion of TODO#7 after the lead records
 their exact evidence. VSOCK/singleton, daemon control and native release remain
 separate unfinished tasks.
+
+
+### 8.24 O5 observer preservation and runtime admission freeze
+
+The normative observer extension is in `observer_destroy_preservation.md`; it
+uses the accepted graph snapshot ABI and appends observer lifecycle/status
+values without renumbering. `linux_session_admission.md` freezes the bounded
+lease/connector owner; real runtime wiring is required before credit. The
+isolated native harness boundary is `native_runner.md`. These contracts
+supersede older advisory proposals and grant no progress by themselves.

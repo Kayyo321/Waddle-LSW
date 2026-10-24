@@ -223,10 +223,10 @@
     "ci_run": 40126247004,
     "ci_conclusion": "success"
   },
-  "lead_current_work": "Claude graph return reviewed/imported; graph35% accepted. Linux connected-byte-owner accepted5%TODO7; source74907d6f, coverage97.21line90.12branch, eight exports, exact full local gates. Implementation3b50946 pushed and all3CIgreen: interop40133523501, graph40133523475, NativeAV40133523473. Total18.00%; all Luna file ownership released. Root owns Git/build/docs. O5 consolidated contract and host admission are next; advisory plans only. No VM/device changes; execution surface exposes no KVM/VSOCK/DRM nodes.",
+  "lead_current_work": "User resumed O5/runtime/native implementation. Lead freezes8.24 contracts, owns shared integration/build/Git/tracker; total18.00% unchanged. Luna O5, Linux admission and isolated native harness lanes will implement disjoint files. No native credit until actual results.",
   "current_lane_receipts": {
-    "luna_qemu_build": "Linux socket source/main released; lead-reviewed corrections/gates accepted5%TODO7. Return in evidence/linux_socket_owner_2026_10_24.",
-    "luna_layout": "Guard/private fixtures released; final source74907d6f reviewed. O5 review advisory only.",
-    "luna_mounts": "Gate/reachability review complete; no edits pending. Linux admission plan advisory only."
+    "luna_layout": "O5 header/source/portable observer tests after8.24 freeze; exclusive ownership pending assignment.",
+    "luna_mounts": "Linux session owner header/source/fixture after8.24 freeze; real entry integration remains root.",
+    "luna_qemu_build": "Native runner harness and tests; first boot requires root code review and proven private state."
   }
 }
