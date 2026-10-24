@@ -765,7 +765,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     source latch correction and failure regressions to separate Luna owners.
     Source commit894142b contains this review contract.
 
-- **Commit `HEAD`**: `feat(interop): retain raw Windows mapping leases across cleanup failures`
+- **Commit `3230877`**: `feat(interop): retain raw Windows mapping leases across cleanup failures`
   - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total16.40%).
   - **Summary**: Implements the opaque SDK lease owner with bounded SetupAPI
     path acquisition, exact pinned IOCTL ABI, output preservation and retained
@@ -776,5 +776,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     detect_leaks1; production98.06% lines/90.58% branches. Actual SDK object and
     Windows fixture cross-build pass; native CPU CI is wired, live driver/session
     integration remains unaccepted and earns no progress by itself.
-    [Qualification](mapping_windows_qualification_2026_10_24.json). HEAD identifies
-    this containing implementation commit.
+    [Qualification](mapping_windows_qualification_2026_10_24.json). Source commit3230877 contains this implementation.
+
+- **Commit `HEAD`**: `docs(interop): record exact Windows mapper CI qualification`
+  - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total16.40%).
+  - **Summary**: Archives successful Linux coverage/leak-enabled sanitizer and
+    native Windows CPU fixture CI40117078089 plus Native AV40117078160 at
+    exact source3230877. Fake driver calls remain explicit; no installed driver,
+    live mapping or endpoint acceptance is credited. HEAD is this receipt commit.

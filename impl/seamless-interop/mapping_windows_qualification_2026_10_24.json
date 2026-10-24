@@ -77,10 +77,46 @@
     "scope": "Existing driver declarations only; no gitlink change or loose vendoring."
   },
   "limits": [
-    "Actual Windows SDK production translation unit and fixture cross-build pass; CPU execution pending next CI.",
+    "Actual Windows SDK translation unit cross-build and native Windows fixture execution pass at exact commit3230877; all driver calls remain substituted.",
     "Driver calls are substituted in both fixture builds; this does not prove installed signed-driver mapping or accessible live2GiB BAR.",
     "No session listener, metadata initialization, producers, compositor detachment or native endpoint acceptance is implied.",
     "Required leak detection passes under lead host escalation; worker leak-disabled supplemental runs were not accepted as qualification."
   ],
-  "progress_credit": 0
+  "progress_credit": 0,
+  "native_cpu_ci": [
+    {
+      "path": "impl/seamless-interop/evidence/mapping_windows_2026_10_24/ci_interop.json",
+      "sha256": "088c2768be1d26b8253ac882c2bc91f58345963ac30d54a56c12e388650e8528",
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40117078089",
+      "head_sha": "32308773a07580fc767418275a8f672e31be8b78",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "linux",
+          "conclusion": "success"
+        },
+        {
+          "name": "windows",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "path": "impl/seamless-interop/evidence/mapping_windows_2026_10_24/ci_native_av.json",
+      "sha256": "506f107e2906251264c2cf36d8ab3899a0b85b44f074e5a4e6df68cb45a77bed",
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40117078160",
+      "head_sha": "32308773a07580fc767418275a8f672e31be8b78",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "windows",
+          "conclusion": "success"
+        },
+        {
+          "name": "transport",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ]
 }
