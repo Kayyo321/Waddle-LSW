@@ -1,0 +1,98 @@
+[
+  {
+    "function": "init",
+    "line": 214,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "peek_tx",
+    "line": 465,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "ack_tx",
+    "line": 485,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "guest_mapping_initialized",
+    "line": 430,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "guest_mapping_initialized",
+    "line": 431,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "guest_mapping_initialized",
+    "line": 432,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "guest_mapping_initialized",
+    "line": 433,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "guest_mapping_initialized",
+    "line": 434,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "guest_mapping_initialized",
+    "line": 435,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "host_mapping_validated",
+    "line": 396,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "host_mapping_validated",
+    "line": 397,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "host_mapping_validated",
+    "line": 398,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "dispatch_handshake",
+    "line": 791,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "dispatch_handshake",
+    "line": 808,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "dispatch_handshake",
+    "line": 839,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "dispatch_handshake",
+    "line": 840,
+    "column": 0,
+    "edge": 0
+  }
+]

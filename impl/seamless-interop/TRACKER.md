@@ -882,9 +882,21 @@ its uncompiled draft earns no credit until current acceptance passes.
     coverage; source corrections and exact qualification remain pending.
     HEAD identifies this containing contract commit.
 
-- **Commit `HEAD`**: `refactor(interop): conform opaque peer struct tag to type naming`
+- **Commit `c194b3b`**: `refactor(interop): conform opaque peer struct tag to type naming`
   - **Task Impact**: +0% to TODO #6/#7 (+0% overall; total16.40%).
   - **Summary**: Names the incomplete C struct tag interop_peer_t consistently
     with its existing typedef and repository type rule. Pointer ABI, public
     function names and numeric layouts remain unchanged; strict C fixture syntax
     check passes. HEAD identifies this naming-only interface commit.
+
+- **Commit `HEAD`**: `feat(interop): compose bounded connected control peer state`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
+  - **Summary**: Composes framing, owned queue, Hello/Ack mapping gates, common
+    IDs and liveness with an authoritative terminal phase. Full-send readiness,
+    exact expired-send accounting, incomplete-negotiation abort and copied feature
+    dispatch preserve native ownership boundaries. Review fixes mandatory host
+    Ack send-failure flag and documents nontransactional internal errors. Lead47
+    tests and Windows cross-build pass; production96.88% lines90.18% branches.
+    Wrapper/native execution and OS loops remain open; no extra parent credit.
+    [Qualification](control_peer_core_qualification_2026_10_24.json).
+    HEAD identifies this containing implementation commit.

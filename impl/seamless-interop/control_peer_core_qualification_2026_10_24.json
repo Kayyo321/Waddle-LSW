@@ -1,0 +1,47 @@
+{
+  "qualification_utc": "2026-10-24T19:41:37.965894+00:00",
+  "source_revision": "containing implementation commit; exact source SHA256 identities below",
+  "sources_sha256": {
+    "src/interop/control_peer.zig": "f44c39e23dd638d0cec9a8d797b13ec7789e0db3f06b5243be34f6fcb61f2d83",
+    "tests/interop/control_peer.zig": "8518c32c8de13174d7ee31a6da73d48d903c1d526226624710766a473a9a379d",
+    "src/interop/stream_reader.zig": "99f1079e6958800deef860d2a03699cae23fae5fb579b556b7b7c52a3428c77a",
+    "src/interop/stream_send_queue.zig": "c7871040d2082e7e2b28c7d449de8d6619b3d1dc14f49b9c9eb142af85d6910a",
+    "src/interop/session_handshake.zig": "44e01d6238d277edfcf5f1eb20767f982a6d17f008d35c2b42dc6e88d248db3e",
+    "src/interop/session_liveness.zig": "23c3687fe099165b17f1ba43f46f3f1c9fe509dd77be41c8e338c4f3586576b1",
+    "src/interop/request_ids.zig": "9db803d23b9f231f76b0d62a1b22d36b81ec22da2983037b91f87841198a0ef9",
+    "src/interop/agent_version.zig": "5d956923528e511ab3d16c2bc4f1da5bcb3879885f21967c8c35bfa4de4c6ff1",
+    "src/interop/interop_codec.zig": "3036da7f5463c4cd1ca2293a4ac37c294a533d0b96e59855d1db6ef258268c56",
+    "include/waddle/interop_protocol.h": "558546646405535e5e9b6c23c386a284b9ebbb24f224685b60aab9e7ce96e9c9"
+  },
+  "commands": [
+    {
+      "command": "python3 tests/av/coverage.py control_peer",
+      "exit_code": 0,
+      "log": "evidence/control_peer_core_2026_10_24/coverage.log"
+    },
+    {
+      "command": "make interop-control-peer-test build/interop_control_peer_test.exe",
+      "exit_code": 0,
+      "log": "evidence/control_peer_core_2026_10_24/build.log"
+    }
+  ],
+  "tests": "47 independent scenarios plus aggregate bounded private probes; Debug and ReleaseSafe worker runs passed, lead ReleaseSafe coverage and Debug make passed",
+  "coverage": {
+    "lines": [
+      497,
+      513
+    ],
+    "branches": [
+      303,
+      336
+    ],
+    "line_percent": 96.88,
+    "branch_percent": 90.18,
+    "threshold_percent": 90,
+    "compiler_trap_edges_excluded_by_standard_harness": 91
+  },
+  "windows": "Executable cross-built, not yet executed for this source",
+  "memory": "Zig testing allocator zero-leak checks pass. Independent C wrapper/ASan/LSan/UBSan and actual Windows execution pending composed ABI qualification.",
+  "boundaries": "No socket, OS mapping owner, capture, compositor, feature-side-effect authorization or detach proof. Private scalar fault-containment probes are not native acceptance.",
+  "progress_impact": 0
+}

@@ -3308,3 +3308,20 @@ No owning allocation pointer/count corruption, coverage exclusion, gate change
 or production noinline workaround is authorized. The proposal in
 resume_proposals/peer_contextual_errors.md is advisory; this paragraph is the
 normative wrapper ordering and recovery contract.
+
+
+#### 8.20.1 Portable composed core qualification
+
+The production control_peer.zig implementation and independent named-module
+suite satisfy the frozen8.20 contract locally:47 scenarios plus safe private
+helper/fault probes,497/513 production lines and303/336 conditional/switch edges.
+Compiler panic/stack-canary handling uses the existing recorder policy; no new
+exclusion or threshold change. A real full-queue regression found a mandatory
+host HelloAck enqueue failure missing its terminal_send_failed flag; that latch
+is now symmetric with guest mandatory-send failure. No I/O or native memory is
+owned. Native C wrapper qualification, Windows execution and integrated OS loops
+remain separate requirements. Exact hashes/logs are in
+control_peer_core_qualification_2026_10_24.json. Internal/helper errors can
+follow mutation (especially accounting confirmed OS bytes); only the documented
+caller preflight errors promise unchanged core state. An unexpected internal
+failure requires abort/quiescence, never replay of already sent bytes.

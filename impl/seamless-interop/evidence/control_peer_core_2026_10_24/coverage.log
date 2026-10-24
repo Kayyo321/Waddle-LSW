@@ -1,0 +1,63 @@
+preserved control_peer coverage: /home/dev/Waddle-LSW/build/coverage/interop/control_peer/run-20261024T193801751978Z-420901
+control_peer instrumentation: 877 exact metadata-bound sites; 5/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 4388/524288 bytes; 877 sites
+1/47 control_peer.test.two peers exchange fragmented Hello and Ack only after mapping and full sends...OK
+2/47 control_peer.test.local token time count and short-output errors preserve peer and caller state...OK
+3/47 control_peer.test.coalesced feature frames backpressure at one complete frame and preserve each frame...OK
+4/47 control_peer.test.Hello and Ack readiness require full frame bytes and explicit mapping callbacks...OK
+5/47 control_peer.test.mapping failures do not bypass the external gate or mutate guest on local rejection...OK
+6/47 control_peer.test.ping pong is internal, one matched reply refreshes liveness...OK
+7/47 control_peer.test.scoped Error never receives a recursive reply; malformed Error only drains...OK
+8/47 control_peer.test.exact deadlines and terminal callbacks never reopen the peer...OK
+9/47 control_peer.test.mandatory Hello queue OOM drains and deinit frees the owned version...OK
+10/47 control_peer.test.private peer composition probes cover allocator, codec, and alias edges...OK
+11/47 control_peer.test.Hello and Ack reject bad major IDs and capability offers...OK
+12/47 control_peer.test.token phase time closed and empty-queue errors preserve observable state...OK
+13/47 control_peer.test.initialization rejects invalid local version and unknown capability bits...OK
+14/47 control_peer.test.wire header errors latch draining and wrong-direction controls do not dispatch...OK
+15/47 control_peer.test.Goodbye output preflight is atomic and request IDs are validated...OK
+16/47 control_peer.test.local drain aborts incomplete Hello but still accounts confirmed OS bytes...OK
+17/47 control_peer.test.Goodbye and unknown payload limits drain without recursive protocol replies...OK
+18/47 control_peer.test.unknown Pong refreshes receive liveness but exact silence timeout drains...OK
+19/47 control_peer.test.copy-out rejects aliases into version, peer state, and queued frames...OK
+20/47 control_peer.test.Pong capacity failure is terminal and the full control queue drains on the next Pong...OK
+21/47 control_peer.test.mandatory Pong Ping and Error allocation failures stay terminal...OK
+22/47 control_peer.test.deadline zero-progress acknowledgement drains without discarding OS-accounting state...OK
+23/47 control_peer.test.partial HelloAck aborted by drain still consumes its confirmed final bytes...OK
+24/47 control_peer.test.connection token is checked before all peer callbacks and closed peers reject work...OK
+25/47 control_peer.test.mandatory HelloAck allocation failure drains the host...OK
+26/47 control_peer.test.all handshake deadline entry points close at the boundary and stay closed...OK
+27/47 control_peer.test.mapping callbacks reject wrong phase and role before any timeout mutation...OK
+28/47 control_peer.test.drain is idempotent, deadline bounded, and Goodbye allocation failure is recorded...OK
+29/47 control_peer.test.zero ACK is a no-op before deadline and while already draining...OK
+30/47 control_peer.test.reader input alias and pending frames are safe across draining and closure...OK
+31/47 control_peer.test.pre-Ready wire errors are never answered recursively and invalid frames drain...OK
+32/47 control_peer.test.premature Ack and replayed Hello or Ack cannot reopen or bypass handshake...OK
+33/47 control_peer.test.zero Ping and Pong identifiers are rejected on their receiving roles...OK
+34/47 control_peer.test.backwards timestamps are local unchanged errors for every timed callback...OK
+35/47 control_peer.test.already-draining callbacks remain terminal and deinit rejects every operation...OK
+36/47 control_peer.test.replayed control ID cases and malformed Goodbye status drain...OK
+37/47 control_peer.test.ready-session ACK of Ping bytes accounts sends before exact liveness expiry...OK
+38/47 control_peer.test.empty transport and terminal queue APIs preserve their public errors...OK
+39/47 control_peer.test.bad header latches wire drain and records a best-effort protocol error...OK
+40/47 control_peer.test.mapping callbacks reject failed epoch and layout results without readiness...OK
+41/47 control_peer.test.bad handshake envelopes and failed host validation latch draining...OK
+42/47 control_peer.test.malformed required Hello and Ack fields are rejected at each handshake boundary...OK
+43/47 control_peer.test.partial bodies stay hidden and queued-frame output aliases are rejected...OK
+44/47 control_peer.test.best effort Ready protocol errors report allocator exhaustion without leaking...OK
+45/47 control_peer.test.best effort Hello and Ack incompatibility replies report allocator exhaustion...OK
+46/47 control_peer.test.host mapping refusal preserves drain when its error reply cannot allocate...OK
+47/47 control_peer.test.valid HelloAck envelope with invalid SemVer drains as incompatible...OK
+All 47 tests passed.
+control_peer production branch coverage: 90.18% (303/336); 91 compiler panic/stack-canary guards excluded
+control_peer production line coverage: 96.88% (497/513); 91 compiler panic/stack-canary guards excluded
