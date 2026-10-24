@@ -81,8 +81,9 @@ Execution resumed at the user's request from checkpoint4079560. Current
 exclusive Luna/high work orders and phase allocation are recorded in
 [resume_work_orders.json](resume_work_orders.json). Lead retains shared ABI,
 build/workflow, docs/tracker, Git and runner ownership. Shared builds are serial.
-Paused at the user's request after reviewed commits. Start tomorrow at
-[the current checkpoint](checkpoint_2026_10_24.md); all workers are stopped.
+Resumed at the user's request from [the saved checkpoint](checkpoint_2026_10_24.md).
+Current exclusive assignments are in resume_work_orders.json; previous runner
+state must be rechecked before native actions.
 The historical [checkpoint](checkpoint_2026_10_23.md) remains valid evidence;
 its uncompiled draft earns no credit until current acceptance passes.
 
@@ -470,9 +471,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     No integrated native feature acceptance, completion timestamp or merge.
     Source commit3a9a40a contains the checkpoint and qualification receipt.
 
-- **Commit `HEAD`**: `docs(interop): preserve checkpoint logs excluded by ignore rules`
+- **Commit `2cd516e`**: `docs(interop): preserve checkpoint logs excluded by ignore rules`
   - **Task Impact**: +0% to TODO #5/#8/#9/#34 (+0% overall; total14.00%).
   - **Summary**: Explicitly adds only the task-owned checkpoint evidence logs,
     which the repository-wide log ignore rule omitted from3a9a40a. Verifies
     every receipt-listed artifact is tracked and SHA256-matched. No code or
-    acceptance change. HEAD identifies this containing evidence-log commit.
+    acceptance change. Source commit2cd516e preserves the evidence logs.
+
+- **Commit `HEAD`**: `docs(interop): specify resumed lifetime recovery and path work`
+  - **Task Impact**: +0% to TODO #5/#9/#33/#34 (+0% overall; total14.00%).
+  - **Summary**: Records lead decisions on generation/sequence, delayed frame
+    release pins, growth/drain, canonical path behavior and durable journal
+    boundaries before three exclusive Luna implementation lanes resume. Both
+    checkpoint-head workflows succeed (40058148467 interop,40058148519 Native
+    AV). Planning and prior CI add no feature credit. HEAD is this commit.

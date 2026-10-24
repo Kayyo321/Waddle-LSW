@@ -1,5 +1,5 @@
 {
-  "phase_id": "seamless_resume_foundations",
+  "phase_id": "seamless_continue_lifetimes_recovery_paths",
   "allocation_source": "lead",
   "allocations": [
     {
@@ -53,7 +53,7 @@
       ]
     }
   ],
-  "baseline": "4079560",
+  "baseline": "2cd516e",
   "workers": [
     {
       "agent": "luna_layout",
@@ -108,8 +108,56 @@
     "No recursive delegation, README edits, shared make/clean, VM actions or installs by workers",
     "Worker tests use separate /tmp output/cache; no acceptance from mocked/native-unrun results"
   ],
-  "checkpoint_status": "paused_at_user_request",
-  "active_workers": [],
+  "checkpoint_status": "active",
+  "active_workers": [
+    {
+      "agent": "luna_layout",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "src/interop/interop_slot_runtime.zig"
+      ],
+      "task": "Pure slot pin/growth/drain bookkeeping against IMPL_DESC8.9; no mapping integration",
+      "acceptance": [
+        "isolated zig test",
+        "lead production coverage >=90%",
+        "lead C/native integration remains separate"
+      ]
+    },
+    {
+      "agent": "luna_qemu_build",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "src/interop/manifest_store.zig"
+      ],
+      "task": "Durable manifest store/journal/recovery with bounded kind/path policy and fault tests",
+      "acceptance": [
+        "isolated zig test with testing allocator",
+        "crash/failure/recovery cases",
+        "lead coverage and integration"
+      ]
+    },
+    {
+      "agent": "luna_mounts",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "src/common/arguments.c",
+        "src/common/path_rules.h",
+        "src/daemon/daemon_fs.c",
+        "src/cli/host.c",
+        "tests/daemon/test_daemon_fs.c",
+        "tests/interop/canonical_paths.c"
+      ],
+      "task": "Filesystem-aware canonical translation and backend root validation; preserve pure lexical APIs",
+      "acceptance": [
+        "isolated canonical path fixture",
+        "lead CLI/daemon integration",
+        "ASan/LSan/UBSan"
+      ]
+    }
+  ],
   "completed_followups": [
     {
       "agent": "luna_layout",

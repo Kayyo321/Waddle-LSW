@@ -2371,3 +2371,98 @@ report actual errors/state rather than unconditional success. All mutations are
 serialized by the daemon event loop; there are no independent mount threads.
 This milestone does not install guest drive bindings or prove canonical-path,
 restart-stress, compositor or native guest filesystem acceptance.
+
+### 8.9 Continuation contracts: slot lifetime, filesystem paths and durable store
+
+The following decisions resolve the saved proposals before implementation.
+They do not change protocolv2, layoutv3 or manifest-schema1. Pure bookkeeping,
+filesystem authorization and actual host/guest integration receive distinct
+acceptance; no isolated module implies integrated functionality.
+
+**Slot runtime.** New interop_slot_runtime.zig owns fixed heap/window/slot
+bookkeeping, no OS/mapping pointer or allocation. One guest event-loop thread
+serializes calls. Geometry uses compute_frame_layout's existing clamp. Same-
+capacity/shrink changes desired geometry for future publications only; existing
+pins retain their exact prior run and descriptor snapshot. Growth reserves a
+complete replacement triple transactionally. Only an unclaimed, unpinned slot
+may switch; a slot still too small for desired geometry cannot publish. Keep
+all old runs until the complete prior triple is unpinned and switched. A second
+pending growth returns Busy rather than discarding either triple.
+
+Generations are nonzero strictly increasing per agent session, as already
+specified by InteropTagGeneration; admission rejects reused or older generations.
+Frame sequence is nonzero strictly increasing per window incarnation, consumed
+on a successful provisional claim even if later cancelled; never wrap or reuse.
+At most one provisional writer per window is admitted at a time. The local
+runtime claim precedes Free->Writing CAS; failed CAS cancels only that unentered
+claim. After successful CAS, cancellation requires confirmed Writing->Free;
+publication pin commit requires successful Writing->Ready. A post-publication
+local inconsistency fails the session closed and retains reservations.
+
+The host performs Consuming->Free only after buffer use has ended, then sends
+an exact FrameRelease. The guest clears its runtime pin only on the matching
+session/window/generation/slot/sequence release. Observing shared Free alone
+never authorizes reuse. Window retirement blocks new claims and quarantines
+its descriptors until every writer/pin is gone. Session drain blocks admission
+and new claims. Producer shutdown plus explicit caller proof of host buffer
+teardown precedes final drain; no new wire acknowledgement is invented here.
+Transport loss/heartbeat timeout alone is not proof of host drain. Reconnect
+uses a fresh epoch/runtime only after the prior session has safely ended.
+
+**Canonical filesystem boundary.** Preserve the existing pure lexical mapper
+and its compatibility API. Add a bounded filesystem-aware C/POSIX boundary for
+configured exports and CLI explicit path rules. Export roots must exist as
+directories and contain no symlink component; traversal opens components with
+O_DIRECTORY|O_NOFOLLOW. Normalize separators and dot components, reject dotdot,
+and reject duplicate canonical roots. Return ENOENT/ENOTDIR/ELOOP/EACCES from
+root validation, EINVAL for malformed/duplicate rules, EXDEV for an absolute
+host path outside all exports, and ENAMETOOLONG for bounded capacity failures.
+Zero exports share no absolute host path. Relative and Windows-native paths
+pass through unchanged; no filesystem lookup is applied to them.
+
+Existing absolute host inputs use realpath. Missing output paths resolve their
+deepest existing ancestor, then append only normalized genuinely absent suffix
+components. Broken symlinks and loops remain errors, never absent suffixes.
+Longest canonical component-prefix wins, allowing nested exports. A file symlink
+inside a root may resolve to another configured root; a target outside all
+roots is rejected. Validate every configured root before starting any backend
+and pass canonical spellings to virtiofsd. Mount roots must remain stable during
+a VM lifetime; these path conversions do not pin host pathnames against external
+rename/replacement and must not be described as an OS authorization primitive.
+Future live session resolution must bind to the running export identity.
+Exec keeps local-error exit125; the future open command maps EXDEV to126 as
+already frozen. No guest command is launched after translation failure.
+
+**Manifest store.** New manifest_store.zig keeps the pure manifest codec API
+unchanged. The store owns allocator-backed paths and dirfd/lock handles with
+idempotent close; requests borrow candidate bytes and bounded artifact actions
+through commit only. User state resolves XDG_STATE_HOME then HOME fallback;
+system state is exactly /var/lib/waddle/integration and requires euid0. No
+user/system fallback. Private state/lock/journal directories and regular files
+use no-follow traversal and owner/mode checks. Nonblocking exclusive manifest.lock
+spans recover/commit/close; existing session->AV->manifest lock order remains.
+
+Journal schema1 is private, strict JSON with at most32 journals,4096 actions,
+4MiB encoded bytes, codec string limits, unique IDs/targets and unknown-field/
+key rejection. Only allowlisted kind/root-relative targets are actionable.
+Guest kinds and unimplemented host policy kinds fail before any mutation.
+DesktopEntry/HandlerEntry target applications, Icon targets hicolor size/apps,
+Menu targets applications-merged, Autostart targets config/autostart, and
+DesktopShortcut requires an explicit caller-supplied validated desktop root.
+MIME state/system binfmt/polkit producers remain disabled until their dedicated
+policy boundary is implemented. No arbitrary journal absolute path is trusted.
+
+Commit validates old/candidate manifests, expected hashes, record/action identity,
+root/parent paths and current targets. Stage exact new bytes and prior bytes/modes
+in owned files and fsync files/directories before publishing a prepared journal.
+Artifacts use same-directory temporary files and atomic rename/unlink; recheck
+hash/identity before applying each action. Publish/fsync manifest last, then
+publish/fsync committed journal phase before cleanup. Prepared recovery restores
+old artifacts and manifest in reverse order; committed recovery verifies new
+state and only cleans owned temporaries. Unknown third-party state is a retained
+RecoveryRequired conflict, never overwritten. Backups are retained, including
+force-authorized modified-file backups. Force never bypasses path/schema checks.
+Crash between manifest replacement and committed journal rolls back; after
+committed journal it finishes cleanup. Failed recovery blocks further commits.
+Every durable boundary receives crash/I/O failure testing and allocator-failure
+sweeps; all FD/arena/path ownership must be released or retained explicitly.
