@@ -53,7 +53,7 @@
       ]
     }
   ],
-  "baseline": "a408163",
+  "baseline": "4f5a92d",
   "workers": [
     {
       "agent": "luna_layout",
@@ -115,31 +115,30 @@
       "model": "gpt-6-luna",
       "effort": "high",
       "owned_files": [
-        "/tmp/seamless_priority_destroy_contract.md",
-        "/tmp/seamless_priority_destroy_adversarial_review.md",
-        "/tmp/seamless_priority_destroy_api.md"
+        "src/interop/window_graph.zig",
+        "src/interop/window_graph_abi.zig",
+        "include/waddle/interop_window_graph.h"
       ],
-      "task": "Advisory O5 capacity/lifecycle proof and exact API; no repository edits"
+      "task": "Implement frozen8.22.3 tracked snapshot with engine/ABI tests; isolated builds only"
     },
     {
       "agent": "luna_qemu_build",
       "model": "gpt-6-luna",
       "effort": "high",
       "owned_files": [
-        "/tmp/seamless_linux_socket_owner_contract.md",
-        "/tmp/seamless_linux_socket_owner.h",
-        "/tmp/seamless_linux_socket_owner_api.md"
+        "src/interop/linux_socket_owner.c",
+        "tests/interop/linux_socket_owner.c"
       ],
-      "task": "Advisory bounded Linux socket owner contract/header; no repository edits"
+      "task": "Implement frozen8.23 bounded connected socket owner; real socketpair/fault tests in /tmp"
     },
     {
       "agent": "luna_mounts",
       "model": "gpt-6-luna",
       "effort": "high",
       "owned_files": [
-        "/tmp/seamless_observer_postimport_review.md"
+        "/tmp/seamless_priority_destroy_cleanup_api.md"
       ],
-      "task": "Read-only native observer source review; no repository edits"
+      "task": "Advisory quiesced local cleanup/evidence handoff proposal; no repository changes"
     }
   ],
   "completed_followups": [
@@ -226,5 +225,5 @@
     "ci_run": 40126247004,
     "ci_conclusion": "success"
   },
-  "lead_current_work": "Peer C ABI a408163 qualified locally; reviewed graph73bc833 main gates and actual Windows CI40126247004 green. Import awards only #10 pure graph25+C ABI10, total17.80%. O5 priority preservation/API and Linux socket-owner proposals under root review. Observer/native findings remain open. Root owns Git/build/CI/native runner; no VM actions."
+  "lead_current_work": "Main reviewed graph57847b1 imported, pure graph/ABI35% accepted; total17.80%. Peer and Native AV CI40128006140/40128006121 green including actual Windows47/84. Graph CI40128006111 pending. Native guard5ed706d committed with cross-builds; snapshot worker pending qualification; Linux connected-owner implementation active under8.23. Root owns C integration fixture, make/coverage/CI, docs/tracker/Git and native runner; no VM actions."
 }

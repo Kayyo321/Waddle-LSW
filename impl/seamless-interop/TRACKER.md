@@ -954,7 +954,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     [Qualification](claude_window_graph/native_fact_guards_qualification_2026_10_24.json).
     HEAD identifies this native correction commit.
 
-- **Commit `HEAD`**: `docs(interop): freeze bounded Linux connected socket owner`
+- **Commit `4f5a92d`**: `docs(interop): freeze bounded Linux connected socket owner`
   - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total17.80%).
   - **Summary**: Freezes descriptor transfer, bounded copied RX/TX, exact positive
     send ACKs, single-use poll guidance, mapping-wait timers, finite nonextending
@@ -963,3 +963,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     byte owner5%/VSOCK-singleton10%/daemon-local-control10% before any credit.
     Source, socketpair fault/stress/coverage/leak qualification remain pending.
     HEAD identifies this contract commit.
+
+- **Commit `HEAD`**: `docs(interop): record integrated peer Linux and Windows CI`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total17.80%).
+  - **Summary**: Exact57847b1 passes interop CI40128006140 Linux/native Windows
+    and Native AV40128006121. Windows executes47 composed-core and84 C ABI
+    tests plus the independent C fixture; Linux full regression, leak-enabled
+    sanitizer and coverage gates pass. No live endpoint/native memory acceptance
+    is implied; later native guard/snapshot source still requires fresh CI.
+    [Qualification](ci_qualification_57847b1.json). HEAD is this evidence commit.

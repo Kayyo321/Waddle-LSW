@@ -1,0 +1,26 @@
+{
+  "source_commit": "57847b18e33f80034e023f3ec5b67b6c31782ffa",
+  "qualification_utc": "2026-10-24T20:14:30.764947+00:00",
+  "interop": {
+    "run": 40128006140,
+    "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40128006140",
+    "conclusion": "success",
+    "jobs": {
+      "linux": "success",
+      "windows": "success"
+    }
+  },
+  "native_av": {
+    "run": 40128006121,
+    "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40128006121",
+    "conclusion": "success"
+  },
+  "windows": "Actual execution includes47 core tests,84 ABI tests and real C peer fixture, alongside earlier accepted interop foundations.",
+  "scope": "Core7aa4ce7 and ABI a408163 source unchanged in qualified57847b1. Linux full interop test/sanitizer/production coverage and actual Windows tests pass. Graph has separate workflow/result. Later native fact and snapshot changes require fresh CI.",
+  "logs_sha256": {
+    "evidence/ci_57847b1/interop_run.json": "4f19b7cb60fdce1d07f8e18e6ad1c9197f80903bbbb51d32325416fbf540051c",
+    "evidence/ci_57847b1/windows.log": "f5f5803a9297d9452507e421cda5298826c583c0588f5261f6b174a3a4a60bed",
+    "evidence/ci_57847b1/native_av_run.json": "2162762c6c64676442783e57adfdfd757900a6d6fd07b48643e2e96f75befdfe"
+  },
+  "progress_impact": 0
+}
