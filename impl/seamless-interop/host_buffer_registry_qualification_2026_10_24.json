@@ -82,8 +82,44 @@
   "limits": [
     "Pure scalar ownership bookkeeping; no actual Wayland callback, driver, pending-import cancellation or mapping proof is authenticated.",
     "Native owner must keep one canonical registry per unique authorized epoch and quiesce every immutable callback context before replacing it.",
-    "Windows executables cross-build; actual execution awaits next exact-commit CI.",
+    "Both Windows executables execute successfully at exact commit6dd76a2; Linux and native AV jobs also succeed. No compositor or signed-driver claim follows.",
     "No standalone progress credit; live host endpoint/module integration remains open."
   ],
-  "progress_credit": 0
+  "progress_credit": 0,
+  "native_cpu_ci": [
+    {
+      "path": "impl/seamless-interop/evidence/host_buffer_registry_2026_10_24/ci_interop.json",
+      "sha256": "ce3397cb14b9735853ea3c8b8ddc38deecb15981fe0cbaebef4407600d9fc21e",
+      "head_sha": "6dd76a25cd7a0652ceca85db5a3577c53b6c1bb3",
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40120219965",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "linux",
+          "conclusion": "success"
+        },
+        {
+          "name": "windows",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "path": "impl/seamless-interop/evidence/host_buffer_registry_2026_10_24/ci_native_av.json",
+      "sha256": "022cdee89fa73e4049efbaac0357863771711237a6ff5f415a8cd41b007fc6fe",
+      "head_sha": "6dd76a25cd7a0652ceca85db5a3577c53b6c1bb3",
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40120220111",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "windows",
+          "conclusion": "success"
+        },
+        {
+          "name": "transport",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ]
 }

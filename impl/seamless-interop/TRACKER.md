@@ -37,7 +37,7 @@ acceptance remain pending.
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 25% | Shared framing/owned queue/handshake/liveness qualified on Linux and Windows; host transport, singleton, module extraction and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
-| #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
+| #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 0% | Claude3714cf2 returned clean; independent review/rebuild pending, no global credit; session/capture/native integration open |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
 | #13 | Minimize/maximize/fullscreen/restore/close state machine | Pending | 3% | 0% | Waits on #11 |
@@ -835,7 +835,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     implied. [Qualification](host_buffer_registry_qualification_2026_10_24.json).
     Source commit6dd76a2 contains this implementation.
 
-- **Commit `HEAD`**: `docs(interop): freeze copied control peer C boundary`
+- **Commit `e0e27ca`**: `docs(interop): freeze copied control peer C boundary`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
   - **Summary**: Defines an opaque C-allocator owner, exact64-bit struct layouts,
     copied RX/TX buffers, output/clock preservation, complete allocation alias
@@ -843,4 +843,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     runtime guard, leak-enabled C and native Windows tests before acceptance.
     Pure control implementation and its wrapper remain unaccepted while failure
     coverage is expanded; no live endpoint or mapping proof is claimed. HEAD is
-    this interface/specification commit.
+    source commit e0e27ca contains this interface/specification.
+
+- **Commit `HEAD`**: `docs(interop): record registry CI and returned graph ownership`
+  - **Task Impact**: +0% to TODO #5/#6/#7/#10/#34 (+0% overall; total16.40%).
+  - **Summary**: Archives successful Linux/native Windows CI40120219965 and
+    Native AV40120220111 at source6dd76a2. Records human release of Claude's
+    clean isolated3714cf2 and starts independent graph/observer review and fresh
+    standalone gates before import. Preserves peer draft-source findings; its
+    37-case line gate passes but75.58% branches still fails90%, so no peer/core
+    acceptance or native progress is awarded. HEAD is this evidence/ownership commit.

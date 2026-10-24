@@ -53,7 +53,7 @@
       ]
     }
   ],
-  "baseline": "3230877",
+  "baseline": "6dd76a2",
   "workers": [
     {
       "agent": "luna_layout",
@@ -111,29 +111,27 @@
   "checkpoint_status": "active",
   "active_workers": [
     {
-      "agent": "luna_mounts",
-      "model": "gpt-6-luna",
-      "effort": "high",
-      "owned_files": [
-        "src/interop/control_peer.zig"
-      ],
-      "task": "Implement appendix8.20 connected control peer, owning queue and common ID namespace; isolated unit/allocator tests"
-    },
-    {
       "agent": "luna_layout",
       "model": "gpt-6-luna",
       "effort": "high",
-      "owned_files": [
-        "tests/interop/control_peer.zig"
-      ],
-      "task": "Independent two-peer fragmentation/partial-write/failure/clock tests; review core"
+      "owned_files": [],
+      "task": "Read-only returned Claude graph and C ABI review; graph review handed back"
     },
     {
       "agent": "luna_qemu_build",
       "model": "gpt-6-luna",
       "effort": "high",
       "owned_files": [],
-      "task": "Read-only composition contract/source critique; save /tmp findings"
+      "task": "Read-only returned Claude Windows observer review"
+    },
+    {
+      "agent": "luna_mounts",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "tests/interop/control_peer_abi.c"
+      ],
+      "task": "Independent C peer ABI roundtrip/guard tests; root owns all peer/wrapper sources"
     }
   ],
   "completed_followups": [
@@ -182,7 +180,7 @@
   ],
   "resume_entry": "checkpoint_2026_10_24.md",
   "external_claude_handoff": {
-    "status": "reserved_manual_session_not_launched",
+    "status": "returned_ownership_released_under_codex_review",
     "base": "e86cf8e344c6bafea5e562f04129a408e19629ff",
     "branch": "feat/seamless-window-graph",
     "worktree": "/home/dev/.codex/worktrees/seamless-window-graph/Waddle-LSW",
@@ -207,7 +205,9 @@
       "No native VM/GPU/CI/installs/recursive agents",
       "Local atomic commits only in isolated feature branch; no push/merge",
       "Codex does not edit owned paths until explicit return and ownership release"
-    ]
+    ],
+    "returned_tip": "3714cf2",
+    "user_release_received_utc": "2026-10-24T18:41:24.437970+00:00"
   },
-  "lead_current_work": "Registry local Debug/adversarial/coverage and Windows cross-build pass; root retains source, gates and pending implementation commit. Next parallel core composition uses accepted appendix8.20; protocol3 remains unaccepted. Both workflows at3230877 are green; total16.40%; Claude reservation unchanged."
+  "lead_current_work": "Registry6dd76a2 passes exact Linux/Windows/NativeAV CI. Claude3714cf2 returned clean and ownerreleased; freshstandalonegates and independentreviews active beforeimport. Controlpeer37scenarios pass but branch75.58% below90; sources unaccepted, wrapper/Cfixture underreview. Root owns sharedbuilds/Git/docs/native runner; overall16.40%."
 }
