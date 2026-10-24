@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "source_commit": "b2995afed254e4804611df52210067a4d5dbdf0b",
+  "binary_sha256": "741a54ce4748b98fb0fad1f92256212e187042bceed34885f18fa4976eeaa2fd",
+  "helper_sha256": "beacebb28de2b21925973e62a823a51973b66b35b1ec58fb09ac0f41f1b1e94b",
+  "configuration_sha256": {
+    "config-host.h": "204d878567b2e5f89a1ce9e6ba62265c25793319f648cf619795d83cb647e7d0",
+    "config-host.mak": "f9a615b276a4b952d7028084e991c13905f0c7277d4cd03926fbcdc4f2e8346d"
+  },
+  "required_macros": [
+    "CONFIG_AUDIO_PIPEWIRE",
+    "CONFIG_SLIRP",
+    "CONFIG_USB_LIBUSB"
+  ],
+  "dependencies": {
+    "libpipewire-0.3": {
+      "cflags": "-I/usr/include/pipewire-0.3 -I/usr/include/spa-0.2 -D_REENTRANT",
+      "libs": "-lpipewire-0.3",
+      "version": "1.4.2"
+    },
+    "libusb-1.0": {
+      "cflags": "-I/usr/include/libusb-1.0",
+      "libs": "-lusb-1.0",
+      "version": "1.0.28"
+    },
+    "slirp": {
+      "cflags": "-I/usr/include/slirp -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/include/sysprof-6 -pthread",
+      "libs": "-lslirp -lglib-2.0",
+      "version": "4.8.0"
+    }
+  },
+  "commands": [
+    {
+      "cwd": "/home/dev/Waddle-LSW",
+      "command": "env -u PYTHONPATH -u PYTHONHOME PYTHONDONTWRITEBYTECODE=1 make qemu-source",
+      "exit_code": 0
+    },
+    {
+      "cwd": "/home/dev/Waddle-LSW",
+      "command": "PYTHONOPTIMIZE=1 PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/qemu_source_smoke.py --qemu build/qemu-seamless-source/qemu-system-x86_64 --pipewire",
+      "exit_code": 0
+    }
+  ],
+  "logs": [
+    {
+      "path": "/tmp/seamless_resume_qemu_source_verified_build.log",
+      "sha256": "768f4288123fbbfea56b8956ac249ac2de5ce0003415b78201dbf36e25da162c"
+    },
+    {
+      "path": "/tmp/seamless_resume_qemu_source_verified_smoke.log",
+      "sha256": "8d457ed8c33b7c38118e077a4e786c8c22b9a8061be64fad125ea5efd2dc39ad"
+    }
+  ],
+  "startup_results": [
+    {
+      "audio": "none",
+      "paused": true,
+      "qmp": "passed",
+      "network": "user+socket-guestfwd",
+      "devices": [
+        "HDA",
+        "xHCI",
+        "virtio-net"
+      ],
+      "guest_os": false
+    },
+    {
+      "audio": "pipewire",
+      "paused": true,
+      "qmp": "passed",
+      "network": "user+socket-guestfwd",
+      "devices": [
+        "HDA",
+        "xHCI",
+        "virtio-net"
+      ],
+      "guest_os": false
+    }
+  ],
+  "limits": [
+    "Diskless paused CPU/QMP/configuration startup only",
+    "No guest OS, audio stream/audibility, USB realization or network/CUPS traffic proof"
+  ]
+}

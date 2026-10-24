@@ -10,7 +10,8 @@ COMMON = src/common/protocol.c src/common/arguments.c build/path_rules.o
 
 # Bundled Vendor Dependencies
 QEMU_DIR = submodules/qemu
-QEMU_BUILD_DIR = $(QEMU_DIR)/build
+QEMU_BUILD_DIR = build/qemu-seamless-source
+QemuBuildJobs ?= 4
 QEMU_SYSTEM_X86 = $(QEMU_BUILD_DIR)/qemu-system-x86_64
 
 all: cli av-distribution
@@ -24,19 +25,19 @@ build:
 build/vendor: | build
 	mkdir -p $@
 
-$(QEMU_BUILD_DIR)/config-host.mak: $(QEMU_DIR)/configure
-	cd $(QEMU_DIR) && env -u CFLAGS -u CPPFLAGS -u LDFLAGS ./configure --target-list=x86_64-softmmu --enable-kvm --disable-docs --disable-gtk --disable-sdl --disable-vnc
-
-$(QEMU_SYSTEM_X86): $(QEMU_BUILD_DIR)/config-host.mak
-	ninja -C $(QEMU_BUILD_DIR) qemu-system-x86_64
+.PHONY: qemu-source qemu-source-smoke
+qemu-source: scripts/qemu_build.py | build
+	python3 scripts/qemu_build.py --source "$(QEMU_DIR)" --build-dir "$(QEMU_BUILD_DIR)" --expected-source-commit "$$(git rev-parse HEAD:$(QEMU_DIR))" --jobs "$(QemuBuildJobs)"
+$(QEMU_SYSTEM_X86): qemu-source
+	@test -x "$@"
+qemu-source-smoke: qemu-source
+	python3 tests/interop/qemu_source_smoke.py --qemu "$(QEMU_SYSTEM_X86)"
 
 build/vendor/qemu-system-x86_64: | build/vendor
 	@if [ -x /usr/bin/qemu-system-x86_64 ]; then \
 		cp -f /usr/bin/qemu-system-x86_64 $@; \
 	elif which qemu-system-x86_64 >/dev/null 2>&1; then \
 		cp -f "$$(which qemu-system-x86_64)" $@; \
-	elif [ -f $(QEMU_SYSTEM_X86) ]; then \
-		cp -f $(QEMU_SYSTEM_X86) $@; \
 	elif [ -d $(QEMU_DIR) ]; then \
 		$(MAKE) $(QEMU_SYSTEM_X86) && cp -f $(QEMU_SYSTEM_X86) $@; \
 	fi
