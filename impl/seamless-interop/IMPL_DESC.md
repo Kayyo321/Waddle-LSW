@@ -3137,3 +3137,18 @@ this appendix (the existing helper APIs remain unchanged):
   on a real initialization failure. Guest zero epoch is an unchanged local
   argument error. Host succeeded=false or mismatched validated epoch/layout is
   valid failed native proof, so it reaches the helper's ErrorAndDrain path.
+
+Terminal negotiation TX rule: the core exposes read-only
+`must_abort_transport()`. When entering Draining with any unfinished queued
+Hello or HelloAck, set this latch and stop offering new bytes through peek_tx
+(return null). The platform owner aborts the transport; it must not complete a
+readiness-causing control frame after local admission closed. Terminal
+Error/Goodbye enqueue is unavailable in this case. Already OS-sent bytes must
+still be accounted by valid ack_tx (including queue/metadata pop), with every
+handshake completion hook suppressed while Draining or Closed; Closed itself
+permits no new I/O. For normal Ready-session draining without unfinished
+negotiation controls, existing TX/terminal frames may be flushed with a caller
+budget, still without facility dispatch. A peer may transiently become Ready
+from bytes already in flight; no wire exchange can recall them. This grants
+no local facility admission, drain proof or safe reconnect, and every native
+owner must keep the old epoch retained until its own accepted proof path.

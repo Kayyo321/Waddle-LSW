@@ -804,11 +804,21 @@ its uncompiled draft earns no credit until current acceptance passes.
     core. Preserves host-coordinated drain as unaccepted protocolv3 research and
     the completed registry review. Source commit379a953 contains this specification.
 
-- **Commit `HEAD`**: `docs(interop): reconcile peer deadlines with bytes already sent`
+- **Commit `ee7e1bf`**: `docs(interop): reconcile peer deadlines with bytes already sent`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
   - **Summary**: Independent review catches an expired send acknowledgment that
     could expose already-sent bytes again. Requires exact queue/metadata progress
     while suppressing Ready, preflights short output/local callbacks before time
     effects and makes the peer terminal phase authoritative for untimed errors.
     Distinguishes invalid local callbacks from failed host native proof. HEAD is
-    this reviewed clarification commit.
+    source commit ee7e1bf contains this reviewed clarification.
+
+- **Commit `HEAD`**: `docs(interop): abort unfinished negotiation writes on local drain`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
+  - **Summary**: Freezes a transport-abort latch for unfinished Hello/Ack when
+    local drain closes admission; actual sent bytes still advance bookkeeping,
+    and terminal handshake hooks are suppressed. Explicitly permits remote
+    transient Ready from bytes already in flight without treating it as local
+    admission or native proof. Saves the independent draft-source review so its
+    deadline/terminal regressions are mandatory before acceptance. HEAD is this
+    clarification commit.
