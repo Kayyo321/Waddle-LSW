@@ -1,6 +1,8 @@
 # Claude Code handoff: session-wide guest window graph
 
-Status: **reserved for a separate Claude Code session; not launched by Codex**.
+Status: **returned at `3714cf2`; ownership explicitly released by the user.**
+Codex review fixes through `1a179b0` remain in the isolated branch while fresh
+qualification runs. The original handoff below is historical assignment scope.
 The user requested document-based parallel collaboration, without the Claude
 subagent skill. Codex continues the main seamless-interop work and critically
 reviews the returned patch. This assignment is intentionally independent of the
