@@ -21,7 +21,7 @@ if not notes.is_file() or not data.is_file():
 inputs = json.loads((directory / "inputs.json").read_text())
 for relative, expected in inputs["sha256"].items():
     candidate = Root / relative
-    if candidate.is_file() and hashlib.sha256(candidate.read_bytes()).hexdigest() != expected:
+    if not candidate.is_file() or hashlib.sha256(candidate.read_bytes()).hexdigest() != expected:
         raise SystemExit("profile input hash mismatch: " + relative)
 command = ["x86_64-w64-mingw32-gcov", "--json-format", "-b", "-c", str(notes)]
 result = subprocess.run(command, cwd=directory, text=True, capture_output=True)

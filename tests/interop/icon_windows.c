@@ -5,8 +5,25 @@
 #include "../../src/interop/png_writer.h"
 
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef InteropNativeCoverageProfile
+#include <gcov.h>
+
+static void profile_assert_failure(const char *condition, const char *file, int line)
+{
+    (void)fprintf(stderr, "native fixture assertion failed: %s (%s:%d)\n",
+                  condition, file, line);
+    __gcov_dump();
+    exit(1);
+}
+
+#undef assert
+#define assert(condition) \
+    ((condition) ? (void)0 : profile_assert_failure(#condition, __FILE__, __LINE__))
+#endif
 
 typedef struct allocator_state_t {
     bool fail_allocate;
@@ -114,7 +131,8 @@ static void test_owned_gdi_fixtures(void)
 
     WORD monochrome_mask_bits[64u * 2u] = {0};
     for (size_t row = 0u; row < Dimension; ++row) {
-        monochrome_mask_bits[row * 2u] = 0x8000u;
+        /* CreateBitmap stores bottom-up rows; AND is the visual top half. */
+        monochrome_mask_bits[(row + Dimension) * 2u] = 0x8000u;
     }
     HBITMAP monochrome_mask = CreateBitmap((int)Dimension, (int)(Dimension * 2u),
                                             1u, 1u, monochrome_mask_bits);
@@ -135,6 +153,9 @@ static void test_owned_gdi_fixtures(void)
                                   &error));
     assert(returned_color == NULL && returned_mask != NULL);
     const uint8_t *masked_pixels = destination_bits;
+    (void)fprintf(stderr, "monochrome mask alpha sample: %u %u %u %u; neighbors %u %u %u %u\n",
+                  masked_pixels[0], masked_pixels[1], masked_pixels[2], masked_pixels[3],
+                  masked_pixels[4], masked_pixels[5], masked_pixels[6], masked_pixels[7]);
     assert(masked_pixels[3] == 0u && masked_pixels[7] == 255u);
     assert(DeleteObject(returned_mask) != 0);
     assert(DestroyIcon(monochrome_icon) != 0);

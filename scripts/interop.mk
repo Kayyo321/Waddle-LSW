@@ -401,7 +401,7 @@ WindowsComponentFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -D_WI
 build/native_components: | build
 	mkdir -p $@
 build/native_components/icon_fixture.o: tests/interop/icon_windows.c src/interop/icon_windows.c src/interop/icon_windows.h src/interop/png_writer.h | build/native_components
-	$(WindowsComponentCC) $(WindowsComponentFlags) --coverage -fprofile-update=atomic -fprofile-abs-path -c $< -o $@
+	$(WindowsComponentCC) $(WindowsComponentFlags) -DInteropNativeCoverageProfile --coverage -fprofile-update=atomic -fprofile-abs-path -c $< -o $@
 build/native_components/png_writer.o: src/interop/png_writer.c src/interop/png_writer.h | build/native_components
 	$(WindowsComponentCC) $(WindowsComponentFlags) -c $< -o $@
 build/native_components/icon_windows_profile.exe: build/native_components/icon_fixture.o build/native_components/png_writer.o

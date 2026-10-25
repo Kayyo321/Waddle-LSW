@@ -1413,10 +1413,18 @@ its uncompiled draft earns no credit until current acceptance passes.
     74/74taken arcs and real ASan/LSan/UBSan. CI gates the portable encoder;
     native extraction/catalog/artifact integration remain open.
 
-- **Commit `HEAD`**: `feat(interop): qualify native Shell icon ownership on Windows CI`
+- **Commit `3408aad`**: `feat(interop): qualify native Shell icon ownership on Windows CI`
   - **Task Impact**: +0% to TODO #27/#34; native source gate remains open.
   - **Summary**: Add bounded real Shell/GDI extraction with corrected channel
     conversion, fallback mask handling and retained exact cleanup owners.
     Native fixtures cross-link with strict SDK and real gcov instrumentation.
     Dedicated Windows execution and genuine profile-to-Linux90%line/arc gates
     provide feedback without substituting portable stubs for native proof.
+
+- **Commit `HEAD`**: `test(interop): retain native failure profiles and handshake diagnostics`
+  - **Task Impact**: +0% to TODO #6/#27/#34; real native gates remain open.
+  - **Summary**: Real Windows exposed a monochrome alpha assertion and a20s
+    composition timeout despite Linux/cross-link success. Add exact stage/error
+    diagnostics and gcov dump before native fixture assertion exit. Run both
+    bounded native fixtures independently in the fast workflow and analyze
+    genuine partial profile data even after failure; preserve hard90%gates.

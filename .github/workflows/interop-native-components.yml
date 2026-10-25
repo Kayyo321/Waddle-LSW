@@ -5,6 +5,8 @@ on:
     paths:
       - src/interop/icon_windows.*
       - src/interop/png_writer.*
+      - src/interop/session_control_windows.*
+      - tests/interop/session_control_windows*
       - tests/interop/icon_windows.c
       - tests/interop/native_component_coverage.py
       - scripts/interop.mk
@@ -21,14 +23,21 @@ jobs:
       - name: Install native cross compiler
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates make gcc-mingw-w64-x86-64 python3
+          apt-get install -y --no-install-recommends git ca-certificates make gcc-mingw-w64-x86-64 python3 curl xz-utils
           git config --global --add safe.directory '*'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Check out pinned native driver ABI and verified Zig
+        run: |
+          git submodule update --init --depth 1 submodules/looking_glass
+          curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check
+          tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Build real Windows SDK fixture and profile notes
         run: |
-          make build/native_components/icon_windows_profile.exe
+          make build/native_components/icon_windows_profile.exe build/interop_guest_session_integration_test.exe
           python3 - <<'PY'
           import hashlib,json,pathlib,subprocess
           files=['src/interop/icon_windows.c','src/interop/icon_windows.h','src/interop/png_writer.c','src/interop/png_writer.h','tests/interop/icon_windows.c','build/native_components/icon_fixture.gcno','build/native_components/icon_windows_profile.exe']
@@ -39,6 +48,7 @@ jobs:
         with:
           name: native-component-binaries
           path: |
+            build/interop_guest_session_integration_test.exe
             build/native_components/*.exe
             build/native_components/*.gcno
             build/native_components/inputs.json
@@ -51,8 +61,14 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: native-component-binaries
-          path: build/native_components
+          path: build
+      - name: Run real control-session composition
+        shell: pwsh
+        run: |
+          & .\build\interop_guest_session_integration_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run real Shell and GDI ownership fixtures
+        if: always()
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -69,6 +85,7 @@ jobs:
           path: coverage-data/**/*.gcda
           if-no-files-found: error
   coverage:
+    if: always() && needs.build.result == 'success' && needs.windows.result != 'skipped'
     needs: [build, windows]
     runs-on: ubuntu-22.04
     container: debian:trixie-slim
@@ -84,7 +101,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: native-component-binaries
-          path: build/native_components
+          path: build
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: native-component-profile

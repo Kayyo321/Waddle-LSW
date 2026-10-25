@@ -375,13 +375,34 @@ static void run_native_composition_case(fixture_mode_t mode) {
     DWORD wait_result = WaitForSingleObject(host_thread, 25000);
     assert(wait_result == WAIT_OBJECT_0);
     assert(CloseHandle(host_thread));
+    interop_guest_session_state_t state = {0};
+    interop_guest_session_result_t state_result = InteropGuestSessionInvalidArgument;
+    if (owner != NULL) { state_result = interop_guest_session_get_state(owner, &state); }
+    if (InterlockedCompareExchange(&host.failed, 0, 0) != 0 || result != InteropGuestSessionCleanupRequired ||
+        InterlockedCompareExchange(&host.hello_seen, 0, 0) == 0) {
+        fprintf(stderr,
+            "native session fixture mode=%u result=%u wait=%lu host_failed=%ld wsa_error=%lu "
+            "hello=%ld map_valid=%ld ack=%ld ready=%ld heartbeat=%ld eof=%ld owner=%p state_result=%u "
+            "operational=%u cleanup=%u stop=%u map_owned=%u map_published=%u socket_owner=%u\n",
+            (unsigned)mode, (unsigned)result, (unsigned long)wait_result,
+            (long)InterlockedCompareExchange(&host.failed, 0, 0), (unsigned long)host.wsa_error,
+            (long)InterlockedCompareExchange(&host.hello_seen, 0, 0),
+            (long)InterlockedCompareExchange(&host.mapping_validated, 0, 0),
+            (long)InterlockedCompareExchange(&host.ack_bytes_sent, 0, 0),
+            (long)InterlockedCompareExchange(&host.ready_seen, 0, 0),
+            (long)InterlockedCompareExchange(&host.guest_heartbeat_seen, 0, 0),
+            (long)InterlockedCompareExchange(&host.transport_eof_seen, 0, 0),
+            (void *)owner, (unsigned)state_result, (unsigned)state.operational_result,
+            (unsigned)state.cleanup_result, (unsigned)state.stop_requested,
+            (unsigned)state.mapping_owner_owned, (unsigned)state.mapping_view_published,
+            (unsigned)state.socket_owner_owned);
+    }
     assert(InterlockedCompareExchange(&host.failed, 0, 0) == 0);
     assert(InterlockedCompareExchange(&host.hello_seen, 0, 0) == 1);
     assert(InteropGuestSessionCleanupRequired == result);
     assert(owner != NULL);
 
-    interop_guest_session_state_t state = {0};
-    assert(interop_guest_session_get_state(owner, &state) == InteropGuestSessionSuccess);
+    assert(state_result == InteropGuestSessionSuccess);
     assert(state.mapping_owner_owned == 1 && state.mapping_view_published == 1);
     assert(state.winsock_started == 0 && state.family_handle_owned == 0 &&
         state.listener_owned == 0 && state.accepted_socket_owned == 0 &&
