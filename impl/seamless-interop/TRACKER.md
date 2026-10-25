@@ -1609,7 +1609,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     production error branches. Root strict standalone and profile build/link
     pass; no coverage exclusions or premature completion credit.
 
-- **Commit `HEAD`**: `fix(interop): reject malformed successful COM catalog outputs safely`
+- **Commit `bd21efb`**: `fix(interop): reject malformed successful COM catalog outputs safely`
   - **Task Impact**: +0% to TODO #27/#34 pending native90% gates.
   - **Summary**: Root-reviewed nullable COM success boundaries before dereference;
     release returned references on guarded failures. Extend private fixture with
@@ -1617,3 +1617,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     Correct mutable fixture globals to snake_case. Root standalone provider and
     instrumented fixture strict SDK compile/link pass; actual Windows rerun
     pending. Previous9341928 catalog92.41%lines/69.47%arcs remains unaccepted.
+
+- **Commit `HEAD`**: `fix(interop): discharge failed COM catalog acquisitions without use`
+  - **Task Impact**: +0% to TODO #27/#34 pending native90% gates.
+  - **Summary**: Release exact nonnull IShellItem2 from a failed query; suppress
+    all shortcut-property reads after a failed property-store query and release
+    its acquired reference. Root review corrected the fixture to count only
+    that exact failed-query interface among33real shortcuts, asserting zero
+    property reads and one release. Strict standalone/profile SDK compiles pass;
+    actual Windows rerun pending.

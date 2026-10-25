@@ -38,6 +38,7 @@ typedef enum catalog_fault_kind_t {
     CatalogFaultComInitialize,
     CatalogFaultComCreateNull,
     CatalogFaultComPersistNull,
+    CatalogFaultComPropertyFailedNonNull,
 } catalog_fault_kind_t;
 
 typedef struct catalog_fault_state_t {
@@ -54,6 +55,10 @@ static bool catalog_fault_apps_folder_failure;
 static bool catalog_fault_apps_bind_failure;
 static bool catalog_fault_apps_folder_null_success;
 static bool catalog_fault_apps_bind_null_success;
+static size_t catalog_fault_property_qi_acquired;
+static size_t catalog_fault_property_releases;
+static size_t catalog_fault_property_get_value_calls;
+static IPropertyStore *catalog_fault_failed_property_store;
 
 static HRESULT WINAPI catalog_fault_sh_get_known_folder_item(REFKNOWNFOLDERID folder_id,
     KNOWN_FOLDER_FLAG flags, HANDLE token, REFIID iid, void **output) {
@@ -91,7 +96,28 @@ static HRESULT STDMETHODCALLTYPE catalog_fault_shell_link_query(IShellLinkW *lin
         if (output != NULL) *output = NULL;
         return S_OK;
     }
-    return link->lpVtbl->QueryInterface(link, iid, output);
+    HRESULT result = link->lpVtbl->QueryInterface(link, iid, output);
+    if (IsEqualIID(iid, &IID_IPropertyStore) && SUCCEEDED(result) && output != NULL && *output != NULL &&
+        catalog_fault_hit(CatalogFaultComPropertyFailedNonNull)) {
+        catalog_fault_property_qi_acquired++;
+        catalog_fault_failed_property_store = (IPropertyStore *)*output;
+        return E_FAIL;
+    }
+    return result;
+}
+
+static ULONG STDMETHODCALLTYPE catalog_fault_property_store_release(IPropertyStore *store) {
+    if (store == catalog_fault_failed_property_store) {
+        catalog_fault_property_releases++;
+        catalog_fault_failed_property_store = NULL;
+    }
+    return store->lpVtbl->Release(store);
+}
+
+static HRESULT STDMETHODCALLTYPE catalog_fault_property_store_get_value(
+    IPropertyStore *store, REFPROPERTYKEY key, PROPVARIANT *value) {
+    if (store == catalog_fault_failed_property_store) catalog_fault_property_get_value_calls++;
+    return store->lpVtbl->GetValue(store, key, value);
 }
 
 static void *catalog_fault_malloc(size_t size) {
@@ -196,9 +222,15 @@ static HRESULT WINAPI catalog_fault_co_initialize(LPVOID reserved, DWORD flags) 
 #define CoCreateInstance catalog_fault_co_create_instance
 #undef IShellLinkW_QueryInterface
 #define IShellLinkW_QueryInterface catalog_fault_shell_link_query
+#undef IPropertyStore_Release
+#define IPropertyStore_Release(This) catalog_fault_property_store_release(This)
+#undef IPropertyStore_GetValue
+#define IPropertyStore_GetValue(This,key,value) catalog_fault_property_store_get_value(This,key,value)
 #define SHGetKnownFolderItem catalog_fault_sh_get_known_folder_item
 #include "../../src/interop/app_catalog_windows.c"
 #undef SHGetKnownFolderItem
+#undef IPropertyStore_GetValue
+#undef IPropertyStore_Release
 #undef IShellLinkW_QueryInterface
 #undef CoCreateInstance
 #undef CoInitializeEx
@@ -226,6 +258,7 @@ typedef struct catalog_fake_item_t {
     const wchar_t *package_family;
     bool separator;
     bool fail_query;
+    bool fail_query_nonnull;
     bool fail_store;
     bool fail_parsing_name;
     bool fail_display_name;
@@ -333,6 +366,11 @@ static HRESULT STDMETHODCALLTYPE catalog_fake_shell_query(IShellItem *self, REFI
     catalog_fake_item_t *item = catalog_fake_from_shell(self);
     if (object == NULL) return E_POINTER;
     *object = NULL;
+    if (item->fail_query_nonnull && IsEqualIID(iid, &IID_IShellItem2)) {
+        item->references++;
+        *object = &item->shell_item2;
+        return E_FAIL;
+    }
     if (item->fail_query || !IsEqualIID(iid, &IID_IShellItem2)) return E_NOINTERFACE;
     item->references++;
     *object = &item->shell_item2;
@@ -617,6 +655,10 @@ static bool catalog_fault_test_apps_folder_items(const wchar_t *target,
     item.fail_query = true;
     if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0) ok = false;
     item.fail_query = false;
+
+    item.fail_query_nonnull = true;
+    if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0 || item.references != 1) ok = false;
+    item.fail_query_nonnull = false;
 
     item.fail_store = true;
     if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0) ok = false;
@@ -941,6 +983,21 @@ int app_catalog_windows_fault_fixture_run(void) {
         app_catalog_snapshot_deinit(&output);
         app_catalog_snapshot_init(&output);
     }
+
+    /* Failed QI may still return an acquired interface; it must be released without use. */
+    stage = "com-property-failed-nonnull";
+    stage_index = 1;
+    size_t acquired_before = catalog_fault_property_qi_acquired;
+    size_t releases_before = catalog_fault_property_releases;
+    size_t get_value_calls_before = catalog_fault_property_get_value_calls;
+    if (catalog_fault_enumerate(allocator, &options, &roots, &output,
+                                CatalogFaultComPropertyFailedNonNull, 1) != AppCatalogStatusOk ||
+        output.count != 1 || catalog_fault_property_qi_acquired != acquired_before + 1 ||
+        catalog_fault_property_releases != releases_before + 1 ||
+        catalog_fault_property_get_value_calls != get_value_calls_before ||
+        catalog_fault_failed_property_store != NULL) goto cleanup;
+    app_catalog_snapshot_deinit(&output);
+    app_catalog_snapshot_init(&output);
 
     /* A missing optional canonical target is a stale item, not a global error. */
     stage = "optional-target-create-failure";

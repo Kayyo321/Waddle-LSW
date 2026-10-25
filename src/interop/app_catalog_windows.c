@@ -278,7 +278,10 @@ static bool add_apps_folder_item(catalog_collector_t *collector, IShellItem *ite
     if (!collector_checkpoint(collector)) return false;
     IShellItem2 *item2 = NULL;
     HRESULT result = IShellItem_QueryInterface(item, &IID_IShellItem2, (void **)&item2);
-    if (FAILED(result) || item2 == NULL) return true;
+    if (FAILED(result) || item2 == NULL) {
+        if (item2 != NULL) IShellItem2_Release(item2);
+        return true;
+    }
     IPropertyStore *store = NULL;
     result = IShellItem2_GetPropertyStore(item2, GPS_DEFAULT, &IID_IPropertyStore, (void **)&store);
     IShellItem2_Release(item2);
@@ -400,9 +403,11 @@ static bool shortcut_item(catalog_collector_t *collector, app_catalog_source_t s
     IPropertyStore *properties = NULL;
     wchar_t aumid[InteropMaxStringBytes + 1], package[InteropMaxStringBytes + 1];
     size_t aumid_units = 0, package_units = 0;
-    bool have_aumid = SUCCEEDED(IShellLinkW_QueryInterface(link, &IID_IPropertyStore, (void **)&properties)) && properties != NULL &&
+    HRESULT properties_result = IShellLinkW_QueryInterface(link, &IID_IPropertyStore, (void **)&properties);
+    bool have_properties = SUCCEEDED(properties_result) && properties != NULL;
+    bool have_aumid = have_properties &&
                       property_string(properties, &PKEY_AppUserModel_ID, aumid, InteropMaxStringBytes + 1, &aumid_units);
-    bool have_package = properties != NULL &&
+    bool have_package = have_properties &&
                         property_string(properties, &CatalogPackageFamilyName, package, InteropMaxStringBytes + 1, &package_units);
     if (properties != NULL) IPropertyStore_Release(properties);
     IShellLinkW_Release(link);
