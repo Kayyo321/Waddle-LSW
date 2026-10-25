@@ -106,9 +106,14 @@ Rules:
 2. **Repetition.** Repeating any of `--device`/`-d`, `--app`, `--wait`,
    `--new-console` is `DuplicateOption`, even when the values are identical.
    `-d X --device Y` is a duplicate.
-3. **Values.** A value option with no following token, or whose following token
-   begins with `-`, is `MissingOptionValue`. A value is never consumed from the
-   token after a value option when that token is a recognized flag or `--`.
+3. **Values.** An option value is always the next argv token, whatever its
+   spelling. A value option with no next token is `MissingOptionValue`. A
+   next token that fails its own validator is `InvalidDevice` or
+   `InvalidAppKey`. Consequently `-d -dev` and `--device -dev` name the device
+   `-dev`, and `-d --wait` names a device called `--wait`: the device validator
+   (below) accepts these spellings, and no token is re-interpreted as an option.
+   `--app --wait` is `InvalidAppKey`. Write the value after the option; there
+   is no `--opt=value` form.
 4. **Device name.** 1..63 bytes of `[A-Za-z0-9_-]`, matching
    `daemon_device_validate_name` (WaddleMaxDeviceNameLen 64 including NUL).
    Otherwise `InvalidDevice`.

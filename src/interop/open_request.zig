@@ -475,11 +475,12 @@ fn read_header(path: []const u8, options: *const options_t, buffer: *[PrefixByte
     return .None;
 }
 
+/// An option value is always the next token, whatever its spelling. Its own
+/// validator (device name or app key) decides whether it is acceptable. A
+/// missing next token is MissingOptionValue.
 fn value_at(args: []const []const u8, index: usize) ?[]const u8 {
     if (index >= args.len) return null;
-    const value = args[index];
-    if (value.len != 0 and value[0] == '-') return null;
-    return value;
+    return args[index];
 }
 
 fn device_valid(value: []const u8) bool {
@@ -757,9 +758,9 @@ test "usage errors each report their first triggering token" {
         .{ .args = &.{ "--wait", "--wait", "--app", "a-x" }, .expected = .DuplicateOption },
         .{ .args = &.{ "--new-console", "--new-console", "a.txt" }, .expected = .DuplicateOption },
         .{ .args = &.{"--app"}, .expected = .MissingOptionValue },
-        .{ .args = &.{ "--app", "--wait" }, .expected = .MissingOptionValue },
+        .{ .args = &.{ "--app", "--wait" }, .expected = .InvalidAppKey },
         .{ .args = &.{"-d"}, .expected = .MissingOptionValue },
-        .{ .args = &.{ "-d", "-x", "--app", "a-x" }, .expected = .MissingOptionValue },
+        .{ .args = &.{ "--wait", "-d" }, .expected = .MissingOptionValue },
         .{ .args = &.{ "--app", "" }, .expected = .InvalidAppKey },
         .{ .args = &.{ "--app", "a" }, .expected = .InvalidAppKey },
         .{ .args = &.{ "--app", "ax-y" }, .expected = .InvalidAppKey },
@@ -1196,4 +1197,21 @@ fn pe_image_fixture() [256]u8 {
     var buffer: [256]u8 = undefined;
     _ = pe_image(&buffer, 2);
     return buffer;
+}
+
+test "option values are the next token and are checked by their own rule" {
+    var fake = fake_reader_t{ .entries = &.{} };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.None, run(&.{ "-d", "-dev", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "-dev", out.device.?[0..out.device_length]);
+    try testing.expectEqual(open_error_t.None, run(&.{ "--device", "-dev", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "-dev", out.device.?[0..out.device_length]);
+    try testing.expectEqual(open_error_t.None, run(&.{ "-d", "--wait", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "--wait", out.device.?[0..out.device_length]);
+    try testing.expectEqual(@as(u32, 0), out.wait);
+    try testing.expectEqual(open_error_t.InvalidAppKey, run(&.{ "--app", "--wait" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.InvalidDevice, run(&.{ "-d", "", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{"-d"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{"--device"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{ "--wait", "--app" }, &fake, 0, &out));
 }
