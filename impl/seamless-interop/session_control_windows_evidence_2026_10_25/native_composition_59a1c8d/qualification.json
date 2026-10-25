@@ -1,0 +1,18 @@
+{
+  "commit": "59a1c8d55be6988d22d140c65ee1bab40ba64e06",
+  "workflow": 40219818218,
+  "windows_job": 121249151787,
+  "control_composition": "success; all3cases exit0 (validated Ready/repeated heartbeat/stop and pre-Ready EOF/timeout)",
+  "qualification_boundary": "Actual Windows WinSock loopback, real aligned2GiB VirtualAlloc, unchanged controller/socket/map owner/atomics. Viosock discovery/address and SetupAPI/IOCTL boundaries are fixture substitutions. No installed Viosock/IVSHMEMdriver, signing/deployment/autostart or full native qualification credit. Entire workflow remains failed for separate icon/catalog gates.",
+  "production_source_sha256": {
+    "src/interop/session_control_windows.c": "c13edef31a7117bbc7d3813dbd3f89e973584213a1e0f853c8fef51db9722135",
+    "src/interop/session_control_windows.h": "0e334761049c74919ced660e43cc14d2446ad60650abe8772ea3e85a57a1418c",
+    "src/interop/windows_socket_owner.c": "f9b574f200cb2e0132d21564814609a1452b717957d3de525b3eb7257e849b48",
+    "src/interop/interop_mapping_windows.c": "f14969eea91f564b23b05d95d37ae8e95e00915f7f339d66bb05763c9a9011e5",
+    "src/interop/interop_mapping_init.c": "eb6bf7247e461ef243508824b666110a55d7131819c12c25736d7c6b80b609e5",
+    "src/interop/interop_native_atomic.c": "56f4b75f6445b1df71e83aaee4c7f25b5f42343acb5775fb1d0284d92d80e2ed",
+    "tests/interop/session_control_windows_integration.c": "07fc7bcd7401ea06e55e1ed63299de5746d89508739a5f9a9ede4383f7fc2648",
+    "tests/interop/session_control_windows_mapping_seam.c": "a70edfa21c15996f7e58d85bcac023c72d60bdb6070948662381286b54c078fd",
+    "scripts/interop.mk": "1bb1c89dbc94719d453bb9a9071e2f2c04df8bb9df9192274d6036b2edf552a5"
+  }
+}

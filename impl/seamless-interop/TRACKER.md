@@ -33,7 +33,7 @@ acceptance remain pending.
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE native hardware runs pending** |
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 23 codec/imported parser tests; 97.13% branch / 96.56% line; bounded SemVer2 and app-key helpers; native Windows/ASan/LSan gates pass |
 | #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 65% | Snapshot/heap/ABI/atomics/pins60% plus actual host header mapping5% accepted. Live slot/heap/audio integration10% and stress/native qualification25% remain open |
-| #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | In Progress | 4% | 25% | Shared framing/owned queue/handshake/liveness qualified on Linux and Windows; Win32 listener/mapping, signing/deploy and native acceptance remain open |
+| #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | In Progress | 4% | 50% | Shared framing/queue/handshake/liveness25% and bounded Windows control composition25% accepted with root coverage and real Windows fixture. Installed Viosock/IVSHMEM drivers, signing/deploy/autostart and full native acceptance remain open |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 45% | Shared protocol25%, Linux byte-owner5%, actual singleton/VSOCK admission10% and daemon readiness5% accepted. Control-only entry gates real Hello/header/Ready/heartbeat; local command socket, Wayland/module boundary, reconnect/autostart and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 40% | Schema15%, absent-add journal/recovery15% and rooted absent artifact API10% accepted. Replacement/backup/restore, commands/producers and full-removal qualification remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `23.90%`
+**Total Feature Completion**: `24.90%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -73,7 +73,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pure pin/growth/drain bookkeeping 10%; live runtime integration15% (header5%,slot consumer5%,heap/audio5%); coverage/sanitizer/stress/native proof25% | Snapshot20%; heap20%; C ABI5%; native CPU atomics5%; pure pin/growth/drain10%; actual host header mapping5%. Remaining runtime10% and qualification25% open |
-| #6 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; Win32 listener/mapping loop25%; signing/deploy/update/autostart30%; native qualification20% | Shared framing5%; owned queue5%; handshake10%; liveness5%; native CPU units accepted; integrated agent remains open |
+| #6 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; Win32 listener/mapping loop25%; signing/deploy/update/autostart30%; native qualification20% | Shared framing5%; owned queue5%; handshake10%; liveness5%; Windows control composition25% accepted by exact59a1c8d native3-case fixture and root99.33%lines/90.25%arcs plus sanitizer gate. Viosock/IVSHMEM driver boundaries are substituted; signing/deploy30% and installed/native20% remain open |
 | #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | Shared framing5%; owned queue5%; handshake10%; liveness5%; Linux connected-byte-owner5% with full local gates. Actual main/runtime admission/singleton10% and daemon Status/GuestReady5% accepted with real Unix/map/peer fixture and full gates. Local session command control5% remains open; application integration remains open |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
@@ -1518,7 +1518,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     error and retained handle count only. Genuine provider profile82.22%lines/
     53.08%arcs remains below threshold; no enumeration progress accepted.
 
-- **Commit `HEAD`**: `feat(input): bound host repeat timing and focus lifetime`
+- **Commit `405bd91`**: `feat(input): bound host repeat timing and focus lifetime`
   - **Task Impact**: +10% to TODO #15 (+0.30% overall; total23.90%).
   - **Summary**: Allocation-free fixed held-key reducer with delay/rate,
     excluded keys, duplicate suppression, latest-key policy, focus cancellation,
@@ -1526,3 +1526,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     2000lifecycles/3000runtime events,95.24%lines/100%taken arcs pass. Default
     tests/coverage include it; actual Wayland/queue/guest composition remains
     the unaccepted second half of the existing repeat allocation.
+
+- **Commit `HEAD`**: `test(interop): qualify bounded Windows guest control composition`
+  - **Task Impact**: +25% to TODO #6 (+1.00% overall; total24.90%).
+  - **Summary**: Exact59a1c8d Windows job121249151787 passes all3composition
+    cases: real Hello/header/Ack/Ready/repeated heartbeat, bounded stop/drain,
+    pre-Ready EOF and timeout, exact retained/proof-gated mapping cleanup.
+    Preserve immutable logs/source hashes and root99.33%lines/90.25%arcs +
+    sanitizers. Real WinSock/VirtualAlloc composition substitutes Viosock and
+    driver discovery/IOCTL boundaries; installed driver/native20% and deploy30%
+    remain open. Separate icon/catalog workflow failures earn no credit.
