@@ -130,6 +130,7 @@ typedef struct interop_guest_session_owner_t {
     uint32_t last_ntstatus;
     uint32_t mapping_status;
     uint32_t cleanup_error_count;
+    uint32_t ready_seen;
     uint32_t published;
     uint32_t cleanup_retry_mode;
     uint32_t socket_close_indeterminate;
@@ -484,6 +485,7 @@ static int run_loop(interop_guest_session_owner_t *owner, HANDLE stop_event) {
             if (work.event.capabilities != 0) { return InteropGuestSessionPeerFailed; }
             int valid = validate_header(owner);
             if (valid != InteropGuestSessionSuccess) { return valid; }
+            owner->ready_seen = 1;
         } else if (work.event.kind == InteropPeerEventFeatureFrame) {
             return InteropGuestSessionUnexpectedFeature;
         } else if (work.event.kind == InteropPeerEventDraining || work.event.kind == InteropPeerEventError) {
@@ -492,7 +494,11 @@ static int run_loop(interop_guest_session_owner_t *owner, HANDLE stop_event) {
         now = current_now(owner);
         if (now == UINT64_MAX) { return InteropGuestSessionOsError; }
         if (now >= owner->run_deadline) { return InteropGuestSessionTimedOut; }
-        if (now >= owner->next_heartbeat && work.event.phase == InteropPeerReady) {
+        /* The frozen socket owner copies an event only when its kind is not
+         * None. Subsequent idle drives therefore carry a zero phase even
+         * though this serialized controller already completed Ready. Keep
+         * readiness sticky only after the validated Ready event. */
+        if (owner->ready_seen != 0 && now >= owner->next_heartbeat) {
             uint64_t observed = 0;
             interop_shm_header_t *header = (interop_shm_header_t *)(uintptr_t)owner->mapping_view.mapping_base;
             if (session_heartbeat_load(header, owner->mapping_view.mapping_base, owner->mapping_view.mapping_length,

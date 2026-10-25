@@ -249,6 +249,8 @@ static void test_heartbeat_and_cleanup_retries(void) {
     interop_guest_test_set_fast_timeout(0);
     assert(interop_guest_session_run(&config, &owner) == InteropGuestSessionCleanupRequired);
     assert(owner != NULL && interop_guest_test_final_guest_heartbeat() > 1);
+    assert(interop_guest_test_guest_heartbeat_stores() >= 2);
+    assert(interop_guest_test_guest_heartbeat_before_ready() == 0);
     interop_guest_test_set_failure(InteropGuestTestMapClose);
     assert(interop_guest_session_retry_cleanup(&owner, 1) == InteropGuestSessionCleanupRequired);
     assert(owner != NULL);
@@ -279,6 +281,7 @@ static void test_pre_ready_terminal_reasons(void) {
         assert(state.operational_result == cases[index].expected);
         assert(state.mapping_view_published == 1);
         assert(interop_guest_test_final_guest_heartbeat() == 0);
+        assert(interop_guest_test_guest_heartbeat_before_ready() == 0);
         assert(interop_guest_session_retry_cleanup(&owner, 1) == InteropGuestSessionSuccess);
         assert(owner == NULL);
     }

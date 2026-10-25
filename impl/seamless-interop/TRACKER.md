@@ -1421,10 +1421,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     Dedicated Windows execution and genuine profile-to-Linux90%line/arc gates
     provide feedback without substituting portable stubs for native proof.
 
-- **Commit `HEAD`**: `test(interop): retain native failure profiles and handshake diagnostics`
+- **Commit `ca4079a`**: `test(interop): retain native failure profiles and handshake diagnostics`
   - **Task Impact**: +0% to TODO #6/#27/#34; real native gates remain open.
   - **Summary**: Real Windows exposed a monochrome alpha assertion and a20s
     composition timeout despite Linux/cross-link success. Add exact stage/error
     diagnostics and gcov dump before native fixture assertion exit. Run both
     bounded native fixtures independently in the fast workflow and analyze
     genuine partial profile data even after failure; preserve hard90%gates.
+
+- **Commit `HEAD`**: `fix(interop): preserve validated Ready across idle guest drives`
+  - **Task Impact**: +0% to TODO #6/#34 pending actual native rerun.
+  - **Summary**: Native timeout traced to idle socket events clearing phase;
+    retain Ready only after successful capability/header validation and publish
+    later heartbeats from that state. Regression emits one Ready then zero-phase
+    idle events and checks repeated, delayed heartbeat stores. Root independent
+    99.33% lines/90.25% taken arcs and leak-enabled sanitizers pass. Correct
+    diagnostic fields to the real public state ABI; strict Windows fixture links.

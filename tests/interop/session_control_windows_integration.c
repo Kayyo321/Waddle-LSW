@@ -383,7 +383,7 @@ static void run_native_composition_case(fixture_mode_t mode) {
         fprintf(stderr,
             "native session fixture mode=%u result=%u wait=%lu host_failed=%ld wsa_error=%lu "
             "hello=%ld map_valid=%ld ack=%ld ready=%ld heartbeat=%ld eof=%ld owner=%p state_result=%u "
-            "operational=%u cleanup=%u stop=%u map_owned=%u map_published=%u socket_owner=%u\n",
+            "operational=%u cleanup_errors=%u win32_error=%u map_owned=%u map_published=%u socket_owner=%u\n",
             (unsigned)mode, (unsigned)result, (unsigned long)wait_result,
             (long)InterlockedCompareExchange(&host.failed, 0, 0), (unsigned long)host.wsa_error,
             (long)InterlockedCompareExchange(&host.hello_seen, 0, 0),
@@ -393,7 +393,7 @@ static void run_native_composition_case(fixture_mode_t mode) {
             (long)InterlockedCompareExchange(&host.guest_heartbeat_seen, 0, 0),
             (long)InterlockedCompareExchange(&host.transport_eof_seen, 0, 0),
             (void *)owner, (unsigned)state_result, (unsigned)state.operational_result,
-            (unsigned)state.cleanup_result, (unsigned)state.stop_requested,
+            (unsigned)state.cleanup_error_count, (unsigned)state.last_win32_error,
             (unsigned)state.mapping_owner_owned, (unsigned)state.mapping_view_published,
             (unsigned)state.socket_owner_owned);
     }

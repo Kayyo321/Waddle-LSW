@@ -35,6 +35,9 @@ static uint64_t test_clock_override_value;
 static uint32_t test_accepted;
 static uint8_t *test_mapping_base;
 static uint64_t test_final_guest_heartbeat;
+static uint64_t test_ready_event_ms;
+static uint32_t test_guest_heartbeat_stores;
+static uint32_t test_guest_heartbeat_before_ready;
 
 void interop_guest_test_reset(void) {
     test_now_ms = 1000; test_wsa_calls = 0; test_last_wsa_error_calls = 0; test_map_close_calls = 0;
@@ -46,6 +49,7 @@ void interop_guest_test_reset(void) {
     test_clock_fail_read = 0; test_clock_override_read = 0; test_clock_override_value = 0;
     test_accepted = 0;
     test_final_guest_heartbeat = 0;
+    test_ready_event_ms = 0; test_guest_heartbeat_stores = 0; test_guest_heartbeat_before_ready = 0;
 }
 void interop_guest_test_set_failure(interop_guest_test_failure_t failure) {
     test_failure = failure;
@@ -82,6 +86,8 @@ uint32_t interop_guest_test_map_close_calls(void) { return test_map_close_calls;
 uint32_t interop_guest_test_socket_drive_calls(void) { return test_socket_drive_calls; }
 uint32_t interop_guest_test_close_socket_calls(void) { return test_close_socket_calls; }
 uint64_t interop_guest_test_final_guest_heartbeat(void) { return test_final_guest_heartbeat; }
+uint32_t interop_guest_test_guest_heartbeat_stores(void) { return test_guest_heartbeat_stores; }
+uint32_t interop_guest_test_guest_heartbeat_before_ready(void) { return test_guest_heartbeat_before_ready; }
 int interop_guest_test_wsa_startup(uint16_t version, WSADATA *data) {
     test_wsa_calls++;
     if (test_failure == InteropGuestTestFailStartup) { return 10091; }
@@ -293,12 +299,15 @@ int interop_guest_test_socket_drive(struct interop_windows_socket_t *owner, uint
         test_socket_drive_calls++;
         return InteropWindowsSocketSuccess;
     }
-    out->event.kind = owner->drives++ == 0 ? InteropPeerEventReady : InteropPeerEventNone;
+    int first_drive = owner->drives++ == 0;
+    if (first_drive) { test_ready_event_ms = test_now_ms; }
+    out->event.kind = first_drive ? InteropPeerEventReady : InteropPeerEventNone;
     if (test_failure == InteropGuestTestFeatureEvent) { out->event.kind = InteropPeerEventFeatureFrame; }
     if (test_failure == InteropGuestTestDrainingEvent) { out->event.kind = InteropPeerEventDraining; }
     if (test_failure == InteropGuestTestErrorEvent) { out->event.kind = InteropPeerEventError; }
     if (test_failure == InteropGuestTestReadyCapabilities) { out->event.capabilities = 1; }
-    out->event.phase = test_failure == InteropGuestTestNonreadyPhase ? InteropPeerAwaitHelloAck : InteropPeerReady;
+    out->event.phase = test_failure == InteropGuestTestNonreadyPhase ? InteropPeerAwaitHelloAck :
+        first_drive ? InteropPeerReady : 0;
     test_socket_drive_calls++; return InteropWindowsSocketSuccess;
 }
 int interop_guest_test_socket_mapping_result(struct interop_windows_socket_t *owner, uint64_t token,
@@ -324,6 +333,10 @@ interop_atomic_status_t interop_guest_test_heartbeat_load(const interop_shm_head
 interop_atomic_status_t interop_guest_test_heartbeat_store_next(interop_shm_header_t *header,
     uintptr_t base, uint64_t length, interop_heartbeat_kind_t kind, uint64_t next) {
     if (kind == InteropGuestHeartbeat && test_failure == InteropGuestTestFailGuestHeartbeatStore) { return InteropAtomicStatusNotLockFree; }
+    if (kind == InteropGuestHeartbeat) {
+        test_guest_heartbeat_stores++;
+        if (test_ready_event_ms == 0 || test_now_ms < test_ready_event_ms + 500u) { test_guest_heartbeat_before_ready++; }
+    }
     return interop_heartbeat_store_next(header, base, length, kind, next);
 }
 int interop_guest_test_socket_quarantine_handoff(struct interop_windows_socket_t **slot,

@@ -177,5 +177,7 @@ uint32_t interop_guest_test_map_close_calls(void);
 uint32_t interop_guest_test_socket_drive_calls(void);
 uint32_t interop_guest_test_close_socket_calls(void);
 uint64_t interop_guest_test_final_guest_heartbeat(void);
+uint32_t interop_guest_test_guest_heartbeat_stores(void);
+uint32_t interop_guest_test_guest_heartbeat_before_ready(void);
 
 #endif
