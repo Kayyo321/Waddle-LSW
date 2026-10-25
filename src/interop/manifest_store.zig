@@ -675,7 +675,7 @@ pub const store_t = struct {
         defer parsed.deinit();
         try validate_global_paths(parsed.records);
         const record = find_record(parsed.records, record_id) orelse return error.FileNotFound;
-        const target = try self.resolve_allowed(record.*);
+        const target = try self.resolve_recorded(record.*);
         defer self.allocator.free(target.relative);
         const info = (try self.inspect(target.root.fd, target.relative)) orelse return error.FileNotFound;
         return .{ .manifest_sha256 = hash_bytes(manifest_bytes), .target = identity_from_info(info) };
@@ -773,7 +773,7 @@ pub const store_t = struct {
     /// the authorized roots or kinds return null so callers classify them as
     /// foreign; allocation failures propagate. The caller frees `relative`.
     fn resolve_for_record(self: *store_t, record: manifest.record_t) !?resolved_t {
-        return self.resolve_allowed(record) catch |err| switch (err) {
+        return self.resolve_recorded(record) catch |err| switch (err) {
             error.InvalidPath, error.InvalidScope, error.UnsupportedArtifactKind => null,
             else => err,
         };
@@ -1747,7 +1747,7 @@ pub const store_t = struct {
     fn resolve_from_journal(self: *store_t, root: owned_root_t, path: []const u8) ![]u8 {
         validate_relative(path) catch return error.RecoveryRequired;
         const allowed = switch (root.kind) {
-            .Data => first_component(path, "applications") or icon_path_allowed(path) or std.mem.startsWith(u8, path, "desktop-directories/"),
+            .Data => first_component(path, "applications") or icon_path_allowed(path) or legacy_icon_path_allowed(path) or std.mem.startsWith(u8, path, "desktop-directories/"),
             .Config => first_component(path, "autostart") or std.mem.startsWith(u8, path, "menus/applications-merged/"),
             .Desktop => std.mem.indexOfScalar(u8, path, '/') == null,
         };
@@ -1773,7 +1773,7 @@ pub const store_t = struct {
         defer candidate.deinit();
         try validate_global_paths(candidate.records);
         const new_record = find_record(candidate.records, journal.record_id) orelse return error.RecoveryRequired;
-        const target = self.resolve_allowed(new_record.*) catch |err| return if (err == error.OutOfMemory) error.OutOfMemory else error.RecoveryRequired;
+        const target = self.resolve_recorded(new_record.*) catch |err| return if (err == error.OutOfMemory) error.OutOfMemory else error.RecoveryRequired;
         defer self.allocator.free(target.relative);
         if (target.root.kind != root.kind or !std.mem.eql(u8, target.relative, journal.relative_path) or
             !std.ascii.eqlIgnoreCase(new_record.sha256, journal.new_artifact_hash)) return error.RecoveryRequired;
@@ -1826,7 +1826,7 @@ pub const store_t = struct {
         var parsed_candidate = manifest.parse(self.allocator, candidate_manifest) catch |err| return if (err == error.OutOfMemory) error.OutOfMemory else error.RecoveryRequired;
         defer parsed_candidate.deinit();
         const intended = find_record(parsed_candidate.records, journal.record_id) orelse return error.RecoveryRequired;
-        const intended_target = self.resolve_allowed(intended.*) catch |err| return if (err == error.OutOfMemory) error.OutOfMemory else error.RecoveryRequired;
+        const intended_target = self.resolve_recorded(intended.*) catch |err| return if (err == error.OutOfMemory) error.OutOfMemory else error.RecoveryRequired;
         defer self.allocator.free(intended_target.relative);
         if (intended_target.root.kind != root.kind or !std.mem.eql(u8, intended_target.relative, journal.relative_path) or
             !std.ascii.eqlIgnoreCase(intended.sha256, journal.new_artifact_hash)) return error.RecoveryRequired;
@@ -2266,7 +2266,19 @@ pub const store_t = struct {
             return error.RecoveryRequired;
     }
 
+    /// Resolve a record that a new commit or replacement writes. Icons must use
+    /// the XDG-correct `icons/hicolor` form; the legacy form is refused here.
     fn resolve_allowed(self: *store_t, record: manifest.record_t) !resolved_t {
+        return self.resolve_with(record, false);
+    }
+
+    /// Resolve a record that already exists in a manifest (inspect, status, remove,
+    /// recreate, and recovery). Legacy icon paths are accepted so they never wedge.
+    fn resolve_recorded(self: *store_t, record: manifest.record_t) !resolved_t {
+        return self.resolve_with(record, true);
+    }
+
+    fn resolve_with(self: *store_t, record: manifest.record_t, accept_legacy_icon: bool) !resolved_t {
         const kind: root_kind_t = switch (record.kind) {
             .DesktopEntry, .HandlerEntry, .Icon => .Data,
             .Menu => if (self.path_under(.Config, record.path)) .Config else .Data,
@@ -2281,7 +2293,7 @@ pub const store_t = struct {
         try validate_relative(relative);
         const allowed = switch (record.kind) {
             .DesktopEntry, .HandlerEntry => first_component(relative, "applications"),
-            .Icon => icon_path_allowed(relative),
+            .Icon => icon_path_allowed(relative) or (accept_legacy_icon and legacy_icon_path_allowed(relative)),
             .Autostart => first_component(relative, "autostart"),
             .DesktopShortcut => std.mem.indexOfScalar(u8, relative, '/') == null,
             .Menu => if (kind == .Config) std.mem.startsWith(u8, relative, "menus/applications-merged/") else std.mem.startsWith(u8, relative, "desktop-directories/"),
@@ -3232,14 +3244,30 @@ fn valid_hash_text(text: []const u8) bool {
 fn first_component(path: []const u8, component: []const u8) bool {
     return std.mem.startsWith(u8, path, component) and path.len > component.len and path[component.len] == '/';
 }
-fn icon_path_allowed(path: []const u8) bool {
-    if (!std.mem.startsWith(u8, path, "hicolor/")) return false;
-    var parts = std.mem.splitScalar(u8, path, '/');
-    _ = parts.next();
+/// Accept exactly `<size>/apps/<leaf>` after an icon theme prefix: a nonempty size
+/// component, the literal `apps`, and one nonempty leaf with no further components.
+fn icon_tail_allowed(tail: []const u8) bool {
+    var parts = std.mem.splitScalar(u8, tail, '/');
     const size = parts.next() orelse return false;
     if (size.len == 0 or !std.mem.eql(u8, parts.next() orelse return false, "apps")) return false;
     const leaf = parts.next() orelse return false;
     return leaf.len > 0 and parts.next() == null;
+}
+
+/// Icon artifacts written by new commits: `icons/hicolor/<size>/apps/<leaf>`
+/// relative to the XDG data root, the form desktop_artifacts.zig emits.
+fn icon_path_allowed(path: []const u8) bool {
+    const prefix = "icons/hicolor/";
+    return std.mem.startsWith(u8, path, prefix) and icon_tail_allowed(path[prefix.len..]);
+}
+
+/// Icon form used by records committed before the XDG-correct path was adopted:
+/// `hicolor/<size>/apps/<leaf>`. Accepted only for records already present in a
+/// manifest and for recovery of their journals, so they can be inspected, removed,
+/// and recovered; a new commit or replacement never produces this form.
+fn legacy_icon_path_allowed(path: []const u8) bool {
+    const prefix = "hicolor/";
+    return std.mem.startsWith(u8, path, prefix) and icon_tail_allowed(path[prefix.len..]);
 }
 fn hash_bytes(bytes: []const u8) [32]u8 {
     var hash: [32]u8 = undefined;
@@ -3510,8 +3538,8 @@ test "root and record path authorization is component scoped" {
     try std.testing.expectError(error.InvalidPath, validate_absolute_root("/tmp/../etc"));
     try std.testing.expect(first_component("applications/a.desktop", "applications"));
     try std.testing.expect(!first_component("applications-foreign/a.desktop", "applications"));
-    try std.testing.expect(icon_path_allowed("hicolor/48x48/apps/test.png"));
-    try std.testing.expect(!icon_path_allowed("hicolor/48x48/evil/test.png"));
+    try std.testing.expect(icon_path_allowed("icons/hicolor/48x48/apps/test.png"));
+    try std.testing.expect(!icon_path_allowed("icons/hicolor/48x48/evil/test.png"));
     const duplicate_paths = [_]manifest.record_t{
         .{ .id = "one", .kind = .DesktopEntry, .path = "/data/applications/a.desktop", .sha256 = "", .device = null, .app_key = null, .created_by = "", .prior = .None, .mime = null },
         .{ .id = "two", .kind = .HandlerEntry, .path = "/data/applications/a.desktop/child", .sha256 = "", .device = null, .app_key = null, .created_by = "", .prior = .None, .mime = null },
@@ -4211,11 +4239,15 @@ test "strict path helpers cover byte limits, component boundaries, and root bind
     try std.testing.expect(cleanup_txid(".cleanup-gggggggggggggggggggggggggggggggg") == null);
     try std.testing.expect(first_component("applications/x", "applications"));
     try std.testing.expect(!first_component("applications", "applications"));
-    try std.testing.expect(!icon_path_allowed("hicolor/"));
-    try std.testing.expect(!icon_path_allowed("hicolor/48x48"));
-    try std.testing.expect(!icon_path_allowed("hicolor/48x48/apps"));
-    try std.testing.expect(!icon_path_allowed("hicolor//apps/icon.png"));
-    try std.testing.expect(!icon_path_allowed("hicolor/48x48/apps/x/y"));
+    try std.testing.expect(!icon_path_allowed("icons/hicolor/"));
+    try std.testing.expect(!icon_path_allowed("icons/hicolor/48x48"));
+    try std.testing.expect(!icon_path_allowed("icons/hicolor/48x48/apps"));
+    try std.testing.expect(!icon_path_allowed("icons/hicolor//apps/icon.png"));
+    try std.testing.expect(!icon_path_allowed("icons/hicolor/48x48/apps/x/y"));
+    try std.testing.expect(!icon_path_allowed("hicolor/48x48/apps/icon.png"));
+    try std.testing.expect(legacy_icon_path_allowed("hicolor/48x48/apps/icon.png"));
+    try std.testing.expect(!legacy_icon_path_allowed("hicolor/48x48/apps/x/y"));
+    try std.testing.expect(!legacy_icon_path_allowed("icons/hicolor/48x48/apps/icon.png"));
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     const absolute = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
@@ -4468,11 +4500,11 @@ test "native errno mapping and file info digest validation are deterministic" {
     try std.testing.expect(valid_record_id("desktop:valid"));
     try std.testing.expect(!valid_record_id(""));
     try std.testing.expect(!valid_hash_text("not-a-hash"));
-    try std.testing.expect(icon_path_allowed("hicolor/48x48/apps/a.png"));
+    try std.testing.expect(icon_path_allowed("icons/hicolor/48x48/apps/a.png"));
     try std.testing.expect(!icon_path_allowed("other/48x48/apps/a.png"));
-    try std.testing.expect(!icon_path_allowed("hicolor/48x48/no-apps/a.png"));
-    try std.testing.expect(!icon_path_allowed("hicolor/48x48/apps/"));
-    try std.testing.expect(!icon_path_allowed("hicolor/48x48/apps/a.png/extra"));
+    try std.testing.expect(!icon_path_allowed("icons/hicolor/48x48/no-apps/a.png"));
+    try std.testing.expect(!icon_path_allowed("icons/hicolor/48x48/apps/"));
+    try std.testing.expect(!icon_path_allowed("icons/hicolor/48x48/apps/a.png/extra"));
 }
 
 test "configured root roles authorize only frozen host artifact path classes" {
@@ -4508,7 +4540,7 @@ test "configured root roles authorize only frozen host artifact path classes" {
     const good = [_]manifest.record_t{
         test_record("desktop", try std.fmt.allocPrint(std.testing.allocator, "{s}/applications/a.desktop", .{data_path}), ""),
         test_record("handler", try std.fmt.allocPrint(std.testing.allocator, "{s}/applications/waddle-open.desktop", .{data_path}), ""),
-        .{ .id = "icon", .kind = .Icon, .path = try std.fmt.allocPrint(std.testing.allocator, "{s}/hicolor/48x48/apps/a.png", .{data_path}), .sha256 = "", .device = null, .app_key = null, .created_by = "", .prior = .None, .mime = null },
+        .{ .id = "icon", .kind = .Icon, .path = try std.fmt.allocPrint(std.testing.allocator, "{s}/icons/hicolor/48x48/apps/a.png", .{data_path}), .sha256 = "", .device = null, .app_key = null, .created_by = "", .prior = .None, .mime = null },
         .{ .id = "menu", .kind = .Menu, .path = try std.fmt.allocPrint(std.testing.allocator, "{s}/menus/applications-merged/a.menu", .{config_path}), .sha256 = "", .device = null, .app_key = null, .created_by = "", .prior = .None, .mime = null },
         .{ .id = "directory", .kind = .Menu, .path = try std.fmt.allocPrint(std.testing.allocator, "{s}/desktop-directories/a.directory", .{data_path}), .sha256 = "", .device = null, .app_key = null, .created_by = "", .prior = .None, .mime = null },
         .{ .id = "autostart", .kind = .Autostart, .path = try std.fmt.allocPrint(std.testing.allocator, "{s}/autostart/a.desktop", .{config_path}), .sha256 = "", .device = null, .app_key = null, .created_by = "", .prior = .None, .mime = null },
@@ -4522,7 +4554,7 @@ test "configured root roles authorize only frozen host artifact path classes" {
         defer std.testing.allocator.free(resolved.relative);
         try std.testing.expect(resolved.relative.len > 0);
     }
-    for ([_][]const u8{ "applications/a.desktop", "hicolor/48x48/apps/a.png", "desktop-directories/a.directory" }) |path| {
+    for ([_][]const u8{ "applications/a.desktop", "icons/hicolor/48x48/apps/a.png", "hicolor/48x48/apps/a.png", "desktop-directories/a.directory" }) |path| {
         const resolved = try store.resolve_from_journal(store.roots[0], path);
         defer std.testing.allocator.free(resolved);
         try std.testing.expectEqualStrings(path, resolved);
@@ -4532,6 +4564,12 @@ test "configured root roles authorize only frozen host artifact path classes" {
         defer std.testing.allocator.free(resolved);
         try std.testing.expectEqualStrings(path, resolved);
     }
+    const legacy_icon = [_]manifest.record_t{.{ .id = "legacy", .kind = .Icon, .path = try std.fmt.allocPrint(std.testing.allocator, "{s}/hicolor/48x48/apps/a.png", .{data_path}), .sha256 = "", .device = null, .app_key = null, .created_by = "", .prior = .None, .mime = null }};
+    defer std.testing.allocator.free(legacy_icon[0].path);
+    try std.testing.expectError(error.InvalidPath, store.resolve_allowed(legacy_icon[0]));
+    const recorded_legacy = try store.resolve_recorded(legacy_icon[0]);
+    defer std.testing.allocator.free(recorded_legacy.relative);
+    try std.testing.expectEqualStrings("hicolor/48x48/apps/a.png", recorded_legacy.relative);
     const desktop_journal_path = try store.resolve_from_journal(store.roots[2], "Shortcut.desktop");
     defer std.testing.allocator.free(desktop_journal_path);
     try std.testing.expectError(error.RecoveryRequired, store.resolve_from_journal(store.roots[0], "../outside"));
@@ -9685,6 +9723,82 @@ test "register refuses store-managed kinds, non-additions, duplicates, and a mis
     const after = read_stored_manifest(fixture.state);
     defer std.testing.allocator.free(after);
     try std.testing.expectEqualStrings(original, after);
+}
+
+test "an icon built by desktop_artifacts commits through the store at its XDG path" {
+    const desktop_artifacts = @import("desktop_artifacts.zig");
+    const allocator = std.testing.allocator;
+    var fixture = remove_fixture_t.create(allocator);
+    defer fixture.destroy(allocator);
+    const roots = fixture.roots();
+    var store = try store_t.init(allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    const png = "\x89PNG\r\n\x1a\nicon bytes";
+    const icons = [_]desktop_artifacts.icon_input_t{.{ .size = 64, .png = png }};
+    const items = [_]desktop_artifacts.item_input_t{.{ .app_key = "a-App", .display_name = "App", .icons = &icons }};
+    var output = desktop_artifacts.artifacts_t{ .allocator = allocator, .items = &.{} };
+    defer output.deinit();
+    try desktop_artifacts.build(allocator, .{
+        .data_root = fixture.data_path,
+        .config_root = "/home/test/.config",
+        .launcher_path = "/usr/bin/waddle",
+        .device = "default",
+        .waddle_version = "0.2.0",
+        .updated = "2026-10-25T12:00:00Z",
+        .items = &items,
+        .include_menu = false,
+    }, &output);
+    try store.ensure_directory(.Data, "applications");
+    try store.ensure_directory(.Data, "icons/hicolor/64x64/apps");
+    var icon_committed = false;
+    for (output.items) |artifact| {
+        try store.commit(.{ .record_id = artifact.record_id, .prior = .Absent, .artifact_bytes = artifact.bytes, .artifact_mode = artifact.mode, .candidate_manifest = artifact.candidate_manifest });
+        if (std.mem.eql(u8, artifact.kind, "icon")) icon_committed = true;
+    }
+    try std.testing.expect(icon_committed);
+    const stored = try fixture.data.readFileAlloc(allocator, "icons/hicolor/64x64/apps/waddle.default.a-App.png", 1 << 20);
+    defer allocator.free(stored);
+    try std.testing.expectEqualStrings(png, stored);
+    var list = try store.status(allocator);
+    defer list.deinit();
+    try std.testing.expect(list.items.len > 0);
+    for (list.items) |item| try std.testing.expectEqual(record_state_t.Ok, item.state);
+}
+
+test "a legacy hicolor icon record is inspected and removed, and a new commit never writes that form" {
+    const allocator = std.testing.allocator;
+    var fixture = remove_fixture_t.create(allocator);
+    defer fixture.destroy(allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const bytes = "legacy icon";
+    try fixture.data.makePath("hicolor/48x48/apps");
+    write_status_file(fixture.data, "hicolor/48x48/apps/legacy.png", bytes, 0o644);
+    const digest = hash_hex(bytes);
+    const legacy_path = std.fmt.allocPrint(scratch, "{s}/hicolor/48x48/apps/legacy.png", .{fixture.data_path}) catch @panic("fixture path");
+    const legacy = test_spec_t{ .id = "icon:legacy", .kind = "icon", .path = legacy_path, .sha256 = &digest };
+    const original = test_document(scratch, 1, &[_]test_spec_t{legacy});
+    const empty = test_document(scratch, 1, &[_]test_spec_t{});
+    try write_test_file(fixture.state.fd, "manifest.json", original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+
+    var list = try store.status(allocator);
+    defer list.deinit();
+    try std.testing.expectEqual(@as(usize, 1), list.items.len);
+    try std.testing.expectEqual(record_state_t.Ok, list.items[0].state);
+
+    const fresh_digest = hash_hex("new bytes");
+    const fresh_path = std.fmt.allocPrint(scratch, "{s}/hicolor/48x48/apps/new.png", .{fixture.data_path}) catch @panic("fixture path");
+    const fresh = test_spec_t{ .id = "icon:new", .kind = "icon", .path = fresh_path, .sha256 = &fresh_digest };
+    const refused = test_document(scratch, 1, &[_]test_spec_t{ legacy, fresh });
+    try std.testing.expectError(error.InvalidPath, store.commit(.{ .record_id = "icon:new", .prior = .Absent, .artifact_bytes = "new bytes", .candidate_manifest = refused }));
+
+    const removed = try store.remove(.{ .record_id = "icon:legacy", .candidate_manifest = empty });
+    try std.testing.expectEqual(remove_outcome_t.Removed, removed.outcome);
+    try std.testing.expectError(error.FileNotFound, fixture.data.access("hicolor/48x48/apps/legacy.png", .{}));
 }
 
 test "artifact unlink moves the name aside, verifies the moved inode, and returns a changed file to its name" {
