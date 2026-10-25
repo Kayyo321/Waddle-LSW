@@ -171,7 +171,10 @@ re-peek after every admission.
 `dispatch_ready` checks every received feature frame with `check_facility` using the
 reader's producer direction and the negotiated set. A refused frame produces the same
 handling as a codec-level UnsupportedType: one Error(UnsupportedType) reply is queued,
-the frame is consumed, and the peer enters Draining (WireError). Admitted frames are
+the frame is consumed, and the peer enters Draining (WireError). The Draining event
+carries error_code UnsupportedType with message_type and request_id naming the refused
+frame, so callers can report it precisely (session_control_host maps it to
+HostControlUnexpectedFeature, as before). Admitted frames are
 copied unchanged to the caller as FeatureFrame events. The receive side does not yet
 validate request identifier classes; the dispatcher owns that check.
 

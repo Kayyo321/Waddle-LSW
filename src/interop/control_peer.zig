@@ -1124,7 +1124,12 @@ pub const peer_t = struct {
             if (!self.enqueue_error(c_t.InteropErrorUnsupportedType, view.header.request_id, view.header.type)) self.terminal_send_failed = true;
             try self.reader.consume();
             self.last_now_ms = now_ms;
-            return .{ .event = self.event(.Draining) };
+            // The Draining event names the refused type so callers can report it precisely.
+            var refused = self.event(.Draining);
+            refused.error_code = c_t.InteropErrorUnsupportedType;
+            refused.message_type = view.header.type;
+            refused.request_id = view.header.request_id;
+            return .{ .event = refused };
         };
         @memcpy(output[0..view.frame.len], view.frame);
         try self.reader.consume();

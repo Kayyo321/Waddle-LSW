@@ -75,7 +75,7 @@ typedef enum interop_peer_event_kind_t {
     InteropPeerEventReady = 2, /**< This call first committed negotiation readiness. */
     InteropPeerEventFeatureFrame = 3, /**< Full frame copied; authorize externally. */
     InteropPeerEventError = 4, /**< Scoped remote Error copied; never auto-replied. */
-    InteropPeerEventDraining = 5 /**< Connection terminal; no resource proof. */
+    InteropPeerEventDraining = 5 /**< Connection terminal; no resource proof. When a received feature frame lacks its negotiated facility, error_code is InteropErrorUnsupportedType and message_type/request_id name that frame. */
 } interop_peer_event_kind_t;
 /** @brief Event flag requiring immediate transport abort, not fresh TX. */
 #define InteropPeerAbortTransport 1u

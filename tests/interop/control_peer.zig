@@ -2119,6 +2119,8 @@ test "received feature frames outside the negotiated map drain with UnsupportedT
     var output: [MaxTestFrame]u8 = undefined;
     const event = try narrow.host.next_event(HostToken, 502, &output);
     try std_t.testing.expectEqual(peer_t.event_kind_t.Draining, event.event.kind);
+    try std_t.testing.expectEqual(@as(@TypeOf(event.event.error_code), c_t.InteropErrorUnsupportedType), event.event.error_code);
+    try std_t.testing.expectEqual(@as(u16, c_t.InteropMsgClipboardClear), event.event.message_type);
     try std_t.testing.expectEqual(peer_t.phase_t.Draining, narrow.host.phase());
     // The refusal is answered by one Error(UnsupportedType) frame, like codec-level rejections.
     const reply = (try narrow.host.peek_tx(HostToken)).?;
