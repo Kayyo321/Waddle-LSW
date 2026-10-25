@@ -188,7 +188,27 @@ Value 0 is never valid. An all-zero plan therefore fails `complete` with
 | 1 | `WaddleWindowStateHostRequestUnmaximize` | The last completed request was unmaximize |
 | 2 | `WaddleWindowStateHostRequestMaximize` | The last completed request was maximize |
 
-### 4.5 Status codes
+### 4.5 State bits
+
+The header macros equal the protocol values in `include/waddle/interop_protocol.h`.
+Each equality is checked at compile time in both the C test and the Zig module.
+
+| Macro | Value | Protocol enumerator |
+|:--|--:|:--|
+| `WaddleWindowStateMinimized` | 0x01 | `InteropStateMinimized` |
+| `WaddleWindowStateMaximized` | 0x02 | `InteropStateMaximized` |
+| `WaddleWindowStateFullscreen` | 0x04 | `InteropStateFullscreen` |
+| `WaddleWindowStateActivated` | 0x08 | `InteropStateActivated` (host to guest only) |
+| `WaddleWindowStateResizable` | 0x10 | `InteropStateResizable` |
+| `WaddleWindowStateMaximizable` | 0x20 | `InteropStateMaximizable` |
+| `WaddleWindowStateMinimizable` | 0x40 | `InteropStateMinimizable` |
+| `WaddleWindowStateMask` | 0x7F | `InteropStateMask` |
+
+`WaddleWindowStateWindowMask` (Minimized, Maximized, Fullscreen) and
+`WaddleWindowStateCapabilityMask` (Resizable, Maximizable, Minimizable) are derived
+from these and are checked against the reducer's `WindowStateMask` and `CapabilityMask`.
+
+### 4.6 Status codes
 
 Every function returns one of these. Zero is the only success value.
 

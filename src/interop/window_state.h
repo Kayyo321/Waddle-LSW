@@ -26,6 +26,35 @@
 #define WaddleWindowStateMaxActions 8
 
 /**
+ * @name Protocol state bits
+ * Frozen values of the state and capability bitmask. Each value equals the InteropState* enumerator
+ * of the same meaning in include/waddle/interop_protocol.h. The C consumer test and the Zig module
+ * assert every equality at compile time.
+ * @{
+ */
+/** @brief Guest is minimized (iconic). Guest state bit. */
+#define WaddleWindowStateMinimized 0x01u
+/** @brief Guest is maximized (zoomed). Guest state bit. */
+#define WaddleWindowStateMaximized 0x02u
+/** @brief Guest is fullscreen. Guest state bit. */
+#define WaddleWindowStateFullscreen 0x04u
+/** @brief Activation request. Host to guest only; never part of a guest observation. */
+#define WaddleWindowStateActivated 0x08u
+/** @brief Guest capability: resizable. */
+#define WaddleWindowStateResizable 0x10u
+/** @brief Guest capability: maximizable. */
+#define WaddleWindowStateMaximizable 0x20u
+/** @brief Guest capability: minimizable. */
+#define WaddleWindowStateMinimizable 0x40u
+/** @brief Every defined state and capability bit. */
+#define WaddleWindowStateMask 0x7Fu
+/** @brief Minimized, maximized and fullscreen bits: the window state carried in observations. */
+#define WaddleWindowStateWindowMask (WaddleWindowStateMinimized | WaddleWindowStateMaximized | WaddleWindowStateFullscreen)
+/** @brief Resizable, maximizable and minimizable bits: the guest capabilities. */
+#define WaddleWindowStateCapabilityMask (WaddleWindowStateResizable | WaddleWindowStateMaximizable | WaddleWindowStateMinimizable)
+/** @} */
+
+/**
  * @brief Result code of every window-state ABI call. Numeric values are frozen.
  *
  * Errors are reported in the same order the reducer checks them. Argument checks run first.

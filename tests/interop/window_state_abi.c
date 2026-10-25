@@ -9,6 +9,7 @@
  * tests cover the cases the ABI rejects.
  */
 #include "window_state.h"
+#include "waddle/interop_protocol.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -27,6 +28,16 @@ _Static_assert(sizeof(waddle_window_state_snapshot_t) == 56, "snapshot is 56 byt
 _Static_assert(_Alignof(waddle_window_state_snapshot_t) == 8, "snapshot alignment is 8");
 _Static_assert(WaddleWindowStateMaxActions == 8, "plan capacity is 8 actions");
 
+/* Protocol state bits: each equals its InteropState* enumerator in include/waddle/interop_protocol.h. */
+_Static_assert(WaddleWindowStateMinimized == InteropStateMinimized, "Minimized bit");
+_Static_assert(WaddleWindowStateMaximized == InteropStateMaximized, "Maximized bit");
+_Static_assert(WaddleWindowStateFullscreen == InteropStateFullscreen, "Fullscreen bit");
+_Static_assert(WaddleWindowStateActivated == InteropStateActivated, "Activated bit");
+_Static_assert(WaddleWindowStateResizable == InteropStateResizable, "Resizable bit");
+_Static_assert(WaddleWindowStateMaximizable == InteropStateMaximizable, "Maximizable bit");
+_Static_assert(WaddleWindowStateMinimizable == InteropStateMinimizable, "Minimizable bit");
+_Static_assert(WaddleWindowStateMask == InteropStateMask, "state mask");
+
 /* Frozen values. A change to any of these is a protocol change and must fail this test. */
 _Static_assert(WaddleWindowStateOk == 0, "status Ok is 0");
 _Static_assert(WaddleWindowStateInvalidPlan == 13, "status InvalidPlan is 13");
@@ -34,14 +45,6 @@ _Static_assert(WaddleWindowStateActionHostSetMinimized == 1, "first action kind"
 _Static_assert(WaddleWindowStateActionGuestPostClose == 13, "last action kind");
 _Static_assert(WaddleWindowStateInputDestroyObserved == 6, "last input kind");
 _Static_assert(WaddleWindowStatePendingRetire == 5, "last pending kind");
-
-/* Frozen protocol state bits (see window_state.zig). */
-#define StateMinimized 0x01u
-#define StateMaximized 0x02u
-#define StateFullscreen 0x04u
-#define StateActivated 0x08u
-#define StateMaximizable 0x20u
-#define StateMinimizable 0x40u
 
 #define Check(condition) do { \
     if (!(condition)) { \
@@ -116,7 +119,7 @@ static int test_invalid_arguments(void) {
     Check(handle == NULL);
     Check(waddle_window_state_create(1, 0, 0, &handle) == WaddleWindowStateInvalidIdentity);
     Check(handle == NULL);
-    Check(waddle_window_state_create(1, 1, StateActivated, &handle) == WaddleWindowStateInvalidState);
+    Check(waddle_window_state_create(1, 1, WaddleWindowStateActivated, &handle) == WaddleWindowStateInvalidState);
     Check(handle == NULL);
     Check(waddle_window_state_create(1, 1, 0x80u, &handle) == WaddleWindowStateInvalidState);
     Check(handle == NULL);
@@ -160,7 +163,7 @@ static int test_lifecycle_and_slot_clearing(void) {
 
     for (round = 0; round < 512; round++) {
         waddle_window_state_handle_t *handle = NULL;
-        Check(waddle_window_state_create(100u + round, 1u + round % 3u, StateMaximizable, &handle) == WaddleWindowStateOk);
+        Check(waddle_window_state_create(100u + round, 1u + round % 3u, WaddleWindowStateMaximizable, &handle) == WaddleWindowStateOk);
         Check(handle != NULL);
         Check(waddle_window_state_destroy(&handle) == WaddleWindowStateOk);
         Check(handle == NULL);
@@ -185,10 +188,10 @@ static int test_ticket_flow_and_action_order(void) {
     waddle_window_state_plan_t plan;
     waddle_window_state_snapshot_t snapshot;
 
-    Check(waddle_window_state_create(7, 2, StateMinimized | StateMaximizable, &handle) == WaddleWindowStateOk);
+    Check(waddle_window_state_create(7, 2, WaddleWindowStateMinimized | WaddleWindowStateMaximizable, &handle) == WaddleWindowStateOk);
 
     /* Reconciliation of a minimized guest: one-shot minimize, then unmaximize, then unfullscreen. */
-    input = observation(StateMinimized | StateMaximizable);
+    input = observation(WaddleWindowStateMinimized | WaddleWindowStateMaximizable);
     Check(waddle_window_state_plan(handle, 7, 2, &input, &plan) == WaddleWindowStateOk);
     Check(plan.action_count == 3);
     Check(plan.actions[0].kind == WaddleWindowStateActionHostSetMinimized);
@@ -201,8 +204,8 @@ static int test_ticket_flow_and_action_order(void) {
     Check(snapshot.generation == 2);
     Check(snapshot.revision == 2);
     Check(snapshot.synced == 1);
-    Check(snapshot.observed_guest_state == StateMinimized);
-    Check(snapshot.guest_capabilities == StateMaximizable);
+    Check(snapshot.observed_guest_state == WaddleWindowStateMinimized);
+    Check(snapshot.guest_capabilities == WaddleWindowStateMaximizable);
     Check(snapshot.applied_host_state == 0);
     Check(snapshot.host_request == WaddleWindowStateHostRequestNone);
     Check(snapshot.retired == 0);
@@ -215,10 +218,10 @@ static int test_ticket_flow_and_action_order(void) {
     Check(waddle_window_state_complete(handle, &plan, 1, 1) == WaddleWindowStateOk);
     Check(waddle_window_state_snapshot(handle, &snapshot) == WaddleWindowStateOk);
     Check(snapshot.host_request == WaddleWindowStateHostRequestMaximize);
-    Check(snapshot.applied_host_state == StateMaximized);
+    Check(snapshot.applied_host_state == WaddleWindowStateMaximized);
 
     /* Activation of an iconic guest that is also being maximized: restore, maximize, activate, geometry. */
-    input = configure_input(StateActivated | StateMaximized, -20, 10, 1024, 768);
+    input = configure_input(WaddleWindowStateActivated | WaddleWindowStateMaximized, -20, 10, 1024, 768);
     Check(waddle_window_state_plan(handle, 7, 2, &input, &plan) == WaddleWindowStateOk);
     Check(plan.action_count == 4);
     Check(plan.actions[0].kind == WaddleWindowStateActionGuestRestore);
@@ -234,7 +237,7 @@ static int test_ticket_flow_and_action_order(void) {
     Check(plan.actions[4].kind == 0);
     Check(waddle_window_state_complete(handle, &plan, 1, 4) == WaddleWindowStateOk);
     Check(waddle_window_state_snapshot(handle, &snapshot) == WaddleWindowStateOk);
-    Check(snapshot.applied_guest_state == StateMaximized);
+    Check(snapshot.applied_guest_state == WaddleWindowStateMaximized);
 
     Check(waddle_window_state_destroy(&handle) == WaddleWindowStateOk);
     return 0;
@@ -252,7 +255,7 @@ static int test_partial_failure_and_resynchronization(void) {
     Check(waddle_window_state_snapshot(handle, &before) == WaddleWindowStateOk);
 
     /* Activation with geometry: two actions. Report only the first as completed. */
-    input = configure_input(StateActivated, 0, 0, 640, 480);
+    input = configure_input(WaddleWindowStateActivated, 0, 0, 640, 480);
     Check(waddle_window_state_plan(handle, 9, 1, &input, &geometry_plan) == WaddleWindowStateOk);
     Check(geometry_plan.action_count == 2);
     Check(waddle_window_state_complete(handle, &geometry_plan, 0, 1) == WaddleWindowStateOk);
@@ -263,7 +266,7 @@ static int test_partial_failure_and_resynchronization(void) {
     Check(after.applied_guest_state == before.applied_guest_state);
 
     /* While unsynchronized, every host-side request is refused and the plan is zero. */
-    input = configure_input(StateActivated, 0, 0, 0, 0);
+    input = configure_input(WaddleWindowStateActivated, 0, 0, 0, 0);
     Check(waddle_window_state_plan(handle, 9, 1, &input, &plan) == WaddleWindowStateUnsynchronized);
     Check(plan_is_zero(&plan));
     input = request_input(0);
@@ -277,7 +280,7 @@ static int test_partial_failure_and_resynchronization(void) {
     Check(after.synced == 1);
     Check(waddle_window_state_complete(handle, &geometry_plan, 1, 2) == WaddleWindowStateStalePlan);
 
-    input = configure_input(StateActivated, 0, 0, 640, 480);
+    input = configure_input(WaddleWindowStateActivated, 0, 0, 640, 480);
     Check(waddle_window_state_plan(handle, 9, 1, &input, &plan) == WaddleWindowStateOk);
     Check(waddle_window_state_complete(handle, &plan, 1, plan.action_count) == WaddleWindowStateOk);
 
@@ -288,7 +291,7 @@ static int test_partial_failure_and_resynchronization(void) {
 static int test_stale_plans_and_identity(void) {
     waddle_window_state_handle_t *handle = NULL;
     waddle_window_state_input_t close_input = bare_input(WaddleWindowStateInputCloseRequest);
-    waddle_window_state_input_t configure = configure_input(StateActivated, 0, 0, 0, 0);
+    waddle_window_state_input_t configure = configure_input(WaddleWindowStateActivated, 0, 0, 0, 0);
     waddle_window_state_input_t observe_zero = observation(0);
     waddle_window_state_plan_t first;
     waddle_window_state_plan_t second;
@@ -328,7 +331,7 @@ static int test_maximize_capability_gate(void) {
     waddle_window_state_input_t input = request_input(1);
     waddle_window_state_plan_t plan;
 
-    Check(create_synced(13, 1, StateMinimizable, &handle) == 0);
+    Check(create_synced(13, 1, WaddleWindowStateMinimizable, &handle) == 0);
     Check(waddle_window_state_plan(handle, 13, 1, &input, &plan) == WaddleWindowStateUnsupportedStateRequest);
     Check(plan_is_zero(&plan));
     Check(waddle_window_state_destroy(&handle) == WaddleWindowStateOk);
@@ -344,7 +347,7 @@ static int test_retirement(void) {
     waddle_window_state_plan_t plan;
     waddle_window_state_snapshot_t snapshot;
 
-    Check(create_synced(12, 3, StateMinimizable, &handle) == 0);
+    Check(create_synced(12, 3, WaddleWindowStateMinimizable, &handle) == 0);
     Check(waddle_window_state_plan(handle, 12, 3, &hide, &retire) == WaddleWindowStateOk);
     Check(retire.action_count == 0);
     /* A retirement completes only as a zero-action success. */
@@ -373,7 +376,7 @@ static int test_destroy_observation_retires_without_native_action(void) {
     waddle_window_state_snapshot_t snapshot;
 
     /* Live, synchronized window: the destroy plan carries no action, so no native call is made. */
-    Check(create_synced(17, 2, StateMaximizable, &synced) == 0);
+    Check(create_synced(17, 2, WaddleWindowStateMaximizable, &synced) == 0);
     Check(waddle_window_state_plan(synced, 17, 2, &destroyed, &plan) == WaddleWindowStateOk);
     Check(plan.action_count == 0);
     Check(plan.pending_kind == WaddleWindowStatePendingRetire);
@@ -387,7 +390,7 @@ static int test_destroy_observation_retires_without_native_action(void) {
     Check(waddle_window_state_destroy(&synced) == WaddleWindowStateOk);
 
     /* Unsynchronized window: destroy is accepted without a fresh observation and still carries no action. */
-    Check(waddle_window_state_create(18, 1, StateMinimizable, &unsynced) == WaddleWindowStateOk);
+    Check(waddle_window_state_create(18, 1, WaddleWindowStateMinimizable, &unsynced) == WaddleWindowStateOk);
     Check(waddle_window_state_plan(unsynced, 18, 1, &destroyed, &plan) == WaddleWindowStateOk);
     Check(plan.action_count == 0);
     Check(waddle_window_state_complete(unsynced, &plan, 1, 0) == WaddleWindowStateOk);
@@ -401,7 +404,7 @@ static int test_destroy_observation_retires_without_native_action(void) {
 static int test_forged_and_foreign_plans(void) {
     waddle_window_state_handle_t *owner = NULL;
     waddle_window_state_handle_t *other = NULL;
-    waddle_window_state_input_t input = configure_input(StateMaximized, 1, 2, 300, 200);
+    waddle_window_state_input_t input = configure_input(WaddleWindowStateMaximized, 1, 2, 300, 200);
     waddle_window_state_plan_t plan;
     waddle_window_state_plan_t forged;
     waddle_window_state_plan_t zero;
@@ -456,7 +459,7 @@ static int test_snapshot_is_read_only(void) {
     waddle_window_state_snapshot_t first;
     waddle_window_state_snapshot_t second;
 
-    Check(create_synced(16, 4, StateMaximizable, &handle) == 0);
+    Check(create_synced(16, 4, WaddleWindowStateMaximizable, &handle) == 0);
     Check(waddle_window_state_snapshot(handle, &first) == WaddleWindowStateOk);
     Check(waddle_window_state_snapshot(handle, &second) == WaddleWindowStateOk);
     Check(same_snapshot(&first, &second));

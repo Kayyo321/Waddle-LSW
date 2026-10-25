@@ -32,6 +32,11 @@ const c = @cImport({
     @cInclude("window_state.h");
 });
 
+/// Protocol header, imported only to check that the header's state bits equal the frozen protocol values.
+const proto = @cImport({
+    @cInclude("waddle/interop_protocol.h");
+});
+
 /// Owner of one reducer machine and of the seed that keys its plan seals.
 const handle_t = struct {
     /// The reducer state for one exact window generation.
@@ -110,6 +115,27 @@ const init_error_t = error{ InvalidIdentity, InvalidState };
 const plan_error_t = error{ StaleWindow, Retired, RevisionExhausted, Unsynchronized, InvalidState, InvalidGeometry, UnsupportedStateRequest };
 /// Errors that `machine_t.complete` can produce.
 const complete_error_t = error{ StaleWindow, Retired, StalePlan, InvalidCompletion, RevisionExhausted };
+
+comptime {
+    if (c.WaddleWindowStateMinimized != proto.InteropStateMinimized or c.WaddleWindowStateMinimized != reducer.StateMinimized)
+        @compileError("window-state Minimized bit differs from the protocol");
+    if (c.WaddleWindowStateMaximized != proto.InteropStateMaximized or c.WaddleWindowStateMaximized != reducer.StateMaximized)
+        @compileError("window-state Maximized bit differs from the protocol");
+    if (c.WaddleWindowStateFullscreen != proto.InteropStateFullscreen or c.WaddleWindowStateFullscreen != reducer.StateFullscreen)
+        @compileError("window-state Fullscreen bit differs from the protocol");
+    if (c.WaddleWindowStateActivated != proto.InteropStateActivated or c.WaddleWindowStateActivated != reducer.StateActivated)
+        @compileError("window-state Activated bit differs from the protocol");
+    if (c.WaddleWindowStateResizable != proto.InteropStateResizable or c.WaddleWindowStateResizable != reducer.StateResizable)
+        @compileError("window-state Resizable bit differs from the protocol");
+    if (c.WaddleWindowStateMaximizable != proto.InteropStateMaximizable or c.WaddleWindowStateMaximizable != reducer.StateMaximizable)
+        @compileError("window-state Maximizable bit differs from the protocol");
+    if (c.WaddleWindowStateMinimizable != proto.InteropStateMinimizable or c.WaddleWindowStateMinimizable != reducer.StateMinimizable)
+        @compileError("window-state Minimizable bit differs from the protocol");
+    if (c.WaddleWindowStateMask != proto.InteropStateMask or c.WaddleWindowStateMask != reducer.StateMask)
+        @compileError("window-state mask differs from the protocol");
+    if (c.WaddleWindowStateWindowMask != reducer.WindowStateMask or c.WaddleWindowStateCapabilityMask != reducer.CapabilityMask)
+        @compileError("window-state derived masks differ from the reducer");
+}
 
 comptime {
     if (@sizeOf(usize) != 8) @compileError("window-state ABI requires a 64-bit target");
