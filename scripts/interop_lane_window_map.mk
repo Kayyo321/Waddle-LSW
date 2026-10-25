@@ -37,3 +37,16 @@ interop-host-window-map-coverage: $(InteropWindowMapMarkers)
 InteropLaneTests += interop-host-window-map-test
 InteropLaneSanitizers += interop-host-window-map-test
 InteropLaneCoverage += interop-host-window-map-coverage
+
+# Host Wayland realization of interop windows (TODO #11b, #11d, #11e, #11f). The test includes the module
+# source; it links the Zig window table, positioner and codec objects. The xdg protocol headers and code are
+# the av.mk generated files.
+InteropWaylandWindowsFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer -Iinclude -Isrc/interop -Ibuild
+InteropWaylandWindowsObjects = build/host_window_map.o build/host_popup_positioner.o build/interop_codec.o
+build/host_wayland_windows_test: tests/interop/host_wayland_windows_test.c src/interop/host_wayland_windows.c src/interop/host_wayland_windows.h $(InteropWaylandWindowsObjects) | build
+	$(CC) $(InteropWaylandWindowsFlags) $(shell pkg-config --cflags wayland-client) tests/interop/host_wayland_windows_test.c $(InteropWaylandWindowsObjects) -fsanitize=address,leak,undefined $(shell pkg-config --libs wayland-client) -o $@
+.PHONY: interop-host-wayland-windows-test
+interop-host-wayland-windows-test: build/host_wayland_windows_test
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/host_wayland_windows_test
+InteropLaneTests += interop-host-wayland-windows-test
+InteropLaneSanitizers += interop-host-wayland-windows-test
