@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-window-state-test interop-keyboard-repeat-test interop-mimeapps-test interop-app-catalog-test interop-png-writer-test interop-pe-header-test interop-host-control-test interop-keyboard-scan-test interop-windows-session-unit-test interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
+interop-test: interop-icon-ownership-test interop-window-state-test interop-keyboard-repeat-test interop-mimeapps-test interop-app-catalog-test interop-png-writer-test interop-pe-header-test interop-host-control-test interop-keyboard-scan-test interop-windows-session-unit-test interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -20,7 +20,7 @@ interop-codec-test: build/interop_codec_abi_test
 	./build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
-interop-sanitizers: interop-window-state-test interop-keyboard-repeat-test interop-mimeapps-test interop-pe-header-test interop-manifest-store-test interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test
+interop-sanitizers: interop-icon-ownership-test interop-window-state-test interop-keyboard-repeat-test interop-mimeapps-test interop-pe-header-test interop-manifest-store-test interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-pe-header-abi-test interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test interop-control-peer-abi-test interop-linux-socket-test interop-linux-session-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o build/interop_layout_abi.o build/daemon_wire.o build/device_storage.o build/daemon_config.o build/path_rules.o
@@ -445,3 +445,11 @@ interop-keyboard-repeat-test:
 .PHONY: interop-window-state-test
 interop-window-state-test:
 	$(ZIG) test src/interop/window_state.zig -Iinclude -lc
+
+# Shared image allocator owner under real Linux memory/leak sanitizers.
+# Native Shell/GDI qualification remains in the Windows component workflow.
+build/interop_icon_ownership_sanitized_test: tests/interop/icon_windows_ownership.c src/interop/icon_windows.c src/interop/icon_windows.h | build
+	$(CC) $(CPPFLAGS) -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer -no-pie tests/interop/icon_windows_ownership.c src/interop/icon_windows.c -o $@
+.PHONY: interop-icon-ownership-test
+interop-icon-ownership-test: build/interop_icon_ownership_sanitized_test
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/interop_icon_ownership_sanitized_test

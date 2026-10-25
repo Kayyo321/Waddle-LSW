@@ -3820,3 +3820,14 @@ The largest grammar path has five ordered actions. The #13 allocation is
 portable reducer50%, native adapter25%, wire/compositor15%, integrated native10%.
 This module earns only portable50% after root tests and whole-module90% gates;
 it makes no claim that a real Windows/Wayland adapter executes those plans.
+
+### Native icon extraction acceptance — 2026-10-25
+
+Exact commit24cc612 passed real Windows fixture job121258778958 with98.11%of
+entire production lines and90.34%of taken arcs. Immutable compiler notes,
+genuine Windows gcda, JSON report, source/fixture hashes and logs are retained
+in icon_windows_evidence_2026_10_25. The shared C image owner is independently
+run with ASan/LSan(detect_leaks1)/UBSan on Linux; these results do not claim
+Windows GDI sanitizer execution. Native extraction earns the defined15%of#27;
+catalog enumeration, notifications, runtime composition and integrated native
+qualification remain separate unaccepted milestones.

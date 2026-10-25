@@ -1,0 +1,24 @@
+{
+  "commit": "24cc6128fad00d6657abf01f4b1c5aa34773cfec",
+  "workflow": 40222998901,
+  "windows_job": 121258778958,
+  "functional": "success; genuine owned GDI/Shell primary/fallback, asymmetry/alpha/mask and failure/retry fixtures",
+  "line": {
+    "covered": 570,
+    "total": 581
+  },
+  "taken_arcs": {
+    "covered": 449,
+    "total": 497
+  },
+  "source_sha256": "4b60ec039a9f98549f6c4cc0c1dab7908dde61e2a0340795f94564eef8a3b6f8",
+  "root_shared_owner_sanitizers": {
+    "command": "make interop-icon-ownership-test",
+    "exit_code": 0,
+    "asan": true,
+    "lsan_detect_leaks": 1,
+    "ubsan": true,
+    "test_sha256": "3f31a6e005d643fb2f9df36fdd3a0862543b6c3d7f962734eec579820aaf1ce6"
+  },
+  "boundary": "Native extraction15% only. Windows GDI is qualified by real API ownership/failure tests and gcov, not claimed to run under Linux sanitizers. Shared C allocator owner and portable PNG use real ASan/LSan/UBSan. Catalog enumeration/workflow still fail separate coverage gate; watches/runtime/integrated native qualification remain open."
+}
