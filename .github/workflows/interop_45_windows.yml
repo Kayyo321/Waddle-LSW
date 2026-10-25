@@ -1,0 +1,54 @@
+name: Seamless interop 45 percent Windows gates
+on:
+  push:
+    branches: [feat/seamless-45-percent]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    container:
+      image: debian:trixie-slim
+      options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+    steps:
+      - name: Install build toolchains
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential gcc-mingw-w64-x86-64 clang-19 llvm-19 python3 pkg-config libwayland-dev wayland-protocols
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Check out pinned driver ABI dependency
+        run: git submodule update --init --depth 1 submodules/looking_glass
+      - name: Install verified Zig
+        run: |
+          curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check
+          tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
+      - name: Cross-build the Windows executables added by the 45 percent milestone
+        run: make build/interop_window_state_adapter_native_test.exe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: interop-45-windows
+          path: build/*.exe
+          if-no-files-found: error
+  windows:
+    needs: linux
+    runs-on: windows-2022
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: interop-45-windows
+          path: build
+      - name: Execute the real Win32 window-state adapter smoke on the runner desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($test_name in @('interop_window_state_adapter_native_test.exe')) {
+            & ".\build\$test_name"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
