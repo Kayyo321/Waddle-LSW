@@ -175,10 +175,10 @@ extern int __real_epoll_create1(int flags);
 extern int __real_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
 extern int __real_epoll_wait(int epfd, struct epoll_event *events, int maximum, int timeout);
 
-enum fault_point {
+typedef enum fault_point_t {
     FaultSocket, FaultBind, FaultListen, FaultMkdir, FaultLstat, FaultUnlink, FaultSend, FaultRecv,
     FaultAccept, FaultGetsockopt, FaultEpollCreate, FaultEpollCtl, FaultEpollWait, FaultPoints
-};
+} fault_point_t;
 
 static int fault_calls[FaultPoints];
 static int fault_fail_at[FaultPoints];
@@ -187,7 +187,7 @@ static int scripted_count = -1;
 static struct epoll_event scripted_events[8];
 static int fake_peer_uid = -1;
 
-static void fault_arm(enum fault_point point, int nth, int error)
+static void fault_arm(fault_point_t point, int nth, int error)
 {
     fault_calls[point] = 0;
     fault_fail_at[point] = nth;
@@ -206,7 +206,7 @@ static void fault_reset(void)
 }
 
 /** @brief True exactly once, on the armed call of a fault point; sets errno for the caller. */
-static bool fault_fires(enum fault_point point)
+static bool fault_fires(fault_point_t point)
 {
     ++fault_calls[point];
     if (fault_fail_at[point] == 0 || fault_calls[point] != fault_fail_at[point]) return false;
@@ -1443,7 +1443,7 @@ static void test_init_path_length_and_names(void)
 static void test_ready_fault_paths(void)
 {
     static const struct {
-        enum fault_point point;
+        fault_point_t point;
         int nth;
         int error;
     } cases[] = {
