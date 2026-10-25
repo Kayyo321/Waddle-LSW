@@ -3685,3 +3685,16 @@ nonsecret two-file ISO reproduction records both views in the native install
 evidence. Earlier answer media is never rewritten; retry preparation creates
 new private credentials/media/disk/firmware/TPM. Desktop boot or successful media
 preparation is not native interop acceptance.
+
+### 8.35 Rooted absent-artifact transaction milestone (2026-10-25)
+
+[manifest_store_contract.md](manifest_store_contract.md) specifies descriptor,
+allocator, lock, no-follow path and exact file identity ownership for the schema1
+store. Only one absent allowlisted host artifact is supported per transaction;
+existing-target replacement and force/backup fail before mutation. Immutable
+staged identities bind both artifact and manifest; PREPARED recovery preflights
+both live states then reverses publication, while COMMITTED verifies/fyncs state
+before cleanup. Unknown, foreign or malformed state remains untouched with
+RecoveryRequired. Bounded journal and cleanup-marker recovery, syscall faults
+and allocation failures are qualified in manifest_store_evidence_2026_10_25.
+Replacement/backup/restore and command/producer integration remain separate.

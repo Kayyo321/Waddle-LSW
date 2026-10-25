@@ -1,0 +1,23 @@
+{
+  "attempt": "build/coverage/interop/manifest_store/run-20261025T164056663136Z-2",
+  "metrics": {
+    "branch": {
+      "covered": 912,
+      "total": 1013,
+      "percent": 90.02961500493583
+    },
+    "line": {
+      "covered": 860,
+      "total": 862,
+      "percent": 99.76798143851508
+    }
+  },
+  "public_api_smoke_tests": 1,
+  "embedded_tests": 43,
+  "compiler_panic_stack_guards_excluded": 165,
+  "inputs": {
+    "src/interop/manifest_store.zig": "9a2560d862b39eff86ce92b7c98c870d6db1dd74b3110ba09474a780294ac2e1",
+    "tests/interop/manifest_store.zig": "deae6ef0b3ddca786f634255164d94e8b72f4c7517df47f2832e8d68a06f22c6",
+    "tests/av/coverage.py": "8b4d1a5fcf97abf2b355280433c43722e9728752808e50134174d020bc05eb5f"
+  }
+}

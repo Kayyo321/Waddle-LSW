@@ -1,0 +1,608 @@
+[
+  {
+    "function": "validate_absolute_root",
+    "line": 1206,
+    "column": 13,
+    "edge": 1
+  },
+  {
+    "function": "write_all",
+    "line": 1353,
+    "column": 13,
+    "edge": 1
+  },
+  {
+    "function": "write_all",
+    "line": 1357,
+    "column": 13,
+    "edge": 1
+  },
+  {
+    "function": "native_error_code",
+    "line": 1336,
+    "column": 20,
+    "edge": 2
+  },
+  {
+    "function": "native_error_code",
+    "line": 1336,
+    "column": 20,
+    "edge": 3
+  },
+  {
+    "function": "native_error_code",
+    "line": 1336,
+    "column": 20,
+    "edge": 4
+  },
+  {
+    "function": "native_error_code",
+    "line": 1336,
+    "column": 20,
+    "edge": 5
+  },
+  {
+    "function": "read_all",
+    "line": 1367,
+    "column": 13,
+    "edge": 1
+  },
+  {
+    "function": "read_all",
+    "line": 1376,
+    "column": 31,
+    "edge": 0
+  },
+  {
+    "function": "validate_global_paths",
+    "line": 1115,
+    "column": 30,
+    "edge": 0
+  },
+  {
+    "function": "validate_global_paths",
+    "line": 1115,
+    "column": 30,
+    "edge": 1
+  },
+  {
+    "function": "validate_root_binding",
+    "line": 1217,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "remove_cleanup_dir",
+    "line": 1043,
+    "column": 76,
+    "edge": 0
+  },
+  {
+    "function": "remove_cleanup_dir",
+    "line": 1043,
+    "column": 90,
+    "edge": 0
+  },
+  {
+    "function": "io_fstatat",
+    "line": 118,
+    "column": 13,
+    "edge": 0
+  },
+  {
+    "function": "io_fstatat",
+    "line": 120,
+    "column": 27,
+    "edge": 0
+  },
+  {
+    "function": "read_tx_file",
+    "line": 817,
+    "column": 98,
+    "edge": 0
+  },
+  {
+    "function": "read_tx_file",
+    "line": 819,
+    "column": 66,
+    "edge": 1
+  },
+  {
+    "function": "parse_journal",
+    "line": 1090,
+    "column": 32,
+    "edge": 1
+  },
+  {
+    "function": "validate_journal_header",
+    "line": 1100,
+    "column": 67,
+    "edge": 1
+  },
+  {
+    "function": "valid_hash_text",
+    "line": 1269,
+    "column": 43,
+    "edge": 0
+  },
+  {
+    "function": "resolve_from_journal",
+    "line": 518,
+    "column": 37,
+    "edge": 0
+  },
+  {
+    "function": "resolve_from_journal",
+    "line": 519,
+    "column": 39,
+    "edge": 0
+  },
+  {
+    "function": "find_root",
+    "line": 727,
+    "column": 18,
+    "edge": 1
+  },
+  {
+    "function": "resolve_allowed",
+    "line": 714,
+    "column": 33,
+    "edge": 0
+  },
+  {
+    "function": "validate_delta",
+    "line": 1078,
+    "column": 38,
+    "edge": 1
+  },
+  {
+    "function": "validate_delta",
+    "line": 1083,
+    "column": 24,
+    "edge": 1
+  },
+  {
+    "function": "validate_journal_manifests",
+    "line": 546,
+    "column": 37,
+    "edge": 0
+  },
+  {
+    "function": "validate_journal_manifests",
+    "line": 547,
+    "column": 37,
+    "edge": 0
+  },
+  {
+    "function": "validate_journal_manifests",
+    "line": 557,
+    "column": 38,
+    "edge": 0
+  },
+  {
+    "function": "validate_journal_manifests",
+    "line": 558,
+    "column": 31,
+    "edge": 0
+  },
+  {
+    "function": "open_parent",
+    "line": 756,
+    "column": 30,
+    "edge": 0
+  },
+  {
+    "function": "inspect",
+    "line": 749,
+    "column": 39,
+    "edge": 0
+  },
+  {
+    "function": "inspect_manifest",
+    "line": 1012,
+    "column": 98,
+    "edge": 0
+  },
+  {
+    "function": "validate_optional_temp",
+    "line": 1000,
+    "column": 54,
+    "edge": 0
+  },
+  {
+    "function": "validate_optional_temp",
+    "line": 1000,
+    "column": 106,
+    "edge": 0
+  },
+  {
+    "function": "same_file_info",
+    "line": 1310,
+    "column": 49,
+    "edge": 0
+  },
+  {
+    "function": "same_file_info",
+    "line": 1310,
+    "column": 71,
+    "edge": 0
+  },
+  {
+    "function": "unlink_owned_artifact",
+    "line": 921,
+    "column": 28,
+    "edge": 0
+  },
+  {
+    "function": "unlink_owned_artifact",
+    "line": 929,
+    "column": 54,
+    "edge": 0
+  },
+  {
+    "function": "unlink_named_if_matches",
+    "line": 1186,
+    "column": 35,
+    "edge": 0
+  },
+  {
+    "function": "unlink_named_if_matches",
+    "line": 1187,
+    "column": 50,
+    "edge": 0
+  },
+  {
+    "function": "unlink_named_if_matches",
+    "line": 1193,
+    "column": 106,
+    "edge": 1
+  },
+  {
+    "function": "unlink_named_if_matches",
+    "line": 1194,
+    "column": 54,
+    "edge": 0
+  },
+  {
+    "function": "unlink_named_if_matches",
+    "line": 1194,
+    "column": 110,
+    "edge": 0
+  },
+  {
+    "function": "unlink_named_if_matches",
+    "line": 1195,
+    "column": 63,
+    "edge": 0
+  },
+  {
+    "function": "unlink_named_if_matches",
+    "line": 1202,
+    "column": 55,
+    "edge": 0
+  },
+  {
+    "function": "unlink_named_if_matches",
+    "line": 1202,
+    "column": 112,
+    "edge": 0
+  },
+  {
+    "function": "verify_named_file",
+    "line": 983,
+    "column": 54,
+    "edge": 0
+  },
+  {
+    "function": "verify_named_file",
+    "line": 984,
+    "column": 84,
+    "edge": 0
+  },
+  {
+    "function": "publish_manifest",
+    "line": 963,
+    "column": 54,
+    "edge": 0
+  },
+  {
+    "function": "publish_manifest",
+    "line": 964,
+    "column": 13,
+    "edge": 1
+  },
+  {
+    "function": "publish_manifest",
+    "line": 966,
+    "column": 28,
+    "edge": 0
+  },
+  {
+    "function": "unlink_owned_manifest",
+    "line": 936,
+    "column": 28,
+    "edge": 0
+  },
+  {
+    "function": "unlink_owned_manifest",
+    "line": 939,
+    "column": 54,
+    "edge": 0
+  },
+  {
+    "function": "apply_committed",
+    "line": 662,
+    "column": 36,
+    "edge": 0
+  },
+  {
+    "function": "apply_committed",
+    "line": 676,
+    "column": 44,
+    "edge": 0
+  },
+  {
+    "function": "remove_tx_tree",
+    "line": 1026,
+    "column": 65,
+    "edge": 1
+  },
+  {
+    "function": "recover_locked",
+    "line": 481,
+    "column": 29,
+    "edge": 0
+  },
+  {
+    "function": "cleanup_txid",
+    "line": 1262,
+    "column": 59,
+    "edge": 0
+  },
+  {
+    "function": "recover_locked",
+    "line": 490,
+    "column": 52,
+    "edge": 2
+  },
+  {
+    "function": "recover_locked",
+    "line": 490,
+    "column": 52,
+    "edge": 3
+  },
+  {
+    "function": "rollback_prepared",
+    "line": 612,
+    "column": 20,
+    "edge": 0
+  },
+  {
+    "function": "rollback_prepared",
+    "line": 619,
+    "column": 32,
+    "edge": 0
+  },
+  {
+    "function": "rollback_prepared",
+    "line": 624,
+    "column": 31,
+    "edge": 0
+  },
+  {
+    "function": "rollback_prepared",
+    "line": 626,
+    "column": 36,
+    "edge": 0
+  },
+  {
+    "function": "rollback_prepared",
+    "line": 640,
+    "column": 13,
+    "edge": 1
+  },
+  {
+    "function": "rollback_prepared",
+    "line": 641,
+    "column": 33,
+    "edge": 0
+  },
+  {
+    "function": "rollback_prepared",
+    "line": 646,
+    "column": 60,
+    "edge": 0
+  },
+  {
+    "function": "rollback_prepared",
+    "line": 647,
+    "column": 42,
+    "edge": 0
+  },
+  {
+    "function": "init",
+    "line": 288,
+    "column": 39,
+    "edge": 0
+  },
+  {
+    "function": "init",
+    "line": 291,
+    "column": 61,
+    "edge": 0
+  },
+  {
+    "function": "init",
+    "line": 291,
+    "column": 61,
+    "edge": 1
+  },
+  {
+    "function": "init",
+    "line": 281,
+    "column": 23,
+    "edge": 0
+  },
+  {
+    "function": "init",
+    "line": 296,
+    "column": 49,
+    "edge": 0
+  },
+  {
+    "function": "init",
+    "line": 312,
+    "column": 69,
+    "edge": 1
+  },
+  {
+    "function": "read_manifest",
+    "line": 861,
+    "column": 65,
+    "edge": 1
+  },
+  {
+    "function": "read_manifest",
+    "line": 861,
+    "column": 98,
+    "edge": 0
+  },
+  {
+    "function": "write_journal",
+    "line": 828,
+    "column": 18,
+    "edge": 1
+  },
+  {
+    "function": "publish_file",
+    "line": 948,
+    "column": 13,
+    "edge": 0
+  },
+  {
+    "function": "publish_file",
+    "line": 952,
+    "column": 36,
+    "edge": 1
+  },
+  {
+    "function": "apply_prepared",
+    "line": 581,
+    "column": 46,
+    "edge": 0
+  },
+  {
+    "function": "apply_prepared",
+    "line": 582,
+    "column": 37,
+    "edge": 0
+  },
+  {
+    "function": "apply_prepared",
+    "line": 596,
+    "column": 24,
+    "edge": 0
+  },
+  {
+    "function": "apply_prepared",
+    "line": 592,
+    "column": 33,
+    "edge": 0
+  },
+  {
+    "function": "apply_prepared",
+    "line": 593,
+    "column": 32,
+    "edge": 1
+  },
+  {
+    "function": "publish_phase",
+    "line": 840,
+    "column": 18,
+    "edge": 1
+  },
+  {
+    "function": "commit",
+    "line": 363,
+    "column": 29,
+    "edge": 0
+  },
+  {
+    "function": "commit",
+    "line": 368,
+    "column": 34,
+    "edge": 0
+  },
+  {
+    "function": "commit",
+    "line": 380,
+    "column": 48,
+    "edge": 0
+  },
+  {
+    "function": "commit",
+    "line": 382,
+    "column": 38,
+    "edge": 0
+  },
+  {
+    "function": "commit",
+    "line": 386,
+    "column": 42,
+    "edge": 0
+  },
+  {
+    "function": "commit",
+    "line": 388,
+    "column": 28,
+    "edge": 1
+  },
+  {
+    "function": "commit",
+    "line": 389,
+    "column": 80,
+    "edge": 0
+  },
+  {
+    "function": "commit",
+    "line": 392,
+    "column": 31,
+    "edge": 0
+  },
+  {
+    "function": "commit",
+    "line": 394,
+    "column": 45,
+    "edge": 0
+  },
+  {
+    "function": "commit",
+    "line": 399,
+    "column": 17,
+    "edge": 1
+  },
+  {
+    "function": "commit",
+    "line": 417,
+    "column": 57,
+    "edge": 0
+  },
+  {
+    "function": "same_prior",
+    "line": 1128,
+    "column": 52,
+    "edge": 0
+  },
+  {
+    "function": "write_test_file",
+    "line": 3250,
+    "column": 9,
+    "edge": 1
+  },
+  {
+    "function": "write_test_file",
+    "line": 3252,
+    "column": 18,
+    "edge": 0
+  }
+]

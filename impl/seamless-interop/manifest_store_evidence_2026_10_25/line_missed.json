@@ -1,0 +1,14 @@
+[
+  {
+    "function": "take_io_fault",
+    "line": 85,
+    "column": 0,
+    "edge": 0
+  },
+  {
+    "function": "publish_manifest",
+    "line": 965,
+    "column": 0,
+    "edge": 0
+  }
+]

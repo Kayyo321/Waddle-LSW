@@ -60,10 +60,10 @@ acceptance remain pending.
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
 | #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | Pending | 2% | 0% | Waits on #29 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
 | #32 | binfmt_misc system artifacts, `install --system`, status/conflict reporting | Pending | 1% | 0% | Waits on #31 |
-| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
+| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 40% | Schema15%, absent-add journal/recovery15% and rooted absent artifact API10% accepted. Replacement/backup/restore, commands/producers and full-removal qualification remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `19.80%`
+**Total Feature Completion**: `20.55%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -78,7 +78,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; portable observer15%; native adapter15%. O5 preservation qualified by89ff058 local coverage/sanitizers and exact Windows native smoke/failure guards at d77dcb3, CI40144415938; installed-session15% accepted by the hash-bound fresh Windows guest run; coordinator20% remains open |
-| #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
+| #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec15%; absent-add journal15%/30% and rooted absent API10%/20%, root-reviewed43 tests,90.03% taken arcs/99.77% lines. Replacement journal15% and replacement/backup API10% remain open |
 
 Execution resumed at the user's request from checkpoint4079560. Current
 exclusive Luna/high work orders and phase allocation are recorded in
@@ -1335,9 +1335,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     ordering, title, quarantine and generation fixture passes. This isolated
     native CI evidence does not qualify installed agent or complete acceptance.
 
-- **Commit `HEAD`**: `test(interop): qualify observer in isolated installed Windows session`
+- **Commit `5cbf968`**: `test(interop): qualify observer in isolated installed Windows session`
   - **Task Impact**: +15% to TODO #10 (+0.60% overall; total19.80%).
   - **Summary**: Actual new Windows guest-exec over VSOCK runs 28 graph ABI
     cases, real and foreign-process observer fixtures and the corrected native
     socket fixture, all exit0. Retain hash-bound outputs and clean ACPI/reap
     receipts. No capture/coordinator, native interop driver or #34 credit.
+
+- **Commit `HEAD`**: `feat(interop): journal rooted absent artifact publication and recovery`
+  - **Task Impact**: +25% to TODO #33 (+0.75% overall; total20.55%).
+  - **Summary**: Accept absent-add journal15% and ownership API10% with strict
+    root binding, staged inode/hash proofs, no-clobber publication, reverse
+    PREPARED rollback, COMMITTED cleanup, retained conflicts and bounded fault/
+    OOM tests. Root43 tests,99.77% lines/90.03% taken arcs and public smoke pass.
+    CI runs the suite and coverage. Replacement/backup/restore remain open.
