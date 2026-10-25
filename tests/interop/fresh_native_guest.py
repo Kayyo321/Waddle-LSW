@@ -594,7 +594,9 @@ def prepare_fresh_guest(config: fresh_guest_config_t = fresh_guest_config_t(), *
         os.chmod(disk_path, 0o600)
         answer_iso = run_root / "answer.iso"
         xorriso = validated["tools"]["xorriso"]
-        _run_command([xorriso, "-as", "mkisofs", "-iso-level", "3", "-V", "WADDLEANS",
+        # Windows ignores Rock Ridge names. Joliet preserves the hyphens in
+        # bootstrap/binary paths instead of ISO9660 underscore substitution.
+        _run_command([xorriso, "-as", "mkisofs", "-iso-level", "3", "-J", "-V", "WADDLEANS",
                       "-o", str(answer_iso), str(stage)],
                      timeout=config.preparation_timeout_seconds,
                      log_path=run_root / "xorriso.log", run=run)

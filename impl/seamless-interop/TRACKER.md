@@ -1297,7 +1297,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     ASan/LSan/UBSan pass. Native SDK build/link pass; Windows CI loopback run is
     now wired separately. No VSOCK/installed-session or guest runtime credit.
 
-- **Commit `HEAD`**: `test(interop): exercise real foreign window graph lifecycle on Windows`
+- **Commit `48555db`**: `test(interop): exercise real foreign window graph lifecycle on Windows`
   - **Task Impact**: +0% to TODO #10/#34; actual Windows execution pending.
   - **Summary**: Add an exact child-process/real observer/real graph native
     fixture for parent-before-dialog admission, foreign title update, hide
@@ -1305,3 +1305,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     creates capture/pins or invents external release proof. Zig SDK link and
     MinGW strict compile pass; Windows CI executes it. New isolated guest now
     reaches desktop and stops cleanly; guest-exec is still unreachable.
+
+- **Commit `HEAD`**: `fix(interop): preserve Windows bootstrap names on private ISO`
+  - **Task Impact**: +0% to TODO #34; execution/native acceptance still open.
+  - **Summary**: Real specialize command returned31 before finding its script.
+    A separate nonsecret ISO probe reproduces ISO9660 hyphen-to-underscore
+    renaming; Joliet preserves exact script/executable paths for Windows.
+    Add -J to new media and require it in all16 preparation tests. Existing
+    private answer media and secrets were not inspected or rewritten.

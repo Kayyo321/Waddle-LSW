@@ -3673,3 +3673,15 @@ the unmodified native observer; it verifies title, hide, retirement and new
 generation behavior. It creates no capture or pin users, so completion of its
 local empty-resource retirements cannot imply production detach. Both Windows
 SDK toolchains compile it; actual Windows execution is a separate gate.
+
+### 8.34 Windows-visible private media filenames (2026-10-25)
+
+Private preparation invokes xorriso mkisofs compatibility with -iso-level3 -J.
+Joliet is mandatory because Windows ignores Rock Ridge names; primary ISO9660
+records substitute underscores for hyphens in waddle-guest-setup.ps1 and
+waddle-guest-exec.exe. The239-character specialize bootstrap and staged script
+use exact hyphenated names. The preparation fixture asserts -J; an independent
+nonsecret two-file ISO reproduction records both views in the native install
+evidence. Earlier answer media is never rewritten; retry preparation creates
+new private credentials/media/disk/firmware/TPM. Desktop boot or successful media
+preparation is not native interop acceptance.

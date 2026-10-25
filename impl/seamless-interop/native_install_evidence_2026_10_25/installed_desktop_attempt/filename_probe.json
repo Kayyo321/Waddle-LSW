@@ -1,0 +1,11 @@
+{
+  "inputs": "nonsecret temporary fixture files only; no answer medium inspected",
+  "bootstrap_source_name": "waddle-guest-setup.ps1",
+  "binary_source_name": "waddle-guest-exec.exe",
+  "plain_iso9660_windows_visible": ["WADDLE_GUEST_EXEC.EXE", "WADDLE_GUEST_SETUP.PS1"],
+  "joliet_windows_visible": ["waddle-guest-exec.exe", "waddle-guest-setup.ps1"],
+  "probe_command": "xorriso -read_fs norock -indev NONSECRET_FIXTURE_ISO -ls /",
+  "actual_specialize_exit_code": 31,
+  "actual_bootstrap_log_present": false,
+  "native_acceptance_credit": false
+}

@@ -100,6 +100,7 @@ class fresh_native_guest_tests_t(unittest.TestCase):
                 if fail_tool == "qemu-img":
                     return SimpleNamespace(returncode=12, stdout=b"private disk creation failed")
             else:
+                self.assertIn("-J", argv)
                 output = Path(argv[argv.index("-o") + 1])
                 if fail_tool == "xorriso":
                     return SimpleNamespace(returncode=4, stdout=b"ISO generation failure")
