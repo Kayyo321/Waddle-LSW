@@ -1236,9 +1236,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     now use the real validator result keys rather than inventing a path key;
     all16 preparation units pass. No guest boot or native acceptance claimed.
 
-- **Commit `HEAD`**: `feat(interop): decode bounded daemon status for session admission`
+- **Commit `8517da8`**: `feat(interop): decode bounded daemon status for session admission`
   - **Task Impact**: +0% to TODO #7; runtime entry remains separate.
   - **Summary**: Add exact little-endian status validation through Zig before
     host admission can consume daemon state. Five Zig cases and independent
     C ABI consumer pass, including leak-enabled ASan/LSan/UBSan. Exact58/58
     production lines and36/36 metadata branches pass the existing coverage gate.
+
+- **Commit `HEAD`**: `test(interop): supervise fresh native installation with bounded ownership`
+  - **Task Impact**: +0% to TODO #34; test tooling and new guest preparation.
+  - **Summary**: Reviewed supervisor enforces exact child/fd ownership, bounded
+    QMP/startup/shutdown, poisoned-stream reconnect, independent cleanup and
+    private evidence. Sixteen supervisor and16 preparation tests pass and
+    join CI hardware-free gates. Actual repaired preparation succeeds with
+    CID52943 in a new private run; native acceptance remains unclaimed.

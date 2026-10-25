@@ -3575,3 +3575,22 @@ mounts, malformed lengths and output preservation, plus an independent C ABI
 consumer under ASan/LSan/UBSan. Current production metadata coverage58/58lines
 and36/36branches (existing compiler guard exclusions only). The parser alone
 earns no session-entry credit.
+
+### 8.28 Fresh native test supervisor (2026-10-25)
+
+The test-only install supervisor follows
+[fresh_native_install_contract.md](fresh_native_install_contract.md). Root
+review accepted exact child/log/fd ownership, finite30-minute installation
+observation plus fixed cleanup allowances, QMP greeting/ID/absolute deadline
+and event bounds, swtpm readiness before QEMU, ordinary UID/KVM, source
+vhost-vsock descriptor preservation and a borrowed stop-pipe. Failed QMP
+transactions poison the stream and cleanup reconnects before ACPI. Every
+child receives its own bounded cleanup attempt even after sibling errors.
+No process names/groups are signalled. The source test suites16+16 are
+hardware-free and part of interop-test. Test-run creation/launch is authorized
+by the user's existing native test-device instruction; all generated secrets
+stay inside the new private run. No preserved VM data or legacy secrets are
+consumed. Preparation succeeded at fresh-0ef763355e3b44cbac3c0fa3414f95fa
+with CID52943, private files0600 and directory0700. Preparation is not boot,
+listener, interop, or installed-session acceptance. The live run must retain
+its own exact result; no tracker credit is assigned to this test tooling.

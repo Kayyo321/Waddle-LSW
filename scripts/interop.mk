@@ -272,3 +272,5 @@ interop-linux-session-test: build/interop_linux_session_owner_test
 .PHONY: interop-native-runner-test
 interop-native-runner-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/interop -p native_guest_runner_test.py
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/interop -p fresh_native_guest_test.py
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/interop -p fresh_native_install_test.py
