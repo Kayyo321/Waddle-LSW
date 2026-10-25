@@ -42,10 +42,9 @@ pub const window_ref_t = extern struct {
 pub const window_entry_t = extern struct {
     /// Realized identity.
     window: window_ref_t,
-    /// Requested parent identity, or none. Retire cascades follow this field.
+    /// Requested direct parent, or none. A popup of a popup names the popup; retire cascades and
+    /// positioning both follow this field.
     parent: window_ref_t,
-    /// Popup only: positioning root, a non-popup window. None for every other role.
-    root: window_ref_t,
     /// Raw `interop_window_role_t` value, 1..6.
     role: u8,
 };
@@ -196,23 +195,9 @@ pub fn announce(map: *host_window_map_t, window: window_ref_t, parent: window_re
     }
     if (realized_len(map) == MaxRealized) return .RefuseExhausted;
 
-    append_realized(map, window, parent, role);
-    return .Realize;
-}
-
-/// Append a realized entry. A popup's parent is realized by the caller's check.
-fn append_realized(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) void {
-    const root = if (is_popup_role(role)) popup_root(map, parent) else window_ref_t{ .window = 0, .generation = 0 };
-    map.realized[realized_len(map)] = .{ .window = window, .parent = parent, .root = root, .role = role };
+    map.realized[realized_len(map)] = .{ .window = window, .parent = parent, .role = role };
     map.realized_count += 1;
-}
-
-/// Positioning root of a popup whose parent is realized: a popup parent contributes its own root,
-/// any other parent is its own root.
-fn popup_root(map: *const host_window_map_t, parent: window_ref_t) window_ref_t {
-    const index = find_realized(map, parent.window) orelse unreachable;
-    const entry = map.realized[index];
-    return if (is_popup_role(entry.role)) entry.root else entry.window;
+    return .Realize;
 }
 
 /// Remove a realized window and its realized subtree.
@@ -369,8 +354,8 @@ export fn host_window_map_realized_count(map: ?*const host_window_map_t) callcon
 
 comptime {
     // Layout frozen by src/interop/host_window_map.h (and checked there by _Static_assert).
-    if (@sizeOf(window_ref_t) != 16 or @sizeOf(window_entry_t) != 56) @compileError("host window map entry layout changed");
-    if (@sizeOf(host_window_map_t) != 3592) @compileError("host window map table layout changed");
+    if (@sizeOf(window_ref_t) != 16 or @sizeOf(window_entry_t) != 40) @compileError("host window map entry layout changed");
+    if (@sizeOf(host_window_map_t) != 2568) @compileError("host window map table layout changed");
 }
 
 // Test-only fixtures.
@@ -440,14 +425,13 @@ test "reset produces an empty table and zero-filled storage is the same state" {
     try testing.expectEqual(@as(u32, 0), realized_count(&zeroed));
 }
 
-test "announce toplevel realizes and records a rootless entry" {
+test "announce toplevel realizes and records the none parent" {
     var map = new_map();
     try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(10, 1), none(), RoleToplevel));
     try testing.expect(is_current(&map, ref(10, 1)));
     const entry = lookup(&map, ref(10, 1)).?;
     try testing.expectEqual(RoleToplevel, entry.role);
     try expect_ref(none(), entry.parent);
-    try expect_ref(none(), entry.root);
 }
 
 test "every announce refusal reports its status and changes nothing" {
@@ -515,39 +499,38 @@ test "dialog without a parent and uac consent are realized without a parent" {
     try testing.expectEqual(RoleUacConsent, lookup(&map, ref(2, 1)).?.role);
 }
 
-test "a dialog keeps its parent and its own root stays none" {
+test "a dialog keeps its parent" {
     var map = new_map();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(2, 1), ref(1, 1), RoleDialog));
     const dialog = lookup(&map, ref(2, 1)).?;
     try expect_ref(ref(1, 1), dialog.parent);
-    try expect_ref(none(), dialog.root);
     try testing.expectEqual(RoleDialog, dialog.role);
 }
 
-test "popup of a toplevel and of a dialog records that window as its root" {
+test "a popup keeps its direct parent whether that parent is a toplevel, a dialog or a popup" {
     var map = new_map();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
     try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(3, 1), ref(1, 1), RoleMenu));
-    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.root);
+    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.parent);
     try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(4, 1), ref(2, 1), RoleTooltip));
-    try expect_ref(ref(2, 1), lookup(&map, ref(4, 1)).?.root);
+    try expect_ref(ref(2, 1), lookup(&map, ref(4, 1)).?.parent);
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(5, 1), ref(4, 1), RoleImePreedit));
+    try expect_ref(ref(4, 1), lookup(&map, ref(5, 1)).?.parent);
 }
 
-test "popup of a popup is re-parented to the root while keeping the requested parent" {
+test "a nested popup keeps its direct parent and retire cascades through the chain" {
     var map = new_map();
     var out = new_out();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
     _ = announce(&map, ref(3, 1), ref(2, 1), RoleTooltip);
     _ = announce(&map, ref(4, 1), ref(3, 1), RoleImePreedit);
-    const grandchild = lookup(&map, ref(4, 1)).?;
-    try expect_ref(ref(3, 1), grandchild.parent);
-    try expect_ref(ref(1, 1), grandchild.root);
-    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.root);
+    try expect_ref(ref(3, 1), lookup(&map, ref(4, 1)).?.parent);
+    try expect_ref(ref(2, 1), lookup(&map, ref(3, 1)).?.parent);
 
-    // The cascade follows the requested parent chain, so the whole popup chain goes with its root.
+    // Retire follows the direct parent chain, so the whole popup chain goes with the toplevel.
     const result = retire(&map, ref(1, 1), &out);
     try testing.expectEqual(@as(u32, 4), result.count);
     try expect_ref(ref(4, 1), out[0]);
@@ -645,13 +628,6 @@ const reference_model_t = struct {
         return null;
     }
 
-    fn model_root(self: *const reference_model_t, parent: window_ref_t, role: u8) window_ref_t {
-        if (!is_popup_role(role)) return none();
-        const index = self.model_find(parent.window).?;
-        const entry = self.realized.items[index];
-        return if (is_popup_role(entry.role)) entry.root else entry.window;
-    }
-
     fn model_announce(self: *reference_model_t, window: window_ref_t, parent: window_ref_t, role: u8) !announce_status_t {
         if (window.window == 0 or window.generation == 0) return .RefuseInvalid;
         if ((parent.window == 0) != (parent.generation == 0)) return .RefuseInvalid;
@@ -668,7 +644,7 @@ const reference_model_t = struct {
             if (self.realized.items[index].window.generation != parent.generation) return .RefuseStaleParent;
         }
         if (self.realized.items.len >= MaxRealized) return .RefuseExhausted;
-        try self.realized.append(.{ .window = window, .parent = parent, .root = self.model_root(parent, role), .role = role });
+        try self.realized.append(.{ .window = window, .parent = parent, .role = role });
         return .Realize;
     }
 
@@ -702,7 +678,6 @@ fn expect_same_state(map: *const host_window_map_t, model: *const reference_mode
     for (model.realized.items, 0..) |entry, index| {
         try expect_ref(entry.window, map.realized[index].window);
         try expect_ref(entry.parent, map.realized[index].parent);
-        try expect_ref(entry.root, map.realized[index].root);
         try testing.expectEqual(entry.role, map.realized[index].role);
     }
 }
@@ -809,7 +784,7 @@ test "C ABI lookup returns a copy and a presence test needs no output" {
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
     var entry: window_entry_t = undefined;
     try testing.expect(abi_shim_t.lookup(&map, ref(2, 1), &entry));
-    try expect_ref(ref(1, 1), entry.root);
+    try expect_ref(ref(1, 1), entry.parent);
     try testing.expect(abi_shim_t.lookup(&map, ref(1, 1), null));
     try testing.expect(!abi_shim_t.lookup(&map, ref(1, 2), &entry));
     try testing.expect(abi_shim_t.is_current(&map, ref(2, 1)));

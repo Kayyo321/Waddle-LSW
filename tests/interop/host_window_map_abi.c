@@ -35,8 +35,8 @@ static int same(host_window_ref_t left, host_window_ref_t right) {
 
 static int check_layout(void) {
     Check(sizeof(host_window_ref_t) == 16);
-    Check(sizeof(host_window_entry_t) == 56);
-    Check(sizeof(host_window_map_t) == 3592);
+    Check(sizeof(host_window_entry_t) == 40);
+    Check(sizeof(host_window_map_t) == 2568);
     Check(HostWindowMapMaxRealized == 64);
     Check(HostWindowMapMaxOutput == 64);
     Check(HostWindowMapRoleImePreedit == 6);
@@ -87,7 +87,6 @@ static int check_popups_and_lookup(host_window_map_t *map) {
 
     Check(host_window_map_lookup(map, ref(32, 1), &entry));
     Check(same(entry.parent, ref(31, 1)));
-    Check(same(entry.root, ref(20, 1)));
     Check(entry.role == HostWindowMapRoleImePreedit);
     Check(host_window_map_lookup(map, ref(20, 1), NULL));
     Check(!host_window_map_lookup(map, ref(20, 2), &entry));

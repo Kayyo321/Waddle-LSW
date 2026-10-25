@@ -47,8 +47,7 @@ typedef struct host_window_ref_t {
 /** @brief One realized window; copied out by `host_window_map_lookup`. */
 typedef struct host_window_entry_t {
     host_window_ref_t window; /**< Realized identity. */
-    host_window_ref_t parent; /**< Requested parent, or none. Retire cascades follow this field. */
-    host_window_ref_t root; /**< Popup only: positioning root (non-popup window). None for other roles. */
+    host_window_ref_t parent; /**< Requested direct parent, or none. A nested popup names its popup parent. Retire and positioning follow this field. */
     uint8_t role; /**< Raw `interop_window_role_t` value, 1..6. */
 } host_window_entry_t;
 
@@ -148,7 +147,7 @@ uint32_t host_window_map_realized_count(const host_window_map_t *map);
 
 /* Layout frozen with the Zig extern structs; a change in either breaks the build. */
 _Static_assert(sizeof(host_window_ref_t) == 16, "host_window_ref_t layout");
-_Static_assert(sizeof(host_window_entry_t) == 56, "host_window_entry_t layout");
-_Static_assert(sizeof(host_window_map_t) == 3592, "host_window_map_t layout");
+_Static_assert(sizeof(host_window_entry_t) == 40, "host_window_entry_t layout");
+_Static_assert(sizeof(host_window_map_t) == 2568, "host_window_map_t layout");
 
 #endif
