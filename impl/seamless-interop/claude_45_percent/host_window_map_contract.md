@@ -1,8 +1,9 @@
 # Host Window Map Contract
 
-Owner: TODO #11 subtask 11a. Implements the bounded mapping table of
-`impl/seamless-interop/IMPL_DESC.md` section 8.44 ("Mapping table"), with the
-role rules of section 3.2.4 and the identity rules of section 3.2.8.
+Owner: TODO #11 subtask 11a. Implements the mapping table of
+`impl/seamless-interop/IMPL_DESC.md` section 8.44 as amended (merged from
+`feat/seamless-45-percent`), with the role rules of section 3.2.4 and the identity
+rules of section 3.2.8.
 
 Files: `src/interop/host_window_map.zig` (pure module and C ABI exports),
 `src/interop/host_window_map.h` (C header), `tests/interop/host_window_map_abi.c`
@@ -10,57 +11,64 @@ Files: `src/interop/host_window_map.zig` (pure module and C ABI exports),
 
 ## Scope
 
-In scope: a fixed-size table of realized `(window, generation)` identities and
-deferred children, the ordered output the caller must act on, the parent
-retire cascade, popup re-parenting to the root toplevel, and epoch reset.
+In scope: a fixed-size table of realized `(window, generation)` identities, the
+decision whether one announced identity may be realized, the retire cascade of
+realized children, popup re-parenting to the root toplevel, and epoch reset.
 
 Out of scope: every Wayland call, every native `HWND` query, the `WindowAnnounce`
-codec (`interop_codec.zig`), wire ordering, and the 250 ms guest refresh. The
-table never performs an action. It tells the caller which pairs to realize or
-retire, in order. Creating `wl_surface`, `xdg_toplevel`, `xdg_popup`, decorations
-and app ids is task 11b/11d/11e/11f and remains open.
+codec, wire ordering, and the guest's own deferral of announcements. The table
+performs no action. It returns a status, and the caller creates or destroys the
+native objects. Creating `wl_surface`, `xdg_toplevel`, `xdg_popup`, decorations
+and app ids is tasks 11b, 11d, 11e and 11f and remains open.
 
 ## Limits
 
 | Name | Value | Meaning |
 |---|---|---|
 | `MaxRealized` | 64 | Realized windows per session epoch. |
-| `MaxDeferred` | 64 | Deferred children per session epoch. |
-| `MaxOutput` | 64 | Minimum caller output capacity for `announce` and `retire`. |
+| `MaxOutput` | 64 | Minimum output capacity for `retire`. |
 
-Realized windows, including windows produced by unblocking, count against the 64
-realized entries. Deferred children count against the 64 deferred entries and
-nothing else. A realize operation never leaves the realized table above 64.
+## No deferred state
+
+Section 8.44 (amended) realizes a child only when its exact parent pair is
+realized, and refuses it as a stale parent otherwise. The table therefore keeps
+no deferred queue. A deferred entry is created only when its parent pair is
+already deferred, and the first deferred entry ever would need such a parent.
+Starting from an empty table, no entry can ever be deferred, so a queue would
+never hold anything. The discard rule could never fire either.
+
+The guest handles the ordering problem itself. IMPL_DESC section 3.2.8 requires
+the guest to defer an announcement until its parent is announced and exported,
+and to retry on the 250 ms refresh. A child that reaches the host before its
+parent is therefore a protocol violation or a race that the guest resolves by
+resending, not a state the host must hold.
 
 ## Identity and types
 
-`window_ref_t` is `{ window: u64, generation: u64 }` (protocol `window` and
-`generation` are `u64`). A reference is **valid** when both fields are nonzero.
+`window_ref_t` is `{ window: u64, generation: u64 }`. Protocol `window` and
+`generation` are `u64`. A reference is **valid** when both fields are nonzero.
 A **parent** reference is **none** when both fields are zero. A parent that is
 neither none nor valid is invalid.
 
-`window_entry_t` (realized, stored in realization order):
+`window_entry_t` (stored in realization order):
 
 | Field | Meaning |
 |---|---|
 | `window` | Realized identity. |
-| `parent` | Requested parent identity, or none. Used for every cascade. |
+| `parent` | Requested parent identity, or none. Retire cascades follow this field. |
 | `root` | Popup only: the positioning root (see Popup re-parenting). None for every other role. |
 | `role` | Raw `interop_window_role_t` value, 1..6. |
 
-`deferred_entry_t` (deferred, stored in deferral order): `window`, `parent`, `role`.
-
-`host_window_map_t` is an `extern struct` with `realized_count: u32`,
-`deferred_count: u32`, `realized: [64]window_entry_t`, `deferred: [64]deferred_entry_t`.
-The caller owns the storage (about 6 KiB). The table holds no pointers and no
-allocator memory.
+`host_window_map_t` is an `extern struct` with `realized_count: u32` and
+`realized: [64]window_entry_t`. Its size is 3592 bytes. The caller owns the
+storage, and the table holds no pointers and no allocator memory.
 
 ## Role rules
 
 | Role | Value | Parent rule | Result |
 |---|---|---|---|
 | Toplevel | 1 | parent must be none | realized, not a popup |
-| Dialog | 2 | parent may be none or valid | realized, not a popup; caller uses `lookup` on the parent to decide `set_parent` |
+| Dialog | 2 | parent may be none or valid | realized, not a popup; the caller uses `lookup` on the parent to decide `set_parent` |
 | Menu | 3 | parent must be valid | popup |
 | Tooltip | 4 | parent must be valid | popup |
 | UacConsent | 5 | parent must be none | realized, not a popup |
@@ -68,52 +76,32 @@ allocator memory.
 | 0, 7..255 | | | `RefuseInvalid` |
 
 A **popup** is Menu, Tooltip or ImePreedit. A popup whose parent is none is
-`RefuseInvalid`. Dialog with a none parent is realized without a parent. Toplevel
-or UacConsent with a valid parent is `RefuseInvalid`.
+`RefuseInvalid`. A Toplevel or UacConsent with a valid parent is `RefuseInvalid`.
 
 ## Announce
 
-`announce(map, window, parent, role, out)` returns `announce_result_t
-{ status, count }`. Checks run in this exact order, and the first match wins:
+`announce(map, window, parent, role)` returns an `announce_status_t`. Checks run
+in this order, and the first match wins. Every refusal changes no state.
 
-1. `out` capacity below `MaxOutput`, `window` not valid, `parent` not valid-or-none,
-   role outside 1..6, `parent.window == window.window`, a role/parent rule from
-   the table above violated: `RefuseInvalid`.
-2. A realized entry with the same `window`: same generation gives
-   `RefuseDuplicate`; a different generation gives `RefuseWindowConflict`.
-   A deferred entry with the same `window` follows the same rule.
-3. Parent is valid and a realized entry has the same `parent.window`:
-   a different generation gives `RefuseStaleParent`. Parent not realized
-   (no entry with that window) continues to step 4.
-4. Parent is valid and not realized: `Defer`. If the deferred table already holds
-   `MaxDeferred` entries: `RefuseExhausted`. Otherwise the child is appended to the
-   deferred table in deferral order and `count` is 0.
-5. Otherwise the pair is realized (parent none, or the exact parent pair is
-   realized). If the realized table already holds 64 entries, or realizing the
-   pair plus its transitively unblocked children would exceed 64:
-   `RefuseExhausted`, no state change.
-6. Otherwise `Realize`. The output lists the realized pairs in realization order.
+1. `window` not valid, `parent` neither valid nor none, role outside 1..6,
+   `parent.window == window.window`, or a role/parent rule violated: `RefuseInvalid`.
+2. `window.window` realized under the same generation: `RefuseDuplicate`.
+   Realized under another generation: `RefuseWindowConflict`. The other
+   generation must be retired first.
+3. Parent is valid and `parent.window` is not realized (never announced, or
+   already retired): `RefuseStaleParent`.
+4. Parent is valid, `parent.window` is realized, and under another generation:
+   `RefuseStaleParent`.
+5. The table already holds 64 realized windows: `RefuseExhausted`.
+6. Otherwise the window is appended in realization order and the status is
+   `Realize`. For a popup the root is computed as in Popup re-parenting.
 
-Only `Realize` writes output. Every refusal and `Defer` report `count = 0` and
-change no state.
+Because a child is realized only after its parent, the realization order keeps
+every parent before its children. The retire pass below depends on that
+invariant.
 
-### Unblocking order
-
-After a pair `P` is realized, the table realizes the deferred children whose
-parent is exactly `P`, in deferral order (oldest deferral first). Each realized
-child is then processed the same way. The order is breadth-first:
-
-- `out[0]` is the announced pair.
-- `out[1..]` are the children of `out[0]` in deferral order, then the children of
-  `out[1]` in deferral order, and so on.
-
-This is the ordering contract. A caller that realizes the list in output order
-always has every parent realized before its children, and the realized table
-keeps that order (see Retire).
-
-Planning is a bounded pass over the deferred table with a local `marked` mask.
-The table is mutated only after the whole closure fits. The worst case is
-`64 * 64` pair comparisons.
+Announce has no output list. A successful announce realizes exactly one window,
+which is the one the caller passed in.
 
 ## Popup re-parenting
 
@@ -128,62 +116,37 @@ popup relative to `root`, which is always a non-popup window.
 
 ## Retire
 
-`retire(map, window, retired_out, discarded_out)` returns `retire_result_t
-{ status, retired_count, discarded_count }`.
+`retire(map, window, out)` returns `retire_result_t { status, count }`.
 
-- `RefuseInvalid`: `window` not valid, or either output capacity below 64. No
-  state change.
-- `Stale`: no realized entry has `window.window`, or its generation differs. No
-  state change. This includes a pair that is only deferred: a `retire` naming a
-  deferred pair changes nothing (see Limitations).
+- `RefuseInvalid`: `window` not valid, or `out` shorter than 64. No change.
+- `Stale`: no realized entry with `window.window`, or its generation differs. This
+  covers a pair that was never realized, a pair already retired, and a wrong
+  generation. No change.
 - `Retired`: the realized subtree rooted at `window` is removed.
 
-Subtree: every realized entry whose requested parent is in the subtree, to any
-depth. Because a child is always realized after its parent, one forward pass
-over the realized table in realization order closes the subtree.
+The subtree is every realized entry whose requested parent is in the subtree, to
+any depth. Because a child is always realized after its parent, one forward pass
+over the realized table closes the subtree.
 
-Retired output order is **reverse realization order** over the removed set. Every
-descendant appears before its ancestor, and the target window is last. Retired
-output contains the target, so `retired_count >= 1`.
+The output lists the removed pairs in **reverse realization order**. Every
+descendant appears before its ancestor, and the target is last. `count` is at
+least 1 for `Retired`.
 
-Discarded children: every deferred entry whose parent is a removed realized pair
-is discarded. Discards then propagate: a deferred entry whose parent is a
-discarded deferred pair is also discarded, because that parent can no longer
-become realized in this epoch. Discarded output lists the discarded pairs in
-deferral order and is reported separately. The caller replies `Error{StaleWindow}`
-for each discarded pair, and it never realizes them.
-
-Retire never realizes anything, so it never unblocks deferred children.
-
-**Reachability of discards.** Through the public operations, the discard list is
-always empty. A deferred entry is created only when its parent pair is not
-realized, and realizing a pair unblocks every deferred child that names it. A
-retire removes only realized pairs, so no deferred entry can name a removed pair.
-The discard pass is kept so the reporting contract stays exact for any state the
-table could be given by other means; the white-box test in
-`host_window_map.zig` exercises it directly. Section 8.44 does not say how a
-child announced after its parent was retired is to be treated, and that case is
-deferred (see Limitations). It is an open question for the lead, not a silent
-choice.
+Retire never realizes anything.
 
 ## Lookup, currency and counts
 
 - `lookup(map, window)` returns the realized entry only when both `window` and
   `generation` match. Otherwise none.
 - `is_current(map, window)` is true exactly when `lookup` returns an entry.
-- `realized_count` and `deferred_count` return the current counts.
-
-Any other `(window, generation)` message is stale and changes nothing. This
-includes a `window` realized under another generation and a `window` that is
-deferred.
+- `realized_count` returns the current count.
 
 ## Epoch reset
 
-`reset(map)` sets the whole structure to zero (both counts zero, every entry
-zeroed). Zero-filled storage is therefore equivalent to a reset table. A
-caller must call `reset` before first use of storage it did not zero itself.
-Reset emits no output. The table owns no native objects; the caller tears down
-its own native objects for the old epoch before it calls reset.
+`reset(map)` sets the whole structure to zero. Zero-filled storage is therefore
+equivalent to a reset table. A caller must call `reset` before first use of
+storage it did not zero itself. Reset emits no output. The table owns no native
+objects; the caller tears down its own objects for the old epoch before reset.
 
 ## C ABI
 
@@ -192,22 +155,21 @@ All exports use `callconv(.C)` and are declared in `host_window_map.h`.
 | Export | Result |
 |---|---|
 | `host_window_map_reset(map)` | `void`. NULL `map` is a no-op. |
-| `host_window_map_announce(map, window, parent, role, out, out_capacity, out_count)` | `host_window_map_announce_status_t`. |
-| `host_window_map_retire(map, window, retired_out, retired_capacity, retired_count, discarded_out, discarded_capacity, discarded_count)` | `host_window_map_retire_status_t`. |
+| `host_window_map_announce(map, window, parent, role)` | `host_window_map_announce_status_t`. NULL `map` gives `RefuseInvalid`. |
+| `host_window_map_retire(map, window, out, out_capacity, out_count)` | `host_window_map_retire_status_t`. |
 | `host_window_map_lookup(map, window, out)` | `bool`. `out` may be NULL for a presence test. |
 | `host_window_map_is_current(map, window)` | `bool`. |
-| `host_window_map_realized_count(map)` / `host_window_map_deferred_count(map)` | `uint32_t`. NULL gives 0. |
+| `host_window_map_realized_count(map)` | `uint32_t`. NULL gives 0. |
 
-ABI rules for `announce` and `retire`:
+ABI rules for `retire`:
 
-- A NULL `map`, NULL output pointer, NULL count pointer, output capacity below
-  64, or any overlap between the map storage, an output array, or a count
-  pointer, gives `RefuseInvalid` (retire: `RefuseInvalid`). The count is not
-  written in these cases.
-- Overlap uses saturating address ranges, so a pointer near the top of the address
-  space is never treated as disjoint by wrap-around.
-- For every other call the count is written with the result count, which is 0
-  for every refusal.
+- A NULL `map`, NULL `out`, NULL `out_count`, `out_capacity` below 64, or any
+  overlap between the table storage, the output array, and the count pointer
+  gives `RefuseInvalid`. The count is not written in these cases.
+- Overlap uses saturating address ranges, so a pointer near the top of the
+  address space is never treated as disjoint by wrap-around.
+- For every other call the count is written with the removed count, which is 0
+  for `Stale`.
 
 ## Threading
 
@@ -218,61 +180,54 @@ owner.
 ## Memory and ownership
 
 - The module allocates nothing. Every call uses only the caller's storage and
-  bounded stack locals (about 1 KiB of marks and index arrays).
-- `out` and the count pointers belong to the caller. The table keeps no pointer
+  stack locals.
+- `out` and the count pointer belong to the caller. The table keeps no pointer
   to them after the call returns.
 
-## Error and status values
+## Status values
 
-`announce_status_t`: `Realize = 1`, `Defer = 2`, `RefuseDuplicate = 3`,
-`RefuseStaleParent = 4`, `RefuseWindowConflict = 5`, `RefuseExhausted = 6`,
-`RefuseInvalid = 7`. `RefuseWindowConflict` is an addition to the set in
-section 8.44: a window already realized or deferred under another generation
-must be retired first, and an unrelated generation is never silently replaced.
+`announce_status_t`: `Realize = 1`, `RefuseDuplicate = 2`,
+`RefuseStaleParent = 3`, `RefuseWindowConflict = 4`, `RefuseExhausted = 5`,
+`RefuseInvalid = 6`.
 
 `retire_status_t`: `Retired = 1`, `Stale = 2`, `RefuseInvalid = 3`.
 
+`RefuseWindowConflict` is not in section 8.44. It covers a second generation of
+a window that is still realized: the old incarnation must be retired first, and
+a new one is never silently accepted.
+
 ## Decisions taken where the spec was silent
 
-1. "Announce order" means realization order. A deferred child's position is set
-   when it is realized, not when it was first announced. Deferred children are
-   therefore never retired before their own children.
-2. `RefuseStaleParent` applies only when the parent window is realized under a
-   different generation. A parent window that has never been realized in this
-   epoch defers, because the table cannot tell "stale" from "not yet" without
-   unbounded history.
-3. Duplicate deferred pairs are `RefuseDuplicate`, not a second entry.
-4. Discards cascade through deferred children. This is the stricter reading:
-   a child of a discarded deferred pair cannot realize in this epoch.
-5. Output capacity below 64 is `RefuseInvalid` rather than a partial result, so
-   a caller never sees a truncated realize or retire list.
+1. "Announce order" means realization order. Retire cascades children first in
+   reverse realization order, which is reverse announce order for a table that
+   never defers.
+2. A stale parent is refused, never held. The table cannot tell a retired parent
+   from one that was never announced, and it keeps no history of retired pairs.
+   Both are refused at the same point, which keeps the table bounded.
+3. Stale-parent refusal precedes exhaustion. A child whose parent is not
+   realized is refused as a stale parent even when the table is full, because
+   that refusal is the true reason it cannot be realized.
+4. `retire` requires an output capacity of 64. Any retire can then report its
+   whole subtree in one call, and no truncated result exists.
 
-## Limitations (explicit, bounded)
+## Limitations
 
-- A `retire` naming a deferred pair changes nothing, per section 8.44. A deferred
-  child stays deferred until its parent pair realizes or the epoch resets. It
-  occupies one of the 64 deferred slots meanwhile.
-- A child announced after its parent pair was retired is not stale to the table.
-  The table cannot tell a retired parent from one not yet announced without
-  unbounded history, so the child defers and stays until epoch reset. Section
-  8.44's rule "a deferred child whose parent pair is retired is discarded" therefore
-  never fires for such a child, because the discard happens only at retire time.
-  Conforming guests send a child only after its parent is exported, so this is
-  reachable only by a protocol violation or after a refused parent. A retired-pair
-  record would close the gap; section 8.44 does not provide one.
-- A deferred child whose parent window is later realized under a different
-  generation is not discarded by `announce`. `announce` has no discard output.
-  Such an entry also stays until epoch reset.
+- A child refused as a stale parent is dropped by the table. The guest must
+  resend it once the parent is exported (section 3.2.8). The host sends nothing
+  back to request the resend, and the host has no retry state.
+- Announce has no output list and retire has no discard list. These are
+  deliberate: section 8.44 as amended has no deferred state for them to report.
 
 ## Verification
 
-Zig built-in tests in `host_window_map.zig` cover every status, both capacity
-edges (64 realized, 65th refused; 64 deferred, 65th refused; closure that would
-overflow), deferral chains with unblocking order, the parent retire cascade in
-reverse realization order, stale generations, duplicate announce, popup-of-popup
-re-parenting, epoch reset, every ABI null and overlap rejection, and a
-randomized sequence (several seeds, long runs) compared operation by operation
-with an independent reference model written in the test. The C consumer
-`tests/interop/host_window_map_abi.c` exercises the C ABI under
+Zig built-in tests in `host_window_map.zig` cover every announce and retire
+status, the 64 capacity edge, the 65th refusal, the retire cascade order and
+the unrelated-child case, stale parents (never announced, retired, and another
+generation), popup re-parenting for popup-of-toplevel, popup-of-dialog and
+popup-of-popup, dialog and UacConsent parent rules, epoch reset, every ABI null
+and overlap rejection, and a randomized comparison over five seeded sequences
+against an independent reference model written in the test.
+
+The C consumer `tests/interop/host_window_map_abi.c` exercises the C ABI under
 `-fsanitize=address,leak,undefined`. Coverage gate: 90% line and taken-branch
 coverage through `tests/av/coverage.py host_window_map`.
