@@ -372,8 +372,8 @@ interop-keyboard-scan-test: build/av_codec.o
 InteropHostControlSources = src/interop/session_control_host.c src/interop/session_host.c src/interop/linux_session_owner.c src/interop/linux_socket_owner.c src/interop/interop_mapping_linux.c src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c src/daemon/daemon_device.c
 InteropHostControlObjects = $(InteropHostSessionObjects) build/interop_layout_abi.o
 InteropHostControlHeaders = include/waddle/interop_linux_socket.h include/waddle/interop_peer.h include/waddle/interop_protocol.h include/waddle/interop_memory.h src/interop/session_control_host.h src/interop/interop_mapping_linux.h src/interop/interop_mapping_init.h src/interop/interop_native_atomic.h $(InteropHostSessionDependencies)
-build/waddle-session: src/interop/session_main.c $(InteropHostControlSources) $(InteropHostControlHeaders) $(InteropHostControlObjects) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/interop -Isubmodules/looking_glass/module src/interop/session_main.c $(InteropHostControlSources) $(InteropHostControlObjects) $(LDFLAGS) -pthread -o $@
+build/waddle-session: src/interop/session_main.c src/interop/session_app.c src/interop/session_supervisor.c src/interop/session_handlers_builtin.c $(InteropHostControlSources) $(InteropHostControlHeaders) $(InteropHostControlObjects) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/interop -Isubmodules/looking_glass/module src/interop/session_main.c src/interop/session_app.c src/interop/session_supervisor.c src/interop/session_handlers_builtin.c $(InteropHostControlSources) $(InteropHostControlObjects) $(LDFLAGS) -pthread -o $@
 
 all: build/waddle-session
 .PHONY: interop-host-control-test

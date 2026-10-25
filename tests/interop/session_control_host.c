@@ -98,6 +98,7 @@ static uint32_t fail_stop_read_eintr_count;
 static bool fail_stop_read_short;
 static bool fail_stop_read_wrong_signal;
 static int runtime_stop_fd = -1;
+static int runtime_daemon_fd = -1;
 static bool arm_bad_mapping_layout_event;
 static bool arm_nonzero_ready_capabilities;
 static bool arm_closed_transport_status;
@@ -1444,6 +1445,7 @@ static interop_host_control_result_t run_control_fixture(
     };
     interop_host_control_owners_t owners = {0};
     runtime_stop_fd = stop_fd;
+    runtime_daemon_fd = daemon_pair[0];
     test_fail_mmap_once = fail_mmap_once;
     fail_mapping_view_once = fail_mapping_view;
     fail_munmap_once = fail_cleanup_once;
@@ -1453,6 +1455,7 @@ static interop_host_control_result_t run_control_fixture(
     interop_host_control_result_t result = fixture_control_runner(&config,
         &owners, fixture_detail_out);
     runtime_stop_fd = -1;
+    runtime_daemon_fd = -1;
     arm_poll_after_admission = false;
     if (fail_cleanup_once) {
         assert(result == HostControlCleanupRequired);
@@ -1728,8 +1731,15 @@ static int probe_poll_fds(void *context, struct pollfd *fds, size_t capacity, si
     }
     if (probe->poll_fail_after != 0 && ++probe->poll_calls > probe->poll_fail_after) return 1;
     if (probe->fds_mode == 1) return 1;
-    if (probe->fds_mode == 3) {
-        fds[0].fd = runtime_stop_fd;
+    if (probe->fds_mode == 3 || probe->fds_mode == 6) {
+        fds[0].fd = probe->fds_mode == 3 ? runtime_stop_fd : runtime_daemon_fd;
+        fds[0].events = POLLIN;
+        fds[0].revents = 0;
+        *count = 1;
+        return 0;
+    }
+    if (probe->fds_mode == 5) {
+        fds[0].fd = -1;
         fds[0].events = POLLIN;
         fds[0].revents = 0;
         *count = 1;
@@ -2037,6 +2047,18 @@ __attribute__((unused)) static void session_control_host_feature_tests(void)
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.closing_calls == 1);
+
+    /* 7i. A negative descriptor is ignored by poll(2) and does not fail the run. */
+    memset(&probe, 0, sizeof(probe));
+    probe.fds_mode = 5;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 300, 0, NULL);
+    assert(result == HostControlSuccess && probe.closing_calls == 1);
+
+    /* 7j. A feature descriptor equal to the admitted daemon descriptor is refused. */
+    memset(&probe, 0, sizeof(probe));
+    probe.fds_mode = 6;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed && probe.closing_calls == 1);
 
     /* 8. No run bound: the run lasts until cancellation, and closing sends are refused. */
     memset(&probe, 0, sizeof(probe));

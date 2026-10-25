@@ -2123,7 +2123,7 @@ static void test_socketpair_handshake_fragmented(void)
         interop_writer_init(&writer, inbound_frames, sizeof(inbound_frames));
         Check(interop_put_uint(&writer, InteropTagWindow, 0x11223344) == InteropErrorNone);
         Check(interop_put_uint(&writer, InteropTagGeneration, 7) == InteropErrorNone);
-        Check(interop_writer_finish(&writer, InteropMsgWindowRetire, 41,
+        Check(interop_writer_finish(&writer, InteropMsgWindowRetire, 0,
                                    InteropFromGuest, &feature_length) == InteropErrorNone);
         inbound_length = feature_length;
     }
@@ -2146,7 +2146,7 @@ static void test_socketpair_handshake_fragmented(void)
           InteropWindowsSocketSuccess);
     Check(work.event.kind == InteropPeerEventFeatureFrame);
     Check(work.event.message_type == InteropMsgWindowRetire);
-    Check(work.event.request_id == 41 && work.event.copied_bytes != 0);
+    Check(work.event.request_id == 0 && work.event.copied_bytes != 0);
 
     memset(&work, 0, sizeof(work));
     ++now_ms;
