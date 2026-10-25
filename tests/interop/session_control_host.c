@@ -1241,11 +1241,11 @@ static void *guest_peer(void *unused)
             if (peer_script_close_after) break;
             if (peer_send_feature) {
                 frame_length = make_feature(frame, sizeof(frame));
-                write_all(fd, frame, frame_length);
+                if (!write_all_peer_may_close(fd, frame, frame_length)) break;
             }
             if (peer_send_error) {
                 frame_length = make_error(frame, sizeof(frame));
-                write_all(fd, frame, frame_length);
+                if (!write_all_peer_may_close(fd, frame, frame_length)) break;
             }
         } else if (type == InteropMsgPing) {
             if (peer_script_suppress_pong) continue;
@@ -1255,13 +1255,13 @@ static void *guest_peer(void *unused)
             } else {
                 frame_length = make_pong(frame, sizeof(frame), read_u32_le(frame + 12));
             }
-            write_all(fd, frame, frame_length);
+            if (!write_all_peer_may_close(fd, frame, frame_length)) break;
         } else if (peer_script_enabled && type == InteropMsgLaunchRequest) {
             ++peer_received_launch_requests;
             peer_last_launch_request_id = read_u32_le(frame + 12);
             if (peer_script_echo_launch) {
                 frame_length = make_launch_result(frame, sizeof(frame), peer_last_launch_request_id);
-                write_all(fd, frame, frame_length);
+                if (!write_all_peer_may_close(fd, frame, frame_length)) break;
             }
         } else if (peer_script_enabled && type == InteropMsgWindowClose) {
             ++peer_received_window_close;
@@ -1588,6 +1588,8 @@ typedef struct feature_probe_t {
     uint32_t launch_sent;
     uint32_t launch_queue_full;
     uint32_t launch_refused;
+    uint32_t launch_burst;
+    uint32_t request_ids_full;
     uint32_t window_close_sent;
     uint32_t request_id;
     uint32_t fd_calls;
@@ -1685,17 +1687,20 @@ static int probe_on_tick(void *context, uint64_t now_ms, interop_host_feature_se
         if (interop_host_feature_send(sender, frame, length) == HostFeatureSuccess)
             ++probe->window_close_sent;
     }
-    if (probe->launch_target != 0 && probe->launch_sent < probe->launch_target) {
+    /* Each tick sends up to launch_burst requests and stops at the first refusal. */
+    for (uint32_t burst = 0; burst < (probe->launch_burst == 0 ? 1 : probe->launch_burst) &&
+            probe->launch_target != 0 && probe->launch_sent < probe->launch_target; ++burst) {
         length = build_launch_request(frame, sizeof(frame), 0);
         result = interop_host_feature_send_request(sender, frame, length, &request_id);
         if (result == HostFeatureSuccess) {
             ++probe->launch_sent;
             probe->request_id = request_id;
-        } else if (result == HostFeatureQueueFull) {
-            ++probe->launch_queue_full;
-        } else {
-            ++probe->launch_refused;
+            continue;
         }
+        if (result == HostFeatureQueueFull) ++probe->launch_queue_full;
+        else if (result == HostFeatureRequestIdsFull) ++probe->request_ids_full;
+        else ++probe->launch_refused;
+        break;
     }
     return probe->tick_status;
 }
@@ -2100,6 +2105,29 @@ __attribute__((unused)) static void session_control_host_feature_tests(void)
     assert(peer_received_launch_requests == 2000);
     assert(heartbeat >= 3);
     assert(probe.closing_calls == 1);
+
+    /* 14b. Sender results reach features end to end: a burst past the Data queue reports QueueFull. */
+    memset(&probe, 0, sizeof(probe));
+    probe.launch_target = 600;
+    probe.launch_burst = 600;
+    peer_script_echo_launch = false;
+    result = run_feature_case(&probe, WindowsInputLaunch, WindowsInputLaunch,
+        WindowsInputLaunch, 1500, 0, NULL);
+    assert(result == HostControlSuccess);
+    assert(probe.launch_queue_full >= 1 && probe.launch_sent >= 1);
+    assert(probe.closing_calls == 1);
+
+    /* 14c. Sender results reach features end to end: the 4033rd live identifier reports RequestIdsFull. */
+    memset(&probe, 0, sizeof(probe));
+    probe.launch_target = 4040;
+    probe.launch_burst = 512;
+    peer_script_echo_launch = false;
+    result = run_feature_case(&probe, WindowsInputLaunch, WindowsInputLaunch,
+        WindowsInputLaunch, 6000, 0, NULL);
+    assert(result == HostControlSuccess);
+    assert(probe.launch_sent == 4032 && probe.request_ids_full >= 1);
+    assert(probe.closing_calls == 1);
+    peer_script_echo_launch = false;
 
     /* 15. A graceful stop request from a feature callback ends the run as Cancelled, not failed. */
     memset(&probe, 0, sizeof(probe));
