@@ -13,7 +13,8 @@
  *  - Boolean fields are uint32_t and must be exactly 0 or 1. Any other value is InvalidArgument.
  *  - Enum-typed fields are carried as uint32_t so that out-of-range values can be detected.
  *    An unknown input kind is InvalidArgument; an unknown plan or action kind is InvalidPlan.
- *  - Caller pointers may be misaligned for their type; the ABI reads them by value.
+ *  - Every pointer argument must be naturally aligned for its type. NULL is rejected only where
+ *    the function documents it.
  *  - Output storage is written only on the statuses documented for each function.
  */
 #ifndef WaddleWindowStateH
@@ -23,6 +24,35 @@
 
 /** @brief Maximum number of actions in one plan. Mirrors the reducer constant MaxActions. */
 #define WaddleWindowStateMaxActions 8
+
+/**
+ * @name Protocol state bits
+ * Frozen values of the state and capability bitmask. Each value equals the InteropState* enumerator
+ * of the same meaning in include/waddle/interop_protocol.h. The C consumer test and the Zig module
+ * assert every equality at compile time.
+ * @{
+ */
+/** @brief Guest is minimized (iconic). Guest state bit. */
+#define WaddleWindowStateMinimized 0x01u
+/** @brief Guest is maximized (zoomed). Guest state bit. */
+#define WaddleWindowStateMaximized 0x02u
+/** @brief Guest is fullscreen. Guest state bit. */
+#define WaddleWindowStateFullscreen 0x04u
+/** @brief Activation request. Host to guest only; never part of a guest observation. */
+#define WaddleWindowStateActivated 0x08u
+/** @brief Guest capability: resizable. */
+#define WaddleWindowStateResizable 0x10u
+/** @brief Guest capability: maximizable. */
+#define WaddleWindowStateMaximizable 0x20u
+/** @brief Guest capability: minimizable. */
+#define WaddleWindowStateMinimizable 0x40u
+/** @brief Every defined state and capability bit. */
+#define WaddleWindowStateMask 0x7Fu
+/** @brief Minimized, maximized and fullscreen bits: the window state carried in observations. */
+#define WaddleWindowStateWindowMask (WaddleWindowStateMinimized | WaddleWindowStateMaximized | WaddleWindowStateFullscreen)
+/** @brief Resizable, maximizable and minimizable bits: the guest capabilities. */
+#define WaddleWindowStateCapabilityMask (WaddleWindowStateResizable | WaddleWindowStateMaximizable | WaddleWindowStateMinimizable)
+/** @} */
 
 /**
  * @brief Result code of every window-state ABI call. Numeric values are frozen.

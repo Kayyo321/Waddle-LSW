@@ -3,9 +3,9 @@
 //! Each exported function is a thin wrapper around one public operation of `window_state.zig`.
 //! The wrapper adds only the work a C caller requires:
 //!
-//!  * Every caller pointer is declared `align(1)`. Its target is copied into an aligned local
-//!    before the reducer sees it, and every output is staged in an aligned local and copied to
-//!    the caller only on the statuses the header documents.
+//!  * Every caller pointer must be non-NULL where the header requires it and naturally aligned for
+//!    its type. Inputs are copied by value. Every output is staged in a local and copied to the
+//!    caller only on the statuses the header documents.
 //!  * Enum-typed fields arrive as raw `u32`. Unknown values are rejected before a Zig enum or
 //!    union is formed from them. Boolean fields accept exactly 0 and 1.
 //!  * A plan is a fixed-size struct, not a Zig value with a private completion payload. Plan
@@ -32,13 +32,32 @@ const c = @cImport({
     @cInclude("window_state.h");
 });
 
+/// Protocol header, imported only to check that the header's state bits equal the frozen protocol values.
+const proto = @cImport({
+    @cInclude("waddle/interop_protocol.h");
+});
+
 /// Owner of one reducer machine and of the seed that keys its plan seals.
 const handle_t = struct {
     /// The reducer state for one exact window generation.
     machine: reducer.machine_t,
-    /// Random per-handle key for `plan_seal`; never exposed to C.
+    /// Per-handle key for `plan_seal`, distinct for every handle created in this process; never exposed to C.
     seal_seed: u64,
 };
+
+/// Process-wide count of handles created. Each create takes the next value, so no two handles
+/// share a seal seed until the count wraps after 2^64 creations. An atomic add cannot fail,
+/// and creation performs no OS call.
+var seal_epoch = std.atomic.Value(u64).init(0);
+
+/// Bijective 64-bit mixer (splitmix64 finalizer). Each step is invertible, so distinct epochs
+/// give distinct seeds, and the seeds do not follow the creation order visibly.
+fn mix64(value: u64) u64 {
+    var z = value +% 0x9e3779b97f4a7c15;
+    z = (z ^ (z >> 30)) *% 0xbf58476d1ce4e5b9;
+    z = (z ^ (z >> 27)) *% 0x94d049bb133111eb;
+    return z ^ (z >> 31);
+}
 
 /// Allocation seam of the ABI. Production never writes it. Tests swap it to observe and fail
 /// allocations. It is not synchronized, so a test must swap it while no other thread calls `create`.
@@ -97,14 +116,108 @@ const plan_error_t = error{ StaleWindow, Retired, RevisionExhausted, Unsynchroni
 /// Errors that `machine_t.complete` can produce.
 const complete_error_t = error{ StaleWindow, Retired, StalePlan, InvalidCompletion, RevisionExhausted };
 
+/// Checks one struct's size, alignment and every named field offset against literal values.
+/// Each table entry is `.{ field name, byte offset }`.
+fn check_layout(comptime T: type, comptime size: usize, comptime alignment: usize, comptime table: anytype) void {
+    if (@sizeOf(T) != size or @alignOf(T) != alignment) @compileError("window-state struct size or alignment differs from the contract");
+    inline for (table) |entry| {
+        if (@offsetOf(T, entry[0]) != entry[1]) @compileError("window-state field offset differs from the contract: " ++ entry[0]);
+    }
+}
+
+/// Checks each named header constant against its literal value. Each table entry is `.{ name, value }`.
+fn check_values(comptime table: anytype) void {
+    inline for (table) |entry| {
+        if (@field(c, entry[0]) != entry[1]) @compileError("window-state header value differs from the contract: " ++ entry[0]);
+    }
+}
+
+comptime {
+    if (c.WaddleWindowStateMinimized != proto.InteropStateMinimized or c.WaddleWindowStateMinimized != reducer.StateMinimized)
+        @compileError("window-state Minimized bit differs from the protocol");
+    if (c.WaddleWindowStateMaximized != proto.InteropStateMaximized or c.WaddleWindowStateMaximized != reducer.StateMaximized)
+        @compileError("window-state Maximized bit differs from the protocol");
+    if (c.WaddleWindowStateFullscreen != proto.InteropStateFullscreen or c.WaddleWindowStateFullscreen != reducer.StateFullscreen)
+        @compileError("window-state Fullscreen bit differs from the protocol");
+    if (c.WaddleWindowStateActivated != proto.InteropStateActivated or c.WaddleWindowStateActivated != reducer.StateActivated)
+        @compileError("window-state Activated bit differs from the protocol");
+    if (c.WaddleWindowStateResizable != proto.InteropStateResizable or c.WaddleWindowStateResizable != reducer.StateResizable)
+        @compileError("window-state Resizable bit differs from the protocol");
+    if (c.WaddleWindowStateMaximizable != proto.InteropStateMaximizable or c.WaddleWindowStateMaximizable != reducer.StateMaximizable)
+        @compileError("window-state Maximizable bit differs from the protocol");
+    if (c.WaddleWindowStateMinimizable != proto.InteropStateMinimizable or c.WaddleWindowStateMinimizable != reducer.StateMinimizable)
+        @compileError("window-state Minimizable bit differs from the protocol");
+    if (c.WaddleWindowStateMask != proto.InteropStateMask or c.WaddleWindowStateMask != reducer.StateMask)
+        @compileError("window-state mask differs from the protocol");
+    if (c.WaddleWindowStateWindowMask != reducer.WindowStateMask or c.WaddleWindowStateCapabilityMask != reducer.CapabilityMask)
+        @compileError("window-state derived masks differ from the reducer");
+}
+
 comptime {
     if (@sizeOf(usize) != 8) @compileError("window-state ABI requires a 64-bit target");
     if (reducer.MaxActions != c.WaddleWindowStateMaxActions) @compileError("window-state ABI action capacity differs from the reducer");
-    if (@sizeOf(c.waddle_window_state_input_t) != 28 or @alignOf(c.waddle_window_state_input_t) != 4) @compileError("window-state input layout changed");
-    if (@sizeOf(c.waddle_window_state_action_t) != 24 or @alignOf(c.waddle_window_state_action_t) != 4) @compileError("window-state action layout changed");
-    if (@sizeOf(c.waddle_window_state_plan_t) != 248 or @alignOf(c.waddle_window_state_plan_t) != 8) @compileError("window-state plan layout changed");
-    if (@offsetOf(c.waddle_window_state_plan_t, "actions") != 52) @compileError("window-state plan action offset changed");
-    if (@sizeOf(c.waddle_window_state_snapshot_t) != 56 or @alignOf(c.waddle_window_state_snapshot_t) != 8) @compileError("window-state snapshot layout changed");
+    check_layout(c.waddle_window_state_input_t, 28, 4, .{
+        .{ "kind", 0 }, .{ "state", 4 }, .{ "x", 8 }, .{ "y", 12 },
+        .{ "width", 16 }, .{ "height", 20 }, .{ "maximize", 24 },
+    });
+    check_layout(c.waddle_window_state_action_t, 24, 4, .{
+        .{ "kind", 0 }, .{ "x", 4 }, .{ "y", 8 }, .{ "width", 12 },
+        .{ "height", 16 }, .{ "maximized", 20 },
+    });
+    check_layout(c.waddle_window_state_plan_t, 248, 8, .{
+        .{ "window_id", 0 }, .{ "base_revision", 8 }, .{ "action_count", 16 }, .{ "seal", 24 },
+        .{ "generation", 32 }, .{ "pending_kind", 36 }, .{ "pending_state", 40 },
+        .{ "pending_capabilities", 44 }, .{ "pending_host_state", 48 }, .{ "actions", 52 },
+    });
+    check_layout(c.waddle_window_state_snapshot_t, 56, 8, .{
+        .{ "window_id", 0 }, .{ "revision", 8 }, .{ "generation", 16 },
+        .{ "observed_guest_state", 20 }, .{ "applied_guest_state", 24 }, .{ "applied_host_state", 28 },
+        .{ "guest_capabilities", 32 }, .{ "host_request", 36 }, .{ "synced", 40 },
+        .{ "close_posted", 44 }, .{ "retired", 48 },
+    });
+    check_values(.{
+        .{ "WaddleWindowStateOk", 0 },
+        .{ "WaddleWindowStateInvalidArgument", 1 },
+        .{ "WaddleWindowStateOutOfMemory", 2 },
+        .{ "WaddleWindowStateInvalidIdentity", 3 },
+        .{ "WaddleWindowStateInvalidState", 4 },
+        .{ "WaddleWindowStateInvalidGeometry", 5 },
+        .{ "WaddleWindowStateStaleWindow", 6 },
+        .{ "WaddleWindowStateStalePlan", 7 },
+        .{ "WaddleWindowStateRetired", 8 },
+        .{ "WaddleWindowStateUnsynchronized", 9 },
+        .{ "WaddleWindowStateUnsupportedStateRequest", 10 },
+        .{ "WaddleWindowStateRevisionExhausted", 11 },
+        .{ "WaddleWindowStateInvalidCompletion", 12 },
+        .{ "WaddleWindowStateInvalidPlan", 13 },
+        .{ "WaddleWindowStateInputGuestObservation", 1 },
+        .{ "WaddleWindowStateInputHostConfigure", 2 },
+        .{ "WaddleWindowStateInputHostStateRequest", 3 },
+        .{ "WaddleWindowStateInputCloseRequest", 4 },
+        .{ "WaddleWindowStateInputHideObserved", 5 },
+        .{ "WaddleWindowStateInputDestroyObserved", 6 },
+        .{ "WaddleWindowStateActionHostSetMinimized", 1 },
+        .{ "WaddleWindowStateActionHostSetMaximized", 2 },
+        .{ "WaddleWindowStateActionHostUnsetMaximized", 3 },
+        .{ "WaddleWindowStateActionHostSetFullscreen", 4 },
+        .{ "WaddleWindowStateActionHostUnsetFullscreen", 5 },
+        .{ "WaddleWindowStateActionGuestRestore", 6 },
+        .{ "WaddleWindowStateActionGuestMaximize", 7 },
+        .{ "WaddleWindowStateActionGuestMinimize", 8 },
+        .{ "WaddleWindowStateActionGuestEnterFullscreen", 9 },
+        .{ "WaddleWindowStateActionGuestLeaveFullscreen", 10 },
+        .{ "WaddleWindowStateActionGuestActivate", 11 },
+        .{ "WaddleWindowStateActionGuestSetGeometry", 12 },
+        .{ "WaddleWindowStateActionGuestPostClose", 13 },
+        .{ "WaddleWindowStatePendingGuestObservation", 1 },
+        .{ "WaddleWindowStatePendingHostConfigure", 2 },
+        .{ "WaddleWindowStatePendingHostStateRequest", 3 },
+        .{ "WaddleWindowStatePendingCloseRequest", 4 },
+        .{ "WaddleWindowStatePendingRetire", 5 },
+        .{ "WaddleWindowStateHostRequestNone", 0 },
+        .{ "WaddleWindowStateHostRequestUnmaximize", 1 },
+        .{ "WaddleWindowStateHostRequestMaximize", 2 },
+    });
 }
 
 /// Maps an init error to its header status.
@@ -352,13 +465,14 @@ export fn waddle_window_state_create(
     window_id: u64,
     generation: u32,
     guest_state: u32,
-    out_handle: ?*align(1) ?*handle_t,
+    out_handle: ?*?*handle_t,
 ) status_t {
     const slot = out_handle orelse return c.WaddleWindowStateInvalidArgument;
     slot.* = null;
     const machine = reducer.machine_t.init(window_id, generation, guest_state) catch |err| return status_of_init_error(err);
     const storage = abi_allocator.create(handle_t) catch return c.WaddleWindowStateOutOfMemory;
-    storage.* = .{ .machine = machine, .seal_seed = std.crypto.random.int(u64) };
+    const epoch = seal_epoch.fetchAdd(1, .monotonic);
+    storage.* = .{ .machine = machine, .seal_seed = mix64(epoch) };
     slot.* = storage;
     return c.WaddleWindowStateOk;
 }
@@ -369,7 +483,7 @@ export fn waddle_window_state_create(
 /// @return Ok, or InvalidArgument when handle_slot is NULL.
 /// @note Ownership: releases the handle allocated by `create`. The slot is NULL after Ok.
 /// @note Thread safety: must not run concurrently with any other call on the same handle.
-export fn waddle_window_state_destroy(handle_slot: ?*align(1) ?*handle_t) status_t {
+export fn waddle_window_state_destroy(handle_slot: ?*?*handle_t) status_t {
     const slot = handle_slot orelse return c.WaddleWindowStateInvalidArgument;
     const storage = slot.* orelse return c.WaddleWindowStateOk;
     abi_allocator.destroy(storage);
@@ -394,8 +508,8 @@ export fn waddle_window_state_plan(
     handle: ?*const handle_t,
     window_id: u64,
     generation: u32,
-    input: ?*align(1) const c.waddle_window_state_input_t,
-    out_plan: ?*align(1) c.waddle_window_state_plan_t,
+    input: ?*const c.waddle_window_state_input_t,
+    out_plan: ?*c.waddle_window_state_plan_t,
 ) status_t {
     const out = out_plan orelse return c.WaddleWindowStateInvalidArgument;
     out.* = std.mem.zeroes(c.waddle_window_state_plan_t);
@@ -421,7 +535,7 @@ export fn waddle_window_state_plan(
 /// @note Thread safety: calls on one handle must be serialized by the caller.
 export fn waddle_window_state_complete(
     handle: ?*handle_t,
-    plan: ?*align(1) const c.waddle_window_state_plan_t,
+    plan: ?*const c.waddle_window_state_plan_t,
     succeeded: u32,
     completed_actions: u64,
 ) status_t {
@@ -443,7 +557,7 @@ export fn waddle_window_state_complete(
 /// @note Thread safety: must not run concurrently with complete or destroy on the same handle.
 export fn waddle_window_state_snapshot(
     handle: ?*const handle_t,
-    out_snapshot: ?*align(1) c.waddle_window_state_snapshot_t,
+    out_snapshot: ?*c.waddle_window_state_snapshot_t,
 ) status_t {
     const out = out_snapshot orelse return c.WaddleWindowStateInvalidArgument;
     const storage = handle orelse return c.WaddleWindowStateInvalidArgument;
@@ -471,23 +585,23 @@ const testing = std.testing;
 // Every test call to an export goes through a `never_inline` wrapper. Without it the optimizer
 // inlines an export into the test with constant arguments and folds its checks away, so the coverage
 // recorder would measure copies that the tests never execute. The wrappers keep the real bodies live.
-fn call_create(window_id: u64, generation: u32, guest_state: u32, out_handle: ?*align(1) ?*handle_t) status_t {
+fn call_create(window_id: u64, generation: u32, guest_state: u32, out_handle: ?*?*handle_t) status_t {
     return @call(.never_inline, waddle_window_state_create, .{ window_id, generation, guest_state, out_handle });
 }
 
-fn call_destroy(handle_slot: ?*align(1) ?*handle_t) status_t {
+fn call_destroy(handle_slot: ?*?*handle_t) status_t {
     return @call(.never_inline, waddle_window_state_destroy, .{handle_slot});
 }
 
-fn call_plan(handle: ?*const handle_t, window_id: u64, generation: u32, input: ?*align(1) const c.waddle_window_state_input_t, out_plan: ?*align(1) c.waddle_window_state_plan_t) status_t {
+fn call_plan(handle: ?*const handle_t, window_id: u64, generation: u32, input: ?*const c.waddle_window_state_input_t, out_plan: ?*c.waddle_window_state_plan_t) status_t {
     return @call(.never_inline, waddle_window_state_plan, .{ handle, window_id, generation, input, out_plan });
 }
 
-fn call_complete(handle: ?*handle_t, plan: ?*align(1) const c.waddle_window_state_plan_t, succeeded: u32, completed_actions: u64) status_t {
+fn call_complete(handle: ?*handle_t, plan: ?*const c.waddle_window_state_plan_t, succeeded: u32, completed_actions: u64) status_t {
     return @call(.never_inline, waddle_window_state_complete, .{ handle, plan, succeeded, completed_actions });
 }
 
-fn call_snapshot(handle: ?*const handle_t, out_snapshot: ?*align(1) c.waddle_window_state_snapshot_t) status_t {
+fn call_snapshot(handle: ?*const handle_t, out_snapshot: ?*c.waddle_window_state_snapshot_t) status_t {
     return @call(.never_inline, waddle_window_state_snapshot, .{ handle, out_snapshot });
 }
 
@@ -554,7 +668,7 @@ fn plan_ok(handle: *const handle_t, window_id: u64, generation: u32, raw: c.wadd
 }
 
 /// Completes through the ABI and returns the raw status.
-fn complete_abi(handle: *handle_t, plan: *align(1) const c.waddle_window_state_plan_t, succeeded: u32, completed: u64) status_t {
+fn complete_abi(handle: *handle_t, plan: *const c.waddle_window_state_plan_t, succeeded: u32, completed: u64) status_t {
     return call_complete(handle, plan, succeeded, completed);
 }
 
@@ -702,23 +816,6 @@ test "plan rejects NULL arguments and bad input kinds or boolean words with Inva
     try expect_zero_plan(&out);
 }
 
-test "plan and complete read and write misaligned caller storage by value" {
-    const handle = try create_for_test(14, 1, 0);
-    defer destroy_for_test(handle) catch {};
-
-    var input_buffer: [@sizeOf(c.waddle_window_state_input_t) + 1]u8 align(8) = undefined;
-    var plan_buffer: [@sizeOf(c.waddle_window_state_plan_t) + 1]u8 align(8) = undefined;
-    const input_slot: *align(1) c.waddle_window_state_input_t = @ptrCast(input_buffer[1..].ptr);
-    const plan_slot: *align(1) c.waddle_window_state_plan_t = @ptrCast(plan_buffer[1..].ptr);
-
-    input_slot.* = input_of(.GuestObservation, 0);
-    try expect_status(c.WaddleWindowStateOk, call_plan(handle, 14, 1, input_slot, plan_slot));
-    // Unsynchronized reconciliation of a non-minimized guest unmaximizes and unfullscreens.
-    try testing.expectEqual(@as(u64, 2), plan_slot.action_count);
-    try expect_status(c.WaddleWindowStateOk, complete_abi(handle, plan_slot, 1, 2));
-    try testing.expectEqual(@as(u32, 1), (try snapshot_of(handle)).synced);
-}
-
 test "every reducer action kind survives a plan encode and decode round trip" {
     const actions = [_]reducer.action_t{
         .HostSetMinimized,
@@ -744,23 +841,45 @@ test "every reducer action kind survives a plan encode and decode round trip" {
     try testing.expectError(error.InvalidPlan, decode_action(.{ .kind = 14, .x = 0, .y = 0, .width = 0, .height = 0, .maximized = 0 }));
 }
 
-test "every plan, completion, init, and input error maps to its header status" {
-    try expect_status(c.WaddleWindowStateStaleWindow, status_of_plan_error(error.StaleWindow));
-    try expect_status(c.WaddleWindowStateRetired, status_of_plan_error(error.Retired));
-    try expect_status(c.WaddleWindowStateRevisionExhausted, status_of_plan_error(error.RevisionExhausted));
-    try expect_status(c.WaddleWindowStateUnsynchronized, status_of_plan_error(error.Unsynchronized));
-    try expect_status(c.WaddleWindowStateInvalidState, status_of_plan_error(error.InvalidState));
-    try expect_status(c.WaddleWindowStateInvalidGeometry, status_of_plan_error(error.InvalidGeometry));
-    try expect_status(c.WaddleWindowStateUnsupportedStateRequest, status_of_plan_error(error.UnsupportedStateRequest));
-    try expect_status(c.WaddleWindowStateStaleWindow, status_of_complete_error(error.StaleWindow));
-    try expect_status(c.WaddleWindowStateRetired, status_of_complete_error(error.Retired));
-    try expect_status(c.WaddleWindowStateStalePlan, status_of_complete_error(error.StalePlan));
-    try expect_status(c.WaddleWindowStateInvalidCompletion, status_of_complete_error(error.InvalidCompletion));
-    try expect_status(c.WaddleWindowStateRevisionExhausted, status_of_complete_error(error.RevisionExhausted));
-    try expect_status(c.WaddleWindowStateInvalidIdentity, status_of_init_error(error.InvalidIdentity));
-    try expect_status(c.WaddleWindowStateInvalidState, status_of_init_error(error.InvalidState));
-    try expect_status(c.WaddleWindowStateInvalidArgument, status_of_input_error(error.InvalidArgument));
-    try expect_status(c.WaddleWindowStateInvalidPlan, status_of_decode_error(error.InvalidPlan));
+/// Documented status rows. The values are the header numbers from contract section 4.5, written as
+/// literals so the table does not reuse the mapping under test.
+const plan_status_row_t = struct { err: plan_error_t, value: u32 };
+const plan_status_rows = [_]plan_status_row_t{
+    .{ .err = error.StaleWindow, .value = 6 },
+    .{ .err = error.Retired, .value = 8 },
+    .{ .err = error.RevisionExhausted, .value = 11 },
+    .{ .err = error.Unsynchronized, .value = 9 },
+    .{ .err = error.InvalidState, .value = 4 },
+    .{ .err = error.InvalidGeometry, .value = 5 },
+    .{ .err = error.UnsupportedStateRequest, .value = 10 },
+};
+const complete_status_row_t = struct { err: complete_error_t, value: u32 };
+const complete_status_rows = [_]complete_status_row_t{
+    .{ .err = error.StaleWindow, .value = 6 },
+    .{ .err = error.Retired, .value = 8 },
+    .{ .err = error.StalePlan, .value = 7 },
+    .{ .err = error.InvalidCompletion, .value = 12 },
+    .{ .err = error.RevisionExhausted, .value = 11 },
+};
+const init_status_row_t = struct { err: init_error_t, value: u32 };
+const init_status_rows = [_]init_status_row_t{
+    .{ .err = error.InvalidIdentity, .value = 3 },
+    .{ .err = error.InvalidState, .value = 4 },
+};
+
+test "status mapping follows the documented header values row by row" {
+    // Each error set is covered in full: the table length equals the number of errors in the set.
+    try testing.expectEqual(@typeInfo(plan_error_t).ErrorSet.?.len, plan_status_rows.len);
+    try testing.expectEqual(@typeInfo(complete_error_t).ErrorSet.?.len, complete_status_rows.len);
+    try testing.expectEqual(@typeInfo(init_error_t).ErrorSet.?.len, init_status_rows.len);
+    try testing.expectEqual(@typeInfo(input_error_t).ErrorSet.?.len, 1);
+    try testing.expectEqual(@typeInfo(plan_decode_error_t).ErrorSet.?.len, 1);
+
+    for (plan_status_rows) |row| try testing.expectEqual(row.value, @as(u32, @intCast(status_of_plan_error(row.err))));
+    for (complete_status_rows) |row| try testing.expectEqual(row.value, @as(u32, @intCast(status_of_complete_error(row.err))));
+    for (init_status_rows) |row| try testing.expectEqual(row.value, @as(u32, @intCast(status_of_init_error(row.err))));
+    try testing.expectEqual(@as(u32, 1), @as(u32, @intCast(status_of_input_error(error.InvalidArgument))));
+    try testing.expectEqual(@as(u32, 13), @as(u32, @intCast(status_of_decode_error(error.InvalidPlan))));
 }
 
 test "plan maps identity, synchronization, state, geometry, capability, and revision errors" {
@@ -854,6 +973,54 @@ test "retirement completes only as a zero-action success and then rejects all pl
     var destroy_input = input_of(.DestroyObserved, 0);
     try expect_status(c.WaddleWindowStateRetired, call_plan(handle, 18, 6, &destroy_input, &out));
     try expect_status(c.WaddleWindowStateRetired, complete_abi(handle, &hide, 1, 0));
+}
+
+test "destroy observation retires a synchronized window with no native action" {
+    const handle = try create_for_test(23, 10, reducer.StateMaximizable);
+    defer destroy_for_test(handle) catch {};
+    try synchronize(handle, reducer.StateMaximizable);
+
+    const destroyed = try plan_ok(handle, 23, 10, input_of(.DestroyObserved, 0));
+    try testing.expectEqual(@as(u64, 0), destroyed.action_count);
+    try expect_status(c.WaddleWindowStateOk, call_complete(handle, &destroyed, 1, 0));
+
+    const snap = try snapshot_of(handle);
+    try expect_u32(1, snap.retired);
+    try expect_u32(0, snap.close_posted);
+    try testing.expectEqual(@as(u32, 0), snap.applied_host_state);
+    try expect_u32(0, snap.applied_guest_state);
+}
+
+test "destroy observation retires an unsynchronized window with no native action" {
+    const handle = try create_for_test(24, 11, reducer.StateMinimized);
+    defer destroy_for_test(handle) catch {};
+
+    const destroyed = try plan_ok(handle, 24, 11, input_of(.DestroyObserved, 0));
+    try testing.expectEqual(@as(u64, 0), destroyed.action_count);
+    try expect_status(c.WaddleWindowStateOk, call_complete(handle, &destroyed, 1, 0));
+
+    const snap = try snapshot_of(handle);
+    try expect_u32(1, snap.retired);
+    try expect_u32(0, snap.close_posted);
+    var out = std.mem.zeroes(c.waddle_window_state_plan_t);
+    var close = input_of(.CloseRequest, 0);
+    try expect_status(c.WaddleWindowStateRetired, call_plan(handle, 24, 11, &close, &out));
+}
+
+test "a plan from a destroyed handle is rejected by a recreated handle with the same identity" {
+    const first = try create_for_test(25, 12, 0);
+    try synchronize(first, 0);
+    const stale = try plan_ok(first, 25, 12, input_of(.CloseRequest, 0));
+    try destroy_for_test(first);
+
+    const second = try create_for_test(25, 12, 0);
+    defer destroy_for_test(second) catch {};
+    try synchronize(second, 0);
+    // Same identity and same revision: only the per-handle seal separates the two.
+    try testing.expectEqual(second.machine.revision, stale.base_revision);
+    const before = try snapshot_of(second);
+    try expect_status(c.WaddleWindowStateInvalidPlan, call_complete(second, &stale, 1, 1));
+    try expect_same_snapshot(before, try snapshot_of(second));
 }
 
 test "sealed plans reject edits, resealed invalid structure, foreign handles, and NULL arguments" {
@@ -1024,10 +1191,12 @@ fn random_step(random: std.rand.Random) step_t {
     } else if (roll < 75) {
         step.kind = .HostStateRequest;
         step.maximize = random.boolean();
-    } else if (roll < 99) {
+    } else if (roll < 98) {
         step.kind = .CloseRequest;
-    } else {
+    } else if (roll == 98) {
         step.kind = .HideObserved;
+    } else {
+        step.kind = .DestroyObserved;
     }
     return step;
 }

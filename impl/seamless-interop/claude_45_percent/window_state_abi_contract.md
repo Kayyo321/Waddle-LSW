@@ -111,10 +111,17 @@ The ABI tests and the C test verify each size, alignment and offset with
 
 ## 3. Handle and ownership
 
-- `waddle_window_state_create` is the only allocating function. It takes exactly
+- `waddle_window_state_create` is the only allocating function. It makes exactly
   one allocation of the internal handle, through `abi_allocator`, which defaults
-  to `std.heap.c_allocator`. The handle contains the reducer's `machine_t` and a
-  64-bit seal seed drawn from `std.crypto.random` at creation.
+  to `std.heap.c_allocator`. It makes no other allocation, no OS call, and no
+  random-number call.
+- The handle contains the reducer's `machine_t` and a 64-bit seal seed. The seed
+  is `mix64(e)`, where `e` is the value that `create` takes from a process-wide
+  atomic counter (`fetchAdd(1, monotonic)`, starting at 0). `mix64` is the
+  splitmix64 finalizer, which is bijective, so two handles created in the same
+  process never share a seed until the counter wraps after 2^64 creations.
+  An atomic add cannot fail, so `create` has no failure path beyond the single
+  allocation.
 - The caller owns the handle until `waddle_window_state_destroy`. Destroy frees it
   through the same allocator and sets the caller's slot to NULL.
 - A destroyed handle, and every copy of its pointer, is dangling. The ABI does
@@ -181,7 +188,27 @@ Value 0 is never valid. An all-zero plan therefore fails `complete` with
 | 1 | `WaddleWindowStateHostRequestUnmaximize` | The last completed request was unmaximize |
 | 2 | `WaddleWindowStateHostRequestMaximize` | The last completed request was maximize |
 
-### 4.5 Status codes
+### 4.5 State bits
+
+The header macros equal the protocol values in `include/waddle/interop_protocol.h`.
+Each equality is checked at compile time in both the C test and the Zig module.
+
+| Macro | Value | Protocol enumerator |
+|:--|--:|:--|
+| `WaddleWindowStateMinimized` | 0x01 | `InteropStateMinimized` |
+| `WaddleWindowStateMaximized` | 0x02 | `InteropStateMaximized` |
+| `WaddleWindowStateFullscreen` | 0x04 | `InteropStateFullscreen` |
+| `WaddleWindowStateActivated` | 0x08 | `InteropStateActivated` (host to guest only) |
+| `WaddleWindowStateResizable` | 0x10 | `InteropStateResizable` |
+| `WaddleWindowStateMaximizable` | 0x20 | `InteropStateMaximizable` |
+| `WaddleWindowStateMinimizable` | 0x40 | `InteropStateMinimizable` |
+| `WaddleWindowStateMask` | 0x7F | `InteropStateMask` |
+
+`WaddleWindowStateWindowMask` (Minimized, Maximized, Fullscreen) and
+`WaddleWindowStateCapabilityMask` (Resizable, Maximizable, Minimizable) are derived
+from these and are checked against the reducer's `WindowStateMask` and `CapabilityMask`.
+
+### 4.6 Status codes
 
 Every function returns one of these. Zero is the only success value.
 
@@ -244,11 +271,16 @@ Every function returns one of these. Zero is the only success value.
   `maximized`.
 - The `seal` field itself is never hashed. Bytes of actions at index
   `action_count` and above are never hashed.
-- Purpose: detect accidental edits and plans issued by a different handle. Two
-  handles created in the same process have independent random seeds.
-- Limits: this is not a cryptographic authenticator. Wyhash keyed by a secret
-  seed does not resist a deliberate forger who can read handle memory or who can
-  compute tags for chosen plans. The reducer remains memory safe for any input,
+- Purpose: detect accidental edits, plans issued by a different handle, and plans
+  issued by a handle that was destroyed and recreated with the same identity. Each
+  handle has a distinct seed (section 3), so the second handle rejects the first
+  handle's plan even when both have the same identity and revision.
+- Predictability: the seed is a function of creation order, which an attacker
+  inside the process can observe. That is acceptable under the stated limit below.
+- Limits: this is not a cryptographic authenticator. The seed is not secret. A
+  forger who knows the handle's seed, for example one who can read its memory or
+  one who can count the handles created in the process, can compute valid tags
+  for chosen plans. The reducer remains memory safe for any input,
   so a forged plan can change only the state of its own handle. A caller who can
   read the handle is outside the trust boundary.
 
@@ -261,24 +293,32 @@ Every function returns one of these. Zero is the only success value.
 - `complete` and `destroy` mutate or free the handle. They must not run
   concurrently with any other call on that handle.
 - Calls on distinct handles are independent and may run on any threads.
-- `create` uses `abi_allocator` and `std.crypto.random`. Both are thread-safe for
-  production use. `abi_allocator` is a global variable that tests replace; no
-  production code writes it.
+- `create` uses `abi_allocator` and the process-wide seal counter. `create` may run
+  on any thread. The counter is an atomic and `c_allocator` is thread-safe.
+  `abi_allocator` is a global variable that tests replace; no production code
+  writes it.
 
 ## 7. Error handling summary
 
 - Every error leaves the handle unchanged, except that `create` on failure leaves
   the output slot NULL, `destroy` on success always leaves the slot NULL, and
   `plan` on failure leaves the output plan all zero.
-- No function aborts, logs, or blocks.
+- No function aborts, logs, or waits on a lock or an OS service. The only
+  operation that can fail is the allocation in `create`, which reports
+  OutOfMemory. The allocator is the one external dependency and is the caller's
+  responsibility if it blocks.
 - A caller passing a pointer that is neither NULL nor a live handle (for example a
   destroyed handle) has undefined behavior; the ABI cannot detect it.
 
 ## 8. Verification
 
 Zig, `zig test src/interop/window_state_abi.zig -Iinclude -Isrc/interop -lc`
-(17 ABI tests; the imported reducer and graph tests also run):
+(19 ABI tests; the imported reducer and graph tests also run):
 
+- Layout and values, at compile time: every size, alignment and field offset of
+  the four structs (section 2) and every enumerator of the header (section 4),
+  each compared with a literal. The state bit macros are compared with the
+  protocol header (`include/waddle/interop_protocol.h`) and the reducer constants.
 - create: NULL slot, zero identity, forbidden guest state, double-destroy
   idempotence, NULL-slot destroy, FailingAllocator at the single allocation
   (OutOfMemory, slot NULL), and success when the injected index is never reached.
@@ -286,46 +326,55 @@ Zig, `zig test src/interop/window_state_abi.zig -Iinclude -Isrc/interop -lc`
   restore with activation and geometry, and the zero-length plan.
 - Argument checks: NULL handle, input, output and plan; every bad kind and
   boolean word; plan output zeroed on every failure.
-- Misaligned caller storage read and written by value.
 - Every reducer action kind survives encode and decode; unknown action kinds are
   InvalidPlan.
-- Every status mapping, and every plan, completion, identity, sync, state,
-  geometry, capability and revision error through real calls.
+- Status mapping: a table of documented values, one row per error, with the table
+  length checked against each error set.
 - Stale plans, partial failure and resynchronization, retirement, the maximize
   request and its snapshot words.
+- DestroyObserved on a synchronized and on an unsynchronized window: zero actions,
+  retirement, no close posted, host and guest state unchanged.
 - Forged plans: edited identity, pending word and action; a plan from another
-  handle; a plan with an oversized count; resealed bad pending, action, boolean
+  handle; a plan from a destroyed and recreated handle with the same identity and
+  revision; a plan with an oversized count; resealed bad pending, action, boolean
   and maximized values; NULL arguments of complete; state unchanged after each.
 - RevisionExhausted through a resealed plan at UINT64_MAX.
 - A fixed-seed random sequence of 12 rounds and up to 300 steps each, with
-  replays of earlier plans. Every ABI status and every encoded action is compared
-  with a direct reducer machine driven in lockstep; the full machine state is
-  compared after each step. The test asserts that the run includes more than 200
-  accepted plans, more than 100 accepted completions and at least one rejected
-  completion.
+  replays of earlier plans, and with DestroyObserved and HideObserved among the
+  inputs. Every ABI status and every encoded action is compared with a direct
+  reducer machine driven in lockstep; the full machine state is compared after
+  each step. The test asserts that the run includes more than 200 accepted plans,
+  more than 100 accepted completions and at least one rejected completion.
 
 C, `tests/interop/window_state_abi.c`, built with `-std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG`:
 
 - Ten tests: invalid arguments, lifecycle and slot clearing, ticket flow and
   action order, partial failure with resynchronization, stale plans and identity,
-  the maximize capability gate, retirement, forged and foreign plans, misaligned
-  storage, and read-only snapshots.
-- Static assertions for every size, alignment and offset in section 2, and for
-  the frozen status and kind values.
+  the maximize capability gate, retirement, destroy observation without native
+  action, forged and foreign plans, and read-only snapshots. The snapshot test
+  plans, observes, requests and refuses between two snapshots and requires them
+  to be byte-identical until a successful completion.
+- Static assertions for every size, alignment and field offset in section 2, every
+  enumerator in section 4, and every state bit against the protocol header.
+
+Mutation checks, not committed, each run and restored: DestroyObserved mapped to
+CloseRequest (Zig and C fail); seal seed constant (recreate and foreign-handle tests
+fail); a swapped status mapping (Zig fails in three tests and in the table test);
+a header enumerator changed from 8 to 9 (C static assert and Zig comptime check
+fail); a state bit changed to 0x02 (C static assert and Zig comptime check fail).
 
 Sanitizers: the C test under `-fsanitize=address,leak,undefined` with
 `ASAN_OPTIONS=detect_leaks=1`. The Zig object is not instrumented. Its
 allocations go through libc `malloc`, so LeakSanitizer sees them. Zig ownership is
 proven by `std.testing.allocator` in the Zig tests, not by a sanitizer.
 
-Coverage: `python3 tests/av/coverage.py window_state_abi`. The recorder needs
-`-Isrc/interop` for this module's `@cInclude("window_state.h")`, which requires
-the one-line change described in the lane commit. With that change, measured on
-the patched recorder: branch 100.00% (34 of 34), line 97.04% (131 of 135). The four
-line records not attributed are the `return switch (err)` header lines of
+Coverage: `python3 tests/av/coverage.py window_state_abi`. The tracked script
+passes `-Isrc/interop` for this mode (commit `381e30b`, merged from the 45 percent
+branch). Measured by that run: branch 100.00% (34 of 34), line 97.16% (137 of 141).
+The four line records not attributed are the `return switch (err)` header lines of
 `status_of_input_error`, `status_of_plan_error`, `status_of_complete_error` and
 `status_of_decode_error`. Every arm those switches dispatch to is covered by the
-branch measure and by the mapping test. The recorder does not report a hit for the
+branch measure and by the mapping table. The recorder does not report a hit for the
 header instruction itself; the cause is not established.
 
 Known gaps: none in the portable surface. Native adapters, the compositor
