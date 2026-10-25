@@ -15,7 +15,7 @@ pub const state_t = struct {
     /// Current focused window identity; zero means no focus.
     window: u64 = 0,
     /// Current focused generation; zero means no focus.
-    generation: u32 = 0,
+    generation: u64 = 0,
     /// Physical down observations for admitted keys only.
     held: [MaxKey + 1]bool = [_]bool{false} ** (MaxKey + 1),
     /// Configured host repeat enable policy.
@@ -57,7 +57,7 @@ pub const state_t = struct {
     }
     /// Replace focus and discard all inherited held keys/candidate. Both IDs
     /// must be nonzero; invalid inputs preserve state. Borrows no memory.
-    pub fn focus(self: *state_t, window: u64, generation: u32) error_t!void {
+    pub fn focus(self: *state_t, window: u64, generation: u64) error_t!void {
         if (window == 0 or generation == 0) return error.InvalidFocus;
         self.cancel();
         self.window = window;

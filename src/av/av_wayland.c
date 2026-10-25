@@ -189,7 +189,7 @@ static void repeat_cancel(av_wayland_t *client) {
 }
 static void repeat_focus(av_wayland_t *client, const video_window_t *window) {
     if (window->geometry.window_id && window->incarnation)
-        waddle_keyboard_repeat_focus(&client->repeat, window->geometry.window_id, (uint32_t)window->incarnation);
+        waddle_keyboard_repeat_focus(&client->repeat, window->geometry.window_id, window->incarnation);
 }
 /* Feed one forwarded key event to the reducer. Only events actually delivered to the
  * guest reach here, so keys suppressed at enter never arm a repeat. */

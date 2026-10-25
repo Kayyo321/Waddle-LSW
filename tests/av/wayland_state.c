@@ -704,6 +704,21 @@ static void pointer_randomized_live(void) {
     assert(checked == 1500);
     puts("AV Wayland pointer randomized: 1500-step button, axis, leave and focus-loss lifecycle has no stuck buttons passed");
 }
+/* A 64-bit incarnation must not alias zero after truncation: 1 << 32 is a valid focus. */
+static void incarnation_wide_repeat(void) {
+    av_wayland_t client; video_window_t *window;
+    live_ready(&client, &window);
+    window->incarnation = 1ull << 32;
+    now_ms = 12000;
+    keyboard_repeat(&client, NULL, 25, 100);
+    live_enter(&client, window);
+    deliveries = 0;
+    live_key(&client, 30, 1);
+    now_ms = 12100;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 2 && delivered.width == 30);
+    live_key(&client, 30, 0);
+    puts("AV Wayland repeat: a 64-bit incarnation of 1 << 32 is a valid focus and repeats passed");
+}
 static void live_repeat(void) {
     live_repeat_timing();
     live_repeat_info();
@@ -757,6 +772,7 @@ int main(void) {
     pointer_buttons_live();
     wheel_paths_live();
     pointer_randomized_live();
+    incarnation_wide_repeat();
     lifecycle_callbacks();
     decoration_callbacks();
     lease_callbacks();

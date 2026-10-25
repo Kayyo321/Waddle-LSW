@@ -58,7 +58,7 @@ waddle_keyboard_repeat_status_t waddle_keyboard_repeat_configure(void *storage, 
  * @param storage inout, non-NULL. @param window in, nonzero. @param generation in, nonzero.
  * @return Ok, NullArgument, or InvalidFocus.
  */
-waddle_keyboard_repeat_status_t waddle_keyboard_repeat_focus(void *storage, uint64_t window, uint32_t generation);
+waddle_keyboard_repeat_status_t waddle_keyboard_repeat_focus(void *storage, uint64_t window, uint64_t generation);
 
 /**
  * @brief Cancel repeat, clear focus and held observations, keep timing. Idempotent.

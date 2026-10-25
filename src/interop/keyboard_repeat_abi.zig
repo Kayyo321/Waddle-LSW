@@ -75,7 +75,7 @@ export fn waddle_keyboard_repeat_configure(storage: ?*anyopaque, enabled: u8, ra
 
 /// C ABI: replace focus with (window, generation) and discard inherited held keys.
 /// Both values must be nonzero. Thread safety: caller serializes calls on one storage.
-export fn waddle_keyboard_repeat_focus(storage: ?*anyopaque, window: u64, generation: u32) callconv(.C) status_t {
+export fn waddle_keyboard_repeat_focus(storage: ?*anyopaque, window: u64, generation: u64) callconv(.C) status_t {
     const state = state_of(storage) orelse return .NullArgument;
     state.focus(window, generation) catch |err| return map_error(err);
     return .Ok;
