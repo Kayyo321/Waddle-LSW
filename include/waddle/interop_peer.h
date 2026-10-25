@@ -14,8 +14,10 @@
  * but requires the caller to abort/quiesce I/O and destroy the peer.
  *
  * A successful call can report Draining/Closed: these describe the connection,
- * never native memory release. Ready grants negotiated connection status only;
- * copied feature frames still need external capability/operation authorization.
+ * never native memory release. Ready grants negotiated connection status only.
+ * Received feature frames are checked against the negotiated facilities before
+ * delivery (an unadmitted frame gets Error UnsupportedType and a drain); each
+ * delivered frame still needs operation-level authorization by the caller.
  * Actual OS send counts must be acknowledged before any next send. No borrowed
  * pointer crosses this interface. All returned bytes belong to the caller.
  */
@@ -44,7 +46,10 @@ typedef enum interop_peer_result_t {
     InteropPeerInvalidFrame = 12, /**< Feature frame header, length or payload is malformed; nothing queued. */
     InteropPeerUnsupportedFrame = 13, /**< Feature frame type is control, local-only, unknown or wrong for this role. */
     InteropPeerFeatureNotNegotiated = 14, /**< Feature facility is absent from the negotiated capabilities. */
-    InteropPeerQueueFull = 15 /**< Outbound admission has no slot; retry after ack_tx drains the queue. */
+    InteropPeerQueueFull = 15, /**< Outbound admission has no slot; retry after ack_tx drains the queue. */
+    InteropPeerRequestIdsFull = 16, /**< 4032 feature identifiers are live or the namespace is full; nothing reserved or queued. */
+    InteropPeerUnknownRequestId = 17, /**< Release target is not a live feature-owned identifier; state unchanged. */
+    InteropPeerRequestRetired = 18 /**< transport_lost retired every identifier; release is a benign no-op. */
 } interop_peer_result_t;
 /** @brief Local role, fixed at create; not a wire enum. */
 typedef enum interop_peer_role_t {
@@ -167,17 +172,54 @@ int interop_peer_mapping_result(interop_peer_t *peer, uint64_t token, uint64_t n
  * @param[in,out] peer Non-NULL live serialized owner; changed only on admission or deadline drain.
  * @param[in] token Captured nonzero connection token.
  * @param[in] now_ms Nondecreasing monotonic time; committed only when admission succeeds.
- * @param[in] bytes Borrowed complete header plus payload; NULL is allowed only with length 0.
+ * @param[in] bytes Borrowed complete header plus payload; NULL is allowed only with length 0, which is InvalidFrame.
  * @param[in] length Exact frame size in InteropHeaderBytes..InteropMaxFrameBytes; no peer alias.
- * @param[out] event Non-NULL disjoint event, unchanged on API error. None after queueing; Draining
- * when the Ready deadline expired at now_ms (frame not queued, connection terminal).
- * @return InteropPeerSuccess; InvalidArgument for pointer, alias or range errors; WrongToken,
- * TimeWentBackwards or WrongPhase (any phase other than Ready) with state unchanged;
- * InvalidFrame, UnsupportedFrame, FeatureNotNegotiated, QueueFull or OutOfMemory with state unchanged.
- * @note The frame is copied before return and the caller keeps its buffer. Feature request IDs are
- * neither reserved nor checked by the peer; correlation belongs to the external dispatcher.
+ * @param[out] event Non-NULL aligned event disjoint from bytes and peer storage; unchanged on API error.
+ *        None after queueing; Draining when the Ready deadline expired at now_ms (frame not queued).
+ * @return InteropPeerSuccess. InvalidArgument for a NULL pointer, alignment, range, alias or a zero token;
+ *         PeerClosed after destroy; WrongToken for another connection's token; TimeWentBackwards;
+ *         WrongPhase for every phase other than Ready. InvalidFrame for a malformed frame, a nonzero
+ *         identifier on an unsolicited type, or a zero identifier on a response type. UnsupportedFrame for
+ *         control, local-only, unknown or wrong-direction types and for Request types, which must use
+ *         interop_peer_enqueue_request. FeatureNotNegotiated, QueueFull or OutOfMemory. Every error leaves
+ *         the peer, queue, identifier and clock state unchanged.
+ * @note The frame is copied before return. Transfer frames carry zero and use their own identifiers
+ *       inside the payload. Feature responses echo the peer's identifier and are never reserved here.
+ * @thread_safety Serialized by the one event-loop owner with every other peer operation.
  */
 int interop_peer_enqueue_feature(interop_peer_t *peer, uint64_t token, uint64_t now_ms, const uint8_t *bytes, size_t length, interop_peer_event_t *event);
+/** @brief Atomically reserve a feature request identifier, stamp it and admit one Request frame.
+ * @param[in,out] peer Non-NULL live serialized owner; changed only on admission or deadline drain.
+ * @param[in] token Captured nonzero connection token.
+ * @param[in] now_ms Nondecreasing monotonic time; committed only on admission.
+ * @param[in] bytes Borrowed complete request frame whose header identifier is zero; never written.
+ * @param[in] length Exact frame size in InteropHeaderBytes..InteropMaxFrameBytes; no peer alias.
+ * @param[out] out_request_id Non-NULL aligned output disjoint from bytes and event; written only on success
+ *        with the stamped identifier, or zero when the Ready deadline drained the peer without queueing.
+ * @param[out] event Non-NULL aligned output disjoint from bytes and out_request_id; written only on success.
+ * @return InteropPeerSuccess. The argument, token, time and phase errors match interop_peer_enqueue_feature.
+ *         InvalidFrame for a malformed frame or a nonzero header identifier. UnsupportedFrame for any type
+ *         other than LaunchRequest, PrinterSync, DisplayConfig or DndDrop. FeatureNotNegotiated. RequestIdsFull
+ *         when 4032 feature identifiers are live. QueueFull or OutOfMemory. Every error leaves the peer state,
+ *         identifier cursor and both outputs unchanged, so a retry receives the same identifier.
+ * @note The identifier is owned by the feature class until interop_peer_release_request; liveness Ping
+ *       identifiers occupy the 64 remaining slots and are never returned here.
+ * @thread_safety Serialized by the one event-loop owner with every other peer operation.
+ */
+int interop_peer_enqueue_request(interop_peer_t *peer, uint64_t token, uint64_t now_ms, const uint8_t *bytes, size_t length, uint32_t *out_request_id, interop_peer_event_t *event);
+/** @brief Release one feature-owned request identifier after its response arrived or the request was abandoned.
+ * @param[in,out] peer Non-NULL live serialized owner; the identifier namespace changes only on success.
+ * @param[in] token Captured nonzero connection token.
+ * @param[in] request_id Identifier previously returned by interop_peer_enqueue_request.
+ * @return InteropPeerSuccess. InvalidArgument for a NULL peer or zero token or a zero identifier. WrongToken
+ *         for another connection's token; PeerClosed after destroy. UnknownRequestId for any identifier that
+ *         is not a live feature reservation, including liveness and Hello identifiers. RequestRetired after
+ *         transport_lost retired everything; this benign result changes nothing. InternalInvariant when
+ *         bookkeeping disagrees, after which the caller must abort the connection.
+ * @note No time is consumed and no queued bytes are removed; queued frames keep their identifiers.
+ * @thread_safety Serialized by the one event-loop owner with every other peer operation.
+ */
+int interop_peer_release_request(interop_peer_t *peer, uint64_t token, uint32_t request_id);
 /** @brief Query remaining bytes offered for next OS send.
  * @param[in] peer Non-NULL live serialized owner; no mutation.
  * @param[in] token Captured token.
