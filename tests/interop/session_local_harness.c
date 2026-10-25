@@ -23,12 +23,15 @@
  *
  * --drop-first-guest closes the first guest connection right after its HelloAck, which is a
  * transport loss before any launch. The supervisor must reconnect and serve the second attempt.
+ * --drop-first-after-launch closes the first guest after it answered one launch, so the second
+ * attempt is a second consecutive guest session that serves its own launches.
  *
  * Signals: SIGINT and SIGTERM are blocked before any thread is created, so the runtime's signalfd
  * is the only consumer. SIGTERM therefore ends the run through the real graceful stop, the handler
  * removes session.sock, and the process exits 0. A LocalStop from a client does the same thing.
  *
- *   interop_session_local_harness --runtime-dir DIR --device NAME --reply REPLY --record PATH [--drop-first-guest]
+ *   interop_session_local_harness --runtime-dir DIR --device NAME --reply REPLY --record PATH
+ *       [--drop-first-guest | --drop-first-after-launch]
  *
  * Test-only. Built with -DWaddleSessionNoMain and linked with --wrap=socket,--wrap=connect.
  */
@@ -87,6 +90,7 @@ typedef struct harness_guest_t {
     char socket_path[256]; /* runtime/waddle/<device>/session.sock */
     char daemon_socket[256];
     int drop_first_guest;
+    int drop_first_after_launch; /* the first guest drops right after answering one launch */
     uint32_t connections; /* guarded by connection_lock */
     pthread_mutex_t connection_lock;
 } harness_guest_t;
@@ -268,6 +272,7 @@ static void *guest_thread(void *opaque)
             append_record(frame, InteropHeaderBytes + header.length);
             length = make_launch_result(frame, sizeof(frame), header.request_id);
             write_all(fd, frame, length);
+            if (guest.drop_first_after_launch && index == 0) break;
         } else if (header.type == InteropMsgGoodbye) {
             break;
         }
@@ -466,6 +471,11 @@ int main(int argc, char **argv)
     for (int index = 1; index < argc;) {
         if (strcmp(argv[index], "--drop-first-guest") == 0) {
             guest.drop_first_guest = 1;
+            index += 1;
+            continue;
+        }
+        if (strcmp(argv[index], "--drop-first-after-launch") == 0) {
+            guest.drop_first_after_launch = 1;
             index += 1;
             continue;
         }

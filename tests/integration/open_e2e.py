@@ -175,11 +175,13 @@ class HarnessServer:
     stop, and checks that it exited cleanly.
     """
 
-    def __init__(self, lab, scenario, drop_first=False):
+    def __init__(self, lab, scenario, drop_first=False, drop_after_launch=False):
         self.record = lab.root / ("harness-%d.jsonl" % time.monotonic_ns())
         self.ready = Path(str(self.record) + ".ready")
         self.connections_file = Path(str(self.record) + ".connections")
         extra = ["--drop-first-guest"] if drop_first else []
+        if drop_after_launch:
+            extra = ["--drop-first-after-launch"]
         # The harness takes its runtime and state directories from the lab environment, the same
         # ones the client uses. Inheriting the developer's XDG_RUNTIME_DIR would share session.lock
         # with other runs and make admission fail with Busy.
@@ -571,6 +573,31 @@ def reconnect_after_guest_drop(lab):
         server.close()
 
 
+def two_consecutive_sessions(lab):
+    """Two guest sessions in a row: the first serves one open and drops; the second serves its own open."""
+    server = HarnessServer(lab, {"reply": "ok"}, drop_after_launch=True)
+    try:
+        first = lab.make_file("session-one.txt")
+        result = lab.run("open", "--wait", str(first))
+        check(result.returncode == 0, ("first session open", result.returncode, result.stderr))
+        server.wait_for_connections(2)
+        second = lab.make_file("session-two.txt")
+        deadline = time.monotonic() + 20.0
+        result = None
+        while time.monotonic() < deadline:
+            # The launch socket is re-bound by the second attempt; retry until it accepts.
+            result = lab.run("open", "--wait", str(second))
+            if result.returncode == 0:
+                break
+            time.sleep(0.2)
+        check(result is not None and result.returncode == 0, ("second session open", result))
+        launches = server.launches()
+        check(len(launches) == 2, ("one launch per consecutive session", launches))
+        check(server.connection_count() >= 2, "the second session used a second VSOCK connection")
+    finally:
+        server.close()
+
+
 def main():
     cases = [codec_cross_check, warm_path, statuses, error_and_eof, grace_handover, multiple_items,
              outside_share, usage_errors, wrong_mode_directory, cold_path, cold_path_without_notice,
@@ -579,7 +606,7 @@ def main():
         cases.append(cold_path_deadline)
     if HARNESS is not None:
         cases = [case for case in cases if case.__name__ not in FAKE_ONLY_CASES]
-        cases += [local_stop, reconnect_after_guest_drop]
+        cases += [local_stop, reconnect_after_guest_drop, two_consecutive_sessions]
     with tempfile.TemporaryDirectory(prefix="waddle-open-e2e-") as directory:
         lab = Lab(os.path.realpath(directory))
         for case in cases:
