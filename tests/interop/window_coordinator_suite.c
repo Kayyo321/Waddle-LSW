@@ -1710,6 +1710,37 @@ static int test_review_p3_resize_reaches_slots_and_capture(void) {
     return 0;
 }
 
+/** @brief P2 (IMPL 3.2.5): a configure carries no position; applying it keeps the window where it is. */
+static int test_review_p2_configure_keeps_position(void) {
+    fixture_t *fp = &GlobalFixture;
+    uint8_t frame[WireFrameBytes];
+    size_t length = 0;
+    wsa_double_window_t *native;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    add_window(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    native = wsa_double_find(&fp->adapter, 0x1000);
+    Check(native != NULL);
+    Check(native->rect.left == 100 && native->rect.top == 100);
+    {
+        interop_writer_t writer;
+        interop_writer_init(&writer, frame, sizeof(frame));
+        Check(interop_put_uint(&writer, InteropTagWindow, 0x1000) == InteropErrorNone);
+        Check(interop_put_uint(&writer, InteropTagGeneration, 1) == InteropErrorNone);
+        Check(interop_put_rect(&writer, InteropTagRect, 0, 0, 1024, 768) == 0);
+        Check(interop_put_uint(&writer, InteropTagState, 0u) == InteropErrorNone);
+        Check(interop_writer_finish(&writer, InteropMsgWindowConfigure, 0u, InteropFromHost, &length) == InteropErrorNone);
+    }
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Check(tick(fp) == WindowCoordinatorOk);
+    native = wsa_double_find(&fp->adapter, 0x1000);
+    Check(native->rect.left == 100 && native->rect.top == 100);
+    Check(native->rect.right - native->rect.left == 1024 && native->rect.bottom - native->rect.top == 768);
+    retire_one_window(fp, 0x1000);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2156,6 +2187,7 @@ int main(void) {
         {"review: retire waits for FIFO room", test_review_retire_waits_for_fifo_room},
         {"review P5: heap pressure announces without frames", test_review_p5_heap_pressure_announces_without_frames},
         {"review P3: resize reaches slots and capture", test_review_p3_resize_reaches_slots_and_capture},
+        {"review P2: configure keeps position", test_review_p2_configure_keeps_position},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},
