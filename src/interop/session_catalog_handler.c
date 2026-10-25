@@ -287,7 +287,7 @@ static int on_frame(void *context, uint32_t message_type, uint32_t request_id, c
     now = handler_now(handler);
     switch (message_type) {
     case InteropMsgCatalogBegin:
-        catalog_runtime_begin(handler->runtime);
+        catalog_runtime_begin(handler->runtime, now);
         break;
     case InteropMsgCatalogAdd:
         apply_app(handler, payload, payload_length, 0);

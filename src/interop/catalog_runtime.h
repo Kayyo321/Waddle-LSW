@@ -133,6 +133,7 @@ typedef struct catalog_runtime_stats_t {
     uint32_t publication_pending; /**< 1 when publication work remains. */
     uint32_t dropped_actions;     /**< Actions dropped because the outbound ring was full. */
     uint32_t queued_actions;      /**< Actions currently queued for the owner. */
+    uint32_t aborted_transactions; /**< Transactions aborted for want of an End. */
 } catalog_runtime_stats_t;
 
 /**
@@ -155,9 +156,10 @@ void catalog_runtime_destroy(catalog_runtime_t *runtime);
 /**
  * @brief Open a full-sync transaction (CatalogBegin). A second Begin restarts the transaction.
  * @param[in] runtime Non-NULL handle.
+ * @param[in] now_ms Current monotonic time; an End not received within 60 s aborts the transaction.
  * @return CatalogRuntimeOk, or InvalidArgument for NULL.
  */
-int catalog_runtime_begin(catalog_runtime_t *runtime);
+int catalog_runtime_begin(catalog_runtime_t *runtime, uint64_t now_ms);
 
 /**
  * @brief Close the transaction (CatalogEnd). Applications not announced since Begin are removed.

@@ -47,6 +47,8 @@ pub const MaxOpsPerPass: usize = 32;
 pub const MaxActions: usize = 64;
 /// Maximum retry backoff for failed publication, in milliseconds.
 pub const MaxPublishBackoffMs: u64 = 8_000;
+/// An open transaction that receives no End within this many milliseconds is aborted.
+pub const TransactionTimeoutMs: u64 = 60_000;
 /// Maximum retry backoff for a failed icon request, in milliseconds.
 pub const IconRetryBackoffMs: u64 = 5_000;
 /// Maximum display title bytes for an uncatalogued window entry.
@@ -224,6 +226,8 @@ pub const stats_c_t = extern struct {
     dropped_actions: u32,
     /// Actions currently queued for the owner.
     queued_actions: u32,
+    /// Transactions aborted because no End arrived within the transaction timeout.
+    aborted_transactions: u32,
 };
 
 /// Outbound action with its key borrowed from the runtime.
@@ -370,9 +374,14 @@ pub const runtime_t = struct {
     snapshot_bytes: usize = 0,
     /// Next candidate transfer identifier; zero is never used.
     next_transfer_id: u32 = 1,
-    /// Transaction state: open flag, epoch that marks announced apps, poison flag.
+    /// Transaction state: open flag, epoch that marks announced apps, per-transaction poison
+    /// flag, and the monotonic time at which the open transaction began.
     transaction_open: bool = false,
+    tx_poisoned: bool = false,
+    tx_started: u64 = 0,
     epoch: u64 = 0,
+    /// Transactions aborted for want of an End (see TransactionTimeoutMs).
+    aborted_transactions: u32 = 0,
     /// True after a rejected frame inside a transaction until a clean full sync.
     sync_required: bool = false,
     /// True when the menu or directory artifacts must be regenerated.
@@ -455,8 +464,10 @@ pub const runtime_t = struct {
 
     /// Begin a full-sync transaction. A Begin inside an open transaction restarts it: the
     /// announce marks of the abandoned attempt are discarded and the snapshot is kept.
-    pub fn begin(self: *runtime_t) void {
+    pub fn begin(self: *runtime_t, now: u64) void {
         self.transaction_open = true;
+        self.tx_poisoned = false;
+        self.tx_started = now;
         self.epoch += 1;
     }
 
@@ -464,9 +475,14 @@ pub const runtime_t = struct {
     /// Returns Rejected when no transaction is open or the transaction was poisoned; the
     /// snapshot then stays as it is and publication stays blocked until a clean full sync.
     pub fn end(self: *runtime_t) error_t!void {
-        if (!self.transaction_open) return error.Rejected;
+        if (!self.transaction_open) {
+            self.rejected_frames +|= 1;
+            return error.Rejected;
+        }
         self.transaction_open = false;
-        if (self.sync_required) return error.Rejected;
+        // A poisoned transaction keeps sync_required set; only a clean End clears it.
+        if (self.tx_poisoned) return error.Rejected;
+        self.sync_required = false;
         var index = self.apps.items.len;
         while (index > 0) {
             index -= 1;
@@ -506,6 +522,7 @@ pub const runtime_t = struct {
         self.action_count = 0;
         self.action_head = 0;
         self.transaction_open = false;
+        self.tx_poisoned = false;
         self.sync_required = false;
         self.menu_dirty = false;
         self.publish_failures = 0;
@@ -582,6 +599,7 @@ pub const runtime_t = struct {
     /// Advance timeouts, issue icon requests and publish pending artifacts.
     /// `updated` is the UTC RFC3339 timestamp recorded in candidate manifests.
     pub fn tick(self: *runtime_t, now: u64, updated: []const u8) void {
+        self.expire_transaction(now);
         self.expire_transfers(now);
         self.issue_requests(now);
         if (self.publication_pending() and !self.transaction_open and !self.sync_required and now >= self.publish_not_before) {
@@ -622,6 +640,7 @@ pub const runtime_t = struct {
     /// Earliest absolute deadline the caller must tick at, or null when idle.
     pub fn next_deadline(self: *runtime_t, now: u64) ?u64 {
         var best: ?u64 = null;
+        if (self.transaction_open) best = min_optional(best, @max(self.tx_started + TransactionTimeoutMs, now));
         for (self.transfers) |maybe| {
             if (maybe) |transfer| best = min_optional(best, transfer.deadline);
         }
@@ -682,6 +701,7 @@ pub const runtime_t = struct {
             .publication_pending = @intFromBool(self.publication_pending()),
             .dropped_actions = self.dropped_actions,
             .queued_actions = @intCast(self.action_count),
+            .aborted_transactions = self.aborted_transactions,
         };
     }
 
@@ -702,23 +722,41 @@ pub const runtime_t = struct {
         };
     }
 
-    /// Count an invalid frame; inside a transaction it also blocks publication until a clean sync.
+    /// Poison the open transaction (if any): it will not sweep, and publication waits for the
+    /// next clean full sync.
+    fn poison(self: *runtime_t) void {
+        if (!self.transaction_open) return;
+        self.tx_poisoned = true;
+        self.sync_required = true;
+    }
+
+    /// Count an invalid frame; inside a transaction it also poisons the transaction.
     fn reject_invalid(self: *runtime_t) error_t {
         self.rejected_frames += 1;
-        if (self.transaction_open) self.sync_required = true;
+        self.poison();
         return error.Rejected;
     }
 
     fn reject_poison(self: *runtime_t) error_t {
         self.rejected_frames += 1;
-        self.sync_required = true;
+        self.poison();
         return error.Rejected;
     }
 
     fn reject_quota(self: *runtime_t) error_t {
         self.rejected_frames += 1;
-        if (self.transaction_open) self.sync_required = true;
+        self.poison();
         return error.Quota;
+    }
+
+    /// Abort a transaction that has been open for TransactionTimeoutMs without its End. The
+    /// snapshot is kept but never swept, and publication waits for a clean full sync.
+    fn expire_transaction(self: *runtime_t, now: u64) void {
+        if (!self.transaction_open or now < self.tx_started + TransactionTimeoutMs) return;
+        self.transaction_open = false;
+        self.tx_poisoned = true;
+        self.sync_required = true;
+        self.aborted_transactions +|= 1;
     }
 
     const parsed_input_t = struct {
@@ -1569,9 +1607,9 @@ export fn catalog_runtime_destroy(runtime: ?*runtime_t) void {
 }
 
 /// Open a catalog transaction (CatalogBegin).
-export fn catalog_runtime_begin(runtime: ?*runtime_t) c_int {
+export fn catalog_runtime_begin(runtime: ?*runtime_t, now_ms: u64) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
-    self.begin();
+    self.begin(now_ms);
     return @intFromEnum(status_t.Ok);
 }
 
@@ -1755,7 +1793,7 @@ fn input_app(key: []const u8, name: []const u8) app_input_t {
 }
 
 fn sync(rt: *runtime_t, apps: []const app_input_t) !void {
-    rt.begin();
+    rt.begin(0);
     for (apps) |input| rt.upsert(false, input) catch unreachable;
     try rt.end();
 }
@@ -1989,7 +2027,7 @@ test "changed content replaces the entry and keeps the manifest digest consisten
     try sync(rt, &.{ input_app("a-Alpha", "Alpha"), input_app("a-Beta", "Beta") });
     _ = drive(rt, 0);
 
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(true, input_app("a-Alpha", "Alpha Renamed"));
     try rt.upsert(false, input_app("a-Beta", "Beta"));
     try rt.end();
@@ -2036,15 +2074,15 @@ test "transaction semantics: begin restarts, end rejects, incremental remains" {
     try rt.upsert(false, input_app("a-Incremental", "Incremental"));
     try testing.expectEqual(@as(u32, 1), rt.stats().apps);
 
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, input_app("a-First", "First"));
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, input_app("a-Second", "Second"));
     try rt.end();
     try testing.expectEqual(@as(u32, 1), rt.stats().apps);
     try testing.expect(rt.find("a-Second") != null);
     try testing.expect(rt.find("a-Incremental") == null);
-    try testing.expectEqual(@as(u32, 1), rt.stats().rejected_frames);
+    try testing.expectEqual(@as(u32, 2), rt.stats().rejected_frames);
 }
 
 test "hostile input is rejected and a poisoned transaction blocks publication" {
@@ -2070,7 +2108,7 @@ test "hostile input is rejected and a poisoned transaction blocks publication" {
     try testing.expectEqual(@as(u32, 0), rt.stats().apps);
     try testing.expectEqual(@as(u32, bad_inputs.len), rt.stats().rejected_frames);
 
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, input_app("a-Dup", "Dup"));
     try testing.expectError(error.Rejected, rt.upsert(false, input_app("a-Dup", "Dup")));
     try testing.expectError(error.Rejected, rt.end());
@@ -2081,7 +2119,7 @@ test "hostile input is rejected and a poisoned transaction blocks publication" {
 
     rt.reset_session();
     try testing.expect(!rt.sync_required);
-    rt.begin();
+    rt.begin(0);
     try testing.expectError(error.Rejected, rt.upsert(true, input_app("a-Unknown", "Unknown")));
     try rt.upsert(false, input_app("a-Ok", "Ok"));
     try rt.end();
@@ -2107,7 +2145,7 @@ test "application quota and uncatalogued quota are bounded" {
     const rt = try runtime_t.create(testing.allocator, env.config_for());
     defer rt.destroy();
     var keys: [MaxApps][16]u8 = undefined;
-    rt.begin();
+    rt.begin(0);
     for (0..MaxApps) |i| {
         const key = try std.fmt.bufPrint(&keys[i], "a-Q{d:0>5}", .{i});
         try rt.upsert(false, .{ .key = key, .display_name = "Q", .flags = 0 });
@@ -2118,7 +2156,7 @@ test "application quota and uncatalogued quota are bounded" {
     try testing.expectEqual(@as(u32, 1), rt.stats().rejected_frames);
 
     rt.reset_session();
-    rt.begin();
+    rt.begin(0);
     var uncat_keys: [MaxUncatalogued + 1][16]u8 = undefined;
     for (0..MaxUncatalogued) |i| {
         const key = try std.fmt.bufPrint(&uncat_keys[i], "a-U{d:0>4}", .{i});
@@ -2136,7 +2174,7 @@ test "icon request, chunked transfer and icon publication" {
     defer rt.destroy();
     const hash = [_]u8{0x11} ** 32;
     const sizes = [_]u8{ 16, 0, 32, 0 };
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Alpha", .display_name = "Alpha", .flags = 0, .icon_sizes = &sizes, .content_hash = &hash });
     try rt.end();
     rt.tick(0, UpdatedTimestamp);
@@ -2178,7 +2216,7 @@ test "transfer hostility cancels deterministically and retries are bounded" {
     const sizes = [_]u8{ 16, 0 };
     const hash = [_]u8{0x22} ** 32;
     const names = [_][]const u8{ "a-Beta", "a-Gamma", "a-Delta", "a-Eps", "a-Zeta" };
-    rt.begin();
+    rt.begin(0);
     for (names) |name| try rt.upsert(false, .{ .key = name, .display_name = name, .flags = 0, .icon_sizes = &sizes, .content_hash = &hash });
     try rt.end();
 
@@ -2247,7 +2285,7 @@ test "timeouts cancel stalled transfers and retry after backoff" {
     const rt = try runtime_t.create(testing.allocator, env.config_for());
     defer rt.destroy();
     const sizes = [_]u8{ 32, 0 };
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Gamma", .display_name = "Gamma", .flags = 0, .icon_sizes = &sizes });
     try rt.end();
     rt.tick(0, UpdatedTimestamp);
@@ -2290,7 +2328,7 @@ test "icon budget refuses transfers beyond the retained byte cap" {
     var digest: [32]u8 = undefined;
     sha256.hash(big, &digest, .{});
 
-    rt.begin();
+    rt.begin(0);
     for (0..32) |i| {
         const key = try std.fmt.bufPrint(&keys[i], "a-B{d:0>3}", .{i});
         try rt.upsert(false, .{ .key = key, .display_name = "B", .flags = 0, .icon_sizes = &size_256 });
@@ -2401,7 +2439,7 @@ test "ensure_uncatalogued publishes a NoDisplay entry before its first commit" {
     try testing.expectEqual(@as(u32, 1), rt.stats().uncatalogued);
     _ = drive(rt, 1_000_000);
 
-    rt.begin();
+    rt.begin(0);
     try testing.expectError(error.Pending, rt.ensure_uncatalogued("a-Pending", "P", 0, UpdatedTimestamp));
     try rt.end();
 }
@@ -2435,7 +2473,7 @@ test "catalog state under allocation failure never leaks" {
             const hash = [_]u8{0x44} ** 32;
             const png = fake_png(testing.allocator, 16, 40, 0x55) catch unreachable;
             defer testing.allocator.free(png);
-            rt.begin();
+            rt.begin(0);
             if (rt.upsert(false, .{ .key = "a-Sweep", .display_name = "Sweep", .flags = 0, .icon_sizes = &sizes, .content_hash = &hash })) |_| {} else |_| {}
             rt.end() catch {};
             rt.tick(0, UpdatedTimestamp);
@@ -2497,7 +2535,7 @@ test "randomized sequences agree with a reference model" {
     while (round < 40) : (round += 1) {
         const choice = random.uintLessThan(u8, 3);
         if (choice == 0) {
-            rt.begin();
+            rt.begin(0);
             for (0..12) |i| {
                 if (random.boolean()) continue;
                 const variant = random.uintLessThan(u8, 3);
@@ -2579,8 +2617,8 @@ test "C ABI covers configuration, null handling and every export" {
     try testing.expectEqual(@as(c_int, 0), catalog_runtime_create(&raw, &handle));
     const rt = handle.?;
 
-    try testing.expectEqual(@as(c_int, 1), catalog_runtime_begin(null));
-    try testing.expectEqual(@as(c_int, 0), catalog_runtime_begin(rt));
+    try testing.expectEqual(@as(c_int, 1), catalog_runtime_begin(null, 0));
+    try testing.expectEqual(@as(c_int, 0), catalog_runtime_begin(rt, 0));
     try testing.expectEqual(@as(c_int, 1), catalog_runtime_end(null));
     const key = "a-Cabi";
     const name = "Cabi";
@@ -2605,7 +2643,7 @@ test "C ABI covers configuration, null handling and every export" {
     try testing.expectEqual(@as(c_int, 2), catalog_runtime_end(rt));
     catalog_runtime_reset_session(rt);
     app_c.flags = 0;
-    try testing.expectEqual(@as(c_int, 0), catalog_runtime_begin(rt));
+    try testing.expectEqual(@as(c_int, 0), catalog_runtime_begin(rt, 0));
     try testing.expectEqual(@as(c_int, 0), catalog_runtime_upsert(rt, 0, &app_c));
     try testing.expectEqual(@as(c_int, 0), catalog_runtime_end(rt));
     try testing.expectEqual(@as(c_int, 0), catalog_runtime_tick(rt, 0, UpdatedTimestamp.ptr, UpdatedTimestamp.len));
@@ -2814,7 +2852,7 @@ test "state machine branches: deadlines, quotas, updates and transfer identifier
 
     // Update: a flags change marks the menu; a content-hash change requests icons again; mask
     // growth requests the newly advertised size; mask shrink stops requesting it.
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Upd", .display_name = "Upd", .flags = 0, .icon_sizes = &sizes, .content_hash = &hash_a });
     try rt.end();
     rt.tick(0, UpdatedTimestamp);
@@ -2842,7 +2880,7 @@ test "state machine branches: deadlines, quotas, updates and transfer identifier
     rt.reset_session();
     try testing.expectEqual(@as(u32, 0), rt.stats().outstanding);
 
-    rt.begin();
+    rt.begin(0);
     var keys: [MaxOutstanding + 1][8]u8 = undefined;
     for (0..MaxOutstanding + 1) |i| {
         const key = try std.fmt.bufPrint(&keys[i], "a-O{d:0>3}", .{i});
@@ -2877,7 +2915,7 @@ test "icon replacement, uncatalogued supersession, and open transfers at teardow
     defer env.deinit();
     const rt = try runtime_t.create(testing.allocator, env.config_for());
     const sizes = [_]u8{ 16, 0 };
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Swap", .display_name = "Swap", .flags = 0, .icon_sizes = &sizes });
     try rt.end();
     rt.tick(0, UpdatedTimestamp);
@@ -2958,7 +2996,7 @@ test "C ABI covers create variants, teardown with open transfers and every null 
     try testing.expectEqual(@as(c_int, 0), catalog_runtime_create(&raw, &handle));
     const rt = handle.?;
     const sizes = [_]u8{ 16, 0 };
-    try testing.expectEqual(@as(c_int, 0), catalog_runtime_begin(rt));
+    try testing.expectEqual(@as(c_int, 0), catalog_runtime_begin(rt, 0));
     const key = "a-Teardown";
     var app_c = app_c_t{
         .key = key.ptr,
@@ -3125,7 +3163,7 @@ test "request scheduling respects pending, requested, backoff and mask gates" {
     const rt = try runtime_t.create(testing.allocator, env.config_for());
     defer rt.destroy();
     const sizes = [_]u8{ 16, 0, 32, 0 };
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Gate", .display_name = "Gate", .flags = 0, .icon_sizes = &sizes });
     // Inside a transaction nothing is requested and no deadline is scheduled for requests.
     rt.issue_requests(0);
@@ -3166,7 +3204,7 @@ test "removing one app leaves another app's transfer open; reset tears down all 
     const rt = try runtime_t.create(testing.allocator, env.config_for());
     defer rt.destroy();
     const sizes = [_]u8{ 16, 0 };
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Left", .display_name = "Left", .flags = 0, .icon_sizes = &sizes });
     try rt.upsert(false, .{ .key = "a-Right", .display_name = "Right", .flags = 0, .icon_sizes = &sizes });
     try rt.end();
@@ -3186,7 +3224,7 @@ test "transactions block ticks from publishing and transfer_end refuses non-rece
     const rt = try runtime_t.create(testing.allocator, env.config_for());
     defer rt.destroy();
     const sizes = [_]u8{ 16, 0 };
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Open", .display_name = "Open", .flags = 0, .icon_sizes = &sizes });
     rt.tick(0, UpdatedTimestamp);
     var rel_buf: [128]u8 = undefined;
@@ -3236,7 +3274,7 @@ test "sub-condition coverage: key shape, text validity, hash transitions and gat
     // A stored app without a content hash gains one on update, which requests its icons.
     const sizes = [_]u8{ 16, 0 };
     const hash = [_]u8{0x5A} ** 32;
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Hashless", .display_name = "H", .flags = 0, .icon_sizes = &sizes });
     try rt.end();
     rt.tick(0, UpdatedTimestamp);
@@ -3256,7 +3294,7 @@ test "sub-condition coverage: key shape, text validity, hash transitions and gat
     try testing.expect(rt.find("a-Shrink") != null);
 
     // A poisoned session schedules nothing and reports no request deadline.
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Dup", .display_name = "D", .flags = 0 });
     try testing.expectError(error.Rejected, rt.upsert(false, .{ .key = "a-Dup", .display_name = "D", .flags = 0 }));
     try testing.expect(!rt.can_issue_request(0));
@@ -3366,7 +3404,7 @@ test "send backpressure stops new icon requests until the sender recovers" {
     const rt = try runtime_t.create(testing.allocator, env.config_for());
     defer rt.destroy();
     const sizes = [_]u8{ 16, 0 };
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Backpressure", .display_name = "B", .flags = 0, .icon_sizes = &sizes });
     try rt.end();
     rt.set_send_blocked(true);
@@ -3384,22 +3422,64 @@ test "removing an app purges its queued icon requests and reset clears the queue
     const rt = try runtime_t.create(testing.allocator, env.config_for());
     defer rt.destroy();
     const sizes = [_]u8{ 16, 0 };
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Gone", .display_name = "G", .flags = 0, .icon_sizes = &sizes });
     try rt.end();
     rt.tick(0, UpdatedTimestamp);
     // The request is queued and not drained when the application disappears.
-    rt.begin();
+    rt.begin(0);
     try rt.end();
     rt.remove("a-Gone");
     while (rt.next_action()) |action| {
         if (action.kind == .IconRequest) try testing.expect(!std.mem.eql(u8, action.key, "a-Gone"));
     }
     // Queued work is dropped entirely when the session resets.
-    rt.begin();
+    rt.begin(0);
     try rt.upsert(false, .{ .key = "a-Again", .display_name = "A", .flags = 0, .icon_sizes = &sizes });
     try rt.end();
     rt.tick(1, UpdatedTimestamp);
     rt.reset_session();
     try testing.expect(rt.next_action() == null);
+}
+
+test "a poisoned transaction does not block the next clean full sync" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    rt.begin(0);
+    try rt.upsert(false, .{ .key = "a-Dup", .display_name = "D", .flags = 0 });
+    try testing.expectError(error.Rejected, rt.upsert(false, .{ .key = "a-Dup", .display_name = "D", .flags = 0 }));
+    try testing.expectError(error.Rejected, rt.end());
+    try testing.expect(rt.stats().sync_required == 1);
+    // A later, clean transaction clears the requirement and publishes again.
+    rt.begin(0);
+    try rt.upsert(false, .{ .key = "a-Clean", .display_name = "C", .flags = 0 });
+    try rt.end();
+    try testing.expect(rt.stats().sync_required == 0);
+    rt.tick(1, UpdatedTimestamp);
+    var rel_buf: [128]u8 = undefined;
+    _ = try env.data.statFile(desktop_rel(&rel_buf, "a-Clean"));
+}
+
+test "an unfinished transaction is aborted after the timeout and End without Begin is counted" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    try testing.expectError(error.Rejected, rt.end());
+    try testing.expectEqual(@as(u32, 1), rt.stats().rejected_frames);
+    rt.begin(100);
+    try rt.upsert(false, .{ .key = "a-Half", .display_name = "H", .flags = 0 });
+    rt.tick(100 + TransactionTimeoutMs - 1, UpdatedTimestamp);
+    try testing.expectEqual(@as(u32, 1), rt.stats().transaction_open);
+    try testing.expectEqual(@as(?u64, 100 + TransactionTimeoutMs), rt.next_deadline(100));
+    rt.tick(100 + TransactionTimeoutMs, UpdatedTimestamp);
+    const stats = rt.stats();
+    try testing.expectEqual(@as(u32, 0), stats.transaction_open);
+    try testing.expectEqual(@as(u32, 1), stats.aborted_transactions);
+    try testing.expectEqual(@as(u32, 1), stats.sync_required);
+    // The snapshot is kept but never swept, and the late End is refused.
+    try testing.expectEqual(@as(u32, 1), stats.apps);
+    try testing.expectError(error.Rejected, rt.end());
 }
