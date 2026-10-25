@@ -173,3 +173,66 @@ $(WcBuild)/window_coordinator_windows.o: $(WcSrc) $(WcHdr) | $(WcBuild)
 	$(WcMingwCC) -std=c11 -Wall -Wextra -Wpedantic -Werror $(WcWinDefs) -Iinclude -Isrc/interop -c $(WcSrc) -o $@
 
 interop-window-coordinator-windows: $(WcBuild)/window_coordinator_windows.o
+
+# Guest launch executor (TODO #29 subtask 29i, impl/seamless-interop/claude_45_percent/guest_launch_contract.md).
+#   make interop-guest-launch-test           Linux suite over the native double and the real interop codec
+#   make interop-guest-launch-sanitizers     the same suite under ASan, LSan and UBSan with detect_leaks=1
+#   make interop-guest-launch-coverage       gcov line and branch gate (90 percent) on guest_launch.c
+#   make interop-guest-launch-windows        mingw cross-build of build/interop_guest_launch_native_test.exe
+#
+# The portable core (src/interop/guest_launch.c) is measured on Linux. The Win32 table
+# (src/interop/guest_launch_windows.c) and the native test run on a Windows desktop only.
+
+GlBuild := build/guest_launch
+GlCore := src/interop/guest_launch.c
+GlHdr := src/interop/guest_launch.h
+GlSuite := tests/interop/guest_launch_suite.c
+GlDouble := tests/interop/guest_launch_double.h
+GlWindowsTable := src/interop/guest_launch_windows.c
+GlNativeTest := tests/interop/guest_launch_native_windows.c
+GlCoverage := tests/interop/guest_launch_coverage.py
+GlCFlags := -std=c11 -Wall -Wextra -Wpedantic -Werror -Wno-unused-function -UNDEBUG -O0 -g -pthread -Iinclude -Isrc/interop -Itests/interop
+GlSanFlags := -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer
+GlSanEnv := ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+GlWinDefs := -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE
+GlWinCodec := $(GlBuild)/codec_windows.o
+GlHostCodec := $(GlBuild)/codec.o
+
+InteropLaneTests += interop-guest-launch-test
+InteropLaneSanitizers += interop-guest-launch-sanitizers
+InteropLaneCoverage += interop-guest-launch-coverage
+
+$(GlBuild):
+	mkdir -p $@
+
+$(GlHostCodec): src/interop/interop_codec.zig include/waddle/interop_protocol.h | $(GlBuild)
+	$(ZIG) build-obj src/interop/interop_codec.zig -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+# The same codec for the Windows target, linked into the native test.
+$(GlWinCodec): src/interop/interop_codec.zig include/waddle/interop_protocol.h | $(GlBuild)
+	$(ZIG) build-obj src/interop/interop_codec.zig -target x86_64-windows-gnu -Iinclude -O ReleaseSafe -fcompiler-rt -lc -femit-bin=$@
+
+$(GlBuild)/suite: $(GlSuite) $(GlDouble) $(GlCore) $(GlHdr) $(GlHostCodec) | $(GlBuild)
+	$(CC) $(GlCFlags) $(GlSuite) $(GlCore) $(GlHostCodec) -o $@
+
+$(GlBuild)/suite_san: $(GlSuite) $(GlDouble) $(GlCore) $(GlHdr) $(GlHostCodec) | $(GlBuild)
+	$(CC) $(GlCFlags) $(GlSanFlags) $(GlSuite) $(GlCore) $(GlHostCodec) -o $@
+
+.PHONY: interop-guest-launch-test interop-guest-launch-sanitizers interop-guest-launch-coverage interop-guest-launch-windows
+
+interop-guest-launch-test: $(GlBuild)/suite
+	$(GlBuild)/suite
+
+interop-guest-launch-sanitizers: $(GlBuild)/suite_san
+	$(GlSanEnv) $(GlBuild)/suite_san
+
+interop-guest-launch-coverage:
+	python3 $(GlCoverage)
+
+# Native test: the real Win32 table and a recording wrapper, built for mingw. Run on Windows as
+#   .\build\interop_guest_launch_native_test.exe
+build/interop_guest_launch_native_test.exe: $(GlNativeTest) $(GlWindowsTable) $(GlCore) $(GlHdr) $(GlWinCodec) | $(GlBuild)
+	mkdir -p build
+	$(WsaMingwCC) -std=c11 -Wall -Wextra -Wpedantic -Werror $(GlWinDefs) -Iinclude -Isrc/interop $(GlNativeTest) $(GlWindowsTable) $(GlCore) $(GlWinCodec) -lshell32 -luser32 -lole32 -lntdll -ladvapi32 -o $@
+
+interop-guest-launch-windows: build/interop_guest_launch_native_test.exe
