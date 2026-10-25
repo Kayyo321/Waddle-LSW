@@ -46,7 +46,7 @@ calls, and wire encoding of `InputLockState` (already in `interop_codec.zig`).
 | `error_t` | error set | `InvalidIndex`, `InvalidMask`, `InvalidSerial`, `InvalidEpoch`, `EpochMismatch` |
 | `modifiers_t` | extern struct | `depressed`, `latched`, `locked` (u32 each), by value |
 | `indices_t` | extern struct | `caps`, `num`, `scroll` (u8 each), by value |
-| `host_state_t` | extern struct | `focused: bool`, `last_mask: u8`. Zero = valid initial value |
+| `host_state_t` | extern struct | `focused: bool`, `pending_sync: bool`. Zero = valid initial value |
 | `host_decision_t` | extern struct | `send: bool`, `mask: u8` |
 | `guest_state_t` | extern struct | `accepted: bool`, `epoch: u64`, `serial: u32`. Zero = valid initial value |
 | `toggle_action_t` | extern struct | `vk: u16`, `pressed: bool` |
@@ -54,14 +54,15 @@ calls, and wire encoding of `InputLockState` (already in `interop_codec.zig`).
 | `update_t` | extern struct | `applied: bool`, `plan: toggle_plan_t` |
 | `status_t` | enum(c_int) | `Ok`=0, `NullArgument`=1, `InvalidIndex`=2, `InvalidMask`=3, `InvalidSerial`=4, `InvalidEpoch`=5, `EpochMismatch`=6 |
 | `lock_mask(mods, indices)` | fn | Returns the mask, or `InvalidIndex` |
-| `host_enter`, `host_observe`, `host_leave` | fn | Host reducer (below) |
+| `host_enter(state, indices)`, `host_observe(state, mods, indices)`, `host_leave(state)` | fn | Host reducer (below) |
 | `serial_newer(candidate, last)` | fn | Wrap-safe serial order (below) |
 | `plan_toggles(desired, current)` | fn | Ordered toggle plan (below) |
 | `guest_update(state, current_epoch, epoch, serial, desired, current)` | fn | Lease-epoch gate, serial gate, plan |
 
 C ABI (`export fn`, `callconv(.C)`, all pointer parameters are nullable and a
 NULL pointer returns `NullArgument`): `waddle_keyboard_lock_mask`,
-`waddle_keyboard_lock_host_enter`, `waddle_keyboard_lock_host_observe`,
+`waddle_keyboard_lock_host_enter` (no output; arms the sync),
+`waddle_keyboard_lock_host_observe`,
 `waddle_keyboard_lock_host_leave`, `waddle_keyboard_lock_guest_update`,
 `waddle_keyboard_lock_plan_toggles`. Output structs are written only when the
 call returns `Ok`. The C header mirrors the struct layouts exactly; the Zig
@@ -75,19 +76,25 @@ index equal to `ModifierAbsent` contributes 0. An index in 32 through 254 is
 `InvalidIndex`. Validation of all three indices happens before any state is
 read, so an invalid call never changes state and never sends.
 
-`host_enter(state, mods, indices)`: computes the mask, sets `focused = true`,
-records `last_mask`, and returns `send = true`. Every wl_keyboard enter sends
-exactly one `InputLockState`, including a second enter without an intervening
-leave and an enter whose mask equals the previous one. The spec requires one
-message per `InputFocus{enter}`.
+Sync trigger. The protocol requires exactly one `InputLockState` per
+`InputFocus{enter}` (IMPL_DESC 3.6.3). `wl_keyboard.enter` carries no modifiers,
+so the sync is sent by the first `modifiers` observation after the enter.
 
-`host_observe(state, mods, indices)`: computes the mask. If not focused, or the
-mask equals `last_mask`, returns `send = false`. Otherwise records the new
-mask and returns `send = true`. A duplicate mask is never re-sent without a
-focus enter. While unfocused the recorded mask is not updated.
+`host_enter(state, indices)`: validates the three indices, sets `focused = true`
+and `pending_sync = true`. A second enter without an intervening leave re-arms
+the sync, so it still yields one message. Invalid indices return `InvalidIndex`
+with no state change.
 
-`host_leave(state)`: clears `focused`. `last_mask` is retained but is not used
-until the next enter, which always sends.
+`host_observe(state, mods, indices)`: validates the indices and computes the
+mask. The message is sent only when the observation is focused and
+`pending_sync` is set. That observation clears `pending_sync` and returns
+`send = true` with the mask. Every later observation returns `send = false`,
+even when the mask changed, until the next enter. Mask changes while focused
+are carried by `InputKey` events (Caps Lock is a key press), so sending a second
+`InputLockState` would race the guest toggle. Unfocused observations send nothing.
+
+`host_leave(state)`: clears `focused` and `pending_sync`. A sync that was armed
+but not consumed is discarded.
 
 ## Guest gate and planner
 
@@ -166,10 +173,10 @@ Zig built-in tests in `keyboard_lock.zig` (run by `make interop-keyboard-lanes-t
 
 - Lock mask: each bit, absent index, index 31, ignored `depressed`/`latched`,
   rejection of 32, 33, 254 at each of the three positions.
-- Host: enter sends; observe sends only on change while focused; duplicate
-  mask suppressed; unfocused observe never sends; leave then enter sends;
-  repeated enter sends each time; invalid indices leave state and output
-  unchanged.
+- Host: the first observation after enter sends exactly once; later changes and
+  duplicates never send until the next enter; unfocused observations never send;
+  a second enter re-arms one sync; leave discards an unconsumed sync; invalid
+  indices on enter or observe leave state and output unchanged.
 - Serial: equal, older, newer, wrap from 0xFFFFFFFF to 1, distance 2^31 - 1
   newer, distance 2^31 and above older.
 - Plan: equal masks empty; single key press-release; all keys in order; each

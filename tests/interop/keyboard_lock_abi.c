@@ -40,29 +40,35 @@ static void test_host_session(void) {
     waddle_keyboard_lock_host_t host;
     memset(&host, 0, sizeof(host));
     waddle_keyboard_lock_modifiers_t num_on = {0, 0, 1u << 1};
+    waddle_keyboard_lock_modifiers_t caps_on = {0, 0, 1u << 0};
     waddle_keyboard_lock_host_decision_t decision = {false, 0};
 
     assert(waddle_keyboard_lock_host_observe(&host, &num_on, &indices_default, &decision) == WaddleKeyboardLockOk);
     assert(!decision.send && !host.focused);
-    assert(waddle_keyboard_lock_host_enter(&host, NULL, &indices_default, &decision) == WaddleKeyboardLockNullArgument);
-    assert(waddle_keyboard_lock_host_enter(&host, &num_on, &indices_default, &decision) == WaddleKeyboardLockOk);
+    assert(waddle_keyboard_lock_host_enter(NULL, &indices_default) == WaddleKeyboardLockNullArgument);
+    assert(waddle_keyboard_lock_host_enter(&host, NULL) == WaddleKeyboardLockNullArgument);
+    waddle_keyboard_lock_indices_t bad = {0, 1, 99};
+    assert(waddle_keyboard_lock_host_enter(&host, &bad) == WaddleKeyboardLockInvalidIndex);
+    assert(!host.focused && !host.pending_sync);
+
+    assert(waddle_keyboard_lock_host_enter(&host, &indices_default) == WaddleKeyboardLockOk);
+    assert(host.focused && host.pending_sync);
+    assert(waddle_keyboard_lock_host_observe(&host, &num_on, &indices_default, &decision) == WaddleKeyboardLockOk);
     assert(decision.send && decision.mask == WaddleKeyboardLockNum);
-    assert(host.focused && host.last_mask == WaddleKeyboardLockNum);
+    assert(!host.pending_sync);
 
     assert(waddle_keyboard_lock_host_observe(&host, &num_on, &indices_default, &decision) == WaddleKeyboardLockOk);
     assert(!decision.send);
-    waddle_keyboard_lock_modifiers_t caps_on = {0, 0, 1u << 0};
     assert(waddle_keyboard_lock_host_observe(&host, &caps_on, &indices_default, &decision) == WaddleKeyboardLockOk);
-    assert(decision.send && decision.mask == WaddleKeyboardLockCaps);
+    assert(!decision.send && decision.mask == WaddleKeyboardLockCaps);
 
-    waddle_keyboard_lock_indices_t bad = {0, 1, 99};
     decision.mask = 0x55u;
     assert(waddle_keyboard_lock_host_observe(&host, &caps_on, &bad, &decision) == WaddleKeyboardLockInvalidIndex);
-    assert(decision.mask == 0x55u && host.last_mask == WaddleKeyboardLockCaps);
+    assert(decision.mask == 0x55u && !host.pending_sync);
 
     assert(waddle_keyboard_lock_host_leave(NULL) == WaddleKeyboardLockNullArgument);
     assert(waddle_keyboard_lock_host_leave(&host) == WaddleKeyboardLockOk);
-    assert(!host.focused);
+    assert(!host.focused && !host.pending_sync);
     assert(waddle_keyboard_lock_host_observe(&host, &num_on, &indices_default, &decision) == WaddleKeyboardLockOk);
     assert(!decision.send);
 }

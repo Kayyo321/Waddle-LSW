@@ -62,12 +62,12 @@ pub const indices_t = extern struct {
 pub const host_state_t = extern struct {
     /// True between a focus enter and the next leave.
     focused: bool,
-    /// Lock mask last sent to the guest for the current focus.
-    last_mask: u8,
+    /// True from a focus enter until the first modifiers observation consumes it.
+    pending_sync: bool,
 };
 
-/// Host decision for one observation. When `send` is true the caller queues
-/// exactly one InputLockState carrying `mask`; otherwise it queues nothing.
+/// Host decision for one modifiers observation. When `send` is true the caller
+/// queues exactly one InputLockState carrying `mask`; otherwise it queues nothing.
 pub const host_decision_t = extern struct {
     /// True when an InputLockState must be queued.
     send: bool,
@@ -143,9 +143,7 @@ const toggle_table = [_]toggle_entry_t{
 /// Errors: InvalidIndex when any index is neither ModifierAbsent nor 0..31.
 /// Thread safety: pure function, callable from any thread.
 pub noinline fn lock_mask(mods: modifiers_t, indices: indices_t) error_t!u8 {
-    try validate_index(indices.caps);
-    try validate_index(indices.num);
-    try validate_index(indices.scroll);
+    try validate_indices(indices);
     var mask: u8 = 0;
     if (locked_bit(mods.locked, indices.caps)) mask |= LockCaps;
     if (locked_bit(mods.locked, indices.num)) mask |= LockNum;
@@ -153,38 +151,41 @@ pub noinline fn lock_mask(mods: modifiers_t, indices: indices_t) error_t!u8 {
     return mask;
 }
 
-/// Host focus enter. Always decides to send one InputLockState, because every
-/// wl_keyboard enter requires a fresh guest sync. Marks the state focused and
-/// records the mask as sent.
-/// `state` is in/out and owner-serialized; `mods` and `indices` are in by value.
-/// Returns the decision with send=true.
-/// Errors: InvalidIndex; state is not mutated on error.
+/// Host focus enter. Arms exactly one lock sync. wl_keyboard.enter carries no
+/// modifiers; the modifiers event that follows is the observation that sends the
+/// sync (IMPL_DESC 3.6.3: lock state is sent on InputFocus{enter}). A second enter
+/// without a leave re-arms the sync, so it still yields one message.
+/// `state` is in/out and owner-serialized; `indices` is in by value.
+/// Errors: InvalidIndex when an index is invalid; state is not mutated on error.
 /// Thread safety: caller serializes all calls on one state.
-pub noinline fn host_enter(state: *host_state_t, mods: modifiers_t, indices: indices_t) error_t!host_decision_t {
-    const mask = try lock_mask(mods, indices);
+pub noinline fn host_enter(state: *host_state_t, indices: indices_t) error_t!void {
+    try validate_indices(indices);
     state.focused = true;
-    state.last_mask = mask;
-    return .{ .send = true, .mask = mask };
+    state.pending_sync = true;
 }
 
-/// Host modifier observation. Sends only on change while focused, so an
-/// unchanged mask is never duplicated. While unfocused nothing is sent and the
-/// recorded mask is left unchanged.
+/// Host modifiers observation. Sends exactly one InputLockState for the first
+/// observation after a focus enter, and nothing for later observations until the
+/// next enter, even when the lock mask changes. Caps Lock pressed while focused is
+/// delivered as InputKey, so a mask update here would race the guest toggle.
+/// While unfocused nothing is sent.
 /// `state` is in/out; `mods` and `indices` are in by value.
-/// Returns the decision; send=true means exactly one InputLockState is due.
+/// Returns the decision; `mask` is the lock mask of this observation.
 /// Errors: InvalidIndex; state is not mutated on error, and nothing is sent.
 /// Thread safety: caller serializes all calls on one state.
 pub noinline fn host_observe(state: *host_state_t, mods: modifiers_t, indices: indices_t) error_t!host_decision_t {
     const mask = try lock_mask(mods, indices);
-    if (!state.focused or mask == state.last_mask) return .{ .send = false, .mask = mask };
-    state.last_mask = mask;
+    if (!state.focused or !state.pending_sync) return .{ .send = false, .mask = mask };
+    state.pending_sync = false;
     return .{ .send = true, .mask = mask };
 }
 
-/// Host focus leave. Clears focus so later observations send nothing.
-/// `state` is in/out. No error. Thread safety: caller serializes.
+/// Host focus leave. Clears focus and any unconsumed sync, so later observations
+/// send nothing until the next enter. `state` is in/out. No error.
+/// Thread safety: caller serializes.
 pub noinline fn host_leave(state: *host_state_t) void {
     state.focused = false;
+    state.pending_sync = false;
 }
 
 /// Wrap-safe serial ordering (RFC 1982 style). `candidate` is newer than `last`
@@ -245,6 +246,12 @@ noinline fn validate_index(index: u8) error_t!void {
     if (index != ModifierAbsent and index > MaxModifierIndex) return error.InvalidIndex;
 }
 
+noinline fn validate_indices(indices: indices_t) error_t!void {
+    try validate_index(indices.caps);
+    try validate_index(indices.num);
+    try validate_index(indices.scroll);
+}
+
 noinline fn validate_mask(mask: u8) error_t!void {
     if ((mask & ~LockAll) != 0) return error.InvalidMask;
 }
@@ -284,21 +291,19 @@ export fn waddle_keyboard_lock_mask(mods: ?*const modifiers_t, indices: ?*const 
     return .Ok;
 }
 
-/// C ABI: host focus enter. `state` is inout; `mods`/`indices` are in; `out` is out.
-/// Returns Ok, NullArgument, or InvalidIndex. State and `out` change only on Ok.
+/// C ABI: host focus enter. `state` is inout; `indices` is in. Returns Ok,
+/// NullArgument, or InvalidIndex. State changes only on Ok.
 /// Thread safety: caller serializes calls on one state.
-export fn waddle_keyboard_lock_host_enter(state: ?*host_state_t, mods: ?*const modifiers_t, indices: ?*const indices_t, out: ?*host_decision_t) callconv(.C) status_t {
+export fn waddle_keyboard_lock_host_enter(state: ?*host_state_t, indices: ?*const indices_t) callconv(.C) status_t {
     const s = state orelse return .NullArgument;
-    const m = mods orelse return .NullArgument;
     const i = indices orelse return .NullArgument;
-    const o = out orelse return .NullArgument;
-    o.* = host_enter(s, m.*, i.*) catch |err| return status_of(err);
+    host_enter(s, i.*) catch |err| return status_of(err);
     return .Ok;
 }
 
-/// C ABI: host modifier observation. `state` is inout; `mods`/`indices` are in;
+/// C ABI: host modifiers observation. `state` is inout; `mods`/`indices` are in;
 /// `out` is out. Returns Ok, NullArgument, or InvalidIndex. Writes state and
-/// `out` only on Ok.
+/// `out` only on Ok. `send` is true for exactly one observation per focus enter.
 /// Thread safety: caller serializes calls on one state.
 export fn waddle_keyboard_lock_host_observe(state: ?*host_state_t, mods: ?*const modifiers_t, indices: ?*const indices_t, out: ?*host_decision_t) callconv(.C) status_t {
     const s = state orelse return .NullArgument;
@@ -364,58 +369,65 @@ test "lock mask rejects indices outside 0 through 31 at every position" {
     try std.testing.expectEqual(@as(u8, 0), try lock_mask(mods, good));
 }
 
-test "host enter always sends and observe sends only on change while focused" {
-    var state = host_state_t{ .focused = false, .last_mask = 0 };
-    const caps_on = modifiers_t{ .depressed = 0, .latched = 0, .locked = 1 << 1 };
+test "host sends one sync for the first modifiers observation after enter and never on later changes" {
+    var state = host_state_t{ .focused = false, .pending_sync = false };
     const indices = indices_t{ .caps = 1, .num = 2, .scroll = ModifierAbsent };
-    const unchanged = try host_observe(&state, caps_on, indices);
-    try std.testing.expect(!unchanged.send);
-    try std.testing.expect(!state.focused);
+    const caps_on = modifiers_t{ .depressed = 0, .latched = 0, .locked = 1 << 1 };
+    const num_on = modifiers_t{ .depressed = 0, .latched = 0, .locked = 1 << 2 };
 
-    const entered = try host_enter(&state, caps_on, indices);
-    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockCaps }, entered);
-    try std.testing.expect(state.focused);
-    try std.testing.expectEqual(@as(u8, LockCaps), state.last_mask);
+    const unfocused = try host_observe(&state, caps_on, indices);
+    try std.testing.expect(!unfocused.send);
+
+    try host_enter(&state, indices);
+    try std.testing.expect(state.focused and state.pending_sync);
+
+    const first = try host_observe(&state, caps_on, indices);
+    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockCaps }, first);
+    try std.testing.expect(!state.pending_sync);
 
     const duplicate = try host_observe(&state, caps_on, indices);
     try std.testing.expect(!duplicate.send);
-    try std.testing.expectEqual(@as(u8, LockCaps), duplicate.mask);
 
-    const changed = try host_observe(&state, .{ .depressed = 0, .latched = 0, .locked = 1 << 2 }, indices);
-    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockNum }, changed);
-    try std.testing.expectEqual(@as(u8, LockNum), state.last_mask);
+    const changed = try host_observe(&state, num_on, indices);
+    try std.testing.expect(!changed.send);
+    try std.testing.expectEqual(@as(u8, LockNum), changed.mask);
 
     host_leave(&state);
-    try std.testing.expect(!state.focused);
-    const after_leave = try host_observe(&state, .{ .depressed = 0, .latched = 0, .locked = 0 }, indices);
-    try std.testing.expect(!after_leave.send);
-    try std.testing.expectEqual(@as(u8, LockNum), state.last_mask);
+    try std.testing.expect(!state.focused and !state.pending_sync);
+    try std.testing.expect(!(try host_observe(&state, caps_on, indices)).send);
 
-    const reentered = try host_enter(&state, .{ .depressed = 0, .latched = 0, .locked = 0 }, indices);
-    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = 0 }, reentered);
+    try host_enter(&state, indices);
+    const after_reenter = try host_observe(&state, num_on, indices);
+    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockNum }, after_reenter);
 }
 
-test "host enter repeated without leave still sends one message per enter" {
-    var state = host_state_t{ .focused = false, .last_mask = 0 };
+test "a second enter without a leave re-arms one sync and enter without modifiers sends nothing" {
+    var state = host_state_t{ .focused = false, .pending_sync = false };
     const indices = indices_t{ .caps = 0, .num = 1, .scroll = 2 };
     const mods = modifiers_t{ .depressed = 0, .latched = 0, .locked = 0b100 };
-    try std.testing.expect((try host_enter(&state, mods, indices)).send);
-    try std.testing.expect((try host_enter(&state, mods, indices)).send);
+    try host_enter(&state, indices);
+    try host_enter(&state, indices);
+    try std.testing.expect((try host_observe(&state, mods, indices)).send);
+    try std.testing.expect(!(try host_observe(&state, mods, indices)).send);
+
+    try host_enter(&state, indices);
+    host_leave(&state);
     try std.testing.expect(!(try host_observe(&state, mods, indices)).send);
 }
 
 test "host rejections preserve state and never send" {
-    var state = host_state_t{ .focused = false, .last_mask = 0 };
+    var state = host_state_t{ .focused = false, .pending_sync = false };
     const mods = rt(modifiers_t, .{ .depressed = 0, .latched = 0, .locked = 1 });
     const bad = rt(indices_t, .{ .caps = 40, .num = 1, .scroll = 2 });
     const before = state;
-    try std.testing.expectError(error.InvalidIndex, host_enter(&state, mods, bad));
+    try std.testing.expectError(error.InvalidIndex, host_enter(&state, bad));
     try std.testing.expectEqualDeep(before, state);
 
-    _ = try host_enter(&state, mods, .{ .caps = 0, .num = 1, .scroll = 2 });
-    const focused = state;
+    try host_enter(&state, rt(indices_t, .{ .caps = 0, .num = 1, .scroll = 2 }));
+    const armed = state;
     try std.testing.expectError(error.InvalidIndex, host_observe(&state, mods, bad));
-    try std.testing.expectEqualDeep(focused, state);
+    try std.testing.expectEqualDeep(armed, state);
+    try std.testing.expect(state.pending_sync);
 }
 
 test "serial ordering is wrap safe and rejects equal and half-space distances" {
@@ -549,28 +561,29 @@ test "C ABI maps every status and writes outputs only on success" {
     try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_mask(&mods, &indices, &mask));
     try std.testing.expectEqual(@as(u8, LockCaps), mask);
 
-    var host = host_state_t{ .focused = false, .last_mask = 0 };
+    var host = host_state_t{ .focused = false, .pending_sync = false };
     var decision = host_decision_t{ .send = true, .mask = 0xEE };
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(rt(?*host_state_t, null), &mods, &indices, &decision));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(&host, rt(?*const modifiers_t, null), &indices, &decision));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(&host, &mods, rt(?*const indices_t, null), &decision));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(&host, &mods, &indices, rt(?*host_decision_t, null)));
-    try std.testing.expectEqual(status_t.InvalidIndex, waddle_keyboard_lock_host_enter(&host, &mods, &bad_indices, &decision));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(rt(?*host_state_t, null), &indices));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(&host, rt(?*const indices_t, null)));
+    try std.testing.expectEqual(status_t.InvalidIndex, waddle_keyboard_lock_host_enter(&host, &bad_indices));
     try std.testing.expect(!host.focused);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_enter(&host, &mods, &indices, &decision));
-    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockCaps }, decision);
-    decision = .{ .send = true, .mask = 0xEE };
-    try std.testing.expectEqual(status_t.InvalidIndex, waddle_keyboard_lock_host_observe(&host, &mods, &bad_indices, &decision));
-    try std.testing.expectEqual(@as(u8, 0xEE), decision.mask);
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_enter(&host, &indices));
+    try std.testing.expect(host.focused and host.pending_sync);
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_observe(rt(?*host_state_t, null), &mods, &indices, &decision));
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_observe(&host, rt(?*const modifiers_t, null), &indices, &decision));
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_observe(&host, &mods, rt(?*const indices_t, null), &decision));
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_observe(&host, &mods, &indices, rt(?*host_decision_t, null)));
+    decision = .{ .send = true, .mask = 0xEE };
+    try std.testing.expectEqual(status_t.InvalidIndex, waddle_keyboard_lock_host_observe(&host, &mods, &bad_indices, &decision));
+    try std.testing.expectEqual(@as(u8, 0xEE), decision.mask);
+    try std.testing.expect(host.pending_sync);
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_observe(&host, &mods, &indices, &decision));
+    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockCaps }, decision);
     try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_observe(&host, &mods, &indices, &decision));
     try std.testing.expect(!decision.send);
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_leave(rt(?*host_state_t, null)));
     try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_leave(&host));
-    try std.testing.expect(!host.focused);
+    try std.testing.expect(!host.focused and !host.pending_sync);
 
     var plan = std.mem.zeroes(toggle_plan_t);
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_plan_toggles(LockAll, 0, rt(?*toggle_plan_t, null)));
@@ -592,7 +605,7 @@ fn rt(comptime T: type, value: T) T {
 // Independent references: pure arithmetic written differently from the reducer.
 const reference_t = struct {
     focused: bool = false,
-    last_mask: u8 = 0,
+    pending: bool = false,
     accepted: bool = false,
     epoch: u64 = 0,
     serial: u32 = 0,
@@ -622,7 +635,7 @@ fn random_index(random: std.Random) u8 {
 test "randomized host and guest sequences match independent references" {
     var prng = std.Random.DefaultPrng.init(0x6c6f636b);
     const random = prng.random();
-    var host = host_state_t{ .focused = false, .last_mask = 0 };
+    var host = host_state_t{ .focused = false, .pending_sync = false };
     var guest = guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 };
     var reference = reference_t{};
     var wrap_base: u32 = 0;
@@ -634,15 +647,12 @@ test "randomized host and guest sequences match independent references" {
             0 => {
                 const before = host;
                 if (!valid) {
-                    try std.testing.expectError(error.InvalidIndex, host_enter(&host, mods, indices));
+                    try std.testing.expectError(error.InvalidIndex, host_enter(&host, indices));
                     try std.testing.expectEqualDeep(before, host);
                 } else {
-                    const mask = reference_mask(mods, indices);
-                    const decision = try host_enter(&host, mods, indices);
-                    try std.testing.expect(decision.send);
-                    try std.testing.expectEqual(mask, decision.mask);
+                    try host_enter(&host, indices);
                     reference.focused = true;
-                    reference.last_mask = mask;
+                    reference.pending = true;
                 }
             },
             1 => {
@@ -653,15 +663,16 @@ test "randomized host and guest sequences match independent references" {
                 } else {
                     const mask = reference_mask(mods, indices);
                     const decision = try host_observe(&host, mods, indices);
-                    const expect_send = reference.focused and mask != reference.last_mask;
+                    const expect_send = reference.focused and reference.pending;
                     try std.testing.expectEqual(expect_send, decision.send);
                     try std.testing.expectEqual(mask, decision.mask);
-                    if (expect_send) reference.last_mask = mask;
+                    if (expect_send) reference.pending = false;
                 }
             },
             2 => {
                 host_leave(&host);
                 reference.focused = false;
+                reference.pending = false;
             },
             else => {
                 const current_epoch: u64 = if (random.uintLessThan(u8, 16) == 0) 0 else 1 + random.uintLessThan(u64, 3);
@@ -703,6 +714,7 @@ test "randomized host and guest sequences match independent references" {
             },
         }
         try std.testing.expectEqual(reference.focused, host.focused);
+        try std.testing.expectEqual(reference.pending, host.pending_sync);
     }
 }
 
