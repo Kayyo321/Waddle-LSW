@@ -28,6 +28,85 @@ _Static_assert(sizeof(waddle_window_state_snapshot_t) == 56, "snapshot is 56 byt
 _Static_assert(_Alignof(waddle_window_state_snapshot_t) == 8, "snapshot alignment is 8");
 _Static_assert(WaddleWindowStateMaxActions == 8, "plan capacity is 8 actions");
 
+/* Field offsets. Values are the byte offsets documented in window_state_abi_contract.md section 2. */
+_Static_assert(offsetof(waddle_window_state_input_t, kind) == 0, "input.kind offset");
+_Static_assert(offsetof(waddle_window_state_input_t, state) == 4, "input.state offset");
+_Static_assert(offsetof(waddle_window_state_input_t, x) == 8, "input.x offset");
+_Static_assert(offsetof(waddle_window_state_input_t, y) == 12, "input.y offset");
+_Static_assert(offsetof(waddle_window_state_input_t, width) == 16, "input.width offset");
+_Static_assert(offsetof(waddle_window_state_input_t, height) == 20, "input.height offset");
+_Static_assert(offsetof(waddle_window_state_input_t, maximize) == 24, "input.maximize offset");
+_Static_assert(offsetof(waddle_window_state_action_t, kind) == 0, "action.kind offset");
+_Static_assert(offsetof(waddle_window_state_action_t, x) == 4, "action.x offset");
+_Static_assert(offsetof(waddle_window_state_action_t, y) == 8, "action.y offset");
+_Static_assert(offsetof(waddle_window_state_action_t, width) == 12, "action.width offset");
+_Static_assert(offsetof(waddle_window_state_action_t, height) == 16, "action.height offset");
+_Static_assert(offsetof(waddle_window_state_action_t, maximized) == 20, "action.maximized offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, window_id) == 0, "plan.window_id offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, base_revision) == 8, "plan.base_revision offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, action_count) == 16, "plan.action_count offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, seal) == 24, "plan.seal offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, generation) == 32, "plan.generation offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, pending_kind) == 36, "plan.pending_kind offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, pending_state) == 40, "plan.pending_state offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, pending_capabilities) == 44, "plan.pending_capabilities offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, pending_host_state) == 48, "plan.pending_host_state offset");
+_Static_assert(offsetof(waddle_window_state_plan_t, actions) == 52, "plan.actions offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, window_id) == 0, "snapshot.window_id offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, revision) == 8, "snapshot.revision offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, generation) == 16, "snapshot.generation offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, observed_guest_state) == 20, "snapshot.observed_guest_state offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, applied_guest_state) == 24, "snapshot.applied_guest_state offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, applied_host_state) == 28, "snapshot.applied_host_state offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, guest_capabilities) == 32, "snapshot.guest_capabilities offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, host_request) == 36, "snapshot.host_request offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, synced) == 40, "snapshot.synced offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, close_posted) == 44, "snapshot.close_posted offset");
+_Static_assert(offsetof(waddle_window_state_snapshot_t, retired) == 48, "snapshot.retired offset");
+
+/* Enumerated values. Every enumerator of the header, with the value documented in the contract section 4. */
+_Static_assert(WaddleWindowStateOk == 0, "status Ok");
+_Static_assert(WaddleWindowStateInvalidArgument == 1, "status InvalidArgument");
+_Static_assert(WaddleWindowStateOutOfMemory == 2, "status OutOfMemory");
+_Static_assert(WaddleWindowStateInvalidIdentity == 3, "status InvalidIdentity");
+_Static_assert(WaddleWindowStateInvalidState == 4, "status InvalidState");
+_Static_assert(WaddleWindowStateInvalidGeometry == 5, "status InvalidGeometry");
+_Static_assert(WaddleWindowStateStaleWindow == 6, "status StaleWindow");
+_Static_assert(WaddleWindowStateStalePlan == 7, "status StalePlan");
+_Static_assert(WaddleWindowStateRetired == 8, "status Retired");
+_Static_assert(WaddleWindowStateUnsynchronized == 9, "status Unsynchronized");
+_Static_assert(WaddleWindowStateUnsupportedStateRequest == 10, "status UnsupportedStateRequest");
+_Static_assert(WaddleWindowStateRevisionExhausted == 11, "status RevisionExhausted");
+_Static_assert(WaddleWindowStateInvalidCompletion == 12, "status InvalidCompletion");
+_Static_assert(WaddleWindowStateInvalidPlan == 13, "status InvalidPlan");
+_Static_assert(WaddleWindowStateInputGuestObservation == 1, "input GuestObservation");
+_Static_assert(WaddleWindowStateInputHostConfigure == 2, "input HostConfigure");
+_Static_assert(WaddleWindowStateInputHostStateRequest == 3, "input HostStateRequest");
+_Static_assert(WaddleWindowStateInputCloseRequest == 4, "input CloseRequest");
+_Static_assert(WaddleWindowStateInputHideObserved == 5, "input HideObserved");
+_Static_assert(WaddleWindowStateInputDestroyObserved == 6, "input DestroyObserved");
+_Static_assert(WaddleWindowStateActionHostSetMinimized == 1, "action HostSetMinimized");
+_Static_assert(WaddleWindowStateActionHostSetMaximized == 2, "action HostSetMaximized");
+_Static_assert(WaddleWindowStateActionHostUnsetMaximized == 3, "action HostUnsetMaximized");
+_Static_assert(WaddleWindowStateActionHostSetFullscreen == 4, "action HostSetFullscreen");
+_Static_assert(WaddleWindowStateActionHostUnsetFullscreen == 5, "action HostUnsetFullscreen");
+_Static_assert(WaddleWindowStateActionGuestRestore == 6, "action GuestRestore");
+_Static_assert(WaddleWindowStateActionGuestMaximize == 7, "action GuestMaximize");
+_Static_assert(WaddleWindowStateActionGuestMinimize == 8, "action GuestMinimize");
+_Static_assert(WaddleWindowStateActionGuestEnterFullscreen == 9, "action GuestEnterFullscreen");
+_Static_assert(WaddleWindowStateActionGuestLeaveFullscreen == 10, "action GuestLeaveFullscreen");
+_Static_assert(WaddleWindowStateActionGuestActivate == 11, "action GuestActivate");
+_Static_assert(WaddleWindowStateActionGuestSetGeometry == 12, "action GuestSetGeometry");
+_Static_assert(WaddleWindowStateActionGuestPostClose == 13, "action GuestPostClose");
+_Static_assert(WaddleWindowStatePendingGuestObservation == 1, "pending GuestObservation");
+_Static_assert(WaddleWindowStatePendingHostConfigure == 2, "pending HostConfigure");
+_Static_assert(WaddleWindowStatePendingHostStateRequest == 3, "pending HostStateRequest");
+_Static_assert(WaddleWindowStatePendingCloseRequest == 4, "pending CloseRequest");
+_Static_assert(WaddleWindowStatePendingRetire == 5, "pending Retire");
+_Static_assert(WaddleWindowStateHostRequestNone == 0, "host request None");
+_Static_assert(WaddleWindowStateHostRequestUnmaximize == 1, "host request Unmaximize");
+_Static_assert(WaddleWindowStateHostRequestMaximize == 2, "host request Maximize");
+
 /* Protocol state bits: each equals its InteropState* enumerator in include/waddle/interop_protocol.h. */
 _Static_assert(WaddleWindowStateMinimized == InteropStateMinimized, "Minimized bit");
 _Static_assert(WaddleWindowStateMaximized == InteropStateMaximized, "Maximized bit");
@@ -39,12 +118,6 @@ _Static_assert(WaddleWindowStateMinimizable == InteropStateMinimizable, "Minimiz
 _Static_assert(WaddleWindowStateMask == InteropStateMask, "state mask");
 
 /* Frozen values. A change to any of these is a protocol change and must fail this test. */
-_Static_assert(WaddleWindowStateOk == 0, "status Ok is 0");
-_Static_assert(WaddleWindowStateInvalidPlan == 13, "status InvalidPlan is 13");
-_Static_assert(WaddleWindowStateActionHostSetMinimized == 1, "first action kind");
-_Static_assert(WaddleWindowStateActionGuestPostClose == 13, "last action kind");
-_Static_assert(WaddleWindowStateInputDestroyObserved == 6, "last input kind");
-_Static_assert(WaddleWindowStatePendingRetire == 5, "last pending kind");
 
 #define Check(condition) do { \
     if (!(condition)) { \
@@ -456,13 +529,47 @@ static int test_forged_and_foreign_plans(void) {
 
 static int test_snapshot_is_read_only(void) {
     waddle_window_state_handle_t *handle = NULL;
-    waddle_window_state_snapshot_t first;
-    waddle_window_state_snapshot_t second;
+    waddle_window_state_snapshot_t before;
+    waddle_window_state_snapshot_t after;
+    waddle_window_state_plan_t plan;
+    waddle_window_state_plan_t rejected;
+    waddle_window_state_input_t input;
+    waddle_window_state_input_t close_input = bare_input(WaddleWindowStateInputCloseRequest);
+    waddle_window_state_input_t observe = observation(WaddleWindowStateMinimizable);
+    waddle_window_state_input_t maximize;
 
     Check(create_synced(16, 4, WaddleWindowStateMaximizable, &handle) == 0);
-    Check(waddle_window_state_snapshot(handle, &first) == WaddleWindowStateOk);
-    Check(waddle_window_state_snapshot(handle, &second) == WaddleWindowStateOk);
-    Check(same_snapshot(&first, &second));
+    Check(waddle_window_state_snapshot(handle, &before) == WaddleWindowStateOk);
+
+    /* Planning, in every form, changes no snapshot field: the revision and the state stay exact. */
+    input = configure_input(WaddleWindowStateActivated, 0, 0, 640, 480);
+    Check(waddle_window_state_plan(handle, 16, 4, &input, &plan) == WaddleWindowStateOk);
+    Check(waddle_window_state_snapshot(handle, &after) == WaddleWindowStateOk);
+    Check(memcmp(&before, &after, sizeof(before)) == 0);
+
+    Check(waddle_window_state_plan(handle, 16, 4, &close_input, &plan) == WaddleWindowStateOk);
+    Check(waddle_window_state_plan(handle, 16, 4, &observe, &plan) == WaddleWindowStateOk);
+    maximize = request_input(1);
+    Check(waddle_window_state_plan(handle, 16, 4, &maximize, &plan) == WaddleWindowStateOk);
+    Check(waddle_window_state_snapshot(handle, &after) == WaddleWindowStateOk);
+    Check(memcmp(&before, &after, sizeof(before)) == 0);
+
+    /* Refused plans and refused completions leave the snapshot exact as well. */
+    input = bare_input(9);
+    Check(waddle_window_state_plan(handle, 16, 4, &input, &rejected) == WaddleWindowStateInvalidArgument);
+    Check(waddle_window_state_plan(handle, 17, 4, &close_input, &rejected) == WaddleWindowStateStaleWindow);
+    Check(waddle_window_state_complete(handle, &plan, 1, 99) == WaddleWindowStateInvalidCompletion);
+    Check(waddle_window_state_snapshot(handle, &after) == WaddleWindowStateOk);
+    Check(memcmp(&before, &after, sizeof(before)) == 0);
+
+    /* A successful completion is the only operation that moves the snapshot. */
+    Check(waddle_window_state_complete(handle, &plan, 1, plan.action_count) == WaddleWindowStateOk);
+    Check(waddle_window_state_snapshot(handle, &after) == WaddleWindowStateOk);
+    Check(after.revision == before.revision + 1);
+    Check(after.window_id == before.window_id);
+    Check(after.generation == before.generation);
+    Check(after.synced == 1);
+
     Check(waddle_window_state_destroy(&handle) == WaddleWindowStateOk);
     return 0;
 }

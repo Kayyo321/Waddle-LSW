@@ -313,8 +313,12 @@ Every function returns one of these. Zero is the only success value.
 ## 8. Verification
 
 Zig, `zig test src/interop/window_state_abi.zig -Iinclude -Isrc/interop -lc`
-(17 ABI tests; the imported reducer and graph tests also run):
+(19 ABI tests; the imported reducer and graph tests also run):
 
+- Layout and values, at compile time: every size, alignment and field offset of
+  the four structs (section 2) and every enumerator of the header (section 4),
+  each compared with a literal. The state bit macros are compared with the
+  protocol header (`include/waddle/interop_protocol.h`) and the reducer constants.
 - create: NULL slot, zero identity, forbidden guest state, double-destroy
   idempotence, NULL-slot destroy, FailingAllocator at the single allocation
   (OutOfMemory, slot NULL), and success when the injected index is never reached.
@@ -324,29 +328,40 @@ Zig, `zig test src/interop/window_state_abi.zig -Iinclude -Isrc/interop -lc`
   boolean word; plan output zeroed on every failure.
 - Every reducer action kind survives encode and decode; unknown action kinds are
   InvalidPlan.
-- Every status mapping, and every plan, completion, identity, sync, state,
-  geometry, capability and revision error through real calls.
+- Status mapping: a table of documented values, one row per error, with the table
+  length checked against each error set.
 - Stale plans, partial failure and resynchronization, retirement, the maximize
   request and its snapshot words.
+- DestroyObserved on a synchronized and on an unsynchronized window: zero actions,
+  retirement, no close posted, host and guest state unchanged.
 - Forged plans: edited identity, pending word and action; a plan from another
-  handle; a plan with an oversized count; resealed bad pending, action, boolean
+  handle; a plan from a destroyed and recreated handle with the same identity and
+  revision; a plan with an oversized count; resealed bad pending, action, boolean
   and maximized values; NULL arguments of complete; state unchanged after each.
 - RevisionExhausted through a resealed plan at UINT64_MAX.
 - A fixed-seed random sequence of 12 rounds and up to 300 steps each, with
-  replays of earlier plans. Every ABI status and every encoded action is compared
-  with a direct reducer machine driven in lockstep; the full machine state is
-  compared after each step. The test asserts that the run includes more than 200
-  accepted plans, more than 100 accepted completions and at least one rejected
-  completion.
+  replays of earlier plans, and with DestroyObserved and HideObserved among the
+  inputs. Every ABI status and every encoded action is compared with a direct
+  reducer machine driven in lockstep; the full machine state is compared after
+  each step. The test asserts that the run includes more than 200 accepted plans,
+  more than 100 accepted completions and at least one rejected completion.
 
 C, `tests/interop/window_state_abi.c`, built with `-std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG`:
 
 - Ten tests: invalid arguments, lifecycle and slot clearing, ticket flow and
   action order, partial failure with resynchronization, stale plans and identity,
   the maximize capability gate, retirement, destroy observation without native
-  action, forged and foreign plans, and read-only snapshots.
-- Static assertions for every size, alignment and offset in section 2, and for
-  the frozen status and kind values.
+  action, forged and foreign plans, and read-only snapshots. The snapshot test
+  plans, observes, requests and refuses between two snapshots and requires them
+  to be byte-identical until a successful completion.
+- Static assertions for every size, alignment and field offset in section 2, every
+  enumerator in section 4, and every state bit against the protocol header.
+
+Mutation checks, not committed, each run and restored: DestroyObserved mapped to
+CloseRequest (Zig and C fail); seal seed constant (recreate and foreign-handle tests
+fail); a swapped status mapping (Zig fails in three tests and in the table test);
+a header enumerator changed from 8 to 9 (C static assert and Zig comptime check
+fail); a state bit changed to 0x02 (C static assert and Zig comptime check fail).
 
 Sanitizers: the C test under `-fsanitize=address,leak,undefined` with
 `ASAN_OPTIONS=detect_leaks=1`. The Zig object is not instrumented. Its

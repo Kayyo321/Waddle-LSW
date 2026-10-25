@@ -116,6 +116,22 @@ const plan_error_t = error{ StaleWindow, Retired, RevisionExhausted, Unsynchroni
 /// Errors that `machine_t.complete` can produce.
 const complete_error_t = error{ StaleWindow, Retired, StalePlan, InvalidCompletion, RevisionExhausted };
 
+/// Checks one struct's size, alignment and every named field offset against literal values.
+/// Each table entry is `.{ field name, byte offset }`.
+fn check_layout(comptime T: type, comptime size: usize, comptime alignment: usize, comptime table: anytype) void {
+    if (@sizeOf(T) != size or @alignOf(T) != alignment) @compileError("window-state struct size or alignment differs from the contract");
+    inline for (table) |entry| {
+        if (@offsetOf(T, entry[0]) != entry[1]) @compileError("window-state field offset differs from the contract: " ++ entry[0]);
+    }
+}
+
+/// Checks each named header constant against its literal value. Each table entry is `.{ name, value }`.
+fn check_values(comptime table: anytype) void {
+    inline for (table) |entry| {
+        if (@field(c, entry[0]) != entry[1]) @compileError("window-state header value differs from the contract: " ++ entry[0]);
+    }
+}
+
 comptime {
     if (c.WaddleWindowStateMinimized != proto.InteropStateMinimized or c.WaddleWindowStateMinimized != reducer.StateMinimized)
         @compileError("window-state Minimized bit differs from the protocol");
@@ -140,11 +156,68 @@ comptime {
 comptime {
     if (@sizeOf(usize) != 8) @compileError("window-state ABI requires a 64-bit target");
     if (reducer.MaxActions != c.WaddleWindowStateMaxActions) @compileError("window-state ABI action capacity differs from the reducer");
-    if (@sizeOf(c.waddle_window_state_input_t) != 28 or @alignOf(c.waddle_window_state_input_t) != 4) @compileError("window-state input layout changed");
-    if (@sizeOf(c.waddle_window_state_action_t) != 24 or @alignOf(c.waddle_window_state_action_t) != 4) @compileError("window-state action layout changed");
-    if (@sizeOf(c.waddle_window_state_plan_t) != 248 or @alignOf(c.waddle_window_state_plan_t) != 8) @compileError("window-state plan layout changed");
-    if (@offsetOf(c.waddle_window_state_plan_t, "actions") != 52) @compileError("window-state plan action offset changed");
-    if (@sizeOf(c.waddle_window_state_snapshot_t) != 56 or @alignOf(c.waddle_window_state_snapshot_t) != 8) @compileError("window-state snapshot layout changed");
+    check_layout(c.waddle_window_state_input_t, 28, 4, .{
+        .{ "kind", 0 }, .{ "state", 4 }, .{ "x", 8 }, .{ "y", 12 },
+        .{ "width", 16 }, .{ "height", 20 }, .{ "maximize", 24 },
+    });
+    check_layout(c.waddle_window_state_action_t, 24, 4, .{
+        .{ "kind", 0 }, .{ "x", 4 }, .{ "y", 8 }, .{ "width", 12 },
+        .{ "height", 16 }, .{ "maximized", 20 },
+    });
+    check_layout(c.waddle_window_state_plan_t, 248, 8, .{
+        .{ "window_id", 0 }, .{ "base_revision", 8 }, .{ "action_count", 16 }, .{ "seal", 24 },
+        .{ "generation", 32 }, .{ "pending_kind", 36 }, .{ "pending_state", 40 },
+        .{ "pending_capabilities", 44 }, .{ "pending_host_state", 48 }, .{ "actions", 52 },
+    });
+    check_layout(c.waddle_window_state_snapshot_t, 56, 8, .{
+        .{ "window_id", 0 }, .{ "revision", 8 }, .{ "generation", 16 },
+        .{ "observed_guest_state", 20 }, .{ "applied_guest_state", 24 }, .{ "applied_host_state", 28 },
+        .{ "guest_capabilities", 32 }, .{ "host_request", 36 }, .{ "synced", 40 },
+        .{ "close_posted", 44 }, .{ "retired", 48 },
+    });
+    check_values(.{
+        .{ "WaddleWindowStateOk", 0 },
+        .{ "WaddleWindowStateInvalidArgument", 1 },
+        .{ "WaddleWindowStateOutOfMemory", 2 },
+        .{ "WaddleWindowStateInvalidIdentity", 3 },
+        .{ "WaddleWindowStateInvalidState", 4 },
+        .{ "WaddleWindowStateInvalidGeometry", 5 },
+        .{ "WaddleWindowStateStaleWindow", 6 },
+        .{ "WaddleWindowStateStalePlan", 7 },
+        .{ "WaddleWindowStateRetired", 8 },
+        .{ "WaddleWindowStateUnsynchronized", 9 },
+        .{ "WaddleWindowStateUnsupportedStateRequest", 10 },
+        .{ "WaddleWindowStateRevisionExhausted", 11 },
+        .{ "WaddleWindowStateInvalidCompletion", 12 },
+        .{ "WaddleWindowStateInvalidPlan", 13 },
+        .{ "WaddleWindowStateInputGuestObservation", 1 },
+        .{ "WaddleWindowStateInputHostConfigure", 2 },
+        .{ "WaddleWindowStateInputHostStateRequest", 3 },
+        .{ "WaddleWindowStateInputCloseRequest", 4 },
+        .{ "WaddleWindowStateInputHideObserved", 5 },
+        .{ "WaddleWindowStateInputDestroyObserved", 6 },
+        .{ "WaddleWindowStateActionHostSetMinimized", 1 },
+        .{ "WaddleWindowStateActionHostSetMaximized", 2 },
+        .{ "WaddleWindowStateActionHostUnsetMaximized", 3 },
+        .{ "WaddleWindowStateActionHostSetFullscreen", 4 },
+        .{ "WaddleWindowStateActionHostUnsetFullscreen", 5 },
+        .{ "WaddleWindowStateActionGuestRestore", 6 },
+        .{ "WaddleWindowStateActionGuestMaximize", 7 },
+        .{ "WaddleWindowStateActionGuestMinimize", 8 },
+        .{ "WaddleWindowStateActionGuestEnterFullscreen", 9 },
+        .{ "WaddleWindowStateActionGuestLeaveFullscreen", 10 },
+        .{ "WaddleWindowStateActionGuestActivate", 11 },
+        .{ "WaddleWindowStateActionGuestSetGeometry", 12 },
+        .{ "WaddleWindowStateActionGuestPostClose", 13 },
+        .{ "WaddleWindowStatePendingGuestObservation", 1 },
+        .{ "WaddleWindowStatePendingHostConfigure", 2 },
+        .{ "WaddleWindowStatePendingHostStateRequest", 3 },
+        .{ "WaddleWindowStatePendingCloseRequest", 4 },
+        .{ "WaddleWindowStatePendingRetire", 5 },
+        .{ "WaddleWindowStateHostRequestNone", 0 },
+        .{ "WaddleWindowStateHostRequestUnmaximize", 1 },
+        .{ "WaddleWindowStateHostRequestMaximize", 2 },
+    });
 }
 
 /// Maps an init error to its header status.
@@ -768,23 +841,45 @@ test "every reducer action kind survives a plan encode and decode round trip" {
     try testing.expectError(error.InvalidPlan, decode_action(.{ .kind = 14, .x = 0, .y = 0, .width = 0, .height = 0, .maximized = 0 }));
 }
 
-test "every plan, completion, init, and input error maps to its header status" {
-    try expect_status(c.WaddleWindowStateStaleWindow, status_of_plan_error(error.StaleWindow));
-    try expect_status(c.WaddleWindowStateRetired, status_of_plan_error(error.Retired));
-    try expect_status(c.WaddleWindowStateRevisionExhausted, status_of_plan_error(error.RevisionExhausted));
-    try expect_status(c.WaddleWindowStateUnsynchronized, status_of_plan_error(error.Unsynchronized));
-    try expect_status(c.WaddleWindowStateInvalidState, status_of_plan_error(error.InvalidState));
-    try expect_status(c.WaddleWindowStateInvalidGeometry, status_of_plan_error(error.InvalidGeometry));
-    try expect_status(c.WaddleWindowStateUnsupportedStateRequest, status_of_plan_error(error.UnsupportedStateRequest));
-    try expect_status(c.WaddleWindowStateStaleWindow, status_of_complete_error(error.StaleWindow));
-    try expect_status(c.WaddleWindowStateRetired, status_of_complete_error(error.Retired));
-    try expect_status(c.WaddleWindowStateStalePlan, status_of_complete_error(error.StalePlan));
-    try expect_status(c.WaddleWindowStateInvalidCompletion, status_of_complete_error(error.InvalidCompletion));
-    try expect_status(c.WaddleWindowStateRevisionExhausted, status_of_complete_error(error.RevisionExhausted));
-    try expect_status(c.WaddleWindowStateInvalidIdentity, status_of_init_error(error.InvalidIdentity));
-    try expect_status(c.WaddleWindowStateInvalidState, status_of_init_error(error.InvalidState));
-    try expect_status(c.WaddleWindowStateInvalidArgument, status_of_input_error(error.InvalidArgument));
-    try expect_status(c.WaddleWindowStateInvalidPlan, status_of_decode_error(error.InvalidPlan));
+/// Documented status rows. The values are the header numbers from contract section 4.5, written as
+/// literals so the table does not reuse the mapping under test.
+const plan_status_row_t = struct { err: plan_error_t, value: u32 };
+const plan_status_rows = [_]plan_status_row_t{
+    .{ .err = error.StaleWindow, .value = 6 },
+    .{ .err = error.Retired, .value = 8 },
+    .{ .err = error.RevisionExhausted, .value = 11 },
+    .{ .err = error.Unsynchronized, .value = 9 },
+    .{ .err = error.InvalidState, .value = 4 },
+    .{ .err = error.InvalidGeometry, .value = 5 },
+    .{ .err = error.UnsupportedStateRequest, .value = 10 },
+};
+const complete_status_row_t = struct { err: complete_error_t, value: u32 };
+const complete_status_rows = [_]complete_status_row_t{
+    .{ .err = error.StaleWindow, .value = 6 },
+    .{ .err = error.Retired, .value = 8 },
+    .{ .err = error.StalePlan, .value = 7 },
+    .{ .err = error.InvalidCompletion, .value = 12 },
+    .{ .err = error.RevisionExhausted, .value = 11 },
+};
+const init_status_row_t = struct { err: init_error_t, value: u32 };
+const init_status_rows = [_]init_status_row_t{
+    .{ .err = error.InvalidIdentity, .value = 3 },
+    .{ .err = error.InvalidState, .value = 4 },
+};
+
+test "status mapping follows the documented header values row by row" {
+    // Each error set is covered in full: the table length equals the number of errors in the set.
+    try testing.expectEqual(@typeInfo(plan_error_t).ErrorSet.?.len, plan_status_rows.len);
+    try testing.expectEqual(@typeInfo(complete_error_t).ErrorSet.?.len, complete_status_rows.len);
+    try testing.expectEqual(@typeInfo(init_error_t).ErrorSet.?.len, init_status_rows.len);
+    try testing.expectEqual(@typeInfo(input_error_t).ErrorSet.?.len, 1);
+    try testing.expectEqual(@typeInfo(plan_decode_error_t).ErrorSet.?.len, 1);
+
+    for (plan_status_rows) |row| try testing.expectEqual(row.value, @as(u32, @intCast(status_of_plan_error(row.err))));
+    for (complete_status_rows) |row| try testing.expectEqual(row.value, @as(u32, @intCast(status_of_complete_error(row.err))));
+    for (init_status_rows) |row| try testing.expectEqual(row.value, @as(u32, @intCast(status_of_init_error(row.err))));
+    try testing.expectEqual(@as(u32, 1), @as(u32, @intCast(status_of_input_error(error.InvalidArgument))));
+    try testing.expectEqual(@as(u32, 13), @as(u32, @intCast(status_of_decode_error(error.InvalidPlan))));
 }
 
 test "plan maps identity, synchronization, state, geometry, capability, and revision errors" {
