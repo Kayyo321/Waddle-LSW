@@ -94,6 +94,13 @@ uint16_t av_input_scan_code(uint32_t key) {
     if (translation.kind != AvKeyTranslationScanCode) return 0;
     return (uint16_t)translation.scan_code | (translation.extended ? 0x100 : 0);
 }
+int av_input_key_injectable(uint32_t key) {
+    if (key == 0 || key >= AvInputKeys) return 0;
+    const av_key_translation_t translation = av_input_translate_key(key);
+    return translation.kind == AvKeyTranslationScanCode || translation.kind == AvKeyTranslationVirtualKey ||
+        translation.kind == AvKeyTranslationPause;
+}
+
 /* Keys that never auto-repeat: modifiers, lock keys, Pause, and the suppressed
  * power/sleep keys. Same set as keyboard_repeat.zig policy_repeatable(). */
 static const uint16_t NonRepeatKeys[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 125, 126, 142};
@@ -152,7 +159,7 @@ int av_input_apply_admitted(av_input_state_t *state, const av_message_t *event,
     if (!state || !event || !ops || !ops->target || !ops->emit ||
         event->type < MsgInputFocus || event->type > MsgInputRelease) return -1;
     if (event->type == MsgInputKey &&
-        (event->width == 0 || event->width >= AvInputKeys || !av_input_scan_code(event->width))) return -1;
+        (event->width == 0 || event->width >= AvInputKeys || !av_input_key_injectable(event->width))) return -1;
     if (event->type == MsgInputButton && (event->width == 0 || event->width >= 4)) return -1;
     if (event->type == MsgInputFocus && event->flags) {
         int status = ops->target(context, event->window_id, event->sequence, -1);

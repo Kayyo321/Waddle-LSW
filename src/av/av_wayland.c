@@ -223,7 +223,7 @@ static int keyboard_snapshot(av_wayland_t *client, const struct wl_array *keys) 
     for (size_t offset = 0; offset < keys->size; offset += sizeof(uint32_t)) {
         uint32_t key;
         memcpy(&key, (const uint8_t *)keys->data + offset, sizeof(key));
-        if (key < AvInputKeys && av_input_scan_code(key)) present[key] = 1;
+        if (key < AvInputKeys && av_input_key_injectable(key)) present[key] = 1;
     }
     memcpy(client->observed_keys, present, sizeof(present));
     memcpy(client->suppressed_keys, present, sizeof(present));
@@ -267,7 +267,7 @@ static void keyboard_key(void *context, struct wl_keyboard *keyboard, uint32_t s
                          uint32_t time, uint32_t key, uint32_t state) {
     (void)keyboard; (void)serial; (void)time;
     av_wayland_t *client = context;
-    if (key >= AvInputKeys || !av_input_scan_code(key) || state > WL_KEYBOARD_KEY_STATE_PRESSED) return;
+    if (key >= AvInputKeys || !av_input_key_injectable(key) || state > WL_KEYBOARD_KEY_STATE_PRESSED) return;
     if (lease_mode(client)) {
         int suppressed = client->suppressed_keys[key];
         client->observed_keys[key] = (uint8_t)state;

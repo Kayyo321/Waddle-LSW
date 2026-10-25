@@ -137,7 +137,7 @@ static void all_keys_and_stress(void) {
         assert(av_input_apply(&state, &message, &Ops, &fixture) == 0);
         for (unsigned key = 1; key < AvInputKeys; ++key) {
             message = event(MsgInputKey, ++serial, key, 1);
-            assert(av_input_apply(&state, &message, &Ops, &fixture) == (av_input_scan_code(key) ? 0 : -1));
+            assert(av_input_apply(&state, &message, &Ops, &fixture) == (av_input_key_injectable(key) ? 0 : -1));
         }
         for (unsigned button = 1; button <= 3; ++button) {
             message = event(MsgInputButton, ++serial, button, 1);
@@ -194,6 +194,32 @@ static void repeat_policy(void) {
     for (size_t index = 0; index < sizeof(NotRepeatable) / sizeof(NotRepeatable[0]); ++index)
         assert(av_input_key_repeatable(NotRepeatable[index]) == 0);
 }
+static void typed_admission(void) {
+    assert(av_input_key_injectable(30) && av_input_key_injectable(96) && av_input_key_injectable(122));
+    assert(av_input_key_injectable(123) && av_input_key_injectable(119));
+    assert(!av_input_key_injectable(0) && !av_input_key_injectable(116) && !av_input_key_injectable(142));
+    assert(!av_input_key_injectable(118) && !av_input_key_injectable(128));
+    fixture_t fixture = {.allowed_id = 7, .incarnation = 99};
+    av_input_state_t state = {0};
+    av_message_t message = event(MsgInputFocus, 1, 0, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0);
+    /* Typed keys: Hangul, Hanja and Pause are admitted and held until released. */
+    message = event(MsgInputKey, 2, 122, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && state.keys[122] == 1);
+    message = event(MsgInputKey, 3, 123, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && state.keys[123] == 1);
+    message = event(MsgInputKey, 4, 119, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && state.keys[119] == 1);
+    /* Suppressed and unsupported keys are rejected and never held. */
+    message = event(MsgInputKey, 5, 116, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == -1 && !state.keys[116]);
+    message = event(MsgInputKey, 6, 118, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == -1 && !state.keys[118]);
+    unsigned count = fixture.emitted;
+    message = event(MsgInputRelease, 7, 0, AvInputReleaseKeys);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0);
+    assert(!state.keys[122] && !state.keys[123] && !state.keys[119] && fixture.emitted == count + 3);
+}
 static void transfer_and_partial_release(void) {
     fixture_t fixture = {.allowed_id = 7, .incarnation = 99};
     av_input_state_t state = {0};
@@ -227,7 +253,7 @@ static void transfer_and_partial_release(void) {
     assert(av_input_apply(&state, &message, &Ops, &fixture) == -1);
 }
 int main(void) {
-    invalid_arguments(); ownership(); repeat_admission(); repeat_policy(); failures(); all_keys_and_stress(); transfer_and_partial_release();
+    invalid_arguments(); ownership(); repeat_admission(); repeat_policy(); typed_admission(); failures(); all_keys_and_stress(); transfer_and_partial_release();
     puts("AV input ownership, replay, failure and release fixtures passed");
     return 0;
 }

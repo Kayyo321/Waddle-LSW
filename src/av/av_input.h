@@ -112,6 +112,16 @@ int av_input_reset(av_input_state_t *state, const av_input_ops_t *ops, void *con
  * widen the AV wire codec's 1..127 admission bound.
  */
 uint16_t av_input_scan_code(uint32_t key);
+/** @brief Whether this evdev key can be injected or forwarded in its typed form.
+ * @param[in] key Linux evdev code. @return 1 for scan-code keys (including E0 keys),
+ * virtual-key keys (Hangul, Hanja) and Pause; 0 for suppressed power/sleep, unsupported
+ * codes, zero, and any code at or above AvInputKeys.
+ * @note Pure, allocation-free, thread-safe. Admission in av_input_apply and the host
+ * forwarding filter use this predicate; av_input_scan_code remains the legacy 1..127
+ * scan-only view.
+ */
+int av_input_key_injectable(uint32_t key);
+
 /** @brief Whether a duplicate down of this evdev key is an admitted host typematic repeat.
  * @param[in] key Linux evdev code. @return 1 for repeatable keys; 0 for modifiers
  * (Shift, Ctrl, Alt, Meta), lock keys (CapsLock, NumLock, ScrollLock), Pause,
