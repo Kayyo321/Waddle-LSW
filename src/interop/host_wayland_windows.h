@@ -287,6 +287,21 @@ void host_wayland_windows_forget_seat(host_wayland_t *ctx, const struct wl_seat 
 host_wayland_status_t host_wayland_windows_set_scale(host_wayland_t *ctx, uint32_t numerator, uint32_t denominator);
 
 /**
+ * @brief Re-send the parent of every realized child dialog of a window that has just mapped.
+ *
+ * A dialog's xdg_toplevel.set_parent names the parent's toplevel, and the compositor only honours it once that parent
+ * has a buffer. The frames layer calls this on the window's first buffer commit, so each child dialog repeats its
+ * set_parent after the parent is visible. The initial set_parent at realization is kept.
+ *
+ * @param ctx In/out. Initialized context.
+ * @param window In. Protocol window handle of the window that mapped; zero gives HostWaylandInvalidArgument.
+ * @param generation In. Its generation; zero gives HostWaylandInvalidArgument.
+ * @return HostWaylandOk, including when the window is not realized as a toplevel (a stale call is a no-op), or
+ *         HostWaylandNotInitialized. Thread safety: owner thread, synchronous.
+ */
+host_wayland_status_t host_wayland_windows_note_mapped(host_wayland_t *ctx, uint64_t window, uint64_t generation);
+
+/**
  * @brief Number of realized windows.
  *
  * @param ctx Initialized context; NULL or uninitialized gives 0.

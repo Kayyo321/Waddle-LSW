@@ -1466,6 +1466,44 @@ static int check_press_table_rules(void) {
     return 0;
 }
 
+/**
+ * @brief A child dialog repeats its set_parent when the parent maps (4.5). Every realized child is re-sent, a
+ * window with no children sends nothing, and a stale or invalid call changes nothing.
+ */
+static int check_note_mapped_reparents_children(void) {
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    announce_spec_t dialog = toplevel_spec(2, 1, "a-dialog");
+    dialog.role = 2;
+    dialog.has_parent = true;
+    dialog.parent = 1;
+    dialog.parent_generation = 1;
+    Check(announce_spec(&session_ctx, &dialog) == HostWaylandOk);
+    dialog.window = 3;
+    Check(announce_spec(&session_ctx, &dialog) == HostWaylandOk);
+    unsigned root_toplevel = fake_nth("xdg_toplevel", 0);
+    unsigned first_dialog = fake_nth("xdg_toplevel", 1);
+    unsigned second_dialog = fake_nth("xdg_toplevel", 2);
+    Check(fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_PARENT) == 2);
+    unsigned before = fake_request_count;
+    Check(host_wayland_windows_note_mapped(&session_ctx, 1, 1) == HostWaylandOk);
+    Check(fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_PARENT) == 4);
+    int first = fake_find("xdg_toplevel", XDG_TOPLEVEL_SET_PARENT, before);
+    Check(first >= 0 && fake_requests[first].proxy == first_dialog && fake_requests[first].a0 == root_toplevel);
+    int second = fake_find("xdg_toplevel", XDG_TOPLEVEL_SET_PARENT, (unsigned)first + 1);
+    Check(second >= 0 && fake_requests[second].proxy == second_dialog && fake_requests[second].a0 == root_toplevel);
+
+    before = fake_request_count;
+    Check(host_wayland_windows_note_mapped(&session_ctx, 2, 1) == HostWaylandOk);
+    Check(host_wayland_windows_note_mapped(&session_ctx, 9, 1) == HostWaylandOk);
+    Check(host_wayland_windows_note_mapped(&session_ctx, 0, 1) == HostWaylandInvalidArgument);
+    Check(host_wayland_windows_note_mapped(&session_ctx, 1, 0) == HostWaylandInvalidArgument);
+    Check(host_wayland_windows_note_mapped(NULL, 1, 1) == HostWaylandNotInitialized);
+    Check(fake_request_count == before);
+    return 0;
+}
+
 /** @brief Every request the module sent was accepted by the strict double. Runs last. */
 static int check_fake_protocol_clean(void) {
     Check(fake_dead_requests == 0);
@@ -1502,6 +1540,7 @@ int main(void) {
     if (check_update_is_atomic() != 0) return 1;
     if (check_popup_rect_update() != 0) return 1;
     if (check_press_table_rules() != 0) return 1;
+    if (check_note_mapped_reparents_children() != 0) return 1;
     if (check_retire_order() != 0) return 1;
     if (check_retire_stale_and_invalid() != 0) return 1;
     if (check_late_events_after_retire() != 0) return 1;

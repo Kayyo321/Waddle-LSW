@@ -987,6 +987,22 @@ static host_wayland_status_t handle_retire(host_wayland_t *ctx, const uint8_t *p
     return retire_window(ctx, window, generation);
 }
 
+/* ---- mapped parents (4.5) ------------------------------------------------------------------------ */
+
+host_wayland_status_t host_wayland_windows_note_mapped(host_wayland_t *ctx, uint64_t window, uint64_t generation) {
+    if (!context_ready(ctx)) return HostWaylandNotInitialized;
+    if (window == 0 || generation == 0) return HostWaylandInvalidArgument;
+    host_wayland_record_t *parent = find_record(ctx, window, generation);
+    if (parent == NULL || parent->toplevel == NULL) return HostWaylandOk;
+    for (size_t index = 0; index < HostWindowMapMaxRealized; ++index) {
+        host_wayland_record_t *child = &ctx->records[index];
+        if (child->generation == 0 || child->role != ROLE_DIALOG || child->toplevel == NULL) continue;
+        if (child->parent != window || child->parent_generation != generation) continue;
+        xdg_toplevel_set_parent(child->toplevel, parent->toplevel);
+    }
+    return HostWaylandOk;
+}
+
 /* ---- reset --------------------------------------------------------------------------------------- */
 
 host_wayland_status_t host_wayland_windows_reset(host_wayland_t *ctx) {
