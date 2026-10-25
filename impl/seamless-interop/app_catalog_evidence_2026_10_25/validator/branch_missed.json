@@ -1,0 +1,38 @@
+[
+  {
+    "function": "app_catalog_utf8_valid",
+    "line": 28,
+    "column": 25,
+    "edge": 1
+  },
+  {
+    "function": "app_catalog_package_family_valid",
+    "line": 89,
+    "column": 15,
+    "edge": 1
+  },
+  {
+    "function": "app_catalog_path_identity_valid",
+    "line": 140,
+    "column": 53,
+    "edge": 0
+  },
+  {
+    "function": "app_catalog_path_identity_valid",
+    "line": 141,
+    "column": 26,
+    "edge": 0
+  },
+  {
+    "function": "app_catalog_path_identity_valid",
+    "line": 147,
+    "column": 44,
+    "edge": 1
+  },
+  {
+    "function": "app_catalog_path_identity_valid",
+    "line": 149,
+    "column": 18,
+    "edge": 0
+  }
+]

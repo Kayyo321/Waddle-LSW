@@ -1,0 +1,231 @@
+{
+  "source_sha256": {
+    "tests/interop/app_catalog_coverage.py": "be66780a8ab538d23f53e5a5adb11531d851e7d1fe75ad4eedb57417a0618eac",
+    "src/interop/app_catalog.c": "1086a1d0a3b6ead03977bc56b23c37576df0948a7d58a272fe689ffc48a22f8f",
+    "src/interop/app_catalog.h": "ea0a4b6480fd5d7962fad10152dd55e7d3535945f4e7245c01362ecd0e5d092d",
+    "src/interop/app_catalog_validation.h": "8eb7fb8182e559f2529b5bc02ca2e64806b453d4af25421243261fb852a6bcb1",
+    "src/interop/app_catalog_validation.zig": "e5f73399cdb087dd4db29a7050eb099f5addcaf88c96940ee1b0a73cc5d1f819",
+    "src/interop/interop_codec.zig": "3036da7f5463c4cd1ca2293a4ac37c294a533d0b96e59855d1db6ef258268c56",
+    "src/interop/app_catalog_windows.c": "6a3e5f6df8faade1cf0fce2fcc8d853c83a22ce17c451e873a8246647ef2f6c8",
+    "src/interop/app_catalog_windows_private.h": "0d578512c02276d04ca29e6bb5aaaa6c11297b31a9448981171d078f2645c017",
+    "include/waddle/interop_protocol.h": "558546646405535e5e9b6c23c386a284b9ebbb24f224685b60aab9e7ce96e9c9",
+    "tests/interop/app_catalog.c": "d0de42ff64337b2d725b4d929d1869f03e03b6739b01d309339b9a64fca978ac",
+    "tests/interop/app_catalog_windows.c": "e925394dec6cd960644089f5c4f6bcd1e8feb835baa0e2bdec065b9de66a6977",
+    "impl/seamless-interop/app_catalog_contract.md": "9efa74c73aefb2d68f389be404b7bee7492e78fc05bcb101725a9e87f8a8a63c"
+  },
+  "tool_versions": {
+    "zig": "0.13.0",
+    "gcc": "gcc (Debian 14.2.0-19) 14.2.0",
+    "gcov": "gcov (Debian 14.2.0-19) 14.2.0",
+    "mingw_gcc": "x86_64-w64-mingw32-gcc (GCC) 14-posix"
+  },
+  "commands": [
+    [
+      "zig",
+      "version"
+    ],
+    [
+      "gcc",
+      "--version"
+    ],
+    [
+      "gcov",
+      "--version"
+    ],
+    [
+      "gcc",
+      "-v"
+    ],
+    [
+      "/usr/bin/x86_64-w64-mingw32-gcc",
+      "--version"
+    ],
+    [
+      "/usr/bin/x86_64-w64-mingw32-gcc",
+      "-v"
+    ],
+    [
+      "zig",
+      "build-lib",
+      "/home/dev/Waddle-LSW/src/interop/app_catalog_validation.zig",
+      "-static",
+      "-O",
+      "ReleaseSafe",
+      "-fcompiler-rt",
+      "-femit-bin=/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/libapp_catalog_validation.a"
+    ],
+    [
+      "zig",
+      "build-lib",
+      "/home/dev/Waddle-LSW/src/interop/interop_codec.zig",
+      "-I",
+      "/home/dev/Waddle-LSW/include",
+      "-lc",
+      "-static",
+      "-O",
+      "ReleaseSafe",
+      "-fcompiler-rt",
+      "-femit-bin=/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/libinterop_codec.a"
+    ],
+    [
+      "zig",
+      "test",
+      "/home/dev/Waddle-LSW/src/interop/app_catalog_validation.zig"
+    ],
+    [
+      "gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-I",
+      "/home/dev/Waddle-LSW/include",
+      "-I",
+      "/home/dev/Waddle-LSW/src/interop",
+      "--coverage",
+      "-fprofile-update=atomic",
+      "-fprofile-abs-path",
+      "-c",
+      "/home/dev/Waddle-LSW/src/interop/app_catalog.c",
+      "-o",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog.o"
+    ],
+    [
+      "gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-I",
+      "/home/dev/Waddle-LSW/include",
+      "-I",
+      "/home/dev/Waddle-LSW/src/interop",
+      "--coverage",
+      "-fprofile-update=atomic",
+      "-fprofile-abs-path",
+      "-c",
+      "/home/dev/Waddle-LSW/tests/interop/app_catalog.c",
+      "-o",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog_test.o"
+    ],
+    [
+      "gcc",
+      "--coverage",
+      "-no-pie",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog.o",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog_test.o",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/libapp_catalog_validation.a",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/libinterop_codec.a",
+      "-o",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog_coverage"
+    ],
+    [
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog_coverage"
+    ],
+    [
+      "gcov",
+      "--json-format",
+      "-b",
+      "-c",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog.gcno"
+    ],
+    [
+      "gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-I",
+      "/home/dev/Waddle-LSW/include",
+      "-I",
+      "/home/dev/Waddle-LSW/src/interop",
+      "-fsanitize=address,leak,undefined",
+      "-fno-omit-frame-pointer",
+      "-g",
+      "-no-pie",
+      "/home/dev/Waddle-LSW/src/interop/app_catalog.c",
+      "/home/dev/Waddle-LSW/tests/interop/app_catalog.c",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/libapp_catalog_validation.a",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/libinterop_codec.a",
+      "-o",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog_sanitized"
+    ],
+    [
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog_sanitized"
+    ],
+    [
+      "/usr/bin/x86_64-w64-mingw32-gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-I",
+      "/home/dev/Waddle-LSW/include",
+      "-I",
+      "/home/dev/Waddle-LSW/src/interop",
+      "-c",
+      "/home/dev/Waddle-LSW/src/interop/app_catalog.c",
+      "-o",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog_windows_core.o"
+    ],
+    [
+      "/usr/bin/x86_64-w64-mingw32-gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-I",
+      "/home/dev/Waddle-LSW/include",
+      "-I",
+      "/home/dev/Waddle-LSW/src/interop",
+      "-c",
+      "/home/dev/Waddle-LSW/src/interop/app_catalog_windows.c",
+      "-o",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog_windows.o"
+    ],
+    [
+      "/usr/bin/x86_64-w64-mingw32-gcc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-I",
+      "/home/dev/Waddle-LSW/include",
+      "-I",
+      "/home/dev/Waddle-LSW/src/interop",
+      "-c",
+      "/home/dev/Waddle-LSW/tests/interop/app_catalog_windows.c",
+      "-o",
+      "/tmp/app_catalog_coverage/run-20261025T175206-02ac89b0/app_catalog_windows_test.o"
+    ]
+  ],
+  "coverage": {
+    "lines": {
+      "covered": 262,
+      "total": 269,
+      "percent": 97.39776951672863
+    },
+    "taken_arcs": {
+      "covered": 247,
+      "total": 274,
+      "percent": 90.14598540145985
+    }
+  },
+  "zig_validator_coverage": "Retained separately by tests/av/coverage.py app_catalog_validation; Zig tests here are not claimed as a second coverage measurement.",
+  "native_windows_compile": "warning-clean MinGW cross-compilation only; runtime requires Windows CI"
+}

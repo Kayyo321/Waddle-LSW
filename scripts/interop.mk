@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-png-writer-test interop-pe-header-test interop-host-control-test interop-keyboard-scan-test interop-windows-session-unit-test interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
+interop-test: interop-app-catalog-test interop-png-writer-test interop-pe-header-test interop-host-control-test interop-keyboard-scan-test interop-windows-session-unit-test interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -44,6 +44,8 @@ interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o build/i
 	python3 tests/av/coverage.py control_peer_abi
 	python3 tests/av/coverage.py manifest
 	python3 tests/av/coverage.py manifest_store
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/app_catalog_coverage.py
+	python3 tests/av/coverage.py app_catalog_validation
 	python3 tests/av/coverage.py pe_header
 	python3 tests/av/coverage.py interop_layout_abi
 	python3 tests/interop/native_atomic_coverage.py
@@ -406,3 +408,24 @@ build/native_components/png_writer.o: src/interop/png_writer.c src/interop/png_w
 	$(WindowsComponentCC) $(WindowsComponentFlags) -c $< -o $@
 build/native_components/icon_windows_profile.exe: build/native_components/icon_fixture.o build/native_components/png_writer.o
 	$(WindowsComponentCC) -static --coverage $^ -lshell32 -lole32 -luuid -lgdi32 -lcomctl32 -o $@
+
+
+# Catalog source core and native adapter are qualified separately.
+.PHONY: interop-app-catalog-test
+build/interop_app_catalog_validation.o: src/interop/app_catalog_validation.zig src/interop/app_catalog_validation.h | build
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+build/interop_app_catalog_test: tests/interop/app_catalog.c src/interop/app_catalog.c src/interop/app_catalog.h src/interop/app_catalog_validation.h build/interop_app_catalog_validation.o build/interop_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG -Isrc/interop tests/interop/app_catalog.c src/interop/app_catalog.c build/interop_app_catalog_validation.o build/interop_codec.o $(LDFLAGS) -o $@
+interop-app-catalog-test: build/interop_app_catalog_test
+	$(ZIG) test src/interop/app_catalog_validation.zig
+	./build/interop_app_catalog_test
+build/interop_app_catalog_validation_windows.lib: src/interop/app_catalog_validation.zig src/interop/app_catalog_validation.h | build
+	$(ZIG) build-lib $< -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
+build/native_components/catalog_adapter.o: src/interop/app_catalog_windows.c src/interop/app_catalog_windows_private.h src/interop/app_catalog.h | build/native_components
+	$(WindowsComponentCC) $(WindowsComponentFlags) --coverage -fprofile-update=atomic -fprofile-abs-path -Iinclude -c $< -o $@
+build/native_components/catalog_core.o: src/interop/app_catalog.c src/interop/app_catalog.h src/interop/app_catalog_validation.h | build/native_components
+	$(WindowsComponentCC) $(WindowsComponentFlags) -Iinclude -c $< -o $@
+build/native_components/catalog_fixture.o: tests/interop/app_catalog_windows.c src/interop/app_catalog.h src/interop/app_catalog_windows_private.h | build/native_components
+	$(WindowsComponentCC) $(WindowsComponentFlags) -Iinclude -c $< -o $@
+build/native_components/app_catalog_windows_profile.exe: build/native_components/catalog_adapter.o build/native_components/catalog_core.o build/native_components/catalog_fixture.o build/interop_app_catalog_validation_windows.lib build/interop_codec_windows.lib
+	$(WindowsComponentCC) -static --coverage $^ -lshell32 -lole32 -luuid -lpropsys -lntdll -o $@
