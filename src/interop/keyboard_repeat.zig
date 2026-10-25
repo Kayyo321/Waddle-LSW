@@ -111,9 +111,12 @@ pub const state_t = struct {
     }
 };
 
-fn policy_repeatable(code: u16) bool {
+/// Host repeat exclusions (IMPL_DESC 3.6.3): modifiers, lock keys, Pause, Hangul and
+/// Hanja (make-only on real keyboards), and the suppressed power and sleep keys.
+/// Mirrored in av_input.c NonRepeatKeys; keyboard_repeat_abi exports it for the parity test.
+pub fn policy_repeatable(code: u16) bool {
     return switch (code) {
-        29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 125, 126, 142 => false,
+        29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 122, 123, 125, 126, 142 => false,
         else => true,
     };
 }
@@ -155,7 +158,7 @@ test "excluded keys timing configuration and focus cannot start stale repeat" {
     try state.key(31, true, true, 0);
     try state.configure(true, 1000, 0);
     try std.testing.expectEqual(@as(?u16, null), try state.take_due(0));
-    for ([_]u16{ 29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 125, 126, 142 }) |code| {
+    for ([_]u16{ 29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 122, 123, 125, 126, 142 }) |code| {
         try state.key(code, true, true, 0);
         try std.testing.expectEqual(@as(?u64, null), state.next_deadline());
     }

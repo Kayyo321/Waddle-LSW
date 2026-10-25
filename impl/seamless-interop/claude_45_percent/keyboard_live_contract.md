@@ -13,15 +13,24 @@ IMPL_DESC 3.6.3 requires that every host repeat is injected as a down without an
 intervening up. The guest therefore admits a duplicate down for a key that is
 already held when the key is repeatable.
 
-- `av_input_key_repeatable(key)` returns 1 for keys 1..767 except the non-repeat
-  set {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 125, 126, 142}: the four
-  modifier pairs (Shift, Ctrl, Alt, Meta), CapsLock, NumLock, ScrollLock, Pause,
-  and the suppressed power and sleep keys. The set is the same list
-  `keyboard_repeat.zig` `policy_repeatable` uses. It is duplicated in C because
-  the guest sees only evdev codes and cannot call the host reducer. The same
-  14-key golden list appears in `tests/av/input.c` (`repeat_policy`) and in the
-  reducer's Zig tests. A change to the policy in either place fails that suite's
-  golden, so both lists must change together.
+- `av_input_key_repeatable(key)` returns 1 for keys 1..767 except the 16-key
+  non-repeat set {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 122, 123, 125, 126,
+  142}: the four modifier pairs (Shift, Ctrl, Alt, Meta), CapsLock, NumLock,
+  ScrollLock, Pause, Hangul and Hanja, and the suppressed power and sleep keys.
+- **Decision (review fix 4):** Hangul (122) and Hanja (123) do not auto-repeat. Real
+  keyboards send them make-only, and an IME toggles on every down, so a host repeat
+  would toggle the IME repeatedly.
+- **Two lists, one parity test.** The set is kept in two places: `keyboard_repeat.zig`
+  `policy_repeatable` (host) and `av_input.c` `NonRepeatKeys` (guest). The guest sees
+  only evdev codes and cannot call the host reducer, and `interop.mk` compiles the
+  reducer without an include path that a shared header would need. Instead,
+  `keyboard_repeat_abi` exports `waddle_keyboard_repeat_key_repeatable`, and
+  `tests/interop/keyboard_repeat_policy.c` compares it with `av_input_key_repeatable`
+  for every code 0..767. The test also pins the 16-key golden list and the count of
+  751 repeatable codes. Editing either list without the other fails the test; a
+  mutation check (dropping 123 from the guest list) was run and failed `host == guest`.
+  `tests/av/input.c` (`repeat_policy`) and `keyboard_repeat.zig` pin the same golden
+  list.
 - Rule in `av_input_apply_admitted`: a key down for a held key is injected again
   only when the key is repeatable. Duplicate downs for non-repeatable keys stay
   suppressed. Releases and first presses are unchanged. A failed repeat emit
@@ -68,7 +77,8 @@ reducer.
 - **Feeding the reducer.** `keyboard_key` calls `repeat_key` only after `send_input`
   has delivered the key to the guest. A suppressed key (held at focus enter, or not
   yet released after a snapshot) never reaches the reducer, so it never arms a repeat.
-  `repeatable` is always passed as 1. The reducer owns the modifier, lock, Pause and
+  `repeatable` is always passed as 1. The reducer owns the modifier, lock, Pause, Hangul,
+  Hanja and
   suppressed-key exclusions; the adapter does not duplicate them. If delivery of a key
   fails, the repeat is cancelled.
 - **Focus.** `keyboard_enter` calls `focus(window_id, incarnation)` after the focus

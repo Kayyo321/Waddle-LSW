@@ -132,6 +132,13 @@ export fn waddle_keyboard_repeat_next_deadline(storage: ?*anyopaque, out_present
     return .Ok;
 }
 
+/// C ABI: the host repeat policy for one evdev code. Returns 1 when a held key of this code
+/// may auto-repeat, 0 otherwise, including every code outside 1..767. Pure and stateless. Exported
+/// so the guest parity test can compare it with av_input_key_repeatable over every code.
+export fn waddle_keyboard_repeat_key_repeatable(code: u16) callconv(.C) u8 {
+    return if (code >= 1 and code <= 767 and repeat.policy_repeatable(code)) 1 else 0;
+}
+
 test "storage holds the reducer state and the zero bytes are the initial state" {
     try std.testing.expect(@sizeOf(repeat.state_t) <= StorageBytes);
     var storage = [_]u64{0} ** (StorageBytes / 8);
@@ -210,3 +217,16 @@ fn rt(comptime T: type, value: T) T {
     std.mem.doNotOptimizeAway(&copy);
     return copy;
 }
+
+test "exported repeat policy matches the reducer and excludes Hangul and Hanja" {
+    try std.testing.expectEqual(@as(u8, 0), waddle_keyboard_repeat_key_repeatable(rt(u16, 0)));
+    try std.testing.expectEqual(@as(u8, 0), waddle_keyboard_repeat_key_repeatable(rt(u16, 768)));
+    try std.testing.expectEqual(@as(u8, 0), waddle_keyboard_repeat_key_repeatable(rt(u16, 122)));
+    try std.testing.expectEqual(@as(u8, 0), waddle_keyboard_repeat_key_repeatable(rt(u16, 123)));
+    try std.testing.expectEqual(@as(u8, 1), waddle_keyboard_repeat_key_repeatable(rt(u16, 30)));
+    for (1..768) |code| {
+        const expected: u8 = if (repeat.policy_repeatable(@intCast(code))) 1 else 0;
+        try std.testing.expectEqual(expected, waddle_keyboard_repeat_key_repeatable(@intCast(code)));
+    }
+}
+

@@ -190,7 +190,7 @@ static void repeat_admission(void) {
 static void repeat_policy(void) {
     assert(av_input_key_repeatable(30) && av_input_key_repeatable(1) && av_input_key_repeatable(767));
     assert(av_input_key_repeatable(0) == 0 && av_input_key_repeatable(768) == 0);
-    static const uint32_t NotRepeatable[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 125, 126, 142};
+    static const uint32_t NotRepeatable[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 122, 123, 125, 126, 142};
     for (size_t index = 0; index < sizeof(NotRepeatable) / sizeof(NotRepeatable[0]); ++index)
         assert(av_input_key_repeatable(NotRepeatable[index]) == 0);
 }

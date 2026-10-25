@@ -425,12 +425,6 @@ static uint32_t live_random(void) {
     live_random_state ^= live_random_state << 5;
     return live_random_state;
 }
-static int live_repeatable(uint32_t key) {
-    static const uint32_t NotRepeatable[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 125, 126};
-    for (size_t index = 0; index < sizeof(NotRepeatable) / sizeof(NotRepeatable[0]); ++index)
-        if (NotRepeatable[index] == key) return 0;
-    return 1;
-}
 static void live_randomized(void) {
     static const uint32_t Keys[] = {30, 31, 42, 58, 97, 32};
     av_wayland_t client; video_window_t *window;
@@ -459,7 +453,7 @@ static void live_randomized(void) {
                 if (!held[key]) {
                     held[key] = 1;
                     candidate = 0;
-                    if (enabled && rate > 0 && live_repeatable(key)) {
+                    if (enabled && rate > 0 && av_input_key_repeatable(key)) {
                         candidate = key;
                         deadline_ns = model_now_ns + delay_ns;
                     }

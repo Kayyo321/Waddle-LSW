@@ -92,4 +92,11 @@ waddle_keyboard_repeat_status_t waddle_keyboard_repeat_take_due(void *storage, u
  */
 waddle_keyboard_repeat_status_t waddle_keyboard_repeat_next_deadline(void *storage, uint8_t *out_present, uint64_t *out_deadline);
 
+/**
+ * @brief Host repeat policy for one evdev code. Pure and stateless.
+ * @param code in; evdev code. @return 1 when the key may auto-repeat, 0 otherwise
+ *         (including every code outside 1..767). Must agree with av_input_key_repeatable.
+ */
+uint8_t waddle_keyboard_repeat_key_repeatable(uint16_t code);
+
 #endif

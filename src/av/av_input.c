@@ -103,7 +103,7 @@ int av_input_key_injectable(uint32_t key) {
 
 /* Keys that never auto-repeat: modifiers, lock keys, Pause, and the suppressed
  * power/sleep keys. Same set as keyboard_repeat.zig policy_repeatable(). */
-static const uint16_t NonRepeatKeys[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 125, 126, 142};
+static const uint16_t NonRepeatKeys[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 122, 123, 125, 126, 142};
 
 int av_input_key_repeatable(uint32_t key) {
     if (key == 0 || key > 767) return 0;
