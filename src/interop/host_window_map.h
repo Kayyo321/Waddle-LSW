@@ -96,6 +96,12 @@ typedef enum host_window_map_announce_status_t {
     HostWindowMapRefuseInvalid = 6 /**< Zero identity, bad role or parent shape, or NULL map. No change. */
 } host_window_map_announce_status_t;
 
+/** @brief Result of `host_window_map_reset`. */
+typedef enum host_window_map_reset_status_t {
+    HostWindowMapReset = 1, /**< Table torn down: the teardown list was written and the table cleared. */
+    HostWindowMapResetRefuseInvalid = 2 /**< Short capacity, NULL or overlapping argument, or a corrupt table. Nothing written; table unchanged. */
+} host_window_map_reset_status_t;
+
 /** @brief Result of `host_window_map_retire`. */
 typedef enum host_window_map_retire_status_t {
     HostWindowMapRetired = 1, /**< Subtree removed; the output list and count are valid. */
@@ -127,12 +133,23 @@ uint32_t host_window_map_announce_error_code(host_window_map_announce_status_t s
 uint32_t host_window_map_retire_error_code(host_window_map_retire_status_t status);
 
 /**
- * @brief Clear the table to the epoch-start state.
+ * @brief Tear down the table and write the teardown list.
  *
- * @param map In/out. Table to clear. NULL is a no-op.
- * @return Nothing. Emits no output; the caller tears down its own native objects first.
+ * The list holds every realized window in teardown order: roots in descending realization order, and each
+ * root's subtree children first, so every descendant precedes its ancestor. The caller destroys each
+ * window's native objects in list order. The table is cleared only when the whole list was written. A
+ * corrupt table is refused and left as it is; zero-fill such storage to clear it.
+ *
+ * @param map In/out. Table. NULL gives `HostWindowMapResetRefuseInvalid`. Cleared on `HostWindowMapReset`.
+ * @param out Out. Teardown list of at least `out_capacity` entries. NULL gives `HostWindowMapResetRefuseInvalid`.
+ *            Written only on `HostWindowMapReset`. Must not overlap `map` or `out_count`.
+ * @param out_capacity In. Entries in `out`; below `HostWindowMapMaxOutput` gives refusal.
+ * @param out_count Out. Receives the teardown count. NULL gives `HostWindowMapResetRefuseInvalid`. Not written
+ *                  when a NULL pointer, a short capacity, an overlap or a corrupt table refuses the call. Must
+ *                  not overlap `map` or `out`.
+ * @return Reset status. Thread safety: owner thread only.
  */
-void host_window_map_reset(host_window_map_t *map);
+host_window_map_reset_status_t host_window_map_reset(host_window_map_t *map, host_window_ref_t *out, uint32_t out_capacity, uint32_t *out_count);
 
 /** @brief Result of `host_window_map_announce`. `slot` is the stable slot index on Realize and `HostWindowMapNoSlot` otherwise. */
 typedef struct host_window_map_announce_result_t {

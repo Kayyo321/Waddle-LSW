@@ -33,6 +33,12 @@ static int same(host_window_ref_t left, host_window_ref_t right) {
     return left.window == right.window && left.generation == right.generation;
 }
 
+static void clear_table(host_window_map_t *map) {
+    host_window_ref_t list[64];
+    uint32_t count = 0;
+    (void)host_window_map_reset(map, list, 64, &count);
+}
+
 static host_window_map_announce_status_t announce(host_window_map_t *map, host_window_ref_t window, host_window_ref_t parent, uint8_t role) {
     return host_window_map_announce(map, window, parent, role).status;
 }
@@ -66,6 +72,12 @@ static int check_null_and_refusals(host_window_map_t *map) {
     host_window_ref_t out[64];
     uint32_t count = 77;
     host_window_map_announce_result_t result;
+
+    Check(host_window_map_reset(NULL, out, 64, &count) == HostWindowMapResetRefuseInvalid);
+    Check(host_window_map_reset(map, NULL, 64, &count) == HostWindowMapResetRefuseInvalid);
+    Check(host_window_map_reset(map, out, 64, NULL) == HostWindowMapResetRefuseInvalid);
+    Check(host_window_map_reset(map, out, 63, &count) == HostWindowMapResetRefuseInvalid);
+    Check(count == 77);
 
     result = host_window_map_announce(NULL, ref(1, 1), none(), HostWindowMapRoleToplevel);
     Check(result.status == HostWindowMapRefuseInvalid && result.slot == HostWindowMapNoSlot);
@@ -149,7 +161,7 @@ static int check_stable_slots(host_window_map_t *map) {
     host_window_map_announce_result_t c;
     host_window_entry_t entry;
 
-    host_window_map_reset(map);
+    clear_table(map);
     a = host_window_map_announce(map, ref(1, 1), none(), HostWindowMapRoleToplevel);
     b = host_window_map_announce(map, ref(2, 1), none(), HostWindowMapRoleToplevel);
     c = host_window_map_announce(map, ref(3, 1), none(), HostWindowMapRoleToplevel);
@@ -166,11 +178,29 @@ static int check_stable_slots(host_window_map_t *map) {
     return 0;
 }
 
+static int check_teardown(host_window_map_t *map) {
+    host_window_ref_t out[64];
+    uint32_t count = 0;
+
+    /* Teardown lists children first and roots newest first; then the table is empty. */
+    Check(announce(map, ref(1, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
+    Check(announce(map, ref(2, 1), ref(1, 1), HostWindowMapRoleDialog) == HostWindowMapRealize);
+    Check(announce(map, ref(3, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
+    Check(host_window_map_reset(map, out, 64, &count) == HostWindowMapReset);
+    Check(count == 3);
+    Check(same(out[0], ref(3, 1)));
+    Check(same(out[1], ref(2, 1)));
+    Check(same(out[2], ref(1, 1)));
+    Check(host_window_map_realized_count(map) == 0);
+    Check(!host_window_map_is_current(map, ref(1, 1)));
+    return 0;
+}
+
 static int check_capacity_edges(host_window_map_t *map) {
     uint64_t index;
     host_window_map_announce_result_t result;
 
-    host_window_map_reset(map);
+    clear_table(map);
     for (index = 1; index <= HostWindowMapMaxRealized; index++) {
         result = host_window_map_announce(map, ref(index, 1), none(), HostWindowMapRoleToplevel);
         Check(result.status == HostWindowMapRealize);
@@ -188,13 +218,13 @@ static int check_aliasing(host_window_map_t *map) {
     uint32_t count = 5;
     host_window_ref_t out[64];
 
-    host_window_map_reset(map);
+    clear_table(map);
     Check(announce(map, ref(1, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
     Check(host_window_map_retire(map, ref(1, 1), alias, 64, &count) == HostWindowMapRetireRefuseInvalid);
     Check(host_window_map_retire(map, ref(1, 1), out, 64, inside) == HostWindowMapRetireRefuseInvalid);
     Check(host_window_map_realized_count(map) == 1);
     Check(count == 5);
-    host_window_map_reset(map);
+    clear_table(map);
     return 0;
 }
 
@@ -202,15 +232,15 @@ int main(void) {
     static host_window_map_t map;
     if (check_layout() != 0) return 1;
     if (check_error_codes() != 0) return 1;
-    host_window_map_reset(&map);
     if (check_null_and_refusals(&map) != 0) return 1;
     if (check_realize_and_stale_parents(&map) != 0) return 1;
     if (check_popups_and_lookup(&map) != 0) return 1;
     if (check_retire_cascade(&map) != 0) return 1;
+    if (check_teardown(&map) != 0) return 1;
     if (check_stable_slots(&map) != 0) return 1;
     if (check_capacity_edges(&map) != 0) return 1;
     if (check_aliasing(&map) != 0) return 1;
-    host_window_map_reset(&map);
+    clear_table(&map);
     Check(host_window_map_realized_count(&map) == 0);
     puts("host_window_map_abi: all checks passed");
     return 0;

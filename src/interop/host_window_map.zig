@@ -126,6 +126,22 @@ pub const retire_status_t = enum(c_int) {
     RefuseInvalid = 3,
 };
 
+/// Result code of `reset`.
+pub const reset_status_t = enum(c_int) {
+    /// The table was torn down: the teardown list was written and the table cleared.
+    Reset = 1,
+    /// Output capacity below MaxOutput, or a corrupt table. Nothing was written and the table is unchanged.
+    RefuseInvalid = 2,
+};
+
+/// Result of `reset`. `count` is the number of entries written to the teardown list.
+pub const reset_result_t = extern struct {
+    /// Outcome of the reset.
+    status: reset_status_t,
+    /// Realized windows written to the teardown list; zero unless Reset.
+    count: u32,
+};
+
 /// Result of `retire`. `count` is the number of entries written to the output list.
 pub const retire_result_t = extern struct {
     /// Outcome of the retire.
@@ -230,12 +246,44 @@ fn is_consistent(map: *const host_window_map_t) bool {
     return map.realized_count <= MaxRealized and occupied_count(map) == map.realized_count;
 }
 
-/// Clear the table. Zero-filled storage is the same state. Callers must reset before first use of
-/// storage they did not zero themselves. Owner-thread only; emits no output.
+/// Tear down the whole table: write every realized window to `out` in teardown order, then clear it.
 ///
-/// @param map Table to clear; must not be null.
-pub fn reset(map: *host_window_map_t) void {
+/// Teardown order: roots (windows with no parent) in descending realization order, and within each
+/// root the subtree children first, exactly as `retire` orders a subtree. Every descendant therefore
+/// precedes its ancestor. The table is cleared only when the whole teardown list was written. A corrupt
+/// table is refused and left as it is, so the caller can tell that its storage is not a valid table; such
+/// storage is cleared by zero-filling it.
+///
+/// @param map Table; must not be null.
+/// @param out Teardown list, length at least MaxOutput. Written only on Reset.
+/// @return Status and the teardown count.
+/// @thread_safety Owner thread only; no internal synchronization.
+pub fn reset(map: *host_window_map_t, out: []window_ref_t) reset_result_t {
+    const refused = reset_result_t{ .status = .RefuseInvalid, .count = 0 };
+    if (out.len < MaxOutput or !is_consistent(map)) return refused;
+
+    var order: [MaxRealized]u32 = undefined;
+    var count: usize = 0;
+    var bound: u64 = std.math.maxInt(u64);
+    while (true) {
+        var best: ?usize = null;
+        for (map.slots, 0..) |slot, index| {
+            if (slot.occupied == 0 or slot.parent.window != 0) continue;
+            if (slot.realize_seq >= bound) continue;
+            if (best == null or slot.realize_seq > map.slots[best.?].realize_seq) best = index;
+        }
+        const root = best orelse break;
+        if (!emit_subtree(map, root, 0, &order, &count)) return refused;
+        bound = map.slots[root].realize_seq;
+    }
+    // A parent that names no realized window, or a cycle, leaves slots unreachable from a root.
+    if (count != map.realized_count) return refused;
+
+    for (order[0..count], 0..) |index, position| {
+        out[position] = map.slots[index].window;
+    }
     map.* = std.mem.zeroes(host_window_map_t);
+    return .{ .status = .Reset, .count = @intCast(count) };
 }
 
 /// Look up an occupied slot by exact identity.
@@ -391,12 +439,25 @@ fn regions_disjoint(regions: []const region_t) bool {
     return true;
 }
 
-/// C ABI: clear the table. A NULL `map` is ignored.
+/// C ABI: tear down the table and write the teardown list. See `reset` for the order.
 ///
-/// @param map Table to clear; NULL is a no-op. In, out.
-/// @thread_safety Owner thread only.
-export fn host_window_map_reset(map: ?*host_window_map_t) callconv(.C) void {
-    reset(map orelse return);
+/// @param map In/out. Table; NULL gives RefuseInvalid. Cleared on Reset.
+/// @param out Out. Teardown list of at least `out_capacity` entries; NULL gives RefuseInvalid. Written only on
+///            Reset. Must not overlap `map` or `out_count`.
+/// @param out_capacity In. Entries in `out`; below 64 gives RefuseInvalid.
+/// @param out_count Out. Receives the teardown count; NULL gives RefuseInvalid. Not written when a NULL pointer,
+///                  a short capacity, an overlap or a corrupt table refuses the call. Must not overlap `map` or `out`.
+/// @return Reset status. Thread safety: owner thread only.
+export fn host_window_map_reset(map: ?*host_window_map_t, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) callconv(.C) reset_status_t {
+    const count_ptr = out_count orelse return .RefuseInvalid;
+    const target = map orelse return .RefuseInvalid;
+    const out_base = out orelse return .RefuseInvalid;
+    if (out_capacity < MaxOutput) return .RefuseInvalid;
+    const out_slice = out_base[0..out_capacity];
+    if (!regions_disjoint(&.{ region_of_value(target), region_of_slice(out_slice), region_of_value(count_ptr) })) return .RefuseInvalid;
+    const result = reset(target, out_slice);
+    count_ptr.* = result.count;
+    return result.status;
 }
 
 /// C ABI: realize one window. See `announce`.
@@ -511,9 +572,7 @@ fn expect_absent(map: *const host_window_map_t, window: window_ref_t) !void {
 }
 
 fn new_map() host_window_map_t {
-    var map: host_window_map_t = undefined;
-    reset(&map);
-    return map;
+    return std.mem.zeroes(host_window_map_t);
 }
 
 fn new_out() [MaxOutput]window_ref_t {
@@ -523,8 +582,8 @@ fn new_out() [MaxOutput]window_ref_t {
 /// The public functions are called through `never_inline` shims so that the optimized bodies keep
 /// their own branches. A call with constant arguments would otherwise fold refusal paths away.
 const abi_shim_t = struct {
-    fn reset(map: ?*host_window_map_t) void {
-        @call(.never_inline, host_window_map_reset, .{map});
+    fn reset(map: ?*host_window_map_t, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) reset_status_t {
+        return @call(.never_inline, host_window_map_reset, .{ map, out, out_capacity, out_count });
     }
 
     fn announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_result_t {
@@ -560,12 +619,70 @@ fn announce_slot(map: *host_window_map_t, window: window_ref_t, parent: window_r
     return announce(map, window, parent, role).status;
 }
 
-test "reset produces an empty table and zero-filled storage is the same state" {
+test "reset of an empty table writes nothing and leaves zero-filled storage" {
     var map = new_map();
+    var out = new_out();
+    const result = reset(&map, &out);
+    try testing.expectEqual(reset_status_t.Reset, result.status);
+    try testing.expectEqual(@as(u32, 0), result.count);
     try testing.expectEqual(@as(u32, 0), realized_count(&map));
     try expect_absent(&map, ref(1, 1));
-    var zeroed: host_window_map_t = std.mem.zeroes(host_window_map_t);
-    try testing.expectEqual(@as(u32, 0), realized_count(&zeroed));
+}
+
+test "reset writes the teardown list children first, roots in reverse realization order" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel); // A, seq 0
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog); // B, child of A, seq 1
+    _ = announce(&map, ref(3, 1), none(), RoleToplevel); // C, seq 2
+    _ = announce(&map, ref(4, 1), ref(3, 1), RoleMenu); // D, child of C, seq 3
+    _ = announce(&map, ref(5, 1), ref(2, 1), RoleTooltip); // E, child of B, seq 4
+
+    const result = reset(&map, &out);
+    try testing.expectEqual(reset_status_t.Reset, result.status);
+    try testing.expectEqual(@as(u32, 5), result.count);
+    // Root C (newest) first: its child D, then C. Then root A: B's subtree (E, B), then A.
+    try expect_ref(ref(4, 1), out[0]);
+    try expect_ref(ref(3, 1), out[1]);
+    try expect_ref(ref(5, 1), out[2]);
+    try expect_ref(ref(2, 1), out[3]);
+    try expect_ref(ref(1, 1), out[4]);
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
+    try expect_absent(&map, ref(1, 1));
+    try testing.expectEqual(@as(u64, 0), map.next_seq);
+}
+
+test "reset refuses a short list or a corrupt table and leaves it unchanged" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
+    var short: [MaxOutput - 1]window_ref_t = undefined;
+    try testing.expectEqual(reset_status_t.RefuseInvalid, reset(&map, &short).status);
+    try testing.expectEqual(@as(u32, 2), realized_count(&map));
+
+    var out = new_out();
+    map.realized_count = 9;
+    try testing.expectEqual(reset_status_t.RefuseInvalid, reset(&map, &out).status);
+    try testing.expectEqual(@as(u32, 9), map.realized_count);
+
+    // A parent cycle leaves slots unreachable from every root, so the teardown is incomplete.
+    map.realized_count = 2;
+    map.slots[0].parent = ref(2, 1);
+    try testing.expectEqual(reset_status_t.RefuseInvalid, reset(&map, &out).status);
+    try testing.expectEqual(@as(u32, 2), realized_count(&map));
+}
+
+test "a full table can be torn down with a list of exactly 64 entries" {
+    var map = new_map();
+    for (1..MaxRealized + 1) |index| {
+        _ = announce(&map, ref(index, 1), none(), RoleToplevel);
+    }
+    var out = new_out();
+    const result = reset(&map, &out);
+    try testing.expectEqual(@as(u32, 64), result.count);
+    try expect_ref(ref(64, 1), out[0]);
+    try expect_ref(ref(1, 1), out[63]);
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
 }
 
 test "announce toplevel realizes into the lowest slot and records the none parent" {
@@ -809,9 +926,10 @@ test "a corrupt realized count is refused by every operation and not used" {
 
 test "epoch reset clears every realized entry" {
     var map = new_map();
+    var out = new_out();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
-    reset(&map);
+    try testing.expectEqual(reset_status_t.Reset, reset(&map, &out).status);
     try testing.expectEqual(@as(u32, 0), realized_count(&map));
     try expect_absent(&map, ref(1, 1));
     try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(1, 1), none(), RoleToplevel));
@@ -927,8 +1045,23 @@ const reference_model_t = struct {
         return .Retired;
     }
 
-    fn model_reset(self: *reference_model_t) void {
+    /// Teardown: roots by descending sequence number, each subtree children first.
+    fn model_reset(self: *reference_model_t, out: *std.ArrayList(window_ref_t)) !reset_status_t {
+        out.clearRetainingCapacity();
+        var roots = std.ArrayList(usize).init(testing.allocator);
+        defer roots.deinit();
+        for (self.entries, 0..) |entry, index| {
+            if (entry) |value| {
+                if (value.parent.window == 0) try roots.append(index);
+            }
+        }
+        std.mem.sort(usize, roots.items, self, by_descending_seq);
+        var order = std.ArrayList(usize).init(testing.allocator);
+        defer order.deinit();
+        for (roots.items) |root| try self.model_emit(root, &order);
+        for (order.items) |position| try out.append(self.entries[position].?.window);
         self.* = model_init();
+        return .Reset;
     }
 };
 
@@ -961,8 +1094,13 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
     while (step < operations) : (step += 1) {
         const choice = random.uintLessThan(u8, 100);
         if (choice < 2) {
-            reset(&map);
-            model.model_reset();
+            const got_reset = reset(&map, &out);
+            const expected_reset = try model.model_reset(&out_list);
+            try testing.expectEqual(expected_reset, got_reset.status);
+            if (got_reset.status == .Reset) {
+                try testing.expectEqual(@as(u32, @intCast(out_list.items.len)), got_reset.count);
+                for (out_list.items, 0..) |pair, index| try expect_ref(pair, out[index]);
+            }
         } else if (choice < 70) {
             // Zero and mismatched identities appear on purpose.
             const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
@@ -1002,9 +1140,12 @@ test "C ABI counts and lookup accept NULL and report the table" {
 
     var map = new_map();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
-    abi_shim_t.reset(null);
+    var out = new_out();
+    var count: u32 = 0;
+    try testing.expectEqual(reset_status_t.RefuseInvalid, abi_shim_t.reset(null, &out, MaxOutput, &count));
     try testing.expectEqual(@as(u32, 1), abi_shim_t.realized(&map));
-    abi_shim_t.reset(&map);
+    try testing.expectEqual(reset_status_t.Reset, abi_shim_t.reset(&map, &out, MaxOutput, &count));
+    try testing.expectEqual(@as(u32, 1), count);
     try testing.expectEqual(@as(u32, 0), abi_shim_t.realized(&map));
     try testing.expect(!abi_shim_t.is_current(&map, ref(1, 1)));
 }
