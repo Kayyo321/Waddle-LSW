@@ -1,0 +1,144 @@
+{
+  "conclusion": "success",
+  "databaseId": 40210422085,
+  "headSha": "48555db2a3ff4c4ea5f1b56babbbadc2b1ce0aee",
+  "jobs": [
+    {
+      "completedAt": "2026-10-25T16:23:10Z",
+      "conclusion": "success",
+      "databaseId": 121220270718,
+      "name": "linux",
+      "startedAt": "2026-10-25T16:10:39Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-10-25T16:10:41Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-25T16:10:40Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:10:43Z",
+          "conclusion": "success",
+          "name": "Initialize containers",
+          "number": 2,
+          "startedAt": "2026-10-25T16:10:41Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:11:06Z",
+          "conclusion": "success",
+          "name": "Install graph test toolchains",
+          "number": 3,
+          "startedAt": "2026-10-25T16:10:43Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:11:07Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+          "number": 4,
+          "startedAt": "2026-10-25T16:11:06Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:11:12Z",
+          "conclusion": "success",
+          "name": "Install verified Zig",
+          "number": 5,
+          "startedAt": "2026-10-25T16:11:07Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:23:05Z",
+          "conclusion": "success",
+          "name": "Test graph and observer portable core, leak-enabled C clients, coverage and Windows ABI builds",
+          "number": 6,
+          "startedAt": "2026-10-25T16:11:12Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:23:06Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "number": 7,
+          "startedAt": "2026-10-25T16:23:05Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:23:06Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+          "number": 13,
+          "startedAt": "2026-10-25T16:23:06Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:23:08Z",
+          "conclusion": "success",
+          "name": "Stop containers",
+          "number": 14,
+          "startedAt": "2026-10-25T16:23:06Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:23:08Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 15,
+          "startedAt": "2026-10-25T16:23:08Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40210422085/job/121220270718"
+    },
+    {
+      "completedAt": "2026-10-25T16:23:29Z",
+      "conclusion": "success",
+      "databaseId": 121223242266,
+      "name": "windows",
+      "startedAt": "2026-10-25T16:23:11Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-10-25T16:23:12Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-25T16:23:12Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:23:13Z",
+          "conclusion": "success",
+          "name": "Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "number": 2,
+          "startedAt": "2026-10-25T16:23:12Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:23:28Z",
+          "conclusion": "success",
+          "name": "Execute graph C ABI, observer doubles and real Win32 adapter smoke and synthetic failure guards",
+          "number": 3,
+          "startedAt": "2026-10-25T16:23:13Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-25T16:23:28Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 4,
+          "startedAt": "2026-10-25T16:23:28Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40210422085/job/121223242266"
+    }
+  ],
+  "name": "Seamless window graph verification",
+  "status": "completed",
+  "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40210422085"
+}

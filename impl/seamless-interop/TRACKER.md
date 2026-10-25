@@ -1322,8 +1322,15 @@ its uncompiled draft earns no credit until current acceptance passes.
     assert the input mask. Normal build,96.45% lines/90.22% taken arcs, real
     leak-enabled ASan/LSan/UBSan and SDK link pass; native rerun required.
 
-- **Commit `HEAD`**: `refactor(interop): follow naming policy in test guest bootstrap`
+- **Commit `308bdb4`**: `refactor(interop): follow naming policy in test guest bootstrap`
   - **Task Impact**: +0% to TODO #34; naming-only correction.
   - **Summary**: Rename five script-owned PowerShell variables to snake_case;
     keep system API/property names intact. All16 preparation tests pass.
     Refresh disjoint current worker ownership; no native progress change.
+
+- **Commit `HEAD`**: `docs(interop): retain real foreign window Windows CI evidence`
+  - **Task Impact**: +0% to TODO #10/#34; installed/coordinator gates remain open.
+  - **Summary**: Save immutable48555db workflow40210422085 metadata and raw
+    compressed Windows job121223242266 log. Real foreign admission, parent
+    ordering, title, quarantine and generation fixture passes. This isolated
+    native CI evidence does not qualify installed agent or complete acceptance.
