@@ -80,6 +80,9 @@ pub const open_error_t = enum(u32) {
     /// Usage: more than one DelegateExec item, or DelegateExec mixed with sent items.
     /// Depends on classification, so it is reported after the read callback has run.
     DelegateConflict = 22,
+    /// Usage: a PATH, the EXE token or an argument-tail token is not valid UTF-8.
+    /// The codec requires UTF-8 for TargetPath and Arguments, so the request could not be sent.
+    InvalidUtf8 = 23,
 };
 
 /// Launch item kind before path translation. Unused is the zero value of empty slots.
@@ -240,6 +243,7 @@ pub fn exit_code_for_error(err: open_error_t) u8 {
         .ArgumentTooLong,
         .QuotedArgumentsTooLong,
         .DelegateConflict,
+        .InvalidUtf8,
         => ExitUsage,
         .ImageUnreadable, .OutsideShare => ExitNotExecutable,
         .NotFound => ExitNotFound,
@@ -380,6 +384,7 @@ fn plan_tokens(args: []const []const u8, plan: *plan_t) open_error_t {
         } else {
             if (token.len == 0) return .EmptyPath;
             if (plan.app != null) return .MixedTargets;
+            if (!std.unicode.utf8ValidateSlice(token)) return .InvalidUtf8;
             plan.path_indices[plan.path_count] = index;
             plan.path_count += 1;
             index += 1;
@@ -394,7 +399,9 @@ fn plan_exe(args: []const []const u8, exe_index: usize, plan: *plan_t) open_erro
     const exe = args[exe_index];
     if (exe.len == 0) return .EmptyExecutable;
     if (!is_exe_path(exe)) return .ExecutableNotExe;
+    if (!std.unicode.utf8ValidateSlice(exe)) return .InvalidUtf8;
     const tail = args[exe_index + 1 ..];
+    for (tail) |arg| if (!std.unicode.utf8ValidateSlice(arg)) return .InvalidUtf8;
     _ = quoted_length(tail) catch return .QuotedArgumentsTooLong;
     plan.exe_index = exe_index;
     plan.tail_first = if (tail.len == 0) 0 else exe_index + 1;
@@ -961,6 +968,7 @@ test "exit tables cover every error value and LaunchResult status" {
         .{ .err = .GuestUnreachable, .code = 125 },
         .{ .err = .GuestLaunchFailed, .code = 1 },
         .{ .err = .DelegateConflict, .code = 2 },
+        .{ .err = .InvalidUtf8, .code = 2 },
     };
     for (expected) |case| {
         try testing.expectEqual(case.code, exit_code_for_error(case.err));
@@ -1258,4 +1266,21 @@ test "DelegateExec must be the only item: two delegated executables or a mix are
     try testing.expectEqual(item_kind_t.DelegateExec, out.items[0].kind);
     try testing.expectEqual(open_error_t.None, run(&.{ "--", "c1.exe", "x" }, &fake, 1, &out));
     try testing.expectEqual(item_kind_t.DelegateExec, out.items[0].kind);
+}
+
+test "non-UTF-8 PATH, EXE or argument-tail bytes are usage errors before any callback" {
+    const gui = pe_image_fixture();
+    const entries = [_]fake_entry_t{.{ .path = "g.exe", .bytes = &gui }};
+    var fake = fake_reader_t{ .entries = &entries };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.InvalidUtf8, run(&.{"\xff.txt"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.InvalidUtf8, run(&.{ "g.exe", "\xc3" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.InvalidUtf8, run(&.{ "--", "\xffx.exe" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.InvalidUtf8, run(&.{ "--", "g.exe", "ok", "\xed\xa0\x80" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
+    try testing.expectEqual(@as(usize, 0), out.item_count);
+    try testing.expectEqual(ExitUsage, exit_code_for_error(.InvalidUtf8));
+    try testing.expectEqual(open_error_t.None, run(&.{"caf\xc3\xa9.txt"}, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "caf\xc3\xa9.txt", out.item_text(0));
+    try testing.expectEqual(open_error_t.None, run(&.{ "--", "g.exe", "\xc3\xa9t\xc3\xa9" }, &fake, 0, &out));
 }

@@ -137,7 +137,12 @@ Rules:
     `quote_into` (section 6), must be at most **4096** bytes
     (`InteropMaxStringBytes`, the wire limit of `LaunchRequest.arguments`).
     Longer tails are `QuotedArgumentsTooLong`.
-11. Targets are parsed left to right. Each token is consumed once.
+11. **UTF-8.** Every PATH, the `--` EXE token and every argument-tail token must
+    be valid UTF-8 (`std.unicode.utf8ValidateSlice`). The codec's `utf8_text`
+    applies the same check to TargetPath and Arguments but is private, so the
+    parser calls the std validator directly. Otherwise `InvalidUtf8` (exit 2),
+    raised in the grammar pass. NUL cannot occur in argv.
+12. Targets are parsed left to right. Each token is consumed once.
 
 `--new-console` with an `--app` target is accepted and has no effect, because
 App items are never CUI routed. `--wait` has no effect on classification.
@@ -282,7 +287,7 @@ languages): `item_t` 40 bytes, `request_t` 2592 bytes, `options_t` 24 bytes.
 Usage (exit 2): `UnknownOption`, `DuplicateOption`, `MissingOptionValue`,
 `InvalidDevice`, `InvalidAppKey`, `OptionAfterTarget`, `MissingTarget`,
 `MixedTargets`, `EmptyPath`, `EmptyExecutable`, `ExecutableNotExe`,
-`TooManyArgs`, `ArgumentTooLong`, `QuotedArgumentsTooLong`, `DelegateConflict`.
+`TooManyArgs`, `ArgumentTooLong`, `QuotedArgumentsTooLong`, `DelegateConflict`, `InvalidUtf8`.
 
 Parse-time local (exit 126): `ImageUnreadable`.
 

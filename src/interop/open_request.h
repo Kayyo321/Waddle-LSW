@@ -54,7 +54,8 @@ typedef enum interop_open_error_t {
     InteropOpenErrorLocalFailure = 19, /**< Caller-reported: local failure (125). */
     InteropOpenErrorGuestUnreachable = 20, /**< Caller-reported: guest not reachable in 120 s (125). */
     InteropOpenErrorGuestLaunchFailed = 21, /**< Caller-reported: guest launch failure (1). */
-    InteropOpenErrorDelegateConflict = 22 /**< Usage: several DelegateExec items, or DelegateExec mixed with sent items. Reported after the read callback. */
+    InteropOpenErrorDelegateConflict = 22, /**< Usage: several DelegateExec items, or DelegateExec mixed with sent items. Reported after the read callback. */
+    InteropOpenErrorInvalidUtf8 = 23 /**< Usage: PATH, EXE or argument-tail bytes are not valid UTF-8 (codec requirement). */
 } interop_open_error_t;
 
 /** @brief Launch item kinds; Unused is the zero value of slots beyond item_count. */
