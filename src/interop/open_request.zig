@@ -319,43 +319,55 @@ fn error_code(err: open_error_t) c_int {
     return @intCast(@intFromEnum(err));
 }
 
-const scan_state_t = struct {
+/// Result of the grammar pass: borrowed argv indices and flags. Filled without any I/O.
+const plan_t = struct {
+    app: ?[]const u8 = null,
     device: ?[]const u8 = null,
     wait: bool = false,
     new_console: bool = false,
-    app: ?[]const u8 = null,
-    paths: bool = false,
-    item_count: usize = 0,
+    path_indices: [MaxItems]usize = undefined,
+    path_count: usize = 0,
+    exe_index: ?usize = null,
+    tail_first: usize = 0,
+    tail_count: usize = 0,
 };
 
 fn parse_tokens(args: []const []const u8, options: *const options_t, result: *request_t) open_error_t {
+    var plan = plan_t{};
+    const grammar = plan_tokens(args, &plan);
+    if (grammar != .None) return grammar;
+    return classify_plan(args, options, &plan, result);
+}
+
+/// Pass one: every usage and bounds decision over the whole argv. Performs no
+/// classification and never calls the read callback.
+fn plan_tokens(args: []const []const u8, plan: *plan_t) open_error_t {
     if (args.len > MaxArgs) return .TooManyArgs;
     for (args) |arg| if (arg.len > MaxArgBytes) return .ArgumentTooLong;
     if (args.len == 0) return .MissingTarget;
-    var scan = scan_state_t{};
     var index: usize = 0;
     while (index < args.len) {
         const token = args[index];
         if (eql(token, "--")) {
-            if (scan.app != null or scan.paths) return .MixedTargets;
-            return parse_exe(args, index + 1, options, result, &scan);
+            if (plan.app != null or plan.path_count > 0) return .MixedTargets;
+            return plan_exe(args, index + 1, plan);
         } else if (eql(token, "--app")) {
-            if (scan.paths) return .MixedTargets;
-            if (scan.app != null) return .DuplicateOption;
+            if (plan.path_count > 0) return .MixedTargets;
+            if (plan.app != null) return .DuplicateOption;
             const value = value_at(args, index + 1) orelse return .MissingOptionValue;
             if (!app_key_valid(value)) return .InvalidAppKey;
-            scan.app = value;
+            plan.app = value;
             index += 2;
         } else if (eql(token, "--device") or eql(token, "-d")) {
-            if (scan.paths) return .OptionAfterTarget;
-            if (scan.device != null) return .DuplicateOption;
+            if (plan.path_count > 0) return .OptionAfterTarget;
+            if (plan.device != null) return .DuplicateOption;
             const value = value_at(args, index + 1) orelse return .MissingOptionValue;
             if (!device_valid(value)) return .InvalidDevice;
-            scan.device = value;
+            plan.device = value;
             index += 2;
         } else if (eql(token, "--wait") or eql(token, "--new-console")) {
-            if (scan.paths) return .OptionAfterTarget;
-            const flag = if (eql(token, "--wait")) &scan.wait else &scan.new_console;
+            if (plan.path_count > 0) return .OptionAfterTarget;
+            const flag = if (eql(token, "--wait")) &plan.wait else &plan.new_console;
             if (flag.*) return .DuplicateOption;
             flag.* = true;
             index += 1;
@@ -363,52 +375,58 @@ fn parse_tokens(args: []const []const u8, options: *const options_t, result: *re
             return .UnknownOption;
         } else {
             if (token.len == 0) return .EmptyPath;
-            if (scan.app != null) return .MixedTargets;
-            var kind: item_kind_t = .Unused;
-            var image: pe_header.image_kind_t = .Gui;
-            const status = route_path(token, options, scan.new_console, &kind, &image);
-            if (status != .None) return status;
-            result.items[scan.item_count] = .{ .kind = kind, .image = image, .text = token.ptr, .text_length = token.len, .argument_first = 0, .argument_count = 0 };
-            scan.item_count += 1;
-            scan.paths = true;
+            if (plan.app != null) return .MixedTargets;
+            plan.path_indices[plan.path_count] = index;
+            plan.path_count += 1;
             index += 1;
         }
     }
-    if (scan.app) |key| {
-        result.items[0] = .{ .kind = .App, .image = .Gui, .text = key.ptr, .text_length = key.len, .argument_first = 0, .argument_count = 0 };
-        scan.item_count = 1;
-    } else if (!scan.paths) return .MissingTarget;
-    return finish(result, &scan);
+    if (plan.app == null and plan.path_count == 0) return .MissingTarget;
+    return .None;
 }
 
-fn parse_exe(args: []const []const u8, exe_index: usize, options: *const options_t, result: *request_t, scan: *scan_state_t) open_error_t {
+fn plan_exe(args: []const []const u8, exe_index: usize, plan: *plan_t) open_error_t {
     if (exe_index >= args.len) return .EmptyExecutable;
     const exe = args[exe_index];
     if (exe.len == 0) return .EmptyExecutable;
     if (!is_exe_path(exe)) return .ExecutableNotExe;
     const tail = args[exe_index + 1 ..];
     _ = quoted_length(tail) catch return .QuotedArgumentsTooLong;
-    var kind: item_kind_t = .Unused;
-    var image: pe_header.image_kind_t = .Gui;
-    const status = route_exe(exe, options, scan.new_console, .ExeWithArgs, &kind, &image);
-    if (status != .None) return status;
-    result.items[0] = .{
-        .kind = kind,
-        .image = image,
-        .text = exe.ptr,
-        .text_length = exe.len,
-        .argument_first = if (tail.len == 0) 0 else exe_index + 1,
-        .argument_count = tail.len,
-    };
-    scan.item_count = 1;
-    return finish(result, scan);
+    plan.exe_index = exe_index;
+    plan.tail_first = if (tail.len == 0) 0 else exe_index + 1;
+    plan.tail_count = tail.len;
+    return .None;
 }
 
-fn finish(result: *request_t, scan: *const scan_state_t) open_error_t {
-    result.item_count = scan.item_count;
-    result.wait = @intFromBool(scan.wait);
-    result.new_console = @intFromBool(scan.new_console);
-    if (scan.device) |device| {
+/// Pass two: classify the planned items. The only place the read callback runs.
+fn classify_plan(args: []const []const u8, options: *const options_t, plan: *const plan_t, result: *request_t) open_error_t {
+    var count: usize = 0;
+    if (plan.app) |key| {
+        result.items[0] = .{ .kind = .App, .image = .Gui, .text = key.ptr, .text_length = key.len, .argument_first = 0, .argument_count = 0 };
+        count = 1;
+    } else if (plan.exe_index) |exe_index| {
+        const exe = args[exe_index];
+        var kind: item_kind_t = .Unused;
+        var image: pe_header.image_kind_t = .Gui;
+        const status = route_exe(exe, options, plan.new_console, .ExeWithArgs, &kind, &image);
+        if (status != .None) return status;
+        result.items[0] = .{ .kind = kind, .image = image, .text = exe.ptr, .text_length = exe.len, .argument_first = plan.tail_first, .argument_count = plan.tail_count };
+        count = 1;
+    } else {
+        for (plan.path_indices[0..plan.path_count]) |index| {
+            const token = args[index];
+            var kind: item_kind_t = .Unused;
+            var image: pe_header.image_kind_t = .Gui;
+            const status = route_path(token, options, plan.new_console, &kind, &image);
+            if (status != .None) return status;
+            result.items[count] = .{ .kind = kind, .image = image, .text = token.ptr, .text_length = token.len, .argument_first = 0, .argument_count = 0 };
+            count += 1;
+        }
+    }
+    result.item_count = count;
+    result.wait = @intFromBool(plan.wait);
+    result.new_console = @intFromBool(plan.new_console);
+    if (plan.device) |device| {
         result.device = device.ptr;
         result.device_length = device.len;
     }
@@ -1152,4 +1170,30 @@ test "callback status 1 is NotFound (127) and other nonzero statuses are unreada
     try testing.expectEqual(@as(usize, 0), out.item_count);
     try testing.expectEqual(open_error_t.ImageUnreadable, run(&.{"locked.exe"}, &fake, 0, &out));
     try testing.expectEqual(ExitNotExecutable, exit_code_for_error(.ImageUnreadable));
+}
+
+test "usage errors win over classification: an invalid argv never invokes the callback" {
+    const gui = pe_image_fixture();
+    const entries = [_]fake_entry_t{
+        .{ .path = "missing.exe", .status = 1 },
+        .{ .path = "g.exe", .bytes = &gui },
+        .{ .path = "h.exe", .bytes = &gui },
+    };
+    var fake = fake_reader_t{ .entries = &entries };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.OptionAfterTarget, run(&.{ "missing.exe", "--wait" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
+    try testing.expectEqual(open_error_t.UnknownOption, run(&.{ "g.exe", "--bogus" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
+    try testing.expectEqual(open_error_t.EmptyPath, run(&.{ "g.exe", "h.exe", "" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
+    try testing.expectEqual(@as(usize, 0), out.item_count);
+    try testing.expectEqual(open_error_t.None, run(&.{ "g.exe", "h.exe" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 2), fake.calls);
+}
+
+fn pe_image_fixture() [256]u8 {
+    var buffer: [256]u8 = undefined;
+    _ = pe_image(&buffer, 2);
+    return buffer;
 }
