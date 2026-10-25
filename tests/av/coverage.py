@@ -129,7 +129,9 @@ if mode == 'control_peer_abi':
         '-UNDEBUG', '-Dmain=interop_peer_c_fixture_main', '-Iinclude', '-c',
         'tests/interop/control_peer_abi.c', '-o', str(fixture_object)], check=True)
     link_objects.append(str(fixture_object))
-if mode in ('pe_header', 'open_request'):
+if mode == 'open_command':
+    link_objects += ['build/interop_codec.o', 'build/daemon_config.o', 'build/daemon_fs.o', 'build/path_filesystem.o', 'build/path_rules.o', 'build/arguments.o']
+if mode in ('pe_header', 'open_request', 'open_command'):
     fixture_object = output/'pe_header_c_fixture.o'
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
         '-UNDEBUG', '-Dmain=interop_pe_c_fixture_main', '-Isrc/interop', '-c',
@@ -138,8 +140,10 @@ if mode in ('pe_header', 'open_request'):
 extra_args = ['-Isubmodules/venus_protocol/include', *link_objects] if oracle or mode in ModernModeOracles or mode in ('venus_transfer2_native', 'venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else []
 if mode in ('interop_layout_abi', 'interop_slot_runtime_abi', 'window_state_abi'):
     extra_args += ['-Isrc/interop']
-if mode in ('pe_header', 'open_request'):
+if mode in ('pe_header', 'open_request', 'open_command'):
     extra_args += link_objects
+if mode == 'open_command':
+    extra_args += ['-Isrc/daemon', '-Isrc/common']
 test_source = 'src/vgpu/venus_graphics_general_wire.zig' if mode == 'venus_pipeline_wire_helpers' else source
 compile_command=['zig','test',test_source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
  '-femit-llvm-ir='+str(output/'test.ll'),'-femit-bin='+str(output/'test')]
