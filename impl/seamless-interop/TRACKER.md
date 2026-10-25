@@ -1655,7 +1655,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     real disposal. Strict SDK build/link passes; withdraw prior icon15% until
     exact fixed source passes real Windows functionality and90%coverage again.
 
-- **Commit `HEAD`**: `test(interop): requalify four-bitmap cleanup and restore icon milestone`
+- **Commit `a8f2e15`**: `test(interop): requalify four-bitmap cleanup and restore icon milestone`
   - **Task Impact**: +15% to TODO #27 (+0.60% overall; total27.00%).
   - **Summary**: Exacteb01019 Windows job121262210150 passes all icon fixtures
     including four genuine bitmaps with repeated4/3/1failed closes, exact live
@@ -1664,3 +1664,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     Preserve immutable matching inputs/gcno/gcda/report/native and sanitizer
     logs. Restore only the withdrawn native extraction15%; separate catalog
     workflow coverage and runtime/integrated qualification remain open.
+
+- **Commit `HEAD`**: `test(interop): cover default catalog sources and native ownership boundaries`
+  - **Task Impact**: +0% to TODO #27/#34 pending native90%catalog arcs.
+  - **Summary**: Add correctly allocated known-folder outputs, an empty owned
+    source root, exact failed COM reference release shapes, conversion OOM and
+    candidate capacity boundaries. Root review corrected the fake empty
+    enumerator to terminate with S_FALSE rather than malformed S_OK/fetched0.
+    Real751d0e1 catalog98.55%lines/85.04%arcs remains below gate. Strict SDK
+    profile build/link passes; next actual Windows run determines qualification.
