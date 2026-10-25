@@ -34,7 +34,7 @@ ModernModeOracles = {
     'venus_sampler_descriptor_wire': ('sampler_descriptor_wire', 'descriptor_wire', 'render_wire'),
 }
 
-InteropModes = ('interop_codec', 'interop_layout', 'interop_heap', 'manifest', 'manifest_store', 'interop_layout_abi', 'interop_slot_runtime', 'interop_slot_runtime_abi', 'stream_reader', 'stream_send_queue', 'session_handshake', 'session_liveness', 'agent_version', 'request_ids', 'host_buffer_registry', 'control_peer', 'control_peer_abi')
+InteropModes = ('interop_codec', 'interop_layout', 'interop_heap', 'manifest', 'manifest_store', 'pe_header', 'interop_layout_abi', 'interop_slot_runtime', 'interop_slot_runtime_abi', 'stream_reader', 'stream_send_queue', 'session_handshake', 'session_liveness', 'agent_version', 'request_ids', 'host_buffer_registry', 'control_peer', 'control_peer_abi')
 DaemonModes = ('daemon_wire',)
 mode=sys.argv[1]
 assert mode in InteropModes + DaemonModes + ('interop_codec','av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native','venus_modern_sync_wire','venus_extra_objects_wire','venus_requirements2_wire','venus_image_transfer_wire','venus_dynamic_rendering_wire','venus_graphics_general_wire','venus_graphics_dynamic_wire','venus_sampler_descriptor_wire','venus_transfer2_native','venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native')
@@ -126,9 +126,17 @@ if mode == 'control_peer_abi':
         '-UNDEBUG', '-Dmain=interop_peer_c_fixture_main', '-Iinclude', '-c',
         'tests/interop/control_peer_abi.c', '-o', str(fixture_object)], check=True)
     link_objects.append(str(fixture_object))
+if mode == 'pe_header':
+    fixture_object = output/'pe_header_c_fixture.o'
+    subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
+        '-UNDEBUG', '-Dmain=interop_pe_c_fixture_main', '-Isrc/interop', '-c',
+        'tests/interop/pe_header.c', '-o', str(fixture_object)], check=True)
+    link_objects.append(str(fixture_object))
 extra_args = ['-Isubmodules/venus_protocol/include', *link_objects] if oracle or mode in ModernModeOracles or mode in ('venus_transfer2_native', 'venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else []
 if mode in ('interop_layout_abi', 'interop_slot_runtime_abi'):
     extra_args += ['-Isrc/interop']
+if mode == 'pe_header':
+    extra_args += link_objects
 test_source = 'src/vgpu/venus_graphics_general_wire.zig' if mode == 'venus_pipeline_wire_helpers' else source
 compile_command=['zig','test',test_source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
  '-femit-llvm-ir='+str(output/'test.ll'),'-femit-bin='+str(output/'test')]

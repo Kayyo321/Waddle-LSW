@@ -1,0 +1,272 @@
+[
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 41,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 42,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 42,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 43,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 44,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 45,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 45,
+    "column": 84,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 47,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 47,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 54,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 48,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 48,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 49,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 50,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 50,
+    "column": 50,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "interop_pe_classify_prefix",
+    "line": 51,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 51,
+    "column": 40,
+    "edges": 2
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 51,
+    "column": 86,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 18,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 19,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 20,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "classify",
+    "line": 20,
+    "column": 14,
+    "edges": 2
+  },
+  {
+    "function": "classify",
+    "line": 20,
+    "column": 39,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 21,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 22,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "classify",
+    "line": 22,
+    "column": 53,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 24,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "classify",
+    "line": 24,
+    "column": 21,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 25,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 26,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 27,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "classify",
+    "line": 27,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "function": "classify",
+    "line": 27,
+    "column": 42,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 28,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 29,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "classify",
+    "line": 29,
+    "column": 9,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 30,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "classify",
+    "line": 31,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 45,
+    "column": 84,
+    "edges": 2
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 51,
+    "column": 40,
+    "edges": 2
+  },
+  {
+    "function": "interop_pe_classify_prefix",
+    "line": 45,
+    "column": 84,
+    "edges": 2
+  }
+]

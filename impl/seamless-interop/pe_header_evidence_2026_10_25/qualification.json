@@ -1,0 +1,22 @@
+{
+  "attempt": "build/coverage/interop/pe_header/run-20261025T171805623086Z-2",
+  "tests": 5,
+  "fuzz_prefixes": 20000,
+  "line": {
+    "covered": 24,
+    "total": 24
+  },
+  "taken_arcs": {
+    "covered": 27,
+    "total": 28
+  },
+  "compiler_panic_stack_guards_excluded": 4,
+  "c_abi_sanitizers": "ASan/LSan/UBSan detect_leaks=1 passed",
+  "native_windows": "crossbuild/link only, CI execution pending",
+  "sha256": {
+    "src/interop/pe_header.zig": "e2ac7ba0f6d4a9854bb29552bd493ef2e333a3ca809688a9dff1b891f3a8e979",
+    "src/interop/pe_header.h": "cf8ffa97b25e2ba869efcb6f5f4ab280a08bb0e4d284fc8a41aa99d696792419",
+    "tests/interop/pe_header.c": "7b59a7d285db3bcbf37461ebd4e4de32280477ba7eb407374380837e54c5a404",
+    "tests/av/coverage.py": "9dbf4ee7b519df51b8454a33507e78a79e08b4c564a7c50852c6a9bf929ad0e3"
+  }
+}

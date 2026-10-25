@@ -3749,3 +3749,17 @@ remain caller-owned and failed cleanup retains real owner slots/leases. No
 unmap, socket close, stop or process exit is remote detach or reuse authority.
 Only #7 admission10%/daemon5% and #5 live header5% are accepted; application
 integration, local session command socket and native drivers remain open.
+
+### 8.39 Bounded PE routing classifier (2026-10-25)
+
+[pe_header_contract.md](pe_header_contract.md) specifies the allocation-free
+Zig parser and disjoint/transactional C ABI. Both PE32/PE32+ use bounded
+little-endian optional-header offsets; only Subsystem3 selects Console. Malformed
+or unknown contents select GUI without pretending they are valid executables.
+File read errors remain a separate exit126 caller concern. Five Zig/C tests,
+20,000 random prefixes, exact boundaries,100%lines/96.43%taken arcs and real
+ASan/LSan/UBSan C consumer pass; Windows cross-link is distinct from execution.
+Classifier accepts20% of #31. Remaining allocations are MIME preserving editor20%,
+journaled handler artifacts20%, configuration/route integration20%, integrated/
+native qualification20%. No MIME defaults, launch or binfmt registration changes
+are performed by this parser.
