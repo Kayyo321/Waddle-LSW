@@ -42,7 +42,7 @@ acceptance remain pending.
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
 | #13 | Minimize/maximize/fullscreen/restore/close state machine | Pending | 3% | 0% | Waits on #11 |
 | #14 | Guest display sizing, fractional scale/DPI, multi-output | Pending | 3% | 0% | Waits on #11 |
-| #15 | Keyboard completeness (full scancode table, host repeat, lock sync, layout sync, shortcut inhibit) | In Progress | 3% | 10% | Full typed1..767 translation table10% accepted with independent golden/inverse and bounds tests. Injection, repeat, lock/layout, inhibit and native integration remain open |
+| #15 | Keyboard completeness (full scancode table, host repeat, lock sync, layout sync, shortcut inhibit) | In Progress | 3% | 20% | Typed translation10% and portable repeat timing10% accepted with root gates. Live repeat/injection, lock/layout, inhibit and native integration remain open |
 | #16 | Pointer completeness (XBUTTONs, value120, activating click) + cursor shape/image sync | Pending | 3% | 0% | Waits on #7, #10 |
 | #17 | Relative pointer & pointer lock | Pending | 2% | 0% | Waits on #16 |
 | #18 | Touch + pen/tablet via synthetic pointer devices | Pending | 3% | 0% | Waits on #16 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 40% | Schema15%, absent-add journal/recovery15% and rooted absent artifact API10% accepted. Replacement/backup/restore, commands/producers and full-removal qualification remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `23.60%`
+**Total Feature Completion**: `23.90%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -78,7 +78,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; portable observer15%; native adapter15%. O5 preservation qualified by89ff058 local coverage/sanitizers and exact Windows native smoke/failure guards at d77dcb3, CI40144415938; installed-session15% accepted by the hash-bound fresh Windows guest run; coordinator20% remains open |
-| #15 | Typed full translation10%; native injection15%; host repeat20%; lock sync15%; layout sync20%; shortcut inhibit10%; integrated/native qualification10% | Typed translation10% accepted; full1..767/gaps/inverse, correct VKs, legacy bounds, root100%lines/94.53%taken arcs and leak-enabled ASan/LSan/UBSan. No widened wire or typed injection credit |
+| #15 | Typed full translation10%; native injection15%; host repeat20%(pure timing10%,live composition10%); lock sync15%; layout sync20%; shortcut inhibit10%; integrated/native qualification10% | Typed translation10% and portable repeat timing10% accepted; root repeat five tests/2000lifecycles/3000runtime events,95.24%lines/100%arcs. Live repeat10%, typed injection and other milestones remain open |
 | #27 | Source snapshot/diff20%; native enumeration20%; watch/enrichment15%; PNG encoder10%; native icon extraction15%; wire/integration10%; integrated/native qualification10% | PNG encoder10% and source snapshot/diff20% accepted. Core root97.40%lines/90.15%taken arcs, validator100%lines/93.94%arcs and leak-enabled sanitizers. Native Shell/catalog and integrated qualification remain open |
 | #31 | Bounded classifier20%; preserving MIME editor20%; journaled handler artifacts20%; configuration/route integration20%; integrated/native qualification20% | Classifier20% and preserving MIME editor20% accepted; editor six tests,2000 prefixes, all publication-shape OOM tests,100%lines/93.28%arcs. Artifact/config/route/native integration remain open |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec15%; absent-add journal15%/30% and rooted absent API10%/20%, root-reviewed43 tests,90.03% taken arcs/99.77% lines. Replacement journal15% and replacement/backup API10% remain open |
@@ -1511,9 +1511,18 @@ its uncompiled draft earns no credit until current acceptance passes.
     fail-before-close and full guard cases. Root strict production(no seams)
     and profile fixture SDK/link pass; keep whole-source90% native gates.
 
-- **Commit `HEAD`**: `test(interop): expose read-only catalog smoke status without catalog contents`
+- **Commit `59a1c8d`**: `test(interop): expose read-only catalog smoke status without catalog contents`
   - **Task Impact**: +0% to TODO #27/#34; native source gate remains open.
   - **Summary**: Exact9fcd919 temporary shortcut/hash/close-retry cases pass,
     but real AppsFolder/system smoke fails. Print typed status, copied native
     error and retained handle count only. Genuine provider profile82.22%lines/
     53.08%arcs remains below threshold; no enumeration progress accepted.
+
+- **Commit `HEAD`**: `feat(input): bound host repeat timing and focus lifetime`
+  - **Task Impact**: +10% to TODO #15 (+0.30% overall; total23.90%).
+  - **Summary**: Allocation-free fixed held-key reducer with delay/rate,
+    excluded keys, duplicate suppression, latest-key policy, focus cancellation,
+    overflow/backward-clock refusal and no overdue bursts. Root five tests,
+    2000lifecycles/3000runtime events,95.24%lines/100%taken arcs pass. Default
+    tests/coverage include it; actual Wayland/queue/guest composition remains
+    the unaccepted second half of the existing repeat allocation.

@@ -3792,3 +3792,17 @@ genuine MinGW gcda, then requires90%of the entire Windows production source's
 lines and taken arcs using matching compiler gcno. No Linux stub or cross-link
 is native execution proof. This lane remains unaccepted until native execution
 and the full source gate pass; PNG encoding is independently accepted already.
+
+
+### Keyboard repeat timing amendment — 2026-10-25
+
+The portable timing reducer is specified in [keyboard_repeat_contract.md](keyboard_repeat_contract.md)
+and implemented by `src/interop/keyboard_repeat.zig`. It uses one monotonic
+nanosecond clock, fixed768held-key bits, exact focus/generation lifetime,
+rate0..1000Hz and delay0..60000ms, with checked deadlines and mandatory cancel
+on delivery failure/disconnect. Overdue polls emit at most one repeat and skip
+past intervals; rounded-up periods cannot exceed compositor rate. Timing
+changes never revive a previous held key. No implicit activation/grab authority
+is attached. The existing20%TODO#15repeat allocation consists of10%portable
+reducer and10%actual Wayland/queue/guest composition; only the former is
+eligible for acceptance from pure tests. The live input path remains pending.

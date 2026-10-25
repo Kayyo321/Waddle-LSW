@@ -1,0 +1,17 @@
+{
+  "attempt": "build/coverage/interop/keyboard_repeat/run-20261025T180843716985Z-258845",
+  "tests": 5,
+  "deterministic_lifecycles": 2000,
+  "runtime_event_corpus": 3000,
+  "line": {
+    "covered": 40,
+    "total": 42
+  },
+  "taken_arcs": {
+    "covered": 26,
+    "total": 26
+  },
+  "compiler_panic_stack_guards_excluded": 1,
+  "ownership": "allocation-free pure timing reducer; no native/event-loop claim",
+  "source_sha256": "cd63c629cf91d4d5bfb09ab687972771086a022e2c6de8369b38591d6ede17e3"
+}

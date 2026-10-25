@@ -1,0 +1,536 @@
+[
+  {
+    "kind": "line",
+    "function": "configure",
+    "line": 51,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "configure",
+    "line": 53,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "configure",
+    "line": 54,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "configure",
+    "line": 55,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "configure",
+    "line": 56,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "focus",
+    "line": 60,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "cancel",
+    "line": 68,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "cancel",
+    "line": 73,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "cancel",
+    "line": 71,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "focus",
+    "line": 63,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "focus",
+    "line": 64,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 80,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "clock",
+    "line": 34,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "clock",
+    "line": 35,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 89,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "key",
+    "line": 89,
+    "column": 22,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 90,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 93,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "schedule",
+    "line": 42,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "next_deadline",
+    "line": 109,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "schedule",
+    "line": 45,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "next_deadline",
+    "line": 110,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "next_deadline",
+    "line": 110,
+    "column": 24,
+    "edges": 2
+  },
+  {
+    "function": "next_deadline",
+    "line": 110,
+    "column": 24,
+    "edges": 2
+  },
+  {
+    "function": "clock",
+    "line": 35,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 83,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "key",
+    "line": 83,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 85,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 86,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "key",
+    "line": 86,
+    "column": 21,
+    "edges": 2
+  },
+  {
+    "function": "clock",
+    "line": 35,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 86,
+    "column": 21,
+    "edges": 2
+  },
+  {
+    "function": "next_deadline",
+    "line": 110,
+    "column": 24,
+    "edges": 2
+  },
+  {
+    "function": "clock",
+    "line": 35,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 83,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 89,
+    "column": 22,
+    "edges": 2
+  },
+  {
+    "function": "next_deadline",
+    "line": 110,
+    "column": 24,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 83,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "function": "next_deadline",
+    "line": 110,
+    "column": 24,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 81,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "key",
+    "line": 81,
+    "column": 13,
+    "edges": 2
+  },
+  {
+    "function": "clock",
+    "line": 35,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "clock",
+    "line": 36,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 82,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "key",
+    "line": 83,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 84,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "key",
+    "line": 84,
+    "column": 13,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 86,
+    "column": 21,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 89,
+    "column": 22,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 91,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 92,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "key",
+    "line": 92,
+    "column": 18,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 92,
+    "column": 34,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 92,
+    "column": 81,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "key",
+    "line": 94,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "schedule",
+    "line": 43,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "schedule",
+    "line": 44,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "take_due",
+    "line": 99,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "clock",
+    "line": 35,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "take_due",
+    "line": 100,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "take_due",
+    "line": 101,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "take_due",
+    "line": 101,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "function": "take_due",
+    "line": 101,
+    "column": 46,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "take_due",
+    "line": 102,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "take_due",
+    "line": 103,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "take_due",
+    "line": 104,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "take_due",
+    "line": 105,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "next_deadline",
+    "line": 110,
+    "column": 24,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 89,
+    "column": 22,
+    "edges": 2
+  },
+  {
+    "function": "next_deadline",
+    "line": 110,
+    "column": 24,
+    "edges": 2
+  },
+  {
+    "function": "next_deadline",
+    "line": 110,
+    "column": 24,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 81,
+    "column": 13,
+    "edges": 2
+  },
+  {
+    "function": "clock",
+    "line": 35,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 84,
+    "column": 13,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 89,
+    "column": 22,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 92,
+    "column": 18,
+    "edges": 2
+  },
+  {
+    "function": "key",
+    "line": 92,
+    "column": 81,
+    "edges": 2
+  },
+  {
+    "function": "clock",
+    "line": 35,
+    "column": 17,
+    "edges": 2
+  },
+  {
+    "function": "next_deadline",
+    "line": 110,
+    "column": 24,
+    "edges": 2
+  },
+  {
+    "kind": "line",
+    "function": "policy_repeatable",
+    "line": 114,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "kind": "line",
+    "function": "policy_repeatable",
+    "line": 115,
+    "column": 0,
+    "edges": 1
+  },
+  {
+    "function": "policy_repeatable",
+    "line": 115,
+    "column": 20,
+    "edges": 2
+  }
+]
