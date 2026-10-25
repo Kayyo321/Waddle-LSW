@@ -32,9 +32,9 @@ acceptance remain pending.
 | #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **native pipeline readiness and hardware run pending** (`scripts/interop_verify_m0.sh audio`) |
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE native hardware runs pending** |
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 23 codec/imported parser tests; 97.13% branch / 96.56% line; bounded SemVer2 and app-key helpers; native Windows/ASan/LSan gates pass |
-| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 60% | Snapshot, heap, C ABI, native CPU atomics and pure slot pins/growth/drain accepted; live mapping/session integration and qualification remain open |
+| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 65% | Snapshot/heap/ABI/atomics/pins60% plus actual host header mapping5% accepted. Live slot/heap/audio integration10% and stress/native qualification25% remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | In Progress | 4% | 25% | Shared framing/owned queue/handshake/liveness qualified on Linux and Windows; Win32 listener/mapping, signing/deploy and native acceptance remain open |
-| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 30% | Shared protocol25% + Linux connected-byte-owner5% accepted; Lease/VSOCK and GuestReady components qualified without entry credit; actual session entry, mapping/Wayland, module extraction and native acceptance remain open |
+| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 45% | Shared protocol25%, Linux byte-owner5%, actual singleton/VSOCK admission10% and daemon readiness5% accepted. Control-only entry gates real Hello/header/Ready/heartbeat; local command socket, Wayland/module boundary, reconnect/autostart and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 80% | Pure graph25%, C ABI10%, portable observer15%, native adapter15%, installed-session15% accepted. Fresh Windows guest graph/observer/foreign lifecycle tests pass; coordinator/capture/slot/wire20% remains open |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 40% | Schema15%, absent-add journal/recovery15% and rooted absent artifact API10% accepted. Replacement/backup/restore, commands/producers and full-removal qualification remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `20.85%`
+**Total Feature Completion**: `21.60%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -72,9 +72,9 @@ Design assignments earn no credit; only accepted implementation is recorded.
 
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
-| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pure pin/growth/drain bookkeeping 10%; live runtime integration 15%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; pure pin/growth/drain10%; Linux/Windows coverage and tests pass |
+| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pure pin/growth/drain bookkeeping 10%; live runtime integration15% (header5%,slot consumer5%,heap/audio5%); coverage/sanitizer/stress/native proof25% | Snapshot20%; heap20%; C ABI5%; native CPU atomics5%; pure pin/growth/drain10%; actual host header mapping5%. Remaining runtime10% and qualification25% open |
 | #6 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; Win32 listener/mapping loop25%; signing/deploy/update/autostart30%; native qualification20% | Shared framing5%; owned queue5%; handshake10%; liveness5%; native CPU units accepted; integrated agent remains open |
-| #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | Shared framing5%; owned queue5%; handshake10%; liveness5%; Linux connected-byte-owner5% with full local gates. Remaining transport: VSOCK admission/singleton10%, daemon/local-control10%. Integrated host client remains open |
+| #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | Shared framing5%; owned queue5%; handshake10%; liveness5%; Linux connected-byte-owner5% with full local gates. Actual main/runtime admission/singleton10% and daemon Status/GuestReady5% accepted with real Unix/map/peer fixture and full gates. Local session command control5% remains open; application integration remains open |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; portable observer15%; native adapter15%. O5 preservation qualified by89ff058 local coverage/sanitizers and exact Windows native smoke/failure guards at d77dcb3, CI40144415938; installed-session15% accepted by the hash-bound fresh Windows guest run; coordinator20% remains open |
@@ -1369,10 +1369,20 @@ its uncompiled draft earns no credit until current acceptance passes.
     94.53% taken arcs and leak-enabled ASan/LSan/UBSan pass; CI gate added.
     Native typed injection and other keyboard milestones remain open.
 
-- **Commit `HEAD`**: `test(daemon): isolate readiness probe and bound partial response waits`
+- **Commit `2a3f4f1`**: `test(daemon): isolate readiness probe and bound partial response waits`
   - **Task Impact**: +0% to TODO #7/#34; preserve accurate failing CI evidence.
   - **Summary**: Exact7007856 CI failed an earlier500ms responsiveness check.
     Refuse only native VSOCK in the hardware-free fixture, assert timed-out
     probes and keep real Unix concurrency plus original budget. Bound every
     partial response read by one deadline and add a real incomplete-header
     timeout regression. Normal and leak-enabled sanitizers pass; rerun CI.
+
+- **Commit `HEAD`**: `feat(interop): run actual bounded host control session entry`
+  - **Task Impact**: +15% to TODO #7 (+0.60% overall), +5% to TODO #5
+    (+0.15% overall); total21.60%.
+  - **Summary**: Actual selected-profile CLI composes singleton/admission,
+    daemon readiness, one peer, real backing validation/Hello/Ack/Ready,
+    heartbeat and bounded stop/drain with retained authentic cleanup. Root
+    production build/help, runtime96.65%lines/90.61%arcs and CLI96.64%lines/
+    92.61%arcs plus real leak-enabled sanitizers pass. Default build and CI
+    now run it. Cap-zero diagnostics earn no Wayland/application/native credit.

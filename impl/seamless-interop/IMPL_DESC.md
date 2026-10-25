@@ -3734,3 +3734,18 @@ retains legacy1..127 scan-only admission, avoiding a silent AV wire change.
 Typed injection, full interop input dispatch and Pause native behavior remain
 open. Translation alone accepts10% of #15; injection15%, host repeat20%, lock
 sync15%, layout sync20%, inhibit10%, integrated/native qualification10% remain.
+
+### 8.38 Actual host control session entry (2026-10-25)
+
+[session_control_host_contract.md](session_control_host_contract.md) defines the
+process-main-thread CLI and embedded control runtime, absolute deadlines,
+selected profile, signalfd cancellation, one daemon/admission exchange, explicit
+file/KVMFR mapping, Hello-epoch/header validation before Ack, Ready heartbeat,
+bounded drain and authentic retry cleanup. Build produces waddle-session;
+--control-only is required and capabilities remain0. Exact independent source
+coverage and real Unix/map/peer compositions plus leak-enabled sanitizers are
+retained in session_control_host_evidence_2026_10_25. The borrowed descriptors
+remain caller-owned and failed cleanup retains real owner slots/leases. No
+unmap, socket close, stop or process exit is remote detach or reuse authority.
+Only #7 admission10%/daemon5% and #5 live header5% are accepted; application
+integration, local session command socket and native drivers remain open.

@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-keyboard-scan-test interop-windows-session-unit-test interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
+interop-test: interop-host-control-test interop-keyboard-scan-test interop-windows-session-unit-test interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -359,3 +359,15 @@ build/waddle-session-guest.exe: src/interop/session_guest_main.c $(InteropGuestC
 .PHONY: interop-keyboard-scan-test
 interop-keyboard-scan-test: build/av_codec.o
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/keyboard_scan_coverage.py
+
+# Actual bounded host session entry; advertises no application capabilities.
+InteropHostControlSources = src/interop/session_control_host.c src/interop/session_host.c src/interop/linux_session_owner.c src/interop/linux_socket_owner.c src/interop/interop_mapping_linux.c src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c src/daemon/daemon_device.c
+InteropHostControlObjects = $(InteropHostSessionObjects) build/interop_layout_abi.o
+InteropHostControlHeaders = include/waddle/interop_linux_socket.h include/waddle/interop_peer.h include/waddle/interop_protocol.h include/waddle/interop_memory.h src/interop/session_control_host.h src/interop/interop_mapping_linux.h src/interop/interop_mapping_init.h src/interop/interop_native_atomic.h $(InteropHostSessionDependencies)
+build/waddle-session: src/interop/session_main.c $(InteropHostControlSources) $(InteropHostControlHeaders) $(InteropHostControlObjects) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/interop -Isubmodules/looking_glass/module src/interop/session_main.c $(InteropHostControlSources) $(InteropHostControlObjects) $(LDFLAGS) -pthread -o $@
+
+all: build/waddle-session
+.PHONY: interop-host-control-test
+interop-host-control-test: build/waddle-session $(InteropHostControlObjects)
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_control_host_coverage.py
