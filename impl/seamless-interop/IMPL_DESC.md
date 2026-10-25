@@ -3910,10 +3910,15 @@ Section 4.3 must conform to it before TODO #11 credit.
 **Mapping table.** The host keeps at most 64 exported windows and at most 64
 deferred children per session epoch, keyed by `(window, generation)` with both
 nonzero. A `WindowAnnounce` whose `parent` is nonzero is realized only when the
-exact `(parent, parent_generation)` pair is currently realized; otherwise it is
-deferred and re-evaluated whenever any window is realized or retired. A
-deferred child whose parent pair is retired is discarded and an `Error` with
-`StaleWindow` is the host's reply policy; it is never realized. Retiring a
+exact `(parent, parent_generation)` pair is currently realized. If the exact parent
+pair is itself currently deferred, the child is deferred behind it and is
+re-evaluated whenever any window is realized. Otherwise (the parent pair was
+never announced, was retired, or its window is realized under a different
+generation) the Announce is refused as a stale parent, because the single
+ordered stream guarantees a parent is announced before its children. Retiring a
+deferred pair removes it and discards, in announce order, every deferred
+descendant; discarded children are never realized and the host's reply policy
+is an `Error` with `StaleWindow`. Retiring a
 parent retires its realized children first, in reverse announce order. Any
 message naming a pair that is not currently realized, or a generation other
 than the realized one for that window, is stale and changes nothing. Duplicate
