@@ -25,17 +25,17 @@
 #include <stdio.h>
 #include <string.h>
 
-#define FAKE_PROXIES 512u
-#define FAKE_ADDRESSES 512u
-#define FAKE_REQUESTS 4096u
-#define FAKE_SERIALS 8u
-#define FAKE_NONE 0xFFFFFFFFu
+#define FakeProxies 512u
+#define FakeAddresses 512u
+#define FakeRequests 4096u
+#define FakeSerials 8u
+#define FakeNone 0xFFFFFFFFu
 
 /** @brief Role an xdg_surface received; an xdg_surface takes at most one. */
 enum fake_role_t {
-    FAKE_ROLE_NONE = 0,
-    FAKE_ROLE_TOPLEVEL = 1,
-    FAKE_ROLE_POPUP = 2
+    FakeRoleNone = 0,
+    FakeRoleToplevel = 1,
+    FakeRolePopup = 2
 };
 
 typedef struct fake_proxy_t {
@@ -47,16 +47,16 @@ typedef struct fake_proxy_t {
     unsigned address; /* storage slot given at creation; freed on destroy and reused later */
     /* Dependencies for the destroy-order invariants. aux is the object this one was built on (an xdg_surface's
      * wl_surface, a toplevel's or popup's xdg_surface, a decoration's toplevel); aux2 is a popup's parent
-     * xdg_surface. FAKE_NONE when not applicable. */
+     * xdg_surface. FakeNone when not applicable. */
     unsigned aux;
     unsigned aux2;
     /* Configure serials sent to an xdg_surface and not yet acknowledged. */
-    uint32_t serials[FAKE_SERIALS];
+    uint32_t serials[FakeSerials];
     uint8_t serial_count;
 } fake_proxy_t;
 
 typedef struct fake_request_t {
-    unsigned proxy; /* FAKE_NONE for a proxy the fake does not own */
+    unsigned proxy; /* FakeNone for a proxy the fake does not own */
     const char *iface;
     uint32_t opcode;
     uint8_t destroy;
@@ -64,12 +64,12 @@ typedef struct fake_request_t {
     char text[1100];
 } fake_request_t;
 
-static uintptr_t fake_storage[FAKE_ADDRESSES];
-static unsigned fake_address_owner[FAKE_ADDRESSES]; /* proxy index last given the slot; FAKE_NONE when never used */
-static unsigned fake_free_slots[FAKE_ADDRESSES];
+static uintptr_t fake_storage[FakeAddresses];
+static unsigned fake_address_owner[FakeAddresses]; /* proxy index last given the slot; FakeNone when never used */
+static unsigned fake_free_slots[FakeAddresses];
 static unsigned fake_free_count;
 static unsigned fake_next_slot;
-static fake_proxy_t fake_proxies[FAKE_PROXIES];
+static fake_proxy_t fake_proxies[FakeProxies];
 static unsigned fake_proxy_count;
 static unsigned fake_creates, fake_destroys, fake_double_destroys;
 static unsigned fake_order_violations; /* destroys that left a live dependent behind */
@@ -79,21 +79,21 @@ static unsigned fake_invalid_serials; /* acks of serials that were not outstandi
 static unsigned fake_invalid_grabs; /* grabs the compositor model refuses with invalid_grab; never reset */
 static unsigned fake_grants; /* grabs the compositor model accepted since the last fake_begin */
 /* Grabbing popups in grant order. A seat's grab stack is the entries carrying that seat, last one on top. */
-static unsigned fake_grab_popup[FAKE_PROXIES];
-static long long fake_grab_seat[FAKE_PROXIES];
+static unsigned fake_grab_popup[FakeProxies];
+static long long fake_grab_seat[FakeProxies];
 static unsigned fake_grab_depth;
-static fake_request_t fake_requests[FAKE_REQUESTS];
+static fake_request_t fake_requests[FakeRequests];
 static unsigned fake_request_count;
 static const char *fake_fail_create; /* interface whose creation returns NULL */
 static unsigned fake_fail_create_skip; /* creations of that interface allowed before failing */
 static const char *fake_fail_listener; /* interface whose listener registration fails */
 static uint32_t fake_version = 5;
 
-/** @brief Proxy index the storage slot of `pointer` was last given to, or FAKE_NONE for a foreign pointer. */
+/** @brief Proxy index the storage slot of `pointer` was last given to, or FakeNone for a foreign pointer. */
 static unsigned fake_index(const void *pointer) {
     uintptr_t address = (uintptr_t)pointer;
     uintptr_t base = (uintptr_t)fake_storage;
-    if (address < base || address >= base + sizeof fake_storage || (address - base) % sizeof fake_storage[0]) return FAKE_NONE;
+    if (address < base || address >= base + sizeof fake_storage || (address - base) % sizeof fake_storage[0]) return FakeNone;
     return fake_address_owner[(address - base) / sizeof fake_storage[0]];
 }
 
@@ -102,12 +102,12 @@ static void *fake_object(unsigned index) {
 }
 
 static unsigned fake_new(const char *iface) {
-    if (fake_proxy_count >= FAKE_PROXIES) __builtin_trap();
+    if (fake_proxy_count >= FakeProxies) __builtin_trap();
     unsigned slot;
     if (fake_free_count) {
         slot = fake_free_slots[--fake_free_count];
     } else {
-        if (fake_next_slot >= FAKE_ADDRESSES) __builtin_trap();
+        if (fake_next_slot >= FakeAddresses) __builtin_trap();
         slot = fake_next_slot++;
     }
     unsigned index = fake_proxy_count++;
@@ -115,8 +115,8 @@ static unsigned fake_new(const char *iface) {
     fake_proxies[index].iface = iface;
     fake_proxies[index].live = 1;
     fake_proxies[index].address = slot;
-    fake_proxies[index].aux = FAKE_NONE;
-    fake_proxies[index].aux2 = FAKE_NONE;
+    fake_proxies[index].aux = FakeNone;
+    fake_proxies[index].aux2 = FakeNone;
     fake_address_owner[slot] = index;
     ++fake_creates;
     return index;
@@ -147,20 +147,20 @@ static int fake_grab_at(unsigned popup) {
     return -1;
 }
 
-/** @brief Topmost grabbing popup on `seat`, or FAKE_NONE. */
+/** @brief Topmost grabbing popup on `seat`, or FakeNone. */
 static unsigned fake_seat_top(long long seat) {
     for (unsigned at = fake_grab_depth; at > 0; --at) {
         if (fake_grab_seat[at - 1] == seat) return fake_grab_popup[at - 1];
     }
-    return FAKE_NONE;
+    return FakeNone;
 }
 
-/** @brief Popup whose own xdg_surface is `surface`, or FAKE_NONE. Only a live popup counts. */
+/** @brief Popup whose own xdg_surface is `surface`, or FakeNone. Only a live popup counts. */
 static unsigned fake_popup_of_surface(unsigned surface) {
     for (unsigned index = 0; index < fake_proxy_count; ++index) {
         if (fake_proxies[index].live && fake_proxies[index].iface && !strcmp(fake_proxies[index].iface, "xdg_popup") && fake_proxies[index].aux == surface) return index;
     }
-    return FAKE_NONE;
+    return FakeNone;
 }
 
 /**
@@ -170,11 +170,11 @@ static unsigned fake_popup_of_surface(unsigned surface) {
  */
 static int fake_grab_allowed(unsigned popup, long long seat) {
     unsigned parent = fake_proxies[popup].aux2;
-    if (parent == FAKE_NONE || fake_grab_at(popup) >= 0) return 0;
-    if (fake_proxies[parent].role == FAKE_ROLE_TOPLEVEL) return fake_seat_top(seat) == FAKE_NONE;
-    if (fake_proxies[parent].role == FAKE_ROLE_POPUP) {
+    if (parent == FakeNone || fake_grab_at(popup) >= 0) return 0;
+    if (fake_proxies[parent].role == FakeRoleToplevel) return fake_seat_top(seat) == FakeNone;
+    if (fake_proxies[parent].role == FakeRolePopup) {
         unsigned parent_popup = fake_popup_of_surface(parent);
-        return parent_popup != FAKE_NONE && fake_seat_top(seat) == parent_popup;
+        return parent_popup != FakeNone && fake_seat_top(seat) == parent_popup;
     }
     return 0;
 }
@@ -195,7 +195,7 @@ static void fake_grab_pop(unsigned popup) {
 }
 
 static void fake_destroy_index(unsigned index) {
-    if (index == FAKE_NONE) return;
+    if (index == FakeNone) return;
     if (!fake_proxies[index].live) { ++fake_double_destroys; return; }
     if (fake_has_live_dependent(index)) ++fake_order_violations;
     if (fake_proxies[index].iface && !strcmp(fake_proxies[index].iface, "xdg_popup")) fake_grab_pop(index);
@@ -226,45 +226,45 @@ static void fake_begin(void) {
 /* Arguments are decoded per interface and opcode into the recorded slots. A constructor request passes a
  * NULL placeholder for its new-id argument before the real arguments; that placeholder is skipped here. */
 static void decode_args(fake_request_t *request, const char *iface, uint32_t opcode, va_list *ap) {
-#define ARG_PTR(slot) do { void *p = va_arg(*ap, void *); request->a##slot = p ? (long long)fake_index(p) : -1; } while (0)
-#define ARG_INT(slot) request->a##slot = (long long)va_arg(*ap, int)
-#define ARG_UINT(slot) request->a##slot = (long long)va_arg(*ap, uint32_t)
-#define ARG_TEXT() do { const char *t = va_arg(*ap, const char *); snprintf(request->text, sizeof request->text, "%s", t ? t : "(null)"); } while (0)
-#define SKIP_NEW_ID() ((void)va_arg(*ap, void *))
+#define ArgPtr(slot) do { void *p = va_arg(*ap, void *); request->a##slot = p ? (long long)fake_index(p) : -1; } while (0)
+#define ArgInt(slot) request->a##slot = (long long)va_arg(*ap, int)
+#define ArgUint(slot) request->a##slot = (long long)va_arg(*ap, uint32_t)
+#define ArgText() do { const char *t = va_arg(*ap, const char *); snprintf(request->text, sizeof request->text, "%s", t ? t : "(null)"); } while (0)
+#define SkipNewId() ((void)va_arg(*ap, void *))
     if (!strcmp(iface, "xdg_wm_base")) {
-        if (opcode == XDG_WM_BASE_GET_XDG_SURFACE) { SKIP_NEW_ID(); ARG_PTR(0); }
+        if (opcode == XDG_WM_BASE_GET_XDG_SURFACE) { SkipNewId(); ArgPtr(0); }
     } else if (!strcmp(iface, "xdg_surface")) {
-        if (opcode == XDG_SURFACE_GET_TOPLEVEL) { SKIP_NEW_ID(); }
-        else if (opcode == XDG_SURFACE_GET_POPUP) { SKIP_NEW_ID(); ARG_PTR(0); ARG_PTR(1); }
-        else if (opcode == XDG_SURFACE_ACK_CONFIGURE) ARG_UINT(0);
+        if (opcode == XDG_SURFACE_GET_TOPLEVEL) { SkipNewId(); }
+        else if (opcode == XDG_SURFACE_GET_POPUP) { SkipNewId(); ArgPtr(0); ArgPtr(1); }
+        else if (opcode == XDG_SURFACE_ACK_CONFIGURE) ArgUint(0);
     } else if (!strcmp(iface, "xdg_toplevel")) {
-        if (opcode == XDG_TOPLEVEL_SET_PARENT) ARG_PTR(0);
-        else if (opcode == XDG_TOPLEVEL_SET_TITLE || opcode == XDG_TOPLEVEL_SET_APP_ID) ARG_TEXT();
-        else if (opcode == XDG_TOPLEVEL_SET_MIN_SIZE) { ARG_INT(0); ARG_INT(1); }
+        if (opcode == XDG_TOPLEVEL_SET_PARENT) ArgPtr(0);
+        else if (opcode == XDG_TOPLEVEL_SET_TITLE || opcode == XDG_TOPLEVEL_SET_APP_ID) ArgText();
+        else if (opcode == XDG_TOPLEVEL_SET_MIN_SIZE) { ArgInt(0); ArgInt(1); }
     } else if (!strcmp(iface, "xdg_positioner")) {
-        if (opcode == XDG_POSITIONER_SET_SIZE || opcode == XDG_POSITIONER_SET_OFFSET) { ARG_INT(0); ARG_INT(1); }
-        else if (opcode == XDG_POSITIONER_SET_ANCHOR_RECT) { ARG_INT(0); ARG_INT(1); ARG_INT(2); ARG_INT(3); }
-        else if (opcode == XDG_POSITIONER_SET_ANCHOR || opcode == XDG_POSITIONER_SET_GRAVITY || opcode == XDG_POSITIONER_SET_CONSTRAINT_ADJUSTMENT) ARG_UINT(0);
+        if (opcode == XDG_POSITIONER_SET_SIZE || opcode == XDG_POSITIONER_SET_OFFSET) { ArgInt(0); ArgInt(1); }
+        else if (opcode == XDG_POSITIONER_SET_ANCHOR_RECT) { ArgInt(0); ArgInt(1); ArgInt(2); ArgInt(3); }
+        else if (opcode == XDG_POSITIONER_SET_ANCHOR || opcode == XDG_POSITIONER_SET_GRAVITY || opcode == XDG_POSITIONER_SET_CONSTRAINT_ADJUSTMENT) ArgUint(0);
     } else if (!strcmp(iface, "xdg_popup")) {
-        if (opcode == XDG_POPUP_GRAB) { ARG_PTR(0); ARG_UINT(1); }
-        else if (opcode == XDG_POPUP_REPOSITION) { ARG_PTR(0); ARG_UINT(1); }
+        if (opcode == XDG_POPUP_GRAB) { ArgPtr(0); ArgUint(1); }
+        else if (opcode == XDG_POPUP_REPOSITION) { ArgPtr(0); ArgUint(1); }
     } else if (!strcmp(iface, "zxdg_decoration_manager_v1")) {
-        if (opcode == ZXDG_DECORATION_MANAGER_V1_GET_TOPLEVEL_DECORATION) { SKIP_NEW_ID(); ARG_PTR(0); }
+        if (opcode == ZXDG_DECORATION_MANAGER_V1_GET_TOPLEVEL_DECORATION) { SkipNewId(); ArgPtr(0); }
     } else if (!strcmp(iface, "zxdg_toplevel_decoration_v1")) {
-        if (opcode == ZXDG_TOPLEVEL_DECORATION_V1_SET_MODE) ARG_UINT(0);
+        if (opcode == ZXDG_TOPLEVEL_DECORATION_V1_SET_MODE) ArgUint(0);
     }
-#undef ARG_PTR
-#undef ARG_INT
-#undef ARG_UINT
-#undef ARG_TEXT
-#undef SKIP_NEW_ID
+#undef ArgPtr
+#undef ArgInt
+#undef ArgUint
+#undef ArgText
+#undef SkipNewId
 }
 
-/** @brief Record a configure serial sent to an xdg_surface; the oldest is dropped beyond FAKE_SERIALS. */
+/** @brief Record a configure serial sent to an xdg_surface; the oldest is dropped beyond FakeSerials. */
 static void fake_add_serial(unsigned index, uint32_t serial) {
     fake_proxy_t *proxy = &fake_proxies[index];
-    if (proxy->serial_count == FAKE_SERIALS) {
-        memmove(proxy->serials, proxy->serials + 1, sizeof proxy->serials[0] * (FAKE_SERIALS - 1));
+    if (proxy->serial_count == FakeSerials) {
+        memmove(proxy->serials, proxy->serials + 1, sizeof proxy->serials[0] * (FakeSerials - 1));
         proxy->serial_count--;
     }
     proxy->serials[proxy->serial_count++] = serial;
@@ -284,8 +284,8 @@ static int fake_take_serial(unsigned index, uint32_t serial) {
 
 /** @brief Role an xdg_surface's constructor assigns. A second role is a protocol error. */
 static void fake_assign_role(unsigned surface, uint8_t role) {
-    if (surface == FAKE_NONE) return;
-    if (fake_proxies[surface].role != FAKE_ROLE_NONE) ++fake_protocol_errors;
+    if (surface == FakeNone) return;
+    if (fake_proxies[surface].role != FakeRoleNone) ++fake_protocol_errors;
     fake_proxies[surface].role = role;
 }
 
@@ -293,12 +293,12 @@ struct wl_proxy *__wrap_wl_proxy_marshal_flags(struct wl_proxy *proxy, uint32_t 
     (void)version;
     unsigned index = fake_index(proxy);
     int destroying = (flags & WL_MARSHAL_FLAG_DESTROY) != 0;
-    int dead = index == FAKE_NONE || !fake_proxies[index].live;
-    const char *iface = index == FAKE_NONE ? NULL : fake_proxies[index].iface;
+    int dead = index == FakeNone || !fake_proxies[index].live;
+    const char *iface = index == FakeNone ? NULL : fake_proxies[index].iface;
     /* A destroy on a destroyed object is counted as a double destroy below, not as a request. */
     if (dead && !destroying) { ++fake_protocol_errors; ++fake_dead_requests; }
     static fake_request_t scratch;
-    fake_request_t *request = fake_request_count < FAKE_REQUESTS ? &fake_requests[fake_request_count++] : &scratch;
+    fake_request_t *request = fake_request_count < FakeRequests ? &fake_requests[fake_request_count++] : &scratch;
     memset(request, 0, sizeof *request);
     request->proxy = index;
     request->iface = iface;
@@ -336,12 +336,12 @@ struct wl_proxy *__wrap_wl_proxy_marshal_flags(struct wl_proxy *proxy, uint32_t 
     }
     if (iface && !strcmp(iface, "xdg_surface") && opcode == XDG_SURFACE_GET_TOPLEVEL) {
         fake_proxies[created].aux = index;
-        fake_assign_role(index, FAKE_ROLE_TOPLEVEL);
+        fake_assign_role(index, FakeRoleToplevel);
     }
     if (iface && !strcmp(iface, "xdg_surface") && opcode == XDG_SURFACE_GET_POPUP) {
         fake_proxies[created].aux = index;
         fake_proxies[created].aux2 = (unsigned)request->a0;
-        fake_assign_role(index, FAKE_ROLE_POPUP);
+        fake_assign_role(index, FakeRolePopup);
     }
     if (iface && !strcmp(iface, "zxdg_decoration_manager_v1")) {
         fake_proxies[created].aux = (unsigned)request->a0;
@@ -356,7 +356,7 @@ uint32_t __wrap_wl_proxy_get_version(struct wl_proxy *proxy) {
 
 int __wrap_wl_proxy_add_listener(struct wl_proxy *proxy, void (**implementation)(void), void *data) {
     unsigned index = fake_index(proxy);
-    if (index == FAKE_NONE || !fake_proxies[index].live) {
+    if (index == FakeNone || !fake_proxies[index].live) {
         ++fake_protocol_errors;
         ++fake_dead_requests;
         return -1;
@@ -398,7 +398,7 @@ static void deliver_toplevel_close(unsigned index) {
     listener->close(fake_proxies[index].data, (struct xdg_toplevel *)fake_object(index));
 }
 
-/** @brief Index of the nth proxy created with interface `iface` (0-based), or FAKE_NONE. */
+/** @brief Index of the nth proxy created with interface `iface` (0-based), or FakeNone. */
 static unsigned fake_nth(const char *iface, unsigned nth) {
     for (unsigned index = 0; index < fake_proxy_count; ++index) {
         if (fake_proxies[index].iface && !strcmp(fake_proxies[index].iface, iface)) {
@@ -406,7 +406,7 @@ static unsigned fake_nth(const char *iface, unsigned nth) {
             --nth;
         }
     }
-    return FAKE_NONE;
+    return FakeNone;
 }
 
 static void deliver_decoration_configure(unsigned index, uint32_t mode) {
@@ -452,10 +452,10 @@ static unsigned fake_count_requests(const char *iface, uint32_t opcode) {
     return count;
 }
 
-/** @brief Proxy index of the object a request was sent on, or FAKE_NONE. */
+/** @brief Proxy index of the object a request was sent on, or FakeNone. */
 static unsigned fake_proxy_of_first(const char *iface, uint32_t opcode, unsigned from) {
     int index = fake_find(iface, opcode, from);
-    return index < 0 ? FAKE_NONE : fake_requests[index].proxy;
+    return index < 0 ? FakeNone : fake_requests[index].proxy;
 }
 
 #endif

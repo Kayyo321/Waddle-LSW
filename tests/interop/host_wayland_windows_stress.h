@@ -48,13 +48,13 @@ static int stress_invariants(void) {
     return 0;
 }
 
-/** @brief Random live-or-dead proxy of `iface`, or FAKE_NONE. Dead proxies are kept on purpose: late events. */
+/** @brief Random live-or-dead proxy of `iface`, or FakeNone. Dead proxies are kept on purpose: late events. */
 static unsigned stress_pick(const char *iface) {
     unsigned matches = 0;
     for (unsigned index = 0; index < fake_proxy_count; ++index) {
         if (fake_proxies[index].iface && !strcmp(fake_proxies[index].iface, iface)) ++matches;
     }
-    if (matches == 0) return FAKE_NONE;
+    if (matches == 0) return FakeNone;
     unsigned choice = stress_below(matches);
     for (unsigned index = 0; index < fake_proxy_count; ++index) {
         if (fake_proxies[index].iface && !strcmp(fake_proxies[index].iface, iface)) {
@@ -62,7 +62,7 @@ static unsigned stress_pick(const char *iface) {
             --choice;
         }
     }
-    return FAKE_NONE;
+    return FakeNone;
 }
 
 static const char *const stress_fail_names[] = {"wl_surface", "xdg_surface", "xdg_toplevel", "xdg_positioner", "xdg_popup", "zxdg_toplevel_decoration_v1"};
@@ -77,14 +77,14 @@ static int stress_step(uint64_t *now_ms, unsigned *press_serial) {
         uint64_t generation = 1 + stress_below(2);
         announce_spec_t spec = toplevel_spec(window, generation, "a-stress");
         spec.role = 1 + stress_below(6);
-        if (spec.role == ROLE_UAC) spec.role = ROLE_TOPLEVEL;
+        if (spec.role == RoleUac) spec.role = RoleToplevel;
         if (stress_below(3) == 0) spec.title = "Stress";
         if (stress_below(4) == 0) {
             spec.has_min_size = true;
             spec.min_width = 100 + stress_below(900);
             spec.min_height = 100 + stress_below(900);
         }
-        bool wants_parent = spec.role == ROLE_DIALOG || role_is_popup(spec.role);
+        bool wants_parent = spec.role == RoleDialog || role_is_popup(spec.role);
         if (wants_parent && (role_is_popup(spec.role) || stress_below(2))) {
             const host_wayland_record_t *parent = NULL;
             for (unsigned index = 0; index < HostWindowMapMaxRealized && !parent; ++index) {
@@ -94,7 +94,7 @@ static int stress_step(uint64_t *now_ms, unsigned *press_serial) {
             spec.parent = parent ? parent->window : 1 + stress_below(10);
             spec.parent_generation = parent ? parent->generation : 1;
         }
-        if (spec.role == ROLE_MENU && stress_below(2)) {
+        if (spec.role == RoleMenu && stress_below(2)) {
             spec.has_serial = true;
             spec.serial = *press_serial + stress_below(3);
         }
@@ -128,10 +128,10 @@ static int stress_step(uint64_t *now_ms, unsigned *press_serial) {
         (void)retire_frame(1 + stress_below(10), 1 + stress_below(2));
     } else if (choice < 62) {
         unsigned surface = stress_pick("xdg_surface");
-        if (surface != FAKE_NONE) deliver_surface_configure(surface, stress_below(1000));
+        if (surface != FakeNone) deliver_surface_configure(surface, stress_below(1000));
     } else if (choice < 68) {
         unsigned toplevel = stress_pick("xdg_toplevel");
-        if (toplevel != FAKE_NONE) {
+        if (toplevel != FakeNone) {
             if (stress_below(2)) {
                 const uint32_t states[] = {XDG_TOPLEVEL_STATE_MAXIMIZED, XDG_TOPLEVEL_STATE_ACTIVATED};
                 deliver_toplevel_configure(toplevel, (int32_t)stress_below(2000), (int32_t)stress_below(2000), states, stress_below(3));
@@ -141,19 +141,19 @@ static int stress_step(uint64_t *now_ms, unsigned *press_serial) {
         }
     } else if (choice < 76) {
         unsigned popup = stress_pick("xdg_popup");
-        if (popup != FAKE_NONE) {
+        if (popup != FakeNone) {
             if (stress_below(3) == 0) deliver_popup_done(popup);
             else deliver_popup_configure(popup, (int32_t)stress_below(400) - 200, (int32_t)stress_below(400) - 200, 40, 20);
         }
     } else if (choice < 82) {
         unsigned decoration = stress_pick("zxdg_toplevel_decoration_v1");
-        if (decoration != FAKE_NONE) {
-            const uint32_t modes[] = {DECORATION_CLIENT, DECORATION_SERVER, 7u};
+        if (decoration != FakeNone) {
+            const uint32_t modes[] = {DecorationModeClient, DecorationModeServer, 7u};
             deliver_decoration_configure(decoration, modes[stress_below(3)]);
         }
     } else if (choice < 90) {
         unsigned seat = fake_nth("wl_seat", 0);
-        if (seat != FAKE_NONE) {
+        if (seat != FakeNone) {
             *press_serial += 1;
             (void)record_press_at(&session_ctx, *press_serial, 900 + *press_serial, (struct wl_seat *)fake_object(seat), 1 + stress_below(10), 1 + stress_below(2), *now_ms);
         }

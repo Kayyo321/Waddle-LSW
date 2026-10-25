@@ -17,7 +17,7 @@
 #include <string.h>
 
 /** @brief Number of press-table entries (3.6.2: a bounded 64-entry table). */
-#define PRESS_COUNT 64u
+#define PressCount 64u
 
 /** @brief Ceiling of `value / scale` for the integer host scale, zero stays zero. */
 static uint32_t ceil_div_scale(uint32_t value, uint32_t scale) {
@@ -89,7 +89,7 @@ static void observe_clock(host_wayland_t *ctx, uint64_t now_ms) {
 
 /** @brief Remove entries whose validity window has passed. */
 static void press_expire(host_wayland_t *ctx, uint64_t now_ms) {
-    for (size_t index = 0; index < PRESS_COUNT; ++index) {
+    for (size_t index = 0; index < PressCount; ++index) {
         host_wayland_press_t *press = &ctx->presses[index];
         if (press->live && now_ms >= press->recorded_ms && now_ms - press->recorded_ms > HostWaylandPressExpiryMs) {
             press->live = 0;
@@ -126,7 +126,7 @@ static bool press_kind_valid(const host_wayland_press_input_t *input) {
 
 /** @brief Live entry holding protocol serial T, or NULL. Expiry is not applied here. */
 static host_wayland_press_t *press_by_serial(host_wayland_t *ctx, uint32_t protocol_serial) {
-    for (size_t index = 0; index < PRESS_COUNT; ++index) {
+    for (size_t index = 0; index < PressCount; ++index) {
         host_wayland_press_t *press = &ctx->presses[index];
         if (press->live && press->protocol_serial == protocol_serial) return press;
     }
@@ -141,7 +141,7 @@ host_wayland_status_t host_wayland_windows_record_press(host_wayland_t *ctx, con
     press_expire(ctx, input->now_ms);
     if (press_by_serial(ctx, input->protocol_serial) != NULL) return HostWaylandDuplicateSerial;
     host_wayland_press_t *slot = NULL;
-    for (size_t index = 0; index < PRESS_COUNT && slot == NULL; ++index) {
+    for (size_t index = 0; index < PressCount && slot == NULL; ++index) {
         if (!ctx->presses[index].live) slot = &ctx->presses[index];
     }
     /* Every entry is live. Evicting one would lose a grab a compositor may still need, so fail instead. */
@@ -163,7 +163,7 @@ host_wayland_status_t host_wayland_windows_record_press(host_wayland_t *ctx, con
 
 void host_wayland_windows_release_press(host_wayland_t *ctx, uint32_t protocol_serial) {
     if (!context_ready(ctx)) return;
-    for (size_t index = 0; index < PRESS_COUNT; ++index) {
+    for (size_t index = 0; index < PressCount; ++index) {
         host_wayland_press_t *press = &ctx->presses[index];
         if (press->live && press->protocol_serial == protocol_serial) press->live = 0;
     }
@@ -171,7 +171,7 @@ void host_wayland_windows_release_press(host_wayland_t *ctx, uint32_t protocol_s
 
 void host_wayland_windows_drop_presses(host_wayland_t *ctx, uint64_t lease_epoch) {
     if (!context_ready(ctx)) return;
-    for (size_t index = 0; index < PRESS_COUNT; ++index) {
+    for (size_t index = 0; index < PressCount; ++index) {
         host_wayland_press_t *press = &ctx->presses[index];
         if (press->live && press->lease_epoch != lease_epoch) press->live = 0;
     }
@@ -182,7 +182,7 @@ void host_wayland_windows_forget_seat(host_wayland_t *ctx, const struct wl_seat 
     for (size_t index = 0; index < HostWaylandMaxSeats; ++index) {
         if (ctx->seats[index] == seat) ctx->seats[index] = NULL;
     }
-    for (size_t index = 0; index < PRESS_COUNT; ++index) {
+    for (size_t index = 0; index < PressCount; ++index) {
         host_wayland_press_t *press = &ctx->presses[index];
         if (press->live && press->seat == seat) press->live = 0;
     }
@@ -201,19 +201,19 @@ static host_wayland_press_t *press_find(host_wayland_t *ctx, uint32_t protocol_s
 /* ---- records, bindings and events -------------------------------------------------------------- */
 
 /* Protocol role values, identical to interop_window_role_t (checked by the header and by the tests). */
-#define ROLE_TOPLEVEL 1u
-#define ROLE_DIALOG 2u
-#define ROLE_MENU 3u
-#define ROLE_TOOLTIP 4u
-#define ROLE_UAC 5u
-#define ROLE_IME 6u
+#define RoleToplevel 1u
+#define RoleDialog 2u
+#define RoleMenu 3u
+#define RoleTooltip 4u
+#define RoleUac 5u
+#define RoleIme 6u
 
 static bool role_is_popup(uint32_t role) {
-    return role == ROLE_MENU || role == ROLE_TOOLTIP || role == ROLE_IME;
+    return role == RoleMenu || role == RoleTooltip || role == RoleIme;
 }
 
 static bool role_is_toplevel(uint32_t role) {
-    return role == ROLE_TOPLEVEL || role == ROLE_DIALOG || role == ROLE_UAC;
+    return role == RoleToplevel || role == RoleDialog || role == RoleUac;
 }
 
 /** @brief Object of `kind` currently owned by a record, as an opaque proxy pointer. */
@@ -257,8 +257,8 @@ static void emit_error(host_wayland_t *ctx, uint16_t refused_type, uint32_t erro
 }
 
 /* Decoration modes (zxdg_toplevel_decoration_v1.mode). */
-#define DECORATION_CLIENT ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
-#define DECORATION_SERVER ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
+#define DecorationModeClient ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
+#define DecorationModeServer ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
 
 /** @brief Destroy the decoration object of a record, if any. The record forgets it first. */
 static void destroy_decoration(host_wayland_record_t *rec) {
@@ -298,7 +298,7 @@ static void on_surface_configure(void *data, struct xdg_surface *xdg_surface, ui
         rec->decoration_pending = 0;
     }
     xdg_surface_ack_configure(xdg_surface, serial);
-    if (rec->decoration != NULL && rec->decoration_applied == DECORATION_SERVER) destroy_decoration(rec);
+    if (rec->decoration != NULL && rec->decoration_applied == DecorationModeServer) destroy_decoration(rec);
     rec->mapped = 1;
     if (rec->configure_latched) {
         rec->configure_latched = 0;
@@ -317,7 +317,7 @@ static void on_surface_configure(void *data, struct xdg_surface *xdg_surface, ui
 static void on_decoration_configure(void *data, struct zxdg_toplevel_decoration_v1 *decoration, uint32_t mode) {
     host_wayland_record_t *rec = resolve(data, decoration);
     if (rec == NULL) return;
-    if (mode == DECORATION_CLIENT || mode == DECORATION_SERVER) {
+    if (mode == DecorationModeClient || mode == DecorationModeServer) {
         rec->decoration_pending = mode;
         return;
     }
@@ -559,7 +559,7 @@ static int decode_announce(const uint8_t *payload, size_t length, announce_t *ou
 
 /** @brief Protocol app id: "waddle.<device>.<app_key>", or "waddle.<device>.uac" for consent dialogs. */
 static bool build_app_id(const host_wayland_t *ctx, const announce_t *req, char *out, size_t capacity) {
-    int written = req->role == ROLE_UAC
+    int written = req->role == RoleUac
         ? snprintf(out, capacity, "waddle.%s.uac", ctx->config.device)
         : snprintf(out, capacity, "waddle.%s.%s", ctx->config.device, req->app_key);
     return written > 0 && (size_t)written < capacity;
@@ -609,7 +609,7 @@ static void grab_pop_from(host_wayland_t *ctx, const host_wayland_record_t *rec)
  * because the compositor treats a grab from a non-topmost parent as invalid_grab.
  */
 static void maybe_grab(host_wayland_t *ctx, host_wayland_record_t *rec, const announce_t *req, uint64_t now_ms) {
-    if (rec->role != ROLE_MENU || !req->has_serial) return;
+    if (rec->role != RoleMenu || !req->has_serial) return;
     host_wayland_press_t *press = press_find(ctx, req->serial, now_ms);
     /* A press whose seat was forgotten is never a grab: the seat object may already be destroyed. */
     if (press == NULL || !seat_registered(ctx, press->seat)) return;
@@ -699,9 +699,9 @@ static int realize_toplevel(host_wayland_t *ctx, host_wayland_record_t *rec, con
 
     xdg_toplevel_set_app_id(rec->toplevel, app_id);
     if (req->has_title) xdg_toplevel_set_title(rec->toplevel, req->title);
-    if (req->role == ROLE_DIALOG && req->has_parent) {
+    if (req->role == RoleDialog && req->has_parent) {
         host_wayland_record_t *parent = find_record(ctx, req->parent, req->parent_generation);
-        if (parent != NULL && (parent->role == ROLE_TOPLEVEL || parent->role == ROLE_DIALOG) && parent->toplevel != NULL) {
+        if (parent != NULL && (parent->role == RoleToplevel || parent->role == RoleDialog) && parent->toplevel != NULL) {
             xdg_toplevel_set_parent(rec->toplevel, parent->toplevel);
         }
     }
@@ -714,7 +714,7 @@ static int realize_toplevel(host_wayland_t *ctx, host_wayland_record_t *rec, con
         rec->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(ctx->config.decoration_manager, rec->toplevel);
         if (rec->decoration == NULL) return -1;
         if (zxdg_toplevel_decoration_v1_add_listener(rec->decoration, &decoration_listener, &rec->bindings[HostWaylandKindDecoration]) != 0) return -1;
-        zxdg_toplevel_decoration_v1_set_mode(rec->decoration, DECORATION_CLIENT);
+        zxdg_toplevel_decoration_v1_set_mode(rec->decoration, DecorationModeClient);
     }
     wl_surface_commit(rec->surface);
     return 0;
@@ -855,7 +855,7 @@ static host_wayland_record_t *exact_record(host_wayland_t *ctx, uint64_t window,
 /** @brief Mirror the record's parent onto the xdg_toplevel: set_parent for a toplevel or dialog parent, else unset. */
 static void mirror_parent(host_wayland_t *ctx, host_wayland_record_t *rec) {
     host_wayland_record_t *target = find_record(ctx, rec->parent, rec->parent_generation);
-    if (target != NULL && (target->role == ROLE_TOPLEVEL || target->role == ROLE_DIALOG) && target->toplevel != NULL) {
+    if (target != NULL && (target->role == RoleToplevel || target->role == RoleDialog) && target->toplevel != NULL) {
         xdg_toplevel_set_parent(rec->toplevel, target->toplevel);
     } else {
         xdg_toplevel_set_parent(rec->toplevel, NULL);
@@ -967,7 +967,7 @@ static host_wayland_status_t handle_update(host_wayland_t *ctx, const uint8_t *p
 
 /** @brief Drop press entries whose trigger window is retired (3.6.2). */
 static void press_drop_window(host_wayland_t *ctx, uint64_t window, uint64_t generation) {
-    for (size_t index = 0; index < PRESS_COUNT; ++index) {
+    for (size_t index = 0; index < PressCount; ++index) {
         host_wayland_press_t *press = &ctx->presses[index];
         if (press->live && press->window == window && press->generation == generation) press->live = 0;
     }
@@ -1019,7 +1019,7 @@ host_wayland_status_t host_wayland_windows_note_mapped(host_wayland_t *ctx, uint
     if (parent == NULL || parent->toplevel == NULL) return HostWaylandOk;
     for (size_t index = 0; index < HostWindowMapMaxRealized; ++index) {
         host_wayland_record_t *child = &ctx->records[index];
-        if (child->generation == 0 || child->role != ROLE_DIALOG || child->toplevel == NULL) continue;
+        if (child->generation == 0 || child->role != RoleDialog || child->toplevel == NULL) continue;
         if (child->parent != window || child->parent_generation != generation) continue;
         xdg_toplevel_set_parent(child->toplevel, parent->toplevel);
     }

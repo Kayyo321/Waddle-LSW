@@ -17,8 +17,6 @@
     } \
 } while (0)
 
-#define DECORATION_CLIENT ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
-#define DECORATION_SERVER ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
 
 /** @brief Session context shared by the tests; lives in static storage. */
 static host_wayland_t session_ctx;
@@ -299,7 +297,7 @@ static int check_presses(void) {
     host_wayland_windows_release_press(&ctx, 12);
 
     /* Fill all 64 entries live; the 65th is refused and no live entry is evicted. */
-    for (uint32_t serial = 100; serial < 100 + PRESS_COUNT; ++serial) {
+    for (uint32_t serial = 100; serial < 100 + PressCount; ++serial) {
         Check(record_press_at(&ctx, serial, serial, fake_seat, 5, 5, 5000) == HostWaylandOk);
     }
     Check(record_press_at(&ctx, 999, 1, fake_seat, 5, 5, 5000) == HostWaylandPressTableFull);
@@ -337,7 +335,7 @@ static int check_toplevel_realization(void) {
     unsigned surface = fake_nth("wl_surface", 0);
     unsigned xdg_surface = fake_nth("xdg_surface", 0);
     unsigned toplevel = fake_nth("xdg_toplevel", 0);
-    Check(surface != FAKE_NONE && xdg_surface != FAKE_NONE && toplevel != FAKE_NONE);
+    Check(surface != FakeNone && xdg_surface != FakeNone && toplevel != FakeNone);
     Check(fake_count_requests("wl_compositor", WL_COMPOSITOR_CREATE_SURFACE) == 1);
     int get_surface = fake_find("xdg_wm_base", XDG_WM_BASE_GET_XDG_SURFACE, 0);
     Check(get_surface >= 0 && fake_requests[get_surface].a0 == (long long)surface);
@@ -524,7 +522,7 @@ static int check_rollback_and_stale(void) {
     Check(announce_spec(&session_ctx, &spec) == HostWaylandRealizeFailed);
     fake_fail_create = NULL;
     unsigned dead_surface = fake_nth("xdg_surface", 0);
-    Check(dead_surface != FAKE_NONE);
+    Check(dead_surface != FakeNone);
     deliver_surface_configure(dead_surface, 4);
     Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 0);
     return 0;
@@ -584,11 +582,11 @@ static int check_decoration_request(void) {
     Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
     unsigned toplevel = fake_nth("xdg_toplevel", 0);
     unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
-    Check(decoration != FAKE_NONE);
+    Check(decoration != FakeNone);
     int get = fake_find("zxdg_decoration_manager_v1", ZXDG_DECORATION_MANAGER_V1_GET_TOPLEVEL_DECORATION, 0);
     Check(get >= 0 && fake_requests[get].a0 == (long long)toplevel);
     int mode = fake_find("zxdg_toplevel_decoration_v1", ZXDG_TOPLEVEL_DECORATION_V1_SET_MODE, 0);
-    Check(mode >= 0 && fake_requests[mode].proxy == decoration && fake_requests[mode].a0 == DECORATION_CLIENT);
+    Check(mode >= 0 && fake_requests[mode].proxy == decoration && fake_requests[mode].a0 == DecorationModeClient);
     /* Client-side mode is requested before the first commit. */
     int commit = fake_find("wl_surface", WL_SURFACE_COMMIT, 0);
     Check(mode < commit);
@@ -602,7 +600,7 @@ static int check_decoration_request(void) {
     /* Without the manager no decoration is requested and nothing fails. */
     Check(begin_session("dev0") == 0);
     Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
-    Check(fake_nth("zxdg_toplevel_decoration_v1", 0) == FAKE_NONE);
+    Check(fake_nth("zxdg_toplevel_decoration_v1", 0) == FakeNone);
     return 0;
 }
 
@@ -613,7 +611,7 @@ static int check_decoration_staging(void) {
     unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
     unsigned xdg_surface = fake_nth("xdg_surface", 0);
     /* A staged mode is applied by the next surface configuration, not by the decoration event itself. */
-    deliver_decoration_configure(decoration, DECORATION_CLIENT);
+    deliver_decoration_configure(decoration, DecorationModeClient);
     Check(!host_wayland_windows_is_mapped(&session_ctx, 1, 1));
     deliver_surface_configure(xdg_surface, 5);
     Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 1);
@@ -631,7 +629,7 @@ static int check_server_side_fallback(void) {
     Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
     unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
     unsigned xdg_surface = fake_nth("xdg_surface", 0);
-    deliver_decoration_configure(decoration, DECORATION_SERVER);
+    deliver_decoration_configure(decoration, DecorationModeServer);
     deliver_surface_configure(xdg_surface, 6);
     /* Acknowledge first, then destroy the decoration; the window is mapped with its guest frame. */
     int ack = fake_find("xdg_surface", XDG_SURFACE_ACK_CONFIGURE, 0);
@@ -640,7 +638,7 @@ static int check_server_side_fallback(void) {
     Check(destroy > ack);
     Check(host_wayland_windows_is_mapped(&session_ctx, 1, 1));
     /* The destroyed decoration's late events are no-ops. */
-    deliver_decoration_configure(decoration, DECORATION_CLIENT);
+    deliver_decoration_configure(decoration, DecorationModeClient);
     Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 1);
     deliver_surface_configure(xdg_surface, 7);
     Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 2);
@@ -662,7 +660,7 @@ static int check_invalid_mode(void) {
     Check(!host_wayland_windows_is_mapped(&session_ctx, 1, 1));
     Check(fake_find_destroy("xdg_toplevel", 0) >= 0 && fake_find_destroy("zxdg_toplevel_decoration_v1", 0) >= 0);
     Check(fake_creates - fixture_creates == fake_destroys);
-    deliver_decoration_configure(decoration, DECORATION_CLIENT);
+    deliver_decoration_configure(decoration, DecorationModeClient);
     deliver_surface_configure(xdg_surface, 8);
     Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 0);
     /* The guest announces the same window again: the table no longer holds it, so the announce is realized. */
@@ -689,7 +687,7 @@ static int check_first_configure_without_mode(void) {
     Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
     unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 1);
     xdg_surface = fake_nth("xdg_surface", 1);
-    deliver_decoration_configure(decoration, DECORATION_CLIENT);
+    deliver_decoration_configure(decoration, DecorationModeClient);
     deliver_surface_configure(xdg_surface, 5);
     Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 1);
     Check(host_wayland_windows_is_mapped(&session_ctx, 1, 1));
@@ -756,7 +754,7 @@ static int check_popup_realization(void) {
     unsigned popup = fake_nth("xdg_popup", 0);
     unsigned popup_surface = fake_nth("xdg_surface", 1);
     unsigned root_surface = fake_nth("xdg_surface", 0);
-    Check(popup != FAKE_NONE && popup_surface != FAKE_NONE);
+    Check(popup != FakeNone && popup_surface != FakeNone);
     /* The positioner carries the pure positioner values: parent 640 by 480, anchor clamped inside it. */
     unsigned positioner = fake_nth("xdg_positioner", 0);
     int size = fake_find("xdg_positioner", XDG_POSITIONER_SET_SIZE, requests_before);

@@ -8,20 +8,22 @@
  * `interop_protocol.h`) into wl_surface, xdg_surface, xdg_toplevel or xdg_popup, and optional
  * zxdg_toplevel_decoration_v1 objects. The window table is `host_window_map.h`, the popup geometry is
  * `host_popup_positioner.h`. Compositor events come back as the callbacks in
- * `host_wayland_windows_callbacks_t`.
+ * `host_wayland_callbacks_t`.
  *
  * Ownership and threading:
- *  - The caller owns the `host_wayland_windows_t` storage. It must not move while initialized, and it must
+ *  - The caller owns the `host_wayland_t` storage. It must not move while initialized, and it must
  *    be reset before its storage is released or reused. Its fields are private.
- *  - The Wayland objects in the config, the decoration manager and the wl_seat values in the press table are
- *    borrowed. They must stay valid until the window using them is retired or the context is reset.
+ *  - The Wayland objects in the config and the decoration manager are borrowed. The wl_seat values of the press
+ *    table are borrowed too, and must stay valid until `host_wayland_windows_forget_seat` names them or the
+ *    context is reset. A press keeps its seat registered until then.
  *  - Single-thread only: the Wayland dispatch thread that owns the display calls every function and every
  *    callback. Callbacks run synchronously, inside the call that caused them, on that same thread.
  *  - The module never allocates. Every object it creates is destroyed by the module on retire, on a failed
  *    realization, or on reset. Destruction order is fixed (see the contract).
  *
  * Return codes and refusals: functions return `host_wayland_status_t`. A refused Announce, Update or Retire
- * also reports `on_error` with the protocol error code, and the table is left as the table rules specify.
+ * also reports `on_error` with the protocol error code. A refused Update changes nothing and sends no request
+ * (all-or-nothing, 4.3), and a refused Announce leaves the table as the table rules specify.
  * The full contract is `impl/seamless-interop/claude_45_percent/host_wayland_windows_contract.md`.
  */
 #include <stdbool.h>
@@ -190,48 +192,58 @@ typedef struct host_wayland_t {
 #define HostWaylandPressExpiryMs 300u
 
 /** @brief Number of realized windows the table can hold (`host_window_map.h` MaxRealized). */
-#define HOST_WAYLAND_MAX_WINDOWS 64u
+#define HostWaylandMaxWindows 64u
 
 /**
- * @brief Initialize a context and bind its configuration.
+ * @brief Initialize a context and copy its configuration.
  *
- * @param ctx Caller-owned storage; NULL gives HostWaylandInvalidArgument. Overwritten.
- * @param config Non-NULL configuration. Required members must be non-NULL and the device name must be 1..64 bytes.
- * @return HostWaylandOk, or HostWaylandInvalidArgument for a bad configuration. Thread safety: owner thread.
+ * @param ctx Out. Caller-owned storage, overwritten on success. NULL gives HostWaylandInvalidArgument.
+ * @param config In. Non-NULL. The compositor, wm_base and device name are required; the device name is 1..64 bytes;
+ *               wm_base_version is at least 1; the scale fraction must give an integer scale of 1..8 (a zero pair
+ *               means 1/1).
+ * @return HostWaylandOk; HostWaylandInvalidArgument for a NULL pointer, a missing required member, a bad device
+ *         length, a zero wm_base_version, or an invalid scale fraction. Nothing is stored on failure. Thread safety:
+ *         owner thread.
  */
 host_wayland_status_t host_wayland_windows_init(host_wayland_t *ctx, const host_wayland_config_t *config);
 
 /**
- * @brief Epoch reset: destroy every realized window in teardown order and clear the press table.
+ * @brief Epoch reset: destroy every realized window in teardown order and clear the press table, seat registry and
+ * grab state.
  *
  * Teardown is the table's own reset order (children first; roots newest first). Each window's objects are
- * destroyed decoration first, then toplevel or popup, then xdg_surface, then wl_surface. A corrupt table is
- * still torn down: its records are destroyed by descending slot index, with the same per-window order.
+ * destroyed decoration first, then toplevel or popup, then xdg_surface, then wl_surface. A corrupt table is still
+ * torn down: its records are destroyed by descending slot index, with the same per-window order.
  *
- * @param ctx Initialized context; NULL or uninitialized gives HostWaylandNotInitialized. After the call the
- *            context is uninitialized until `host_wayland_windows_init` runs again.
- * @return HostWaylandOk. Thread safety: owner thread.
+ * @param ctx In/out. Initialized context. After success the context is uninitialized until
+ *            `host_wayland_windows_init` runs again.
+ * @return HostWaylandOk; HostWaylandNotInitialized for NULL or an uninitialized context. Thread safety: owner thread.
  */
 host_wayland_status_t host_wayland_windows_reset(host_wayland_t *ctx);
 
 /**
  * @brief Apply one guest frame: WindowAnnounce, WindowUpdate or WindowRetire.
  *
- * @param ctx Initialized context.
- * @param frame Borrowed frame bytes, at least a complete header plus its payload.
- * @param length Bytes available in `frame`.
- * @param now_ms Caller clock in milliseconds, used to expire press entries for popup grabs.
- * @return Status. Refusals and realization failures also invoke `on_error`.
+ * @param ctx In/out. Initialized context.
+ * @param frame In. Borrowed frame bytes: a complete header followed by its payload.
+ * @param length In. Bytes available in `frame`.
+ * @param now_ms In. Monotonic clock in milliseconds. A value below the last one seen clears the press table
+ *               (see `host_wayland_windows_record_press`).
+ * @return HostWaylandOk; HostWaylandInvalidArgument for a NULL context or frame; HostWaylandNotInitialized;
+ *         HostWaylandMalformedFrame for a bad header, payload or field; HostWaylandUnsupportedType for an unknown
+ *         type or a host-to-guest type; HostWaylandRefused when the table or the positioner refused the frame
+ *         (`on_error` reported); HostWaylandRealizeFailed when a Wayland object or listener could not be created (the
+ *         window was rolled back and `on_error` reported). A stale window pair is HostWaylandOk and reports nothing.
  */
 host_wayland_status_t host_wayland_windows_handle_frame(host_wayland_t *ctx, const uint8_t *frame, size_t length, uint64_t now_ms);
 
 /**
  * @brief Whether a realized window has been acknowledged as configured (the "mapped" state of 4.3).
  *
- * @param ctx Initialized context; NULL or uninitialized gives false.
- * @param window Protocol window handle.
- * @param generation Protocol generation.
- * @return True after the first xdg_surface.configure was acknowledged and while the window stays realized.
+ * @param ctx In. Initialized context; NULL or uninitialized gives false.
+ * @param window In. Protocol window handle.
+ * @param generation In. Protocol generation.
+ * @return True after the first xdg_surface.configure was acknowledged, while the window stays realized; false otherwise.
  */
 bool host_wayland_windows_is_mapped(const host_wayland_t *ctx, uint64_t window, uint64_t generation);
 
@@ -280,12 +292,14 @@ void host_wayland_windows_drop_presses(host_wayland_t *ctx, uint64_t lease_epoch
 void host_wayland_windows_forget_seat(host_wayland_t *ctx, const struct wl_seat *seat);
 
 /**
- * @brief Change the host integer scale for windows realized from now on.
+ * @brief Change the host integer scale for windows realized from now on. Realized windows keep the scale they were
+ * realized with.
  *
- * @param ctx Initialized context.
- * @param numerator Fraction numerator; the integer scale is `ceil(numerator / denominator)`, 1..8.
- * @param denominator Fraction denominator, nonzero.
- * @return HostWaylandOk, HostWaylandInvalidArgument for a bad fraction, or HostWaylandNotInitialized.
+ * @param ctx In/out. Initialized context.
+ * @param numerator In. Fraction numerator; the integer scale is `ceil(numerator / denominator)`, 1..8.
+ * @param denominator In. Fraction denominator, nonzero.
+ * @return HostWaylandOk; HostWaylandInvalidArgument for a zero denominator or an integer scale outside 1..8;
+ *         HostWaylandNotInitialized for NULL or an uninitialized context.
  */
 host_wayland_status_t host_wayland_windows_set_scale(host_wayland_t *ctx, uint32_t numerator, uint32_t denominator);
 
@@ -307,11 +321,11 @@ host_wayland_status_t host_wayland_windows_note_mapped(host_wayland_t *ctx, uint
 /**
  * @brief Number of realized windows.
  *
- * @param ctx Initialized context; NULL or uninitialized gives 0.
- * @return The table's realized count.
+ * @param ctx In. Initialized context; NULL or uninitialized gives 0.
+ * @return The table's realized count, 0 to HostWindowMapMaxRealized.
  */
 uint32_t host_wayland_windows_window_count(const host_wayland_t *ctx);
 
-_Static_assert(HOST_WAYLAND_MAX_WINDOWS == HostWindowMapMaxRealized, "record table matches the window table");
+_Static_assert(HostWaylandMaxWindows == HostWindowMapMaxRealized, "record table matches the window table");
 
 #endif
