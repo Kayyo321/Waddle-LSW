@@ -462,6 +462,21 @@ pub const remove_outcome_t = enum {
     KeptForeign,
 };
 
+/// Explicit metadata migration request for one recorded artifact.
+pub const migrate_request_t = struct {
+    /// Existing record identifier; borrowed for this call.
+    record_id: []const u8,
+    /// Borrowed complete schema-1 candidate manifest. Only root-level
+    /// `waddle_version` and `updated` may differ from the current manifest.
+    candidate_manifest: []const u8,
+};
+
+/// Result of one migration request.
+pub const migrate_receipt_t = struct {
+    /// True when a new manifest was published; false for an identical candidate.
+    changed: bool,
+};
+
 /// Result of one removal request. Nothing in the receipt borrows store or
 /// manifest memory.
 pub const remove_receipt_t = struct {
@@ -1073,6 +1088,50 @@ pub const store_t = struct {
         return .{ .outcome = .Removed, .record_found = true, .prior = prior };
     }
 
+    /// Rewrite the manifest-level schema metadata for one recorded artifact
+    /// through the journaled engine. The artifact file is never opened for
+    /// writing, renamed, or unlinked, and its state is not a precondition.
+    /// The candidate must keep every record equal by schema fields (id, kind,
+    /// path, sha256, device, app_key, created_by, prior, mime); only the
+    /// root-level `waddle_version` and `updated` may change. Schema 1 has no
+    /// per-record migration field, so there is no migrated flag to set.
+    /// A candidate byte-identical to the current manifest returns `changed = false`
+    /// with no journal and no filesystem write. A candidate with another schema
+    /// version is refused by the codec with UnsupportedSchema before any mutation.
+    /// Parameters: `self` is an initialized, live mutable store owner; `request`
+    /// and its slices are borrowed only for the call.
+    /// Returns: a by-value receipt with no borrowed memory.
+    /// Errors: Closed, InvalidArgument, InvalidManifest, UnsupportedSchema,
+    /// ManifestMismatch, FileNotFound (no manifest or no such record),
+    /// RecoveryRequired, ArtifactConflict, AccessDenied, OutOfMemory, or a
+    /// filesystem error. Errors before the PREPARED journal change nothing.
+    /// Thread safety: serialized owner-thread use only; do not call concurrently.
+    pub fn migrate_record(self: *store_t, request: migrate_request_t) !migrate_receipt_t {
+        if (!self.live) return error.Closed;
+        try self.recover_locked();
+        if (!valid_record_id(request.record_id) or request.candidate_manifest.len == 0 or
+            request.candidate_manifest.len > manifest.MaxManifestBytes) return error.InvalidArgument;
+        var candidate = try manifest.parse(self.allocator, request.candidate_manifest);
+        defer candidate.deinit();
+        try validate_global_paths(candidate.records);
+        const snapshot = try self.read_manifest_snapshot();
+        defer self.allocator.free(snapshot.bytes);
+        var parsed = try manifest.parse(self.allocator, snapshot.bytes);
+        defer parsed.deinit();
+        try validate_global_paths(parsed.records);
+        if (find_record(parsed.records, request.record_id) == null) return error.FileNotFound;
+        try validate_metadata_only(parsed.records, candidate.records);
+        if (std.mem.eql(u8, snapshot.bytes, request.candidate_manifest)) return .{ .changed = false };
+        try self.run_manifest_transaction(.{
+            .operation = "migrate",
+            .record_id = request.record_id,
+            .old_manifest = snapshot.bytes,
+            .old_info = snapshot.info,
+            .candidate = request.candidate_manifest,
+        });
+        return .{ .changed = true };
+    }
+
     /// Shared journaled engine for version-3 operations. `spec.artifact` is set
     /// only for removal, where the target must stay unchanged until COMMITTED.
     /// PREPARED publishes the candidate manifest; COMMITTED unlinks a removed
@@ -1093,19 +1152,19 @@ pub const store_t = struct {
 
         const new_hash = hash_hex(spec.candidate);
         const old_hash = hash_hex_from_array(spec.old_info.hash);
-        const artifact_hash = hash_hex_from_array(spec.artifact.hash);
+        const artifact_hash: [64]u8 = if (spec.artifact) |info| hash_hex_from_array(info.hash) else [_]u8{'0'} ** 64;
         const journal = journal_v3_t{
             .version = 3,
             .transaction_id = &transaction_id,
             .phase = "prepared",
             .operation = spec.operation,
             .record_id = spec.record_id,
-            .root = root_name(spec.root.kind),
+            .root = if (spec.root) |root| root_name(root.kind) else null,
             .relative_path = spec.relative,
-            .old_artifact_hash = artifact_hash[0..],
-            .old_artifact_mode = spec.artifact.mode,
-            .old_artifact_device = spec.artifact.device,
-            .old_artifact_inode = spec.artifact.inode,
+            .old_artifact_hash = if (spec.artifact != null) artifact_hash[0..] else null,
+            .old_artifact_mode = if (spec.artifact) |info| info.mode else 0,
+            .old_artifact_device = if (spec.artifact) |info| info.device else null,
+            .old_artifact_inode = if (spec.artifact) |info| info.inode else null,
             .old_manifest_hash = old_hash[0..],
             .old_manifest_device = spec.old_info.device,
             .old_manifest_inode = spec.old_info.inode,
@@ -1131,7 +1190,7 @@ pub const store_t = struct {
     /// old manifest at the temp name, or without it after a cleanup.
     fn apply_prepared_v3(self: *store_t, journal: journal_v3_t) !void {
         const txid = try txid_array(journal.transaction_id);
-        try self.expect_v3_artifact(journal);
+        if (v3_is_remove(journal)) try self.expect_v3_artifact(journal);
         const old_info = v3_old_manifest_info(journal);
         const new_info = v3_new_manifest_info(journal);
         const current = (try self.inspect_manifest()) orelse return error.ArtifactConflict;
@@ -1150,7 +1209,7 @@ pub const store_t = struct {
     /// this phase, so a changed artifact fails closed with ArtifactConflict.
     fn rollback_prepared_v3(self: *store_t, journal: journal_v3_t) !void {
         const txid = try txid_array(journal.transaction_id);
-        try self.expect_v3_artifact(journal);
+        if (v3_is_remove(journal)) try self.expect_v3_artifact(journal);
         switch (try self.classify_v3_manifest(journal)) {
             .Candidate => try self.restore_displaced_manifest(txid, journal),
             .Original => {},
@@ -1184,7 +1243,7 @@ pub const store_t = struct {
         const current_manifest = (try self.inspect_manifest()) orelse return error.RecoveryRequired;
         if (!same_file_info(current_manifest, v3_new_manifest_info(journal))) return error.RecoveryRequired;
         try self.validate_displaced_manifest_temp(txid, v3_old_manifest_info(journal));
-        try self.retire_v3_artifact(journal);
+        if (v3_is_remove(journal)) try self.retire_v3_artifact(journal);
 
         const transactions_fd = try self.open_private_dir("transactions");
         defer _ = c.close(transactions_fd);
@@ -1197,10 +1256,12 @@ pub const store_t = struct {
         if (journal_fd < 0) return error.RecoveryRequired;
         defer _ = c.close(journal_fd);
         if (io_fsync(journal_fd) != 0 or io_fsync(tx_fd) != 0 or io_fsync(self.dir_fd) != 0) return native_error();
-        const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
-        const parent = try self.open_parent(root.fd, journal.relative_path.?);
-        defer _ = c.close(parent.fd);
-        if (io_fsync(parent.fd) != 0 or io_fsync(root.fd) != 0) return native_error();
+        if (v3_is_remove(journal)) {
+            const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
+            const parent = try self.open_parent(root.fd, journal.relative_path.?);
+            defer _ = c.close(parent.fd);
+            if (io_fsync(parent.fd) != 0 or io_fsync(root.fd) != 0) return native_error();
+        }
     }
 
     /// Verify the live artifact of a removal journal in PREPARED state. Absence
@@ -1287,6 +1348,10 @@ pub const store_t = struct {
         validate_global_paths(old.records) catch return error.RecoveryRequired;
         validate_global_paths(candidate.records) catch return error.RecoveryRequired;
         const old_record = find_record(old.records, journal.record_id) orelse return error.RecoveryRequired;
+        if (!v3_is_remove(journal)) {
+            validate_metadata_only(old.records, candidate.records) catch return error.RecoveryRequired;
+            return;
+        }
         validate_removal(old.records, candidate.records, journal.record_id) catch return error.RecoveryRequired;
         const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
         const target = self.resolve_for_record(old_record.*) catch |err| return if (err == error.OutOfMemory) error.OutOfMemory else error.RecoveryRequired;
@@ -2395,16 +2460,17 @@ const v3_manifest_state_t = enum { Candidate, Original };
 /// Private argument bundle for `run_manifest_transaction`. Removal sets every
 /// optional artifact field; migration leaves them null.
 const transaction_spec_t = struct {
-    /// Journal operation; this milestone journals only `remove`.
+    /// Journal operation, `remove` or `migrate`.
     operation: []const u8,
     /// Schema record identifier, borrowed for the transaction.
     record_id: []const u8,
-    /// Allowlisted root of the removed artifact.
-    root: owned_root_t,
-    /// Root-relative path of the removed artifact.
-    relative: []const u8,
-    /// Exact identity of the removed artifact, verified before any manifest publish.
-    artifact: file_info_t,
+    /// Allowlisted root of a removed artifact; null for migration.
+    root: ?owned_root_t = null,
+    /// Root-relative path of a removed artifact; null for migration.
+    relative: ?[]const u8 = null,
+    /// Exact identity of a removed artifact, verified before any manifest publish;
+    /// null for migration, which never touches the artifact.
+    artifact: ?file_info_t = null,
     /// Exact bytes of the displaced manifest, retained as transaction evidence.
     old_manifest: []const u8,
     /// Identity of the displaced manifest.
@@ -2469,13 +2535,35 @@ fn validate_journal_v3(journal: journal_v3_t, entry_name: []const u8) !void {
         !valid_hash_text(journal.new_manifest_hash) or std.mem.eql(u8, journal.old_manifest_hash, journal.new_manifest_hash) or
         journal.old_manifest_device == 0 or journal.old_manifest_inode == 0 or
         journal.new_manifest_device == 0 or journal.new_manifest_inode == 0) return error.RecoveryRequired;
-    if (!std.mem.eql(u8, journal.operation, "remove")) return error.RecoveryRequired;
-    const artifact_hash = journal.old_artifact_hash orelse return error.RecoveryRequired;
-    const artifact_device = journal.old_artifact_device orelse return error.RecoveryRequired;
-    const artifact_inode = journal.old_artifact_inode orelse return error.RecoveryRequired;
-    if (journal.root == null or journal.relative_path == null or !valid_hash_text(artifact_hash) or
-        (journal.old_artifact_mode != 0o644 and journal.old_artifact_mode != 0o755) or
-        artifact_device == 0 or artifact_inode == 0) return error.RecoveryRequired;
+    if (v3_is_remove(journal)) {
+        const artifact_hash = journal.old_artifact_hash orelse return error.RecoveryRequired;
+        const artifact_device = journal.old_artifact_device orelse return error.RecoveryRequired;
+        const artifact_inode = journal.old_artifact_inode orelse return error.RecoveryRequired;
+        if (journal.root == null or journal.relative_path == null or !valid_hash_text(artifact_hash) or
+            (journal.old_artifact_mode != 0o644 and journal.old_artifact_mode != 0o755) or
+            artifact_device == 0 or artifact_inode == 0) return error.RecoveryRequired;
+    } else if (std.mem.eql(u8, journal.operation, "migrate")) {
+        if (journal.root != null or journal.relative_path != null or journal.old_artifact_hash != null or
+            journal.old_artifact_mode != 0 or journal.old_artifact_device != null or journal.old_artifact_inode != null)
+            return error.RecoveryRequired;
+    } else return error.RecoveryRequired;
+}
+
+/// True for a version-3 removal journal. Validated journals carry artifact
+/// fields exactly when the operation is a removal.
+fn v3_is_remove(journal: journal_v3_t) bool {
+    return std.mem.eql(u8, journal.operation, "remove");
+}
+
+/// Verify that a migration changes no record: the record counts match and every
+/// old record has an equal counterpart by schema fields. Root-level metadata
+/// (`waddle_version`, `updated`) is outside this check and may differ.
+fn validate_metadata_only(old_records: []const manifest.record_t, new_records: []const manifest.record_t) !void {
+    if (old_records.len != new_records.len) return error.ManifestMismatch;
+    for (old_records) |old| {
+        const candidate = find_record(new_records, old.id) orelse return error.ManifestMismatch;
+        if (!same_record(old, candidate.*)) return error.ManifestMismatch;
+    }
 }
 
 /// Verify that `new_records` equals `old_records` minus the single target record
@@ -8372,6 +8460,341 @@ test "recovery rejects a journal root whose configured kind does not own the rec
     const snapshot = take_remove_snapshot(&fixture);
     defer free_remove_snapshot(snapshot);
     try std.testing.expectEqualStrings(docs.original, snapshot.manifest);
+}
+
+/// Candidate with a different root `waddle_version` and an unchanged record set.
+fn migrated_document(arena: std.mem.Allocator, original: []const u8) []u8 {
+    return std.mem.replaceOwned(u8, arena, original, "\"waddle_version\":\"0.2.0\"", "\"waddle_version\":\"0.3.0\"") catch @panic("fixture migrated");
+}
+
+test "migrate rewrites only root metadata and leaves the artifact and every record identical" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = remove_documents(arena.allocator(), fixture.data_path);
+    const migrated = migrated_document(arena.allocator(), docs.original);
+    install_remove_artifacts(&fixture);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const before = try fixture.data.statFile("applications/target.desktop");
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+
+    const receipt = try store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = migrated });
+    try std.testing.expect(receipt.changed);
+    {
+        const on_disk = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(on_disk);
+        try std.testing.expectEqualStrings(migrated, on_disk);
+    }
+    const after = try fixture.data.statFile("applications/target.desktop");
+    try std.testing.expectEqual(before.inode, after.inode);
+    const target = try fixture.data.readFileAlloc(std.testing.allocator, "applications/target.desktop", 4096);
+    defer std.testing.allocator.free(target);
+    try std.testing.expectEqualStrings("target bytes", target);
+
+    const repeat = try store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = migrated });
+    try std.testing.expect(!repeat.changed);
+    {
+        const on_disk = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(on_disk);
+        try std.testing.expectEqualStrings(migrated, on_disk);
+    }
+}
+
+test "migrate refuses changed, missing, extra, foreign-schema, and malformed requests without mutation" {
+    for (0..11) |case_index| {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const scratch = arena.allocator();
+        const docs = remove_documents(scratch, fixture.data_path);
+        install_remove_artifacts(&fixture);
+        try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+        const roots = fixture.roots();
+        var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+        defer store.deinit();
+
+        const changed_digest = hash_hex("changed target bytes");
+        const target_path = std.fmt.allocPrint(scratch, "{s}/applications/target.desktop", .{fixture.data_path}) catch @panic("fixture path");
+        const keep_path = std.fmt.allocPrint(scratch, "{s}/applications/keep.desktop", .{fixture.data_path}) catch @panic("fixture path");
+        const keep_digest = hash_hex("keep bytes");
+        const extra_digest = hash_hex("extra bytes");
+        const changed_target = test_spec_t{ .id = "desktop:target", .kind = "desktop_entry", .path = target_path, .sha256 = &changed_digest };
+        const keep = test_spec_t{ .id = "desktop:keep", .kind = "desktop_entry", .path = keep_path, .sha256 = &keep_digest };
+        const extra = test_spec_t{ .id = "desktop:extra", .kind = "desktop_entry", .path = "/unused-root/extra.desktop", .sha256 = &extra_digest };
+        const changed_list = [_]test_spec_t{ changed_target, keep };
+        const extra_list = [_]test_spec_t{ changed_target, keep, extra };
+        const other_path = std.fmt.allocPrint(scratch, "{s}/applications/other.desktop", .{fixture.data_path}) catch @panic("fixture path");
+        const other = test_spec_t{ .id = "desktop:other", .kind = "desktop_entry", .path = other_path, .sha256 = &extra_digest };
+        const original_target_digest = hash_hex("target bytes");
+        const original_target = test_spec_t{ .id = "desktop:target", .kind = "desktop_entry", .path = target_path, .sha256 = &original_target_digest };
+        const swapped_list = [_]test_spec_t{ original_target, other };
+        const duplicate_list = [_]test_spec_t{ keep, test_spec_t{ .id = "desktop:duplicate", .kind = "desktop_entry", .path = keep_path, .sha256 = &extra_digest } };
+        const candidate: []const u8 = switch (case_index) {
+            0 => test_document(scratch, 1, &changed_list),
+            1 => docs.candidate,
+            2 => test_document(scratch, 1, &extra_list),
+            3 => test_document(scratch, 2, &extra_list),
+            4 => "{",
+            5 => "",
+            8 => test_document(scratch, 1, &swapped_list),
+            9 => test_document(scratch, 1, &duplicate_list),
+            10 => blk: {
+                const oversized = scratch.alloc(u8, manifest.MaxManifestBytes + 1) catch @panic("fixture size");
+                @memset(oversized, ' ');
+                break :blk oversized;
+            },
+            else => docs.original,
+        };
+        const record_id: []const u8 = switch (case_index) {
+            6 => "desktop:missing",
+            7 => "",
+            else => "desktop:target",
+        };
+        const expected: anyerror = switch (case_index) {
+            0, 1, 2, 8, 9 => error.ManifestMismatch,
+            3 => error.UnsupportedSchema,
+            4 => error.InvalidManifest,
+            5, 7, 10 => error.InvalidArgument,
+            6 => error.FileNotFound,
+            else => unreachable,
+        };
+        try std.testing.expectError(expected, store.migrate_record(.{ .record_id = record_id, .candidate_manifest = candidate }));
+        {
+            const on_disk = read_stored_manifest(fixture.state);
+            defer std.testing.allocator.free(on_disk);
+            try std.testing.expectEqualStrings(docs.original, on_disk);
+        }
+        const target = try fixture.data.readFileAlloc(std.testing.allocator, "applications/target.desktop", 4096);
+        defer std.testing.allocator.free(target);
+        try std.testing.expectEqualStrings("target bytes", target);
+    }
+}
+
+test "migrate rejects an overlapping recorded manifest and a closed store before any mutation" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const docs = remove_documents(scratch, fixture.data_path);
+    install_remove_artifacts(&fixture);
+    const shared_digest = hash_hex("target bytes");
+    const shared_path = std.fmt.allocPrint(scratch, "{s}/applications/target.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const first = test_spec_t{ .id = "desktop:target", .kind = "desktop_entry", .path = shared_path, .sha256 = &shared_digest };
+    const second = test_spec_t{ .id = "desktop:keep", .kind = "desktop_entry", .path = shared_path, .sha256 = &shared_digest };
+    const overlapping = test_document(scratch, 1, &[_]test_spec_t{ first, second });
+    try write_test_file(fixture.state.fd, "manifest.json", overlapping, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    try std.testing.expectError(error.ManifestMismatch, store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = overlapping }));
+    store.deinit();
+    try std.testing.expectError(error.Closed, store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = docs.original }));
+    {
+        const on_disk = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(on_disk);
+        try std.testing.expectEqualStrings(overlapping, on_disk);
+    }
+}
+
+test "migrate without a manifest reports FileNotFound and creates nothing" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = remove_documents(arena.allocator(), fixture.data_path);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    try std.testing.expectError(error.FileNotFound, store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = docs.original }));
+    try std.testing.expectError(error.FileNotFound, fixture.state.access("manifest.json", .{}));
+}
+
+test "migrate recovers after every injected durable checkpoint and a second recovery is a no-op" {
+    var completed = false;
+    var observed_failures: usize = 0;
+    for (1..48) |step| {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const docs = remove_documents(arena.allocator(), fixture.data_path);
+        const migrated = migrated_document(arena.allocator(), docs.original);
+        install_remove_artifacts(&fixture);
+        try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+        const roots = fixture.roots();
+        var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+        defer store.deinit();
+        store.fail_after.store(store.checkpoint_count.load(.monotonic) + step, .monotonic);
+        const outcome = store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = migrated });
+        store.fail_after.store(0, .monotonic);
+        if (outcome) |receipt| {
+            try std.testing.expect(receipt.changed);
+            completed = true;
+        } else |err| {
+            observed_failures += 1;
+            try std.testing.expectEqual(error.InjectedFailure, err);
+            try store.recover();
+        }
+        const on_disk = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(on_disk);
+        try std.testing.expect(std.mem.eql(u8, on_disk, docs.original) or std.mem.eql(u8, on_disk, migrated));
+        if (completed) try std.testing.expectEqualStrings(migrated, on_disk);
+        try store.recover();
+        const again = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(again);
+        try std.testing.expectEqualStrings(on_disk, again);
+        const target = try fixture.data.readFileAlloc(std.testing.allocator, "applications/target.desktop", 4096);
+        defer std.testing.allocator.free(target);
+        try std.testing.expectEqualStrings("target bytes", target);
+        if (completed) break;
+    }
+    try std.testing.expect(completed);
+    try std.testing.expect(observed_failures > 0);
+}
+
+test "migrate retries after every selected injected I/O failure and allocation failure without leaks" {
+    defer {
+        injected_io_at = 0;
+        injected_io_count = 0;
+    }
+    var observed_failures: usize = 0;
+    for (1..240) |failure_io| {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const docs = remove_documents(arena.allocator(), fixture.data_path);
+        const migrated = migrated_document(arena.allocator(), docs.original);
+        install_remove_artifacts(&fixture);
+        try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+        const roots = fixture.roots();
+        var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+        defer store.deinit();
+        injected_io_at = failure_io;
+        injected_io_count = 0;
+        const outcome = store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = migrated });
+        injected_io_at = 0;
+        injected_io_count = 0;
+        if (outcome) |_| {
+            const on_disk = read_stored_manifest(fixture.state);
+            defer std.testing.allocator.free(on_disk);
+            try std.testing.expectEqualStrings(migrated, on_disk);
+            break;
+        } else |err| {
+            observed_failures += 1;
+            try std.testing.expect(err != error.InvalidArgument and err != error.OutOfMemory and err != error.InjectedFailure);
+        }
+        try store.recover();
+        const on_disk = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(on_disk);
+        try std.testing.expect(std.mem.eql(u8, on_disk, docs.original) or std.mem.eql(u8, on_disk, migrated));
+        try store.recover();
+    }
+    try std.testing.expect(observed_failures > 0);
+}
+
+test "migrate allocation failures leave a recoverable state and no leaked allocations" {
+    var observed_failures: usize = 0;
+    for (0..512) |failure_offset| {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const docs = remove_documents(arena.allocator(), fixture.data_path);
+        const migrated = migrated_document(arena.allocator(), docs.original);
+        install_remove_artifacts(&fixture);
+        try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+        const roots = fixture.roots();
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = std.math.maxInt(usize) });
+        var store = try store_t.init(failing.allocator(), fixture.state.fd, &roots);
+        failing.fail_index = failing.alloc_index + failure_offset;
+        const outcome = store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = migrated });
+        if (!failing.has_induced_failure) {
+            _ = try outcome;
+            store.deinit();
+            try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+            break;
+        }
+        observed_failures += 1;
+        if (outcome) |_| {
+            return error.ExpectedOutOfMemory;
+        } else |err| if (err != error.OutOfMemory) return err;
+        failing.fail_index = std.math.maxInt(usize);
+        try store.recover();
+        const on_disk = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(on_disk);
+        try std.testing.expect(std.mem.eql(u8, on_disk, docs.original) or std.mem.eql(u8, on_disk, migrated));
+        store.deinit();
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+    try std.testing.expect(observed_failures > 0);
+}
+
+test "migrate journal rejects removal fields and rewritten metadata before recovery" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const docs = remove_documents(scratch, fixture.data_path);
+    const migrated = migrated_document(scratch, docs.original);
+    install_remove_artifacts(&fixture);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    store.fail_after.store(store.checkpoint_count.load(.monotonic) + 8, .monotonic);
+    try std.testing.expectError(error.InjectedFailure, store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = migrated }));
+    store.fail_after.store(0, .monotonic);
+    const txid = optional_transaction_id(fixture.state) orelse return error.TestExpectedEqual;
+    const journal_text = try store.read_tx_file(txid, "journal.json", MaxJournalBytes);
+    defer std.testing.allocator.free(journal_text);
+    var parsed = try parse_journal_v3(std.testing.allocator, journal_text);
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("prepared", parsed.value.phase);
+    try std.testing.expectEqualStrings("migrate", parsed.value.operation);
+
+    var with_root = parsed.value;
+    with_root.root = "data";
+    var with_artifact = parsed.value;
+    with_artifact.old_artifact_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+    with_artifact.old_artifact_mode = 0o644;
+    with_artifact.old_artifact_device = 1;
+    with_artifact.old_artifact_inode = 1;
+    var as_removal = parsed.value;
+    as_removal.operation = "remove";
+    const variants = [_]journal_v3_t{ with_root, with_artifact, as_removal };
+    for (variants) |variant| {
+        const text = try std.json.stringifyAlloc(std.testing.allocator, variant, .{});
+        defer std.testing.allocator.free(text);
+        replace_transaction_file(fixture.state, txid, "journal.json", text, 0o600);
+        try std.testing.expectError(error.RecoveryRequired, store.recover());
+    }
+    replace_transaction_file(fixture.state, txid, "journal.json", journal_text, 0o600);
+
+    const changed_digest = hash_hex("changed target bytes");
+    const target_path = std.fmt.allocPrint(scratch, "{s}/applications/target.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const keep_path = std.fmt.allocPrint(scratch, "{s}/applications/keep.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const keep_digest = hash_hex("keep bytes");
+    const changed = test_spec_t{ .id = "desktop:target", .kind = "desktop_entry", .path = target_path, .sha256 = &changed_digest };
+    const keep = test_spec_t{ .id = "desktop:keep", .kind = "desktop_entry", .path = keep_path, .sha256 = &keep_digest };
+    const changed_list = [_]test_spec_t{ changed, keep };
+    const semantic_change = test_document(scratch, 1, &changed_list);
+    rewrite_manifest_evidence(fixture.state, txid, parsed.value, docs.original, semantic_change);
+    try std.testing.expectError(error.RecoveryRequired, store.recover());
+    replace_transaction_file(fixture.state, txid, "old-manifest", docs.original, 0o600);
+    replace_transaction_file(fixture.state, txid, "new-manifest", migrated, 0o600);
+    replace_transaction_file(fixture.state, txid, "journal.json", journal_text, 0o600);
+
+    try store.recover();
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    try std.testing.expectEqualStrings(docs.original, on_disk);
+    try std.testing.expect(target_exists(fixture.data));
 }
 
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
