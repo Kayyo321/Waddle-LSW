@@ -84,7 +84,8 @@ reducer.
 - **Focus.** `keyboard_enter` calls `focus(window_id, incarnation)` after the focus
   message is delivered, in both legacy and lease modes. Zero identities are skipped.
 - **Cancel.** `repeat_cancel` runs on every route teardown: `clear_keyboard_focus`
-  (leave, keymap change, seat loss), `disable_routes` (lease revocation, terminal
+  (pointer or keyboard leave, a keymap whose format is not XKB_V1, seat loss),
+  `disable_routes` (lease revocation, terminal
   failure, lease-mode fail), `mark_delivery_failed`, retirement of the focused window,
   and a failed repeat delivery. A repeat that fires while the lease is not in the
   forwarding phase, or while the window is not controllable, cancels instead of sending.
@@ -98,8 +99,10 @@ reducer.
   the remaining nanoseconds rounded up to whole milliseconds, so the poll never wakes
   early and misses the deadline. The fake clock in the tests is whole milliseconds,
   so the ceiling is exercised exactly.
-- **Clock.** `monotonic_ns` reads `CLOCK_MONOTONIC`. A read failure yields 0, which
-  cancels nothing and fires nothing for that call.
+- **Clock.** `monotonic_ns` reads `CLOCK_MONOTONIC`. A read failure yields 0. In
+  `av_wayland_timeout`, repeat service is skipped for that call, so an armed repeat is
+  neither fired nor cancelled by it. A key event under a failed clock cancels the repeat
+  (`repeat_key`).
 
 ## 5. Verification (`tests/av/wayland_state.c`)
 
@@ -133,13 +136,20 @@ translation kind. Both `legacy_input_emit` and `lease_input_emit` use it.
 ### Decision: Pause and the E1 sequence
 
 IMPL_DESC 3.6.3 specifies Pause as the sequence E1 1D 45 (make) and E1 9D C5 (break).
-SendInput has no flag that emits the E1 prefix. The faithful approximation is the
-virtual-key form: VK_PAUSE with scan 0x45, without the scan flag. Windows derives
-the Pause scan sequence from that virtual key. Make is the key-down form and break is
-the key-up form. This matches how the release path already emits the key, so release
-on revocation needs no separate Pause case.
-**The lead should confirm this decision.** It is not verified on a Windows desktop.
-Only the exact INPUT fields are asserted (below).
+SendInput never synthesizes E1 bytes, so the E1 1D 45 / E1 9D C5 wire sequence cannot be
+sent. The form sent is VK_PAUSE with scan 0x45, without the scan flag: make is the
+key-down form and break is the key-up form. The release path emits the same form, so
+release on revocation needs no separate Pause case. Only the exact INPUT fields are
+asserted (below). How Windows reports the key is not verified natively.
+**The lead should confirm this decision.**
+
+### Open native verification items (section 6)
+
+1. Pause delivery: whether Windows reports VK_PAUSE + 0x45 as the Pause key, and whether
+   the guest application sees the same key as a physical Pause.
+2. Ctrl+Pause (Break): whether the injected sequence produces the Break combination.
+3. Raw Input: whether Raw Input reports the injected Pause as an E1-prefixed key.
+These need a Windows desktop run. No Windows runner is available here.
 
 ### Admission and host forwarding
 

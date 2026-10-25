@@ -572,10 +572,11 @@ static int button_input(const av_message_t *event, INPUT *input) {
  * INPUT form; the key-up flag is added for every class:
  * - ScanCode: KEYEVENTF_SCANCODE with the Set-1 byte; E0 keys add KEYEVENTF_EXTENDEDKEY.
  * - VirtualKey (Hangul 0x15, Hanja 0x19): wVk only, no scan code, no scan flag.
- * - Pause: SendInput has no E1 prefix flag, so the key is expressed as the virtual key
- *   VK_PAUSE with the scan code 0x45 and no scan flag. Windows derives the Pause scan
- *   sequence (make E1 1D 45, break E1 9D C5) from that virtual key. Make is the key-down
- *   form and break is the key-up form, exactly as the release path emits them.
+ * - Pause: SendInput never synthesizes E1 bytes. The form sent is VK_PAUSE (0x13)
+ *   with scan code 0x45 and no scan flag, for make (key down) and break (key up). The
+ *   bytes on the wire are therefore not E1 1D 45 / E1 9D C5. How Windows then reports
+ *   Pause, Raw Input, and Ctrl+Pause (Break) is not verified natively; see the open items
+ *   in keyboard_live_contract.md section 6.
  * - Suppressed and unsupported keys are never injected. */
 enum { AvWinVkPause = 0x13, AvWinScanPause = 0x45 };
 static int keyboard_input(const av_message_t *event, INPUT *input) {
