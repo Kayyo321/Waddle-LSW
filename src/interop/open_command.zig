@@ -6,6 +6,7 @@
 //! implementation.
 const std = @import("std");
 const open_request = @import("open_request.zig");
+const local = @import("local_session_client.zig");
 const activation_store = @import("activation_store.zig");
 const c = @cImport({
     @cInclude("daemon_device.h");
@@ -31,7 +32,7 @@ pub const NoticeAfterMs: u64 = 1500;
 /// Time to wait for an immediate reply when --wait is not given, in milliseconds.
 pub const GraceMs: i32 = 2000;
 /// Session socket file name inside the device runtime directory.
-pub const SessionSocketName = "session.sock";
+pub const SessionSocketName = local.SessionSocketName;
 /// Notice text, sent once after NoticeAfterMs when integration.notify is enabled.
 pub const StartingMessage = "Starting Windows\u{2026}";
 /// Usage line printed for every usage error.
@@ -44,11 +45,11 @@ pub const PathError = error{ NotFound, Failed, OutOfMemory };
 /// Failure to translate a canonical host path into a guest path.
 pub const TranslateError = error{ Outside, Failed, OutOfMemory };
 /// Failure to connect to session.sock.
-pub const ConnectError = error{ NotFound, Refused, Failed };
+pub const ConnectError = local.ConnectError;
 /// Failure of a socket read or write.
-pub const IoError = error{ Failed, Timeout };
+pub const IoError = local.IoError;
 /// State of the device runtime directory before connecting.
-pub const DirState = enum { missing, ok, unsafe };
+pub const DirState = local.DirState;
 /// Failure to spawn waddle-session.
 pub const SpawnError = error{Failed};
 /// What waitpid(WNOHANG) reports about a waddle-session child this client started.
@@ -387,38 +388,7 @@ fn build_frame(a: std.mem.Allocator, item: Sent, token: ?[]const u8, request_id:
     return buffer[0..length];
 }
 
-/// Fixed-capacity diagnostic text built without std.fmt or allocation. Every message this client
-/// prints is at most a device name (63 bytes) plus a fixed sentence, so 256 bytes always fit.
-const Message = struct {
-    buffer: [256]u8 = undefined,
-    len: usize = 0,
-
-    fn add(self: *Message, text: []const u8) void {
-        @memcpy(self.buffer[self.len..][0..text.len], text);
-        self.len += text.len;
-    }
-
-    /// Append a decimal number (0 to 255) without leading zeros.
-    fn add_number(self: *Message, value: u8) void {
-        var digits: [3]u8 = undefined;
-        var count: usize = 0;
-        var rest = value;
-        while (true) {
-            digits[count] = '0' + rest % 10;
-            count += 1;
-            rest /= 10;
-            if (rest == 0) break;
-        }
-        while (count > 0) {
-            count -= 1;
-            self.add(digits[count..][0..1]);
-        }
-    }
-
-    fn slice(self: *const Message) []const u8 {
-        return self.buffer[0..self.len];
-    }
-};
+const Message = local.Message;
 
 /// Diagnostic for a waddle-session that ended before the socket appeared.
 fn child_failure_message(failure: ChildState) Message {
@@ -514,19 +484,10 @@ fn connect_session(hooks: *const Hooks, device: *const Device, conn: *Conn) ?u8 
     }
 }
 
-const ReadExact = enum { ok, eof_boundary, eof_partial, timeout, failed };
+const ReadExact = local.ReadExact;
 
 fn read_exact(hooks: *const Hooks, fd: c_int, buffer: []u8, timeout_ms: i32) ReadExact {
-    var filled: usize = 0;
-    while (filled < buffer.len) {
-        const read = hooks.poll_read(hooks.ctx, fd, buffer[filled..], timeout_ms) catch |err| switch (err) {
-            error.Timeout => return .timeout,
-            error.Failed => return .failed,
-        };
-        if (read == 0) return if (filled == 0) .eof_boundary else .eof_partial;
-        filled += read;
-    }
-    return .ok;
+    return local.read_exact(hooks.ctx, hooks.poll_read, fd, buffer, timeout_ms);
 }
 
 /// Wait for the LaunchResult for request_id. Frames for other request ids are skipped.
@@ -723,49 +684,27 @@ const RealHooks = struct {
 
     fn dir_state(ctx: *anyopaque, dir: []const u8) DirState {
         _ = ctx;
-        const st = std.posix.fstatat(std.posix.AT.FDCWD, dir, std.posix.AT.SYMLINK_NOFOLLOW) catch |err| return switch (err) {
-            error.FileNotFound => .missing,
-            else => .unsafe,
-        };
-        const is_dir = (st.mode & std.posix.S.IFMT) == std.posix.S.IFDIR;
-        if (!is_dir or st.uid != std.os.linux.getuid() or (st.mode & 0o777) != 0o700) return .unsafe;
-        return .ok;
+        return local.dir_state(dir);
     }
 
     fn connect(ctx: *anyopaque, path: []const u8) ConnectError!c_int {
         _ = ctx;
-        const addr = std.net.Address.initUnix(path) catch return error.Failed;
-        const fd = std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC, 0) catch return error.Failed;
-        std.posix.connect(fd, &addr.any, addr.getOsSockLen()) catch |err| {
-            std.posix.close(fd);
-            return switch (err) {
-                error.FileNotFound => error.NotFound,
-                error.ConnectionRefused => error.Refused,
-                else => error.Failed,
-            };
-        };
-        return fd;
+        return local.connect(path);
     }
 
     fn close(ctx: *anyopaque, fd: c_int) void {
         _ = ctx;
-        std.posix.close(fd);
+        local.close(fd);
     }
 
     fn write_all(ctx: *anyopaque, fd: c_int, bytes: []const u8) IoError!void {
         _ = ctx;
-        var sent: usize = 0;
-        while (sent < bytes.len) {
-            sent += std.posix.write(fd, bytes[sent..]) catch return error.Failed;
-        }
+        return local.write_all(fd, bytes);
     }
 
     fn poll_read(ctx: *anyopaque, fd: c_int, buffer: []u8, timeout_ms: i32) IoError!usize {
         _ = ctx;
-        var fds = [_]std.posix.pollfd{.{ .fd = fd, .events = std.posix.POLL.IN, .revents = 0 }};
-        const ready = std.posix.poll(&fds, timeout_ms) catch return error.Failed;
-        if (ready == 0) return error.Timeout;
-        return std.posix.read(fd, buffer) catch error.Failed;
+        return local.poll_read(fd, buffer, timeout_ms);
     }
 
     fn spawn_session(ctx: *anyopaque, device: []const u8) SpawnError!c_int {
