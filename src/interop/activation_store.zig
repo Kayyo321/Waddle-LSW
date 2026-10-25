@@ -288,6 +288,68 @@ fn bounded_candidate(candidate: ?[*:0]const u8) ?[]const u8 {
 }
 
 // Test-only fixtures.
+fn opaque_value(comptime value_t: type, value: value_t) value_t {
+    var copy = value;
+    std.mem.doNotOptimizeAway(&copy);
+    return copy;
+}
+
+fn opaque_bytes(bytes: []const u8) []const u8 {
+    return opaque_value([]const u8, bytes);
+}
+
+fn opaque_candidate(bytes: []const u8) ?[]const u8 {
+    return opaque_value(?[]const u8, bytes);
+}
+
+fn put_at(store: *store_t, token: []const u8, process_id: u32, now: u64) error_t!void {
+    return store.put(opaque_value([]const u8, token), opaque_value(u32, process_id), opaque_value(u64, now));
+}
+
+fn take_at(store: *store_t, process_id: u32, now: u64, out: *[MaxTokenBytes]u8) error{InvalidProcess}!?usize {
+    return store.take_for_process(opaque_value(u32, process_id), opaque_value(u64, now), out);
+}
+
+fn expire_at(store: *store_t, now: u64) usize {
+    return store.expire(opaque_value(u64, now));
+}
+
+fn absent_store() ?*store_t {
+    return opaque_value(?*store_t, null);
+}
+
+fn absent_bytes() ?[*]const u8 {
+    return opaque_value(?[*]const u8, null);
+}
+
+fn absent_out() ?*[MaxTokenBytes]u8 {
+    return opaque_value(?*[MaxTokenBytes]u8, null);
+}
+
+fn absent_length() ?*usize {
+    return opaque_value(?*usize, null);
+}
+
+fn absent_string() ?[*:0]const u8 {
+    return opaque_value(?[*:0]const u8, null);
+}
+
+fn absent_token_out() ?*[*]const u8 {
+    return opaque_value(?*[*]const u8, null);
+}
+
+fn absent_slice() ?[]const u8 {
+    return opaque_value(?[]const u8, null);
+}
+
+fn c_put(store: ?*store_t, token: ?[*]const u8, token_length: usize, process_id: u32, now: u64) c_int {
+    return interop_activation_put(opaque_value(?*store_t, store), opaque_value(?[*]const u8, token), opaque_value(usize, token_length), opaque_value(u32, process_id), opaque_value(u64, now));
+}
+
+fn c_take(store: ?*store_t, process_id: u32, now: u64, out: ?*[MaxTokenBytes]u8, length_out: ?*usize) c_int {
+    return interop_activation_take(opaque_value(?*store_t, store), opaque_value(u32, process_id), opaque_value(u64, now), opaque_value(?*[MaxTokenBytes]u8, out), opaque_value(?*usize, length_out));
+}
+
 const testing = std.testing;
 
 test "extern layouts match activation_store.h byte for byte" {
@@ -307,76 +369,76 @@ test "extern layouts match activation_store.h byte for byte" {
 }
 
 test "token rule accepts exact printable bounds and rejects everything else" {
-    try testing.expect(!token_valid(""));
-    try testing.expect(token_valid("a"));
-    try testing.expect(token_valid("!~"));
-    try testing.expect(!token_valid(" a"));
-    try testing.expect(!token_valid("a b"));
-    try testing.expect(!token_valid("\x20"));
-    try testing.expect(!token_valid("\x7f"));
-    try testing.expect(!token_valid("\x00"));
-    try testing.expect(!token_valid("\xc3\xa9"));
+    try testing.expect(!token_valid(opaque_bytes("")));
+    try testing.expect(token_valid(opaque_bytes("a")));
+    try testing.expect(token_valid(opaque_bytes("!~")));
+    try testing.expect(!token_valid(opaque_bytes(" a")));
+    try testing.expect(!token_valid(opaque_bytes("a b")));
+    try testing.expect(!token_valid(opaque_bytes("\x20")));
+    try testing.expect(!token_valid(opaque_bytes("\x7f")));
+    try testing.expect(!token_valid(opaque_bytes("\x00")));
+    try testing.expect(!token_valid(opaque_bytes("\xc3\xa9")));
     const max = [_]u8{'t'} ** MaxTokenBytes;
-    try testing.expect(token_valid(&max));
+    try testing.expect(token_valid(opaque_bytes(&max)));
     const over = [_]u8{'t'} ** (MaxTokenBytes + 1);
-    try testing.expect(!token_valid(&over));
+    try testing.expect(!token_valid(opaque_bytes(&over)));
 }
 
 test "pick_token prefers XDG then DESKTOP_STARTUP_ID and skips invalid candidates" {
-    try testing.expectEqualSlices(u8, "xdg-1", pick_token("xdg-1", "startup-1").?);
-    try testing.expectEqualSlices(u8, "startup-1", pick_token("bad token", "startup-1").?);
-    try testing.expectEqualSlices(u8, "startup-1", pick_token(null, "startup-1").?);
-    try testing.expectEqualSlices(u8, "startup-1", pick_token("", "startup-1").?);
-    try testing.expect(pick_token("bad token", "") == null);
-    try testing.expect(pick_token(null, null) == null);
+    try testing.expectEqualSlices(u8, "xdg-1", pick_token(opaque_candidate("xdg-1"), opaque_candidate("startup-1")).?);
+    try testing.expectEqualSlices(u8, "startup-1", pick_token(opaque_candidate("bad token"), opaque_candidate("startup-1")).?);
+    try testing.expectEqualSlices(u8, "startup-1", pick_token(absent_slice(), opaque_candidate("startup-1")).?);
+    try testing.expectEqualSlices(u8, "startup-1", pick_token(opaque_candidate(""), opaque_candidate("startup-1")).?);
+    try testing.expect(pick_token(opaque_candidate("bad token"), opaque_candidate("")) == null);
+    try testing.expect(pick_token(absent_slice(), absent_slice()) == null);
     const over = [_]u8{'x'} ** (MaxTokenBytes + 1);
-    try testing.expectEqualSlices(u8, "fallback", pick_token(&over, "fallback").?);
+    try testing.expectEqualSlices(u8, "fallback", pick_token(opaque_candidate(&over), opaque_candidate("fallback")).?);
 }
 
 test "put and take return a token exactly once to the matching process" {
     var store = std.mem.zeroes(store_t);
     var out: [MaxTokenBytes]u8 = undefined;
-    try store.put("token-a", 42, 1000);
-    try testing.expectEqual(@as(?usize, null), try store.take_for_process(43, 1001, &out));
+    try put_at(&store, "token-a", 42, 1000);
+    try testing.expectEqual(@as(?usize, null), try take_at(&store, 43, 1001, &out));
     try testing.expectEqual(@as(u32, 1), store.count);
-    const length = (try store.take_for_process(42, 1001, &out)).?;
+    const length = (try take_at(&store, 42, 1001, &out)).?;
     try testing.expectEqualSlices(u8, "token-a", out[0..length]);
-    try testing.expectEqual(@as(?usize, null), try store.take_for_process(42, 1002, &out));
+    try testing.expectEqual(@as(?usize, null), try take_at(&store, 42, 1002, &out));
     try testing.expectEqual(@as(u32, 0), store.count);
 }
 
 test "invalid token or process leaves the store and clock untouched" {
     var store = std.mem.zeroes(store_t);
     var out: [MaxTokenBytes]u8 = undefined;
-    try testing.expectError(error.InvalidToken, store.put("", 1, 500));
-    try testing.expectError(error.InvalidToken, store.put("bad token", 1, 500));
-    try testing.expectError(error.InvalidProcess, store.put("ok", 0, 500));
-    try testing.expectError(error.InvalidProcess, store.take_for_process(0, 400, &out));
+    try testing.expectError(error.InvalidToken, put_at(&store, "", 1, 500));
+    try testing.expectError(error.InvalidToken, put_at(&store, "bad token", 1, 500));
+    try testing.expectError(error.InvalidProcess, put_at(&store, "ok", 0, 500));
+    try testing.expectError(error.InvalidProcess, take_at(&store, 0, 400, &out));
     try testing.expectEqual(@as(u32, 0), store.clock_started);
     try testing.expectEqual(@as(u32, 0), store.count);
-    try store.put("ok", 1, 100);
+    try put_at(&store, "ok", 1, 100);
     try testing.expectEqual(@as(u64, 100), store.last_now);
 }
 
 test "entries are live strictly before inserted plus ttl and expire at the boundary" {
     var out: [MaxTokenBytes]u8 = undefined;
     var live = std.mem.zeroes(store_t);
-    try live.put("edge", 7, 5000);
-    try testing.expect((try live.take_for_process(7, 5000 + TtlMs - 1, &out)) != null);
+    try put_at(&live, "edge", 7, 5000);
+    try testing.expect((try take_at(&live, 7, 5000 + TtlMs - 1, &out)) != null);
     var expiring = std.mem.zeroes(store_t);
-    try expiring.put("edge", 7, 5000);
-    try testing.expectEqual(@as(?usize, null), try expiring.take_for_process(7, 5000 + TtlMs, &out));
+    try put_at(&expiring, "edge", 7, 5000);
+    try testing.expectEqual(@as(?usize, null), try take_at(&expiring, 7, 5000 + TtlMs, &out));
     try testing.expectEqual(@as(u32, 0), expiring.count);
     try testing.expectEqual(@as(u32, 0), expiring.rollbacks);
 }
 
 test "expire removes only stale pairs and reports the removed count" {
     var store = std.mem.zeroes(store_t);
-    try store.put("old-1", 1, 0);
-    try store.put("old-2", 2, 10);
-    try store.put("new", 3, 20_000);
-    try testing.expectEqual(@as(usize, 0), store.expire(29_999));
-    try testing.expectEqual(@as(usize, 2), store.expire(30_010));
+    try put_at(&store, "old-1", 1, 0);
+    try put_at(&store, "old-2", 2, 10);
+    try put_at(&store, "new", 3, 20_000);
+    try testing.expectEqual(@as(usize, 0), expire_at(&store, 29_999));
+    try testing.expectEqual(@as(usize, 2), expire_at(&store, 30_010));
     try testing.expectEqual(@as(u32, 1), store.count);
     store.clear();
     try testing.expectEqual(@as(u32, 0), store.count);
@@ -386,11 +448,11 @@ test "expire removes only stale pairs and reports the removed count" {
 test "duplicate token replaces the pid and refreshes the deadline" {
     var store = std.mem.zeroes(store_t);
     var out: [MaxTokenBytes]u8 = undefined;
-    try store.put("dup", 1, 0);
-    try store.put("dup", 2, 20_000);
+    try put_at(&store, "dup", 1, 0);
+    try put_at(&store, "dup", 2, 20_000);
     try testing.expectEqual(@as(u32, 1), store.count);
-    try testing.expectEqual(@as(?usize, null), try store.take_for_process(1, 20_001, &out));
-    try testing.expect((try store.take_for_process(2, 40_000, &out)) != null);
+    try testing.expectEqual(@as(?usize, null), try take_at(&store, 1, 20_001, &out));
+    try testing.expect((try take_at(&store, 2, 40_000, &out)) != null);
 }
 
 test "full store expires stale pairs before evicting and evicts the oldest" {
@@ -398,21 +460,21 @@ test "full store expires stale pairs before evicting and evicts the oldest" {
     var name_buffer: [16]u8 = undefined;
     for (0..MaxEntries) |index| {
         const name = try std.fmt.bufPrint(&name_buffer, "t{d}", .{index});
-        try store.put(name, @intCast(index + 1), 100);
+        try put_at(&store, name, @intCast(index + 1), 100);
     }
     try testing.expectEqual(@as(u32, MaxEntries), store.count);
-    try store.put("fresh-a", 99, 100);
+    try put_at(&store, "fresh-a", 99, 100);
     try testing.expectEqual(@as(u32, MaxEntries), store.count);
     var out: [MaxTokenBytes]u8 = undefined;
-    try testing.expectEqual(@as(?usize, null), try store.take_for_process(1, 100, &out));
-    try testing.expect((try store.take_for_process(2, 100, &out)) != null);
+    try testing.expectEqual(@as(?usize, null), try take_at(&store, 1, 100, &out));
+    try testing.expect((try take_at(&store, 2, 100, &out)) != null);
 
     var expired = std.mem.zeroes(store_t);
     for (0..MaxEntries) |index| {
         const name = try std.fmt.bufPrint(&name_buffer, "e{d}", .{index});
-        try expired.put(name, @intCast(index + 1), 0);
+        try put_at(&expired, name, @intCast(index + 1), 0);
     }
-    try expired.put("after", 77, 40_000);
+    try put_at(&expired, "after", 77, 40_000);
     try testing.expectEqual(@as(u32, 1), expired.count);
     try testing.expectEqual(@as(u32, 0), expired.rollbacks);
 }
@@ -420,50 +482,50 @@ test "full store expires stale pairs before evicting and evicts the oldest" {
 test "newest token wins when one process holds several live tokens" {
     var store = std.mem.zeroes(store_t);
     var out: [MaxTokenBytes]u8 = undefined;
-    try store.put("first", 5, 0);
-    try store.put("second", 5, 1);
-    const length = (try store.take_for_process(5, 2, &out)).?;
+    try put_at(&store, "first", 5, 0);
+    try put_at(&store, "second", 5, 1);
+    const length = (try take_at(&store, 5, 2, &out)).?;
     try testing.expectEqualSlices(u8, "second", out[0..length]);
-    const next = (try store.take_for_process(5, 3, &out)).?;
+    const next = (try take_at(&store, 5, 3, &out)).?;
     try testing.expectEqualSlices(u8, "first", out[0..next]);
 }
 
 test "clock rollback clears every pair and never returns an earlier token" {
     var store = std.mem.zeroes(store_t);
     var out: [MaxTokenBytes]u8 = undefined;
-    try store.put("before", 9, 1000);
-    try testing.expectEqual(@as(?usize, null), try store.take_for_process(9, 500, &out));
+    try put_at(&store, "before", 9, 1000);
+    try testing.expectEqual(@as(?usize, null), try take_at(&store, 9, 500, &out));
     try testing.expectEqual(@as(u32, 1), store.rollbacks);
     try testing.expectEqual(@as(u32, 0), store.count);
-    try store.put("after", 9, 600);
-    try testing.expectEqual(@as(usize, 0), store.expire(601));
+    try put_at(&store, "after", 9, 600);
+    try testing.expectEqual(@as(usize, 0), expire_at(&store, 601));
     try testing.expectEqual(@as(u32, 1), store.count);
-    try testing.expectEqual(@as(usize, 1), store.expire(600 + TtlMs));
-    try store.put("again", 9, 30_700);
+    try testing.expectEqual(@as(usize, 1), expire_at(&store, 600 + TtlMs));
+    try put_at(&store, "again", 9, 30_700);
     try testing.expectEqual(@as(u32, 1), store.count);
-    try testing.expectEqual(@as(usize, 1), store.expire(30_700 + TtlMs));
+    try testing.expectEqual(@as(usize, 1), expire_at(&store, 30_700 + TtlMs));
     try testing.expectEqual(@as(u32, 1), store.rollbacks);
 }
 
 test "rollback during put clears old pairs and still inserts the new token" {
     var store = std.mem.zeroes(store_t);
     var out: [MaxTokenBytes]u8 = undefined;
-    try store.put("old", 1, 9000);
-    try store.put("new", 2, 3000);
+    try put_at(&store, "old", 1, 9000);
+    try put_at(&store, "new", 2, 3000);
     try testing.expectEqual(@as(u32, 1), store.rollbacks);
     try testing.expectEqual(@as(u32, 1), store.count);
-    try testing.expectEqual(@as(?usize, null), try store.take_for_process(1, 3001, &out));
-    try testing.expect((try store.take_for_process(2, 3001, &out)) != null);
+    try testing.expectEqual(@as(?usize, null), try take_at(&store, 1, 3001, &out));
+    try testing.expect((try take_at(&store, 2, 3001, &out)) != null);
 }
 
 test "clock may move forward by any amount without rollback" {
     var store = std.mem.zeroes(store_t);
-    try store.put("far", 3, 0);
-    try testing.expectEqual(@as(usize, 1), store.expire(std.math.maxInt(u64)));
+    try put_at(&store, "far", 3, 0);
+    try testing.expectEqual(@as(usize, 1), expire_at(&store, std.math.maxInt(u64)));
     try testing.expectEqual(@as(u32, 0), store.rollbacks);
-    try store.put("saturated", 4, std.math.maxInt(u64) - 5);
+    try put_at(&store, "saturated", 4, std.math.maxInt(u64) - 5);
     var out: [MaxTokenBytes]u8 = undefined;
-    try testing.expect((try store.take_for_process(4, std.math.maxInt(u64) - 1, &out)) != null);
+    try testing.expect((try take_at(&store, 4, std.math.maxInt(u64) - 1, &out)) != null);
 }
 
 test "seeded operation streams match a reference model step by step" {
@@ -510,7 +572,7 @@ test "seeded operation streams match a reference model step by step" {
                 const index = random.uintLessThan(u32, 40);
                 const token = try std.fmt.bufPrint(&name_buffer, "s{d}", .{index});
                 const pid: u32 = 1 + random.uintLessThan(u32, 5);
-                try store.put(token, pid, now);
+                try put_at(&store, token, pid, now);
                 var found: ?*Record = null;
                 var live_count: usize = 0;
                 for (&records) |*record| {
@@ -550,7 +612,7 @@ test "seeded operation streams match a reference model step by step" {
                 for (&records) |*record| {
                     if (record.live and record.process_id == pid and (best == null or record.order > best.?.order)) best = record;
                 }
-                const actual = try store.take_for_process(pid, now, &out);
+                const actual = try take_at(&store, pid, now, &out);
                 if (best) |chosen| {
                     @memcpy(model_out[0..chosen.token_length], chosen.token[0..chosen.token_length]);
                     try testing.expectEqual(@as(?usize, chosen.token_length), actual);
@@ -561,7 +623,7 @@ test "seeded operation streams match a reference model step by step" {
                 }
             },
             else => {
-                try testing.expectEqual(expired_now, store.expire(now));
+                try testing.expectEqual(expired_now, expire_at(&store, now));
             },
         }
         var live_total: usize = 0;
@@ -574,28 +636,28 @@ test "seeded operation streams match a reference model step by step" {
 
 test "C ABI put take expire and clear map every status" {
     var store: store_t = undefined;
-    try testing.expectEqual(@as(c_int, 0), interop_activation_store_init(&store));
-    try testing.expectEqual(@as(c_int, 1), interop_activation_store_init(null));
-    try testing.expectEqual(@as(c_int, 1), interop_activation_put(null, "x", 1, 1, 0));
-    try testing.expectEqual(@as(c_int, 1), interop_activation_put(&store, null, 1, 1, 0));
-    try testing.expectEqual(@as(c_int, 2), interop_activation_put(&store, "", 0, 1, 0));
-    try testing.expectEqual(@as(c_int, 3), interop_activation_put(&store, "x", 1, 0, 0));
-    try testing.expectEqual(@as(c_int, 0), interop_activation_put(&store, "abc", 3, 11, 100));
+    try testing.expectEqual(@as(c_int, 0), interop_activation_store_init(opaque_value(?*store_t, &store)));
+    try testing.expectEqual(@as(c_int, 1), interop_activation_store_init(absent_store()));
+    try testing.expectEqual(@as(c_int, 1), c_put(absent_store(), "x", 1, 1, 0));
+    try testing.expectEqual(@as(c_int, 1), c_put(&store, absent_bytes(), 1, 1, 0));
+    try testing.expectEqual(@as(c_int, 2), c_put(&store, "", 0, 1, 0));
+    try testing.expectEqual(@as(c_int, 3), c_put(&store, "x", 1, 0, 0));
+    try testing.expectEqual(@as(c_int, 0), c_put(&store, "abc", 3, 11, 100));
     var out: [MaxTokenBytes]u8 = undefined;
     var length: usize = 0;
-    try testing.expectEqual(@as(c_int, 1), interop_activation_take(null, 11, 101, &out, &length));
-    try testing.expectEqual(@as(c_int, 1), interop_activation_take(&store, 11, 101, null, &length));
-    try testing.expectEqual(@as(c_int, 1), interop_activation_take(&store, 11, 101, &out, null));
-    try testing.expectEqual(@as(c_int, 3), interop_activation_take(&store, 0, 101, &out, &length));
-    try testing.expectEqual(@as(c_int, 2), interop_activation_take(&store, 12, 101, &out, &length));
-    try testing.expectEqual(@as(c_int, 0), interop_activation_take(&store, 11, 101, &out, &length));
+    try testing.expectEqual(@as(c_int, 1), c_take(absent_store(), 11, 101, &out, &length));
+    try testing.expectEqual(@as(c_int, 1), c_take(&store, 11, 101, absent_out(), &length));
+    try testing.expectEqual(@as(c_int, 1), c_take(&store, 11, 101, &out, absent_length()));
+    try testing.expectEqual(@as(c_int, 3), c_take(&store, 0, 101, &out, &length));
+    try testing.expectEqual(@as(c_int, 2), c_take(&store, 12, 101, &out, &length));
+    try testing.expectEqual(@as(c_int, 0), c_take(&store, 11, 101, &out, &length));
     try testing.expectEqualSlices(u8, "abc", out[0..length]);
-    try testing.expectEqual(@as(usize, 0), interop_activation_expire(null, 1));
-    try testing.expectEqual(@as(c_int, 0), interop_activation_put(&store, "gone", 4, 5, 200));
-    try testing.expectEqual(@as(usize, 1), interop_activation_expire(&store, 200 + TtlMs));
-    try testing.expectEqual(@as(c_int, 0), interop_activation_put(&store, "clr", 3, 6, 30_300));
-    interop_activation_clear(null);
-    interop_activation_clear(&store);
+    try testing.expectEqual(@as(usize, 0), interop_activation_expire(absent_store(), 1));
+    try testing.expectEqual(@as(c_int, 0), c_put(&store, "gone", 4, 5, 200));
+    try testing.expectEqual(@as(usize, 1), interop_activation_expire(opaque_value(?*store_t, &store), opaque_value(u64, 200 + TtlMs)));
+    try testing.expectEqual(@as(c_int, 0), c_put(&store, "clr", 3, 6, 30_300));
+    interop_activation_clear(absent_store());
+    interop_activation_clear(opaque_value(?*store_t, &store));
     try testing.expectEqual(@as(u32, 0), store.count);
 }
 
@@ -606,13 +668,25 @@ test "C ABI pick reports found, none and invalid output arguments" {
     try testing.expectEqualSlices(u8, "xdg-1", pointer[0..length]);
     try testing.expectEqual(@as(c_int, 0), interop_activation_pick_token("bad tok", "startup", &pointer, &length));
     try testing.expectEqualSlices(u8, "startup", pointer[0..length]);
-    try testing.expectEqual(@as(c_int, 0), interop_activation_pick_token(null, "s2", &pointer, &length));
-    try testing.expectEqual(@as(c_int, 1), interop_activation_pick_token(null, null, &pointer, &length));
+    try testing.expectEqual(@as(c_int, 0), interop_activation_pick_token(absent_string(), "s2", &pointer, &length));
+    try testing.expectEqualSlices(u8, "s2", pointer[0..length]);
+    try testing.expectEqual(@as(c_int, 1), interop_activation_pick_token(absent_string(), absent_string(), &pointer, &length));
     try testing.expectEqual(@as(c_int, 1), interop_activation_pick_token("", "bad tok", &pointer, &length));
-    try testing.expectEqual(@as(c_int, 2), interop_activation_pick_token("x", "y", null, &length));
-    try testing.expectEqual(@as(c_int, 2), interop_activation_pick_token("x", "y", &pointer, null));
+    try testing.expectEqual(@as(c_int, 2), interop_activation_pick_token("x", "y", absent_token_out(), &length));
+    try testing.expectEqual(@as(c_int, 2), interop_activation_pick_token("x", "y", &pointer, absent_length()));
     var long: [MaxTokenBytes + 1:0]u8 = [_:0]u8{0} ** (MaxTokenBytes + 1);
     @memset(long[0 .. MaxTokenBytes + 1], 'q');
-    try testing.expectEqual(@as(c_int, 1), interop_activation_pick_token(&long, null, &pointer, &length));
-    try testing.expectEqual(@as(c_int, 1), interop_activation_pick_token(null, &long, &pointer, &length));
+    try testing.expectEqual(@as(c_int, 1), interop_activation_pick_token(&long, absent_string(), &pointer, &length));
+    try testing.expectEqual(@as(c_int, 0), interop_activation_pick_token(&long, "ok", &pointer, &length));
+    try testing.expectEqual(@as(usize, 2), length);
+}
+
+test "oldest scans past free slots and prefers the smallest sequence" {
+    var store = std.mem.zeroes(store_t);
+    try put_at(&store, "x", 1, 0);
+    try put_at(&store, "y", 2, 0);
+    var out: [MaxTokenBytes]u8 = undefined;
+    _ = try take_at(&store, 1, 0, &out);
+    try put_at(&store, "z", 3, 0);
+    try testing.expectEqual(@as(usize, 1), store.oldest());
 }
