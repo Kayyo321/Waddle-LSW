@@ -43,8 +43,11 @@ InteropLaneCoverage += interop-host-window-map-coverage
 # the av.mk generated files.
 InteropWaylandWindowsFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer -Iinclude -Isrc/interop -Ibuild
 InteropWaylandWindowsObjects = build/host_window_map.o build/host_popup_positioner.o build/interop_codec.o
-build/host_wayland_windows_test: tests/interop/host_wayland_windows_test.c src/interop/host_wayland_windows.c src/interop/host_wayland_windows.h $(InteropWaylandWindowsObjects) | build
-	$(CC) $(InteropWaylandWindowsFlags) $(shell pkg-config --cflags wayland-client) tests/interop/host_wayland_windows_test.c $(InteropWaylandWindowsObjects) -fsanitize=address,leak,undefined $(shell pkg-config --libs wayland-client) -o $@
+InteropWaylandWindowsProtocol = build/xdg_shell_protocol.c build/xdg_decoration_protocol.c
+InteropWaylandWindowsProtocolHeaders = build/xdg_shell_client.h build/xdg_decoration_client.h
+InteropWaylandWindowsWraps = -Wl,--wrap=wl_proxy_marshal_flags,--wrap=wl_proxy_add_listener,--wrap=wl_proxy_destroy,--wrap=wl_proxy_get_version
+build/host_wayland_windows_test: tests/interop/host_wayland_windows_test.c tests/interop/host_wayland_windows_fake.h src/interop/host_wayland_windows.c src/interop/host_wayland_windows.h $(InteropWaylandWindowsObjects) $(InteropWaylandWindowsProtocolHeaders) $(InteropWaylandWindowsProtocol) | build
+	$(CC) $(InteropWaylandWindowsFlags) $(shell pkg-config --cflags wayland-client) tests/interop/host_wayland_windows_test.c $(InteropWaylandWindowsProtocol) $(InteropWaylandWindowsObjects) -fsanitize=address,leak,undefined $(shell pkg-config --libs wayland-client) $(InteropWaylandWindowsWraps) -o $@
 .PHONY: interop-host-wayland-windows-test
 interop-host-wayland-windows-test: build/host_wayland_windows_test
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/host_wayland_windows_test
