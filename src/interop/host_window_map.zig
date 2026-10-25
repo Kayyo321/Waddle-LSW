@@ -412,6 +412,151 @@ fn compact_realized(map: *host_window_map_t, remove: []const bool) void {
     map.realized_count = @intCast(write);
 }
 
+// ---- C ABI ------------------------------------------------------------------------------------
+
+/// Half-open address range used to reject aliased C arguments before any write.
+const Region = struct {
+    start: usize,
+    len: usize,
+};
+
+fn region_of_value(value: anytype) Region {
+    return .{ .start = @intFromPtr(value), .len = @sizeOf(std.meta.Child(@TypeOf(value))) };
+}
+
+fn region_of_slice(slice: anytype) Region {
+    return .{ .start = @intFromPtr(slice.ptr), .len = slice.len * @sizeOf(std.meta.Child(@TypeOf(slice))) };
+}
+
+/// Whether no two regions overlap. Saturating ends never wrap, so a region near the top of the
+/// address space is still compared correctly.
+fn regions_disjoint(regions: []const Region) bool {
+    for (regions, 0..) |left, index| {
+        for (regions[index + 1 ..]) |right| {
+            if (left.start < right.start +| right.len and right.start < left.start +| left.len) return false;
+        }
+    }
+    return true;
+}
+
+/// C ABI: clear the table. A NULL `map` is ignored.
+///
+/// @param map Table to clear; NULL is a no-op. In, out.
+/// @thread_safety Owner thread only.
+export fn host_window_map_reset(map: ?*host_window_map_t) callconv(.C) void {
+    reset(map orelse return);
+}
+
+/// C ABI: announce one window. See `announce` for the status rules and output order.
+///
+/// @param map Table; NULL gives RefuseInvalid. In, out.
+/// @param window Identity by value; both fields nonzero.
+/// @param parent Parent identity by value; both fields zero for none.
+/// @param role Raw `interop_window_role_t` value 1..6.
+/// @param out Output array of at least `out_capacity` entries; NULL gives RefuseInvalid. Written
+///            only on Realize. Must not overlap `map` or `out_count`. Out.
+/// @param out_capacity Entries available in `out`; below 64 gives RefuseInvalid. In.
+/// @param out_count Receives the output count. NULL gives RefuseInvalid. Not written for an
+///                  argument refusal (NULL or overlap). Must not overlap `map` or `out`. Out.
+/// @return Announce status. Never writes memory on RefuseInvalid from argument validation.
+/// @thread_safety Owner thread only; no internal synchronization.
+export fn host_window_map_announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) callconv(.C) announce_status_t {
+    const count_ptr = out_count orelse return .RefuseInvalid;
+    const target = map orelse return .RefuseInvalid;
+    const out_base = out orelse return .RefuseInvalid;
+    if (out_capacity < MaxOutput) return .RefuseInvalid;
+    const out_slice = out_base[0..out_capacity];
+    if (!regions_disjoint(&.{ region_of_value(target), region_of_slice(out_slice), region_of_value(count_ptr) })) return .RefuseInvalid;
+    const result = announce(target, window, parent, role, out_slice);
+    count_ptr.* = result.count;
+    return result.status;
+}
+
+/// C ABI: remove a realized subtree. See `retire` for the output order and discard rules.
+///
+/// @param map Table; NULL gives RefuseInvalid. In, out.
+/// @param window Identity by value; both fields nonzero.
+/// @param retired_out Output array of at least `retired_capacity` entries; NULL gives RefuseInvalid.
+///                    Must not overlap any other argument region. Out.
+/// @param retired_capacity Entries available in `retired_out`; below 64 gives RefuseInvalid. In.
+/// @param retired_count Receives the retired count; NULL gives RefuseInvalid. Out.
+/// @param discarded_out Output array of at least `discarded_capacity` entries; NULL gives RefuseInvalid.
+///                      Must not overlap any other argument region. Out.
+/// @param discarded_capacity Entries available in `discarded_out`; below 64 gives RefuseInvalid. In.
+/// @param discarded_count Receives the discarded count; NULL gives RefuseInvalid. Out.
+/// @return Retire status. Argument refusals write no memory.
+/// @thread_safety Owner thread only; no internal synchronization.
+export fn host_window_map_retire(map: ?*host_window_map_t, window: window_ref_t, retired_out: ?[*]window_ref_t, retired_capacity: u32, retired_count: ?*u32, discarded_out: ?[*]window_ref_t, discarded_capacity: u32, discarded_count: ?*u32) callconv(.C) retire_status_t {
+    const retired_count_ptr = retired_count orelse return .RefuseInvalid;
+    const discarded_count_ptr = discarded_count orelse return .RefuseInvalid;
+    const target = map orelse return .RefuseInvalid;
+    const retired_base = retired_out orelse return .RefuseInvalid;
+    const discarded_base = discarded_out orelse return .RefuseInvalid;
+    if (retired_capacity < MaxOutput or discarded_capacity < MaxOutput) return .RefuseInvalid;
+    const retired_slice = retired_base[0..retired_capacity];
+    const discarded_slice = discarded_base[0..discarded_capacity];
+    if (!regions_disjoint(&.{
+        region_of_value(target),
+        region_of_slice(retired_slice),
+        region_of_slice(discarded_slice),
+        region_of_value(retired_count_ptr),
+        region_of_value(discarded_count_ptr),
+    })) return .RefuseInvalid;
+    const result = retire(target, window, retired_slice, discarded_slice);
+    retired_count_ptr.* = result.retired_count;
+    discarded_count_ptr.* = result.discarded_count;
+    return result.status;
+}
+
+/// C ABI: exact-identity lookup of a realized entry.
+///
+/// @param map Table, read only; NULL gives false. In.
+/// @param window Identity by value. In.
+/// @param out Receives a copy of the entry when found; NULL is a presence test. Out.
+/// @return True when `window` is realized under its generation.
+/// @thread_safety Owner thread only.
+export fn host_window_map_lookup(map: ?*const host_window_map_t, window: window_ref_t, out: ?*window_entry_t) callconv(.C) bool {
+    const target = map orelse return false;
+    const entry = lookup(target, window) orelse return false;
+    if (out) |destination| destination.* = entry;
+    return true;
+}
+
+/// C ABI: whether the exact identity is realized.
+///
+/// @param map Table, read only; NULL gives false. In.
+/// @param window Identity by value. In.
+/// @return True exactly when `host_window_map_lookup` would succeed.
+/// @thread_safety Owner thread only.
+export fn host_window_map_is_current(map: ?*const host_window_map_t, window: window_ref_t) callconv(.C) bool {
+    const target = map orelse return false;
+    return is_current(target, window);
+}
+
+/// C ABI: number of realized windows; NULL gives 0.
+///
+/// @param map Table, read only. In.
+/// @return Realized count, at most 64.
+/// @thread_safety Owner thread only.
+export fn host_window_map_realized_count(map: ?*const host_window_map_t) callconv(.C) u32 {
+    return if (map) |target| realized_count(target) else 0;
+}
+
+/// C ABI: number of deferred children; NULL gives 0.
+///
+/// @param map Table, read only. In.
+/// @return Deferred count, at most 64.
+/// @thread_safety Owner thread only.
+export fn host_window_map_deferred_count(map: ?*const host_window_map_t) callconv(.C) u32 {
+    return if (map) |target| deferred_count(target) else 0;
+}
+
+comptime {
+    // Layout frozen by src/interop/host_window_map.h (and checked there by _Static_assert).
+    if (@sizeOf(window_ref_t) != 16 or @sizeOf(window_entry_t) != 56 or @sizeOf(deferred_entry_t) != 40) @compileError("host window map entry layout changed");
+    if (@sizeOf(host_window_map_t) != 6152) @compileError("host window map table layout changed");
+}
+
 // Test-only fixtures.
 const testing = std.testing;
 
@@ -999,4 +1144,131 @@ test "randomized sequences agree with the reference model over small and large u
     try run_random_sequence(3, 40, 4000);
     try run_random_sequence(4, 120, 6000);
     try run_random_sequence(0x9E3779B97F4A7C15, 200, 6000);
+}
+
+/// The C ABI exports are called through `never_inline` shims so that the optimized wrapper bodies
+/// keep their own branches. A directly inlined call with constant NULL arguments would fold them away.
+const abi = struct {
+    fn reset(map: ?*host_window_map_t) void {
+        @call(.never_inline, host_window_map_reset, .{map});
+    }
+
+    fn announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) announce_status_t {
+        return @call(.never_inline, host_window_map_announce, .{ map, window, parent, role, out, out_capacity, out_count });
+    }
+
+    fn retire(map: ?*host_window_map_t, window: window_ref_t, retired_out: ?[*]window_ref_t, retired_capacity: u32, retired_count: ?*u32, discarded_out: ?[*]window_ref_t, discarded_capacity: u32, discarded_count: ?*u32) retire_status_t {
+        return @call(.never_inline, host_window_map_retire, .{ map, window, retired_out, retired_capacity, retired_count, discarded_out, discarded_capacity, discarded_count });
+    }
+
+    fn lookup(map: ?*const host_window_map_t, window: window_ref_t, out: ?*window_entry_t) bool {
+        return @call(.never_inline, host_window_map_lookup, .{ map, window, out });
+    }
+
+    fn is_current(map: ?*const host_window_map_t, window: window_ref_t) bool {
+        return @call(.never_inline, host_window_map_is_current, .{ map, window });
+    }
+
+    fn realized(map: ?*const host_window_map_t) u32 {
+        return @call(.never_inline, host_window_map_realized_count, .{map});
+    }
+
+    fn deferred(map: ?*const host_window_map_t) u32 {
+        return @call(.never_inline, host_window_map_deferred_count, .{map});
+    }
+};
+
+test "C ABI counts and lookup accept NULL and report the table" {
+    try testing.expectEqual(@as(u32, 0), abi.realized(null));
+    try testing.expectEqual(@as(u32, 0), abi.deferred(null));
+    try testing.expect(!abi.is_current(null, ref(1, 1)));
+    try testing.expect(!abi.lookup(null, ref(1, 1), null));
+
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
+    abi.reset(null);
+    try testing.expectEqual(@as(u32, 1), abi.realized(&map));
+    abi.reset(&map);
+    try testing.expectEqual(@as(u32, 0), abi.realized(&map));
+    try testing.expect(!abi.is_current(&map, ref(1, 1)));
+}
+
+test "C ABI announce and retire write outputs and counts on success" {
+    var map = new_map();
+    var out = new_out();
+    var retired = new_out();
+    var discarded = new_out();
+    var count: u32 = 99;
+    try testing.expectEqual(announce_status_t.Realize, abi.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, &count));
+    try testing.expectEqual(@as(u32, 1), count);
+    try expect_ref(ref(1, 1), out[0]);
+    try testing.expectEqual(announce_status_t.Defer, abi.announce(&map, ref(2, 1), ref(9, 1), RoleDialog, &out, MaxOutput, &count));
+    try testing.expectEqual(@as(u32, 0), count);
+    try testing.expectEqual(announce_status_t.Realize, abi.announce(&map, ref(9, 1), none(), RoleToplevel, &out, MaxOutput, &count));
+    try testing.expectEqual(@as(u32, 2), count);
+    try expect_ref(ref(2, 1), out[1]);
+
+    var retired_count: u32 = 99;
+    var discarded_count: u32 = 99;
+    try testing.expectEqual(retire_status_t.Retired, abi.retire(&map, ref(9, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(@as(u32, 2), retired_count);
+    try testing.expectEqual(@as(u32, 0), discarded_count);
+    try expect_ref(ref(2, 1), retired[0]);
+    try expect_ref(ref(9, 1), retired[1]);
+    try testing.expectEqual(@as(u32, 1), abi.realized(&map));
+}
+
+test "C ABI rejects NULL, short and aliased arguments without writing" {
+    var map = new_map();
+    var out = new_out();
+    var count: u32 = 77;
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(null, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, &count));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, null, MaxOutput, &count));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, null));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput - 1, &count));
+    try testing.expectEqual(@as(u32, 77), count);
+
+    // An output array that aliases the table, or a count that points into it, is refused untouched.
+    const alias: [*]window_ref_t = @ptrCast(&map);
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, alias, MaxOutput, &count));
+    const inside: *u32 = &map.realized_count;
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, inside));
+    try testing.expectEqual(@as(u32, 0), map.realized_count);
+    try testing.expectEqual(@as(u32, 0), map.deferred_count);
+
+    var retired = new_out();
+    var discarded = new_out();
+    var retired_count: u32 = 5;
+    var discarded_count: u32 = 5;
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(null, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), null, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, null, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, null, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, null));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput - 1, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput - 1, &discarded_count));
+    try testing.expectEqual(@as(u32, 5), retired_count);
+    try testing.expectEqual(@as(u32, 5), discarded_count);
+    // Retired and discarded output lists may not share storage with each other either.
+    const shared: [*]window_ref_t = &retired;
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, shared, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.Stale, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(@as(u32, 0), retired_count);
+}
+
+test "C ABI lookup returns a copy and a presence test needs no output" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu, &out);
+    var entry: window_entry_t = undefined;
+    try testing.expect(abi.lookup(&map, ref(2, 1), &entry));
+    try expect_ref(ref(1, 1), entry.root);
+    try testing.expect(abi.lookup(&map, ref(1, 1), null));
+    try testing.expect(!abi.lookup(&map, ref(1, 2), &entry));
+    try testing.expect(abi.is_current(&map, ref(2, 1)));
+    try testing.expect(!abi.is_current(&map, ref(3, 1)));
+    try testing.expectEqual(@as(u32, 2), abi.realized(&map));
+    try testing.expectEqual(@as(u32, 0), abi.deferred(&map));
 }
