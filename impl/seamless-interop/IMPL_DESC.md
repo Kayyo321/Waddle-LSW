@@ -3663,3 +3663,13 @@ only after synchronous users stop; it establishes no detach or epoch proof.
 The exact source/fixture qualification is windows_socket_owner_evidence_2026_10_25.
 The native loopback fixture is executed by Windows CI separately from Linux
 double/sanitizer coverage. Guest listener/mapping/agent lifecycle is separate.
+
+### 8.33 Installed foreign-window observer fixture (2026-10-25)
+
+installed_observer_acceptance_contract.md specifies exact native fixture
+process/event/GUI ownership, bounded observation, event-order checks and cleanup.
+The fixture admits real windows of its exact child into the real graph through
+the unmodified native observer; it verifies title, hide, retirement and new
+generation behavior. It creates no capture or pin users, so completion of its
+local empty-resource retirements cannot imply production detach. Both Windows
+SDK toolchains compile it; actual Windows execution is a separate gate.

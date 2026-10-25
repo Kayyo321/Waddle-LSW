@@ -1289,10 +1289,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     Exact VM/TPM/probe cleanup receipts retained. All three workflows at1efa382
     are green; no native acceptance or readiness credit.
 
-- **Commit `HEAD`**: `feat(interop): own bounded WinSock control transport and close quarantine`
+- **Commit `6083a9f`**: `feat(interop): own bounded WinSock control transport and close quarantine`
   - **Task Impact**: +0% to TODO #6; guest listener/mapping loop remains open.
   - **Summary**: Reviewed connected Windows byte owner preserves partial I/O,
     bounded work, owner thread/cookies, mapping gate and exact native close
     ownership. Root normal build,96.45% lines/90.22% taken arcs and leak-enabled
     ASan/LSan/UBSan pass. Native SDK build/link pass; Windows CI loopback run is
     now wired separately. No VSOCK/installed-session or guest runtime credit.
+
+- **Commit `HEAD`**: `test(interop): exercise real foreign window graph lifecycle on Windows`
+  - **Task Impact**: +0% to TODO #10/#34; actual Windows execution pending.
+  - **Summary**: Add an exact child-process/real observer/real graph native
+    fixture for parent-before-dialog admission, foreign title update, hide
+    quarantine, stale-action blocking and larger-generation readmission. Never
+    creates capture/pins or invents external release proof. Zig SDK link and
+    MinGW strict compile pass; Windows CI executes it. New isolated guest now
+    reaches desktop and stops cleanly; guest-exec is still unreachable.

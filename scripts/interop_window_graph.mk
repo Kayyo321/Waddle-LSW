@@ -165,7 +165,7 @@ window-graph-coverage: $(WgBuild)/window_graph_abi.o | $(WgBuild) $(WgCovDir)
 	python3 tests/interop/window_observer_coverage.py $(WgBuild)/window_graph_abi.o
 
 # Cross-compile and link checks only. Nothing here is executed (no Windows runtime is available).
-window-graph-windows: $(WgBuild)/window_graph_c_test.exe $(WgBuild)/window_observer_test.exe $(WgBuild)/window_observer_native_test.exe $(WgBuild)/window_observer_native_failures_test.exe $(WgBuild)/window_graph_unit_test.exe $(WgBuild)/window_graph_abi_unit_test.exe $(WgBuild)/observer_native_zig.o $(WgBuild)/observer_native_mingw.o
+window-graph-windows: $(WgBuild)/window_observer_installed_test.exe $(WgBuild)/window_graph_c_test.exe $(WgBuild)/window_observer_test.exe $(WgBuild)/window_observer_native_test.exe $(WgBuild)/window_observer_native_failures_test.exe $(WgBuild)/window_graph_unit_test.exe $(WgBuild)/window_graph_abi_unit_test.exe $(WgBuild)/observer_native_zig.o $(WgBuild)/observer_native_mingw.o
 	@echo "window-graph-windows: cross-compiled and linked only; the Windows binaries were NOT executed."
 
 # Execute the exact ReleaseSafe Zig suites in Windows CI, including all graph regressions.
@@ -189,6 +189,10 @@ $(WgBuild)/window_observer_test.exe: $(wildcard $(WgObsSrc) $(WgObsHdr) $(WgTest
 # Real native adapter smoke, executed by the separate Windows CI job only.
 $(WgBuild)/window_observer_native_test.exe: tests/interop/window_observer_native_windows.c $(wildcard $(WgObsSrc) $(WgObsHdr)) $(WgBuild)/window_graph_abi_windows.lib | $(WgBuild)
 	$(WgWinZigCC) $(WgCFlags) $(WgWinDefs) -Isrc/interop -Iinclude $< $(WgBuild)/window_graph_abi_windows.lib $(WgWinLibs) -o $@
+
+# Real foreign-process graph lifecycle; no capture/pin resources are created.
+$(WgBuild)/window_observer_installed_test.exe: tests/interop/window_observer_installed_windows.c $(WgObsSrc) $(WgObsHdr) $(WgHdrApi) $(WgBuild)/window_graph_abi_windows.lib | $(WgBuild)
+	$(WgWinZigCC) $(WgCFlags) $(WgWinDefs) -Isrc/interop -Iinclude $< $(WgObsSrc) $(WgBuild)/window_graph_abi_windows.lib $(WgWinLibs) -municode -o $@
 
 # Deterministic synthetic native fault fixture, separate from the real adapter smoke.
 $(WgBuild)/window_observer_native_failures_test.exe: tests/interop/window_observer_native_failures_windows.c $(wildcard $(WgObsSrc) $(WgObsHdr)) $(WgBuild)/window_graph_abi_windows.lib | $(WgBuild)
