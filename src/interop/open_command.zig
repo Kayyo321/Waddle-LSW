@@ -432,6 +432,10 @@ fn connect_session(hooks: *const Hooks, device: *const Device, conn: *Conn) ?u8 
                 hooks.message(hooks.ctx, "waddle open: could not connect to the session socket");
                 return 125;
             },
+            error.PeerMismatch => {
+                hooks.message(hooks.ctx, "waddle open: the session socket belongs to another user; refusing to connect");
+                return 125;
+            },
         }
         if (conn.child != 0) {
             switch (hooks.poll_child(hooks.ctx, conn.child)) {
@@ -1413,21 +1417,22 @@ fn write_script(dir: std.fs.Dir, name: []const u8, body: []const u8) !void {
 }
 
 test "production dir_state accepts only a private directory owned by this user" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.makeDir("private");
-    try tmp.dir.makeDir("public");
-    try tmp.dir.writeFile(.{ .sub_path = "plain", .data = "x" });
-    const private = try tmp_path(testing.allocator, &tmp, "private");
+    const base = try local.scratch_root(testing.allocator);
+    defer testing.allocator.free(base);
+    defer std.fs.deleteTreeAbsolute(base) catch {};
+    const private = try std.fmt.allocPrint(testing.allocator, "{s}/private", .{base});
     defer testing.allocator.free(private);
-    const public = try tmp_path(testing.allocator, &tmp, "public");
+    const public = try std.fmt.allocPrint(testing.allocator, "{s}/public", .{base});
     defer testing.allocator.free(public);
-    const plain = try tmp_path(testing.allocator, &tmp, "plain");
+    const plain = try std.fmt.allocPrint(testing.allocator, "{s}/plain", .{base});
     defer testing.allocator.free(plain);
-    const missing = try tmp_path(testing.allocator, &tmp, "missing");
+    const missing = try std.fmt.allocPrint(testing.allocator, "{s}/missing", .{base});
     defer testing.allocator.free(missing);
+    try std.fs.makeDirAbsolute(private);
+    try std.fs.makeDirAbsolute(public);
     try std.posix.fchmodat(std.posix.AT.FDCWD, private, 0o700, 0);
     try std.posix.fchmodat(std.posix.AT.FDCWD, public, 0o755, 0);
+    (try std.fs.createFileAbsolute(plain, .{})).close();
     var real = RealHooks.init(null, null);
     try testing.expectEqual(DirState.ok, RealHooks.dir_state(&real, private));
     try testing.expectEqual(DirState.unsafe, RealHooks.dir_state(&real, public));

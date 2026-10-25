@@ -50,7 +50,7 @@ pub const SessionLockName = "session.lock";
 /// State of the device runtime directory before connecting.
 pub const DirState = enum { missing, ok, unsafe };
 /// Failure to connect to session.sock.
-pub const ConnectError = error{ NotFound, Refused, Failed };
+pub const ConnectError = error{ NotFound, Refused, Failed, PeerMismatch };
 /// Failure of a socket read or write.
 pub const IoError = error{ Failed, Timeout };
 /// State of the session lock as observed by a non-acquiring probe.
@@ -95,7 +95,28 @@ pub fn dir_state(dir: []const u8) DirState {
     };
     const is_dir = (st.mode & std.posix.S.IFMT) == std.posix.S.IFDIR;
     if (!is_dir or st.uid != std.os.linux.getuid() or (st.mode & 0o777) != 0o700) return .unsafe;
+    if (!ancestors_safe(dir)) return .unsafe;
     return .ok;
+}
+
+/// Every existing ancestor of dir must be a real directory (no symbolic links), owned by root or
+/// this user, and not writable by others unless it is sticky (like /tmp). A missing ancestor ends
+/// the walk: nothing below it can exist.
+fn ancestors_safe(dir: []const u8) bool {
+    const uid = std.os.linux.getuid();
+    var parent = std.fs.path.dirname(dir);
+    while (parent) |ancestor| : (parent = std.fs.path.dirname(ancestor)) {
+        if (ancestor.len == 0 or std.mem.eql(u8, ancestor, "/")) break;
+        const st = std.posix.fstatat(std.posix.AT.FDCWD, ancestor, std.posix.AT.SYMLINK_NOFOLLOW) catch |err| switch (err) {
+            error.FileNotFound => return true,
+            else => return false,
+        };
+        if ((st.mode & std.posix.S.IFMT) != std.posix.S.IFDIR) return false;
+        if (st.uid != 0 and st.uid != uid) return false;
+        const sticky = (st.mode & 0o1000) != 0;
+        if ((st.mode & 0o022) != 0 and !sticky) return false;
+    }
+    return true;
 }
 
 /// Connect to a session.sock path. The connected peer's credentials must name this process's
@@ -115,7 +136,7 @@ pub fn connect(path: []const u8) ConnectError!c_int {
     };
     if (!peer_is_self(fd)) {
         std.posix.close(fd);
-        return error.Failed;
+        return error.PeerMismatch;
     }
     return fd;
 }
@@ -140,9 +161,13 @@ pub fn close(fd: c_int) void {
 pub fn write_all(fd: c_int, bytes: []const u8) IoError!void {
     var sent: usize = 0;
     while (sent < bytes.len) {
-        sent += std.posix.write(fd, bytes[sent..]) catch return error.Failed;
+        // MSG_NOSIGNAL turns a peer that has gone away into EPIPE instead of a process-killing SIGPIPE.
+        sent += std.posix.send(fd, bytes[sent..], MsgNoSignal) catch return error.Failed;
     }
 }
+
+/// MSG_NOSIGNAL from <sys/socket.h> on Linux.
+const MsgNoSignal: u32 = 0x4000;
 
 /// Read some bytes, waiting at most timeout_ms (negative waits forever).
 /// @return Bytes read; 0 at end of stream. error.Timeout when nothing became readable in time.
@@ -203,21 +228,59 @@ pub fn lock_state(dir: []const u8) LockState {
     return .unsafe;
 }
 
+/// A scratch directory directly under /tmp (sticky and root-owned, so it is a safe ancestor). The
+/// worktree's own ancestors may be group-writable, which the ancestor rule rightly refuses.
+/// The caller frees the returned path and deletes the tree.
+pub fn scratch_root(allocator: std.mem.Allocator) ![]u8 {
+    var buffer: [96]u8 = undefined;
+    const name = try std.fmt.bufPrint(&buffer, "/tmp/waddle-client-test-{d}-{d}", .{ std.os.linux.getpid(), std.time.nanoTimestamp() });
+    const path = try allocator.dupe(u8, name);
+    try std.fs.makeDirAbsolute(path);
+    return path;
+}
+
+test "dir_state refuses a symbolic link in place of the device directory and a writable ancestor" {
+    const testing = std.testing;
+    const base = try scratch_root(testing.allocator);
+    defer testing.allocator.free(base);
+    defer std.fs.deleteTreeAbsolute(base) catch {};
+    var root = try std.fs.openDirAbsolute(base, .{});
+    defer root.close();
+    try root.makeDir("real");
+    try std.posix.fchmodat(root.fd, "real", 0o700, 0);
+    try root.symLink("real", "linked", .{ .is_directory = true });
+    const linked = try std.fmt.allocPrint(testing.allocator, "{s}/linked", .{base});
+    defer testing.allocator.free(linked);
+    // SYMLINK_NOFOLLOW: the link itself is classified, never the directory it names.
+    try testing.expectEqual(DirState.unsafe, dir_state(linked));
+    // An ancestor that other users can write, and is not sticky, makes the device directory unsafe.
+    try root.makeDir("open");
+    try std.posix.fchmodat(root.fd, "open", 0o777, 0);
+    var open_dir = try root.openDir("open", .{});
+    defer open_dir.close();
+    try open_dir.makeDir("device");
+    try std.posix.fchmodat(open_dir.fd, "device", 0o700, 0);
+    const nested = try std.fmt.allocPrint(testing.allocator, "{s}/open/device", .{base});
+    defer testing.allocator.free(nested);
+    try testing.expectEqual(DirState.unsafe, dir_state(nested));
+}
+
 test "dir_state accepts only a private directory owned by this user" {
     const testing = std.testing;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const base = try scratch_root(testing.allocator);
     defer testing.allocator.free(base);
+    defer std.fs.deleteTreeAbsolute(base) catch {};
+    var root = try std.fs.openDirAbsolute(base, .{});
+    defer root.close();
     const missing = try std.fmt.allocPrint(testing.allocator, "{s}/absent", .{base});
     defer testing.allocator.free(missing);
     try testing.expectEqual(DirState.missing, dir_state(missing));
-    try tmp.dir.makeDir("private");
-    try std.posix.fchmodat(tmp.dir.fd, "private", 0o700, 0);
+    try root.makeDir("private");
+    try std.posix.fchmodat(root.fd, "private", 0o700, 0);
     const private = try std.fmt.allocPrint(testing.allocator, "{s}/private", .{base});
     defer testing.allocator.free(private);
     try testing.expectEqual(DirState.ok, dir_state(private));
-    try std.posix.fchmodat(tmp.dir.fd, "private", 0o755, 0);
+    try std.posix.fchmodat(root.fd, "private", 0o755, 0);
     try testing.expectEqual(DirState.unsafe, dir_state(private));
 }
 
@@ -327,22 +390,28 @@ test "connect reports a missing socket, a refused socket, a live one, and an ove
     try testing.expectError(error.Failed, connect(long));
 }
 
+test "write_all to a peer that has closed fails with an error and never raises SIGPIPE" {
+    const testing = std.testing;
+    var pair: [2]std.posix.fd_t = undefined;
+    try testing.expectEqual(@as(usize, 0), std.os.linux.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair));
+    close(pair[1]);
+    // Without MSG_NOSIGNAL this write kills the test process with SIGPIPE.
+    try testing.expectError(error.Failed, write_all(pair[0], "stop"));
+    close(pair[0]);
+}
+
 test "write_all reports a failed write; poll_read reports timeout, data, end of stream and a closed descriptor" {
     const testing = std.testing;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(testing.allocator, ".");
-    defer testing.allocator.free(base);
-    const file_path = try std.fmt.allocPrint(testing.allocator, "{s}/readonly", .{base});
-    defer testing.allocator.free(file_path);
-    _ = try tmp.dir.createFile("readonly", .{});
-    const read_only = try std.posix.open(file_path, .{}, 0);
-    defer std.posix.close(read_only);
-    try testing.expectError(error.Failed, write_all(read_only, "x"));
+    // A socket whose write side is shut down refuses every write, and the failure is an error.
+    var shut: [2]std.posix.fd_t = undefined;
+    try testing.expectEqual(@as(usize, 0), std.os.linux.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &shut));
+    try std.posix.shutdown(shut[0], .send);
+    try testing.expectError(error.Failed, write_all(shut[0], "x"));
+    close(shut[0]);
+    close(shut[1]);
 
     var pair: [2]std.posix.fd_t = undefined;
-    const rc = std.os.linux.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair);
-    try testing.expectEqual(@as(usize, 0), rc);
+    try testing.expectEqual(@as(usize, 0), std.os.linux.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair));
     const a = pair[0];
     const b = pair[1];
     var buffer: [8]u8 = undefined;

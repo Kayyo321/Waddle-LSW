@@ -115,6 +115,7 @@ fn stop_device(hooks: *const Hooks, device: *const Device) u8 {
     const fd = hooks.connect(hooks.ctx, device.session_path) catch |err| switch (err) {
         error.NotFound, error.Refused => return no_listener(hooks, device, dir),
         error.Failed => return unconfirmed(hooks, "could not connect to the session socket"),
+        error.PeerMismatch => return unconfirmed(hooks, "the session socket belongs to another user"),
     };
     defer hooks.close(hooks.ctx, fd);
     return request_stop(hooks, fd);
@@ -824,12 +825,13 @@ test "production resolve places session.sock beside the registry socket and forw
 }
 
 test "production hooks act on real files, sockets and the clock" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const base = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const base = try local.scratch_root(testing.allocator);
     defer testing.allocator.free(base);
-    try tmp.dir.makeDir("device");
-    try std.posix.fchmodat(tmp.dir.fd, "device", 0o700, 0);
+    defer std.fs.deleteTreeAbsolute(base) catch {};
+    const device_root = try std.fmt.allocPrint(testing.allocator, "{s}/device", .{base});
+    defer testing.allocator.free(device_root);
+    try std.fs.makeDirAbsolute(device_root);
+    try std.posix.fchmodat(std.posix.AT.FDCWD, device_root, 0o700, 0);
     const device_dir = try std.fmt.allocPrint(testing.allocator, "{s}/device", .{base});
     defer testing.allocator.free(device_dir);
     const socket_path = try std.fmt.allocPrint(testing.allocator, "{s}/session.sock", .{device_dir});
