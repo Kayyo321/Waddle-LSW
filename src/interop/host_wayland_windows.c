@@ -300,6 +300,12 @@ static void on_surface_configure(void *data, struct xdg_surface *xdg_surface, ui
     xdg_surface_ack_configure(xdg_surface, serial);
     if (rec->decoration != NULL && rec->decoration_applied == DECORATION_SERVER) destroy_decoration(rec);
     rec->mapped = 1;
+    if (rec->configure_latched) {
+        rec->configure_latched = 0;
+        if (ctx->config.callbacks.on_configure) {
+            ctx->config.callbacks.on_configure(ctx->config.callbacks.user, rec->window, rec->generation, rec->latched_bits, rec->latched_width, rec->latched_height);
+        }
+    }
 }
 
 /**
@@ -336,15 +342,15 @@ static uint32_t state_bits(const struct wl_array *states) {
     return bits;
 }
 
+/* xdg_toplevel.configure only latches the state. It is reported by the xdg_surface.configure that acknowledges it
+ * (4.5), so a state the surface never acknowledged is never delivered. */
 static void on_toplevel_configure(void *data, struct xdg_toplevel *toplevel, int32_t width, int32_t height, struct wl_array *states) {
     host_wayland_record_t *rec = resolve(data, toplevel);
     if (rec == NULL) return;
-    host_wayland_t *ctx = ((const host_wayland_binding_t *)data)->owner;
-    if (ctx->config.callbacks.on_configure) {
-        uint32_t w = width > 0 ? (uint32_t)width : 0u;
-        uint32_t h = height > 0 ? (uint32_t)height : 0u;
-        ctx->config.callbacks.on_configure(ctx->config.callbacks.user, rec->window, rec->generation, state_bits(states), w, h);
-    }
+    rec->configure_latched = 1;
+    rec->latched_bits = state_bits(states);
+    rec->latched_width = width > 0 ? (uint32_t)width : 0u;
+    rec->latched_height = height > 0 ? (uint32_t)height : 0u;
 }
 
 static void on_toplevel_close(void *data, struct xdg_toplevel *toplevel) {
@@ -382,7 +388,7 @@ static void on_popup_configure(void *data, struct xdg_popup *popup, int32_t x, i
     guest.height = rec->guest_height;
     host_popup_rect_t repositioned;
     if (host_popup_positioner_reposition(&guest, rec->scale, &rec->request, x, y, &repositioned) != HostPopupOk) {
-        emit_error(ctx, 0x0103u, InteropErrorUnexpected, rec->window, rec->generation);
+        emit_error(ctx, InteropMsgWindowConfigure, InteropErrorUnexpected, rec->window, rec->generation);
         return;
     }
     if (ctx->config.callbacks.on_popup_repositioned) {
@@ -723,7 +729,7 @@ static host_wayland_status_t fail_realization(host_wayland_t *ctx, host_wayland_
     host_window_ref_t removed[HostWindowMapMaxOutput];
     uint32_t count = 0;
     (void)host_window_map_retire(&ctx->map, id, removed, HostWindowMapMaxOutput, &count);
-    emit_error(ctx, 0x0100u, error_code, window, generation);
+    emit_error(ctx, InteropMsgWindowAnnounce, error_code, window, generation);
     return HostWaylandRealizeFailed;
 }
 
@@ -742,7 +748,7 @@ static host_wayland_status_t handle_announce(host_wayland_t *ctx, const uint8_t 
     parent_id.generation = req.has_parent ? req.parent_generation : 0;
     host_window_map_announce_result_t result = host_window_map_announce(&ctx->map, window_id, parent_id, (uint8_t)req.role);
     if (result.status != HostWindowMapRealize) {
-        emit_error(ctx, 0x0100u, host_window_map_announce_error_code(result.status), req.window, req.generation);
+        emit_error(ctx, InteropMsgWindowAnnounce, host_window_map_announce_error_code(result.status), req.window, req.generation);
         return HostWaylandRefused;
     }
 
@@ -864,7 +870,7 @@ static void mirror_parent(host_wayland_t *ctx, host_wayland_record_t *rec) {
 static host_wayland_status_t reposition_popup(host_wayland_t *ctx, host_wayland_record_t *rec, const update_t *req) {
     host_wayland_record_t *parent = find_record(ctx, rec->parent, rec->parent_generation);
     if (parent == NULL) {
-        emit_error(ctx, 0x0101u, InteropErrorStaleWindow, rec->window, rec->generation);
+        emit_error(ctx, InteropMsgWindowUpdate, InteropErrorStaleWindow, rec->window, rec->generation);
         return HostWaylandRefused;
     }
     uint32_t parent_width = 0;
@@ -877,17 +883,17 @@ static host_wayland_status_t reposition_popup(host_wayland_t *ctx, host_wayland_
     guest.height = req->height;
     host_popup_request_t request;
     if (host_popup_positioner_request(&guest, rec->scale, parent_width, parent_height, &request) != HostPopupOk) {
-        emit_error(ctx, 0x0101u, InteropErrorMalformedFrame, rec->window, rec->generation);
+        emit_error(ctx, InteropMsgWindowUpdate, InteropErrorMalformedFrame, rec->window, rec->generation);
         return HostWaylandRefused;
     }
     /* xdg_popup.reposition exists from xdg_wm_base version 3. An older compositor cannot move the popup. */
     if (ctx->config.wm_base_version < 3) {
-        emit_error(ctx, 0x0101u, InteropErrorVersionMismatch, rec->window, rec->generation);
+        emit_error(ctx, InteropMsgWindowUpdate, InteropErrorVersionMismatch, rec->window, rec->generation);
         return HostWaylandRefused;
     }
     struct xdg_positioner *positioner = xdg_wm_base_create_positioner(ctx->config.wm_base);
     if (positioner == NULL) {
-        emit_error(ctx, 0x0101u, InteropErrorUnexpected, rec->window, rec->generation);
+        emit_error(ctx, InteropMsgWindowUpdate, InteropErrorUnexpected, rec->window, rec->generation);
         return HostWaylandRefused;
     }
     set_positioner(ctx, positioner, &request);
@@ -915,14 +921,14 @@ static host_wayland_status_t handle_update(host_wayland_t *ctx, const uint8_t *p
     if (decode_update(payload, length, &req) != 0) return HostWaylandMalformedFrame;
     host_wayland_record_t *rec = exact_record(ctx, req.window, req.generation);
     if (rec == NULL) {
-        emit_error(ctx, 0x0101u, InteropErrorStaleWindow, req.window, req.generation);
+        emit_error(ctx, InteropMsgWindowUpdate, InteropErrorStaleWindow, req.window, req.generation);
         return HostWaylandRefused;
     }
     bool parent_changes = req.has_parent && (req.parent != rec->parent || req.parent_generation != rec->parent_generation);
     if (role_is_popup(rec->role)) {
         /* A popup never changes parent. The table refuses it by role; this module refuses it first, with the same code. */
         if (parent_changes) {
-            emit_error(ctx, 0x0101u, host_window_map_reparent_error_code(HostWindowMapReparentRefuseRole), rec->window, rec->generation);
+            emit_error(ctx, InteropMsgWindowUpdate, host_window_map_reparent_error_code(HostWindowMapReparentRefuseRole), rec->window, rec->generation);
             return HostWaylandRefused;
         }
         bool rect_changes = req.x != rec->guest_x || req.y != rec->guest_y || req.width != rec->guest_width || req.height != rec->guest_height;
@@ -937,7 +943,7 @@ static host_wayland_status_t handle_update(host_wayland_t *ctx, const uint8_t *p
         new_parent.generation = req.parent_generation;
         host_window_map_reparent_status_t status = host_window_map_reparent(&ctx->map, child, new_parent);
         if (status != HostWindowMapReparented) {
-            emit_error(ctx, 0x0101u, host_window_map_reparent_error_code(status), rec->window, rec->generation);
+            emit_error(ctx, InteropMsgWindowUpdate, host_window_map_reparent_error_code(status), rec->window, rec->generation);
             return HostWaylandRefused;
         }
         rec->parent = req.parent;
@@ -985,7 +991,10 @@ static host_wayland_status_t retire_window(host_wayland_t *ctx, uint64_t window,
     uint32_t count = 0;
     host_window_map_retire_status_t status = host_window_map_retire(&ctx->map, id, removed, HostWindowMapMaxOutput, &count);
     if (status == HostWindowMapStale) return HostWaylandOk;
-    if (status != HostWindowMapRetired) return HostWaylandMalformedFrame;
+    if (status != HostWindowMapRetired) {
+        emit_error(ctx, InteropMsgWindowRetire, host_window_map_retire_error_code(status), window, generation);
+        return HostWaylandRefused;
+    }
     for (uint32_t index = 0; index < count; ++index) {
         host_wayland_record_t *rec = find_record(ctx, removed[index].window, removed[index].generation);
         if (rec != NULL) destroy_window(ctx, rec);

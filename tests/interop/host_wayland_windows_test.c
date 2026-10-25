@@ -423,12 +423,16 @@ static int check_configure_and_close(void) {
     unsigned toplevel = fake_nth("xdg_toplevel", 0);
     /* Maximized, fullscreen and activated map onto state bits; minimized never reaches the guest. */
     const uint32_t states[] = {XDG_TOPLEVEL_STATE_MAXIMIZED, XDG_TOPLEVEL_STATE_ACTIVATED, XDG_TOPLEVEL_STATE_FULLSCREEN, 3u};
+    unsigned xdg_surface = fake_nth("xdg_surface", 0);
     deliver_toplevel_configure(toplevel, 800, -5, states, 4);
+    Check(captured.configures == 0);
+    deliver_surface_configure(xdg_surface, 2);
     Check(captured.configures == 1);
     Check(captured.last_bits == (InteropStateMaximized | InteropStateActivated | InteropStateFullscreen));
     Check(captured.last_width == 800 && captured.last_height == 0);
     Check(captured.last_window == 1 && captured.last_generation == 1);
     deliver_toplevel_configure(toplevel, 0, 0, NULL, 0);
+    deliver_surface_configure(xdg_surface, 3);
     Check(captured.configures == 2 && captured.last_bits == 0);
     deliver_toplevel_close(toplevel);
     Check(captured.closes == 1);
@@ -1152,6 +1156,40 @@ static int check_update_is_atomic(void) {
     return 0;
 }
 
+/**
+ * @brief xdg_toplevel.configure only latches its state (4.5). The callback fires from the xdg_surface.configure that
+ * acknowledges it, and a later surface configure without a new toplevel configure reports nothing. Several toplevel
+ * configures before one surface configure report only the last one.
+ */
+static int check_configure_is_latched(void) {
+    Check(begin_session("dev0") == 0);
+    announce_spec_t spec = toplevel_spec(1, 1, "a-app");
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    unsigned toplevel = fake_nth("xdg_toplevel", 0);
+    unsigned xdg_surface = fake_nth("xdg_surface", 0);
+    const uint32_t maximized[] = {XDG_TOPLEVEL_STATE_MAXIMIZED};
+    deliver_toplevel_configure(toplevel, 300, 200, maximized, 1);
+    deliver_toplevel_configure(toplevel, 640, 480, NULL, 0);
+    Check(captured.configures == 0);
+    deliver_surface_configure(xdg_surface, 5);
+    Check(captured.configures == 1 && captured.last_width == 640 && captured.last_height == 480 && captured.last_bits == 0);
+    deliver_surface_configure(xdg_surface, 6);
+    Check(captured.configures == 1);
+    return 0;
+}
+
+/**
+ * @brief A retire the table rejects as invalid (RefuseInvalid) is reported with the Retire message type and
+ * MalformedFrame, and the call is Refused. The codec rejects a zero window before a frame reaches retire, so this
+ * path is reached directly.
+ */
+static int check_retire_invalid_reports(void) {
+    Check(begin_session("dev0") == 0);
+    Check(retire_window(&session_ctx, 0, 0) == HostWaylandRefused);
+    Check(captured.errors == 1 && captured.last_refused_type == InteropMsgWindowRetire && captured.last_error_code == InteropErrorMalformedFrame);
+    return 0;
+}
+
 static int check_retire_order(void) {
     Check(build_tree() == 0);
     unsigned root_toplevel = fake_nth("xdg_toplevel", 0);
@@ -1591,6 +1629,8 @@ int main(void) {
     if (check_press_table_rules() != 0) return 1;
     if (check_note_mapped_reparents_children() != 0) return 1;
     if (check_parent_size_rounds_down() != 0) return 1;
+    if (check_configure_is_latched() != 0) return 1;
+    if (check_retire_invalid_reports() != 0) return 1;
     if (check_retire_order() != 0) return 1;
     if (check_retire_stale_and_invalid() != 0) return 1;
     if (check_late_events_after_retire() != 0) return 1;

@@ -318,7 +318,8 @@ static int check_missing_record(void) {
 /** @brief Retire and reset take their error and skip paths for a zero identity and for records already gone. */
 static int check_retire_and_reset_paths(void) {
     Check(begin_popup_session(5) == 0);
-    Check(retire_window(&session_ctx, 0, 0) == HostWaylandMalformedFrame);
+    Check(retire_window(&session_ctx, 0, 0) == HostWaylandRefused);
+    Check(captured.last_refused_type == InteropMsgWindowRetire && captured.last_error_code == InteropErrorMalformedFrame);
     announce_spec_t root = toplevel_spec(1, 1, "a-root");
     Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
     Check(host_wayland_windows_reset(&session_ctx) == HostWaylandOk);
