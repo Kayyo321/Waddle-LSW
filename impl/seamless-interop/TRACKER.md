@@ -1495,9 +1495,18 @@ its uncompiled draft earns no credit until current acceptance passes.
     Keep independent failing steps/profile upload so one fixture cannot conceal
     another. Native icon allocator diagnostic reports actual status/error.
 
-- **Commit `HEAD`**: `test(interop): consume native socket hangup through recv before recording EOF`
+- **Commit `21c5058`**: `test(interop): consume native socket hangup through recv before recording EOF`
   - **Task Impact**: +0% to TODO #6/#34; rerun required.
   - **Summary**: Actual9fcd919 reaches Hello/map/Ack/Ready and repeated guest
     heartbeats, then times out waiting for EOF. Poll HUP/ERR also drive the
     nonblocking recv path; only actual recv0 records EOF, with no remote-detach
     inference. Keep the existing absolute deadline and all lifecycle assertions.
+
+- **Commit `HEAD`**: `fix(interop): convert ordinary Shell bitmaps with explicit alpha policy`
+  - **Task Impact**: +0% to TODO #27/#34 pending actual native qualification.
+  - **Summary**: Real Windows status4 before allocator exposed the strict
+    DIBSECTION assumption. Accept bounded real BITMAP dimensions and convert
+    via GetDIBits; preserve explicit32-bit BI_RGB DIB alpha, make formats with
+    no alpha contract opaque. Test authentic retained cleanup handles with
+    fail-before-close and full guard cases. Root strict production(no seams)
+    and profile fixture SDK/link pass; keep whole-source90% native gates.

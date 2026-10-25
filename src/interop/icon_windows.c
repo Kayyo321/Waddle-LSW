@@ -38,7 +38,11 @@ static bool test_fail_fallback_lookup;
 static bool test_fail_image_list_query;
 static bool test_fail_image_list_icon;
 static bool test_fail_delete_once;
+static bool test_fail_cleanup_delete_once;
 static uint32_t test_shell_image_dimension;
+static uint32_t test_last_native_stage;
+static uint32_t test_last_native_error;
+static int32_t test_last_shell_result;
 #endif
 
 static const uint32_t SupportedDimensions[IconWindowsSupportedDimensionCount] = {
@@ -305,25 +309,38 @@ static bool copy_bitmap_to_top_down_dib(HDC device_context,
                                         uint32_t source_height,
                                         void *destination_bits,
                                         BITMAPINFO *destination_info,
+                                        bool *source_has_alpha_out,
                                         DWORD *error_out)
 {
-    DIBSECTION source_description;
+    BITMAP source_description;
     memset(&source_description, 0, sizeof(source_description));
     if (GetObjectW(source_bitmap, sizeof(source_description), &source_description) !=
             sizeof(source_description) ||
-        source_description.dsBm.bmWidth != (LONG)source_width ||
-        source_description.dsBm.bmHeight != (LONG)source_height ||
-        source_description.dsBm.bmBitsPixel != 32u ||
-        source_description.dsBmih.biBitCount != 32u ||
-        source_description.dsBmih.biCompression != BI_RGB) {
+        source_description.bmWidth != (LONG)source_width ||
+        source_description.bmHeight != (LONG)source_height ||
+        source_description.bmWidth <= 0 || source_description.bmHeight <= 0) {
         *error_out = ERROR_INVALID_DATA;
         return false;
     }
+    DIBSECTION source_dib_section;
+    memset(&source_dib_section, 0, sizeof(source_dib_section));
+    const int dib_section_bytes = GetObjectW(source_bitmap, sizeof(source_dib_section),
+                                             &source_dib_section);
+    *source_has_alpha_out = dib_section_bytes == sizeof(source_dib_section) &&
+        source_dib_section.dsBmih.biBitCount == 32u &&
+        source_dib_section.dsBmih.biCompression == BI_RGB;
     const int Rows = GetDIBits(device_context, source_bitmap, 0u, source_height,
                                destination_bits, destination_info, DIB_RGB_COLORS);
     if (Rows != (int)source_height) {
         *error_out = GetLastError();
         return false;
+    }
+    if (!*source_has_alpha_out) {
+        uint8_t *pixels = destination_bits;
+        const size_t pixel_count = (size_t)source_width * (size_t)source_height;
+        for (size_t index = 0u; index < pixel_count; ++index) {
+            pixels[index * 4u + 3u] = 255u;
+        }
     }
     return true;
 }
@@ -378,6 +395,8 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
     bitmap_info.bmiHeader.biSize = sizeof(bitmap_info.bmiHeader);
     uint32_t source_width = dimension;
     uint32_t source_height = dimension;
+    uint32_t native_stage = 1u;
+    (void)native_stage;
     bitmap_info.bmiHeader.biWidth = (LONG)source_width;
     bitmap_info.bmiHeader.biHeight = -(LONG)source_height;
     bitmap_info.bmiHeader.biPlanes = 1u;
@@ -392,6 +411,7 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
                                              (void **)&factory);
 #endif
     if (SUCCEEDED(shell_result)) {
+        native_stage = 2u;
         uint32_t shell_dimension = dimension;
 #ifdef IconWindowsTestSeams
         if (test_shell_image_dimension != 0u) {
@@ -399,12 +419,19 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
         }
 #endif
         SIZE requested_size = {(LONG)shell_dimension, (LONG)shell_dimension};
+#ifdef IconWindowsTestSeams
         shell_result = test_fail_shell_image_get ? E_FAIL :
             IShellItemImageFactory_GetImage(
                 factory, requested_size, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
                 &shell_bitmap);
+#else
+        shell_result = IShellItemImageFactory_GetImage(
+            factory, requested_size, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
+            &shell_bitmap);
+#endif
     }
     if (FAILED(shell_result) || shell_bitmap == NULL) {
+        native_stage = 3u;
         const size_t PathUnits = fallback_path_length(fallback_path);
         if (fallback_path != NULL && PathUnits != 0u && PathUnits != SIZE_MAX &&
             (dimension == 16u || dimension == 32u || dimension == 48u)) {
@@ -412,18 +439,33 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
             memset(&file_info, 0, sizeof(file_info));
             const UINT Flags = SHGFI_SYSICONINDEX |
                 (dimension == 16u ? SHGFI_SMALLICON : SHGFI_LARGEICON);
+#ifdef IconWindowsTestSeams
             const DWORD_PTR IconIndex = test_fail_fallback_lookup ? 0u :
                 SHGetFileInfoW(fallback_path, 0u, &file_info, sizeof(file_info), Flags);
+#else
+            const DWORD_PTR IconIndex =
+                SHGetFileInfoW(fallback_path, 0u, &file_info, sizeof(file_info), Flags);
+#endif
             if (IconIndex != 0u) {
                 const int ImageListSize = dimension == 16u ? SHIL_SMALL :
                     (dimension == 32u ? SHIL_LARGE : SHIL_EXTRALARGE);
+#ifdef IconWindowsTestSeams
                 shell_result = test_fail_image_list_query ? E_FAIL :
                     SHGetImageList(ImageListSize, &IidImageList,
                                    (void **)&image_list);
+#else
+                shell_result = SHGetImageList(ImageListSize, &IidImageList,
+                                              (void **)&image_list);
+#endif
                 if (SUCCEEDED(shell_result) && image_list != NULL) {
+#ifdef IconWindowsTestSeams
                     shell_result = test_fail_image_list_icon ? E_FAIL :
                         IImageList_GetIcon(image_list, file_info.iIcon,
                                            ILD_TRANSPARENT, &icon);
+#else
+                    shell_result = IImageList_GetIcon(image_list, file_info.iIcon,
+                                                      ILD_TRANSPARENT, &icon);
+#endif
                 }
             }
         }
@@ -435,32 +477,32 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
     }
 
     if (shell_bitmap != NULL) {
-        DIBSECTION source_description;
+        native_stage = 4u;
+        BITMAP source_description;
         memset(&source_description, 0, sizeof(source_description));
         if (GetObjectW(shell_bitmap, sizeof(source_description), &source_description) !=
                 sizeof(source_description) ||
-            source_description.dsBm.bmWidth <= 0 || source_description.dsBm.bmHeight <= 0 ||
-            source_description.dsBm.bmWidth > (LONG)IconWindowsMaxNativeSourceDimension ||
-            source_description.dsBm.bmHeight > (LONG)IconWindowsMaxNativeSourceDimension ||
-            source_description.dsBm.bmBitsPixel != 32u ||
-            source_description.dsBmih.biBitCount != 32u ||
-            source_description.dsBmih.biCompression != BI_RGB) {
+            source_description.bmWidth <= 0 || source_description.bmHeight <= 0 ||
+            source_description.bmWidth > (LONG)IconWindowsMaxNativeSourceDimension ||
+            source_description.bmHeight > (LONG)IconWindowsMaxNativeSourceDimension) {
             native_error = ERROR_INVALID_DATA;
             goto cleanup;
         }
-        source_width = (uint32_t)source_description.dsBm.bmWidth;
-        source_height = (uint32_t)source_description.dsBm.bmHeight;
+        source_width = (uint32_t)source_description.bmWidth;
+        source_height = (uint32_t)source_description.bmHeight;
         bitmap_info.bmiHeader.biWidth = (LONG)source_width;
         bitmap_info.bmiHeader.biHeight = -(LONG)source_height;
     }
 
     device_context = CreateCompatibleDC(NULL);
+    native_stage = 5u;
     if (device_context == NULL) {
         native_error = GetLastError();
         goto cleanup;
     }
     dib_bitmap = CreateDIBSection(device_context, &bitmap_info, DIB_RGB_COLORS,
                                   &dib_pixels, NULL, 0u);
+    native_stage = 6u;
     if (dib_bitmap == NULL || dib_pixels == NULL) {
         native_error = GetLastError();
         goto cleanup;
@@ -479,9 +521,12 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
         goto cleanup;
     }
     if (shell_bitmap != NULL) {
+        native_stage = 7u;
+        bool source_has_alpha = false;
         if (!copy_bitmap_to_top_down_dib(device_context, shell_bitmap, source_width,
                                          source_height,
-                                         dib_pixels, &bitmap_info, &native_error)) {
+                                         dib_pixels, &bitmap_info, &source_has_alpha,
+                                         &native_error)) {
             goto cleanup;
         }
     } else if (!draw_icon_to_top_down_dib(device_context, dib_bitmap, icon,
@@ -495,6 +540,7 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
 
     const size_t RowBytes = (size_t)dimension * 4u;
     const size_t ImageSize = RowBytes * (size_t)dimension;
+    native_stage = 8u;
     owned_pixels = allocator.allocate(allocator.context, ImageSize);
     if (owned_pixels == NULL) {
         operation_status = IconWindowsStatusOutOfMemory;
@@ -519,6 +565,11 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
     operation_status = IconWindowsStatusOk;
 
 cleanup:
+#ifdef IconWindowsTestSeams
+    test_last_native_stage = native_stage;
+    test_last_native_error = native_error;
+    test_last_shell_result = (int32_t)shell_result;
+#endif
     if (factory != NULL) {
         (void)IShellItemImageFactory_Release(factory);
         factory = NULL;
@@ -659,7 +710,20 @@ icon_windows_status_t icon_windows_cleanup_retry(icon_windows_cleanup_t *cleanup
     }
     for (uint32_t index = 0u; index < cleanup->bitmap_count; ++index) {
         HBITMAP bitmap = (HBITMAP)cleanup->bitmap_handles[index];
-        if (bitmap != NULL && DeleteObject(bitmap) != 0) {
+        BOOL deleted = FALSE;
+#ifdef IconWindowsTestSeams
+        if (bitmap != NULL && test_fail_cleanup_delete_once) {
+            test_fail_cleanup_delete_once = false;
+            SetLastError(ERROR_BUSY);
+        } else if (bitmap != NULL) {
+            deleted = DeleteObject(bitmap);
+        }
+#else
+        if (bitmap != NULL) {
+            deleted = DeleteObject(bitmap);
+        }
+#endif
+        if (bitmap != NULL && deleted != 0) {
             cleanup->bitmap_handles[index] = 0u;
         } else if (bitmap != NULL) {
             cleanup->last_error = GetLastError();

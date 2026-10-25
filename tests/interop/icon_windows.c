@@ -68,6 +68,8 @@ static HBITMAP create_color_bitmap(uint32_t dimension, void **bits_out)
     return CreateDIBSection(NULL, &info, DIB_RGB_COLORS, bits_out, NULL, 0u);
 }
 
+#include "icon_windows_faults.inc"
+
 static void test_owned_gdi_fixtures(void)
 {
     const uint32_t Dimension = 32u;
@@ -96,8 +98,11 @@ static void test_owned_gdi_fixtures(void)
     destination_info.bmiHeader.biBitCount = 32u;
     destination_info.bmiHeader.biCompression = BI_RGB;
     DWORD error = ERROR_SUCCESS;
+    bool source_has_alpha = false;
     assert(copy_bitmap_to_top_down_dib(device_context, source_bitmap, Dimension, Dimension,
-                                       destination_bits, &destination_info, &error));
+                                       destination_bits, &destination_info,
+                                       &source_has_alpha, &error));
+    assert(source_has_alpha);
     assert(memcmp(source_bits, destination_bits, (size_t)Dimension * Dimension * 4u) == 0);
 
     uint8_t pixel[4] = {0};
@@ -270,8 +275,12 @@ static void test_shell_extraction(void)
         icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup);
     if (allocation_failure_status != IconWindowsStatusOutOfMemory) {
         (void)fprintf(stderr,
-                      "allocation failure returned status %u, GetLastError %lu\n",
+                      "allocation failure returned status %u, stage %u, native error %lu, "
+                      "Shell HRESULT 0x%08lx, GetLastError %lu\n",
                       (unsigned int)allocation_failure_status,
+                      (unsigned int)test_last_native_stage,
+                      (unsigned long)test_last_native_error,
+                      (unsigned long)(uint32_t)test_last_shell_result,
                       (unsigned long)GetLastError());
     }
     assert(allocation_failure_status == IconWindowsStatusOutOfMemory);
@@ -368,6 +377,7 @@ static void test_shell_extraction(void)
 int main(void)
 {
     test_owned_gdi_fixtures();
+    icon_windows_run_fault_tests();
     test_shell_extraction();
     return 0;
 }

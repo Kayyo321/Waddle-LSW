@@ -9,6 +9,7 @@ on:
       - src/interop/session_control_windows.*
       - tests/interop/session_control_windows*
       - tests/interop/icon_windows.c
+      - tests/interop/icon_windows_faults.inc
       - tests/interop/app_catalog*
       - tests/interop/native_component_coverage.py
       - scripts/interop.mk
@@ -42,7 +43,7 @@ jobs:
           make build/native_components/icon_windows_profile.exe build/native_components/app_catalog_windows_profile.exe build/interop_guest_session_integration_test.exe
           python3 - <<'PY'
           import hashlib,json,pathlib,subprocess
-          files=['src/interop/icon_windows.c','src/interop/icon_windows.h','src/interop/png_writer.c','src/interop/png_writer.h','tests/interop/icon_windows.c','build/native_components/icon_fixture.gcno','build/native_components/icon_windows_profile.exe','src/interop/app_catalog.c','src/interop/app_catalog.h','src/interop/app_catalog_windows.c','src/interop/app_catalog_windows_private.h','src/interop/app_catalog_validation.zig','src/interop/app_catalog_validation.h','tests/interop/app_catalog_windows.c','build/native_components/catalog_adapter.gcno','build/native_components/app_catalog_windows_profile.exe']
+          files=['src/interop/icon_windows.c','src/interop/icon_windows.h','src/interop/png_writer.c','src/interop/png_writer.h','tests/interop/icon_windows.c','tests/interop/icon_windows_faults.inc','build/native_components/icon_fixture.gcno','build/native_components/icon_windows_profile.exe','src/interop/app_catalog.c','src/interop/app_catalog.h','src/interop/app_catalog_windows.c','src/interop/app_catalog_windows_private.h','src/interop/app_catalog_validation.zig','src/interop/app_catalog_validation.h','tests/interop/app_catalog_windows.c','build/native_components/catalog_adapter.gcno','build/native_components/app_catalog_windows_profile.exe']
           record={'commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'sha256':{p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in files},'compiler':subprocess.check_output(['x86_64-w64-mingw32-gcc','--version'],text=True).splitlines()[0]}
           pathlib.Path('build/native_components/inputs.json').write_text(json.dumps(record,indent=2)+'\n')
           PY
