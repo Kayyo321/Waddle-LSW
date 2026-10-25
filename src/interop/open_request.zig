@@ -312,7 +312,7 @@ fn error_code(err: open_error_t) c_int {
     return @intCast(@intFromEnum(err));
 }
 
-const ScanState = struct {
+const scan_state_t = struct {
     device: ?[]const u8 = null,
     wait: bool = false,
     new_console: bool = false,
@@ -325,7 +325,7 @@ fn parse_tokens(args: []const []const u8, options: *const options_t, result: *re
     if (args.len > MaxArgs) return .TooManyArgs;
     for (args) |arg| if (arg.len > MaxArgBytes) return .ArgumentTooLong;
     if (args.len == 0) return .MissingTarget;
-    var scan = ScanState{};
+    var scan = scan_state_t{};
     var index: usize = 0;
     while (index < args.len) {
         const token = args[index];
@@ -374,7 +374,7 @@ fn parse_tokens(args: []const []const u8, options: *const options_t, result: *re
     return finish(result, &scan);
 }
 
-fn parse_exe(args: []const []const u8, exe_index: usize, options: *const options_t, result: *request_t, scan: *ScanState) open_error_t {
+fn parse_exe(args: []const []const u8, exe_index: usize, options: *const options_t, result: *request_t, scan: *scan_state_t) open_error_t {
     if (exe_index >= args.len) return .EmptyExecutable;
     const exe = args[exe_index];
     if (exe.len == 0) return .EmptyExecutable;
@@ -397,7 +397,7 @@ fn parse_exe(args: []const []const u8, exe_index: usize, options: *const options
     return finish(result, scan);
 }
 
-fn finish(result: *request_t, scan: *const ScanState) open_error_t {
+fn finish(result: *request_t, scan: *const scan_state_t) open_error_t {
     result.item_count = scan.item_count;
     result.wait = @intFromBool(scan.wait);
     result.new_console = @intFromBool(scan.new_console);
@@ -537,22 +537,22 @@ fn quote_core(args: []const []const u8, out: ?[]u8) quote_error_t!usize {
 // Test-only fixtures.
 const testing = std.testing;
 
-const FakeEntry = struct {
+const fake_entry_t = struct {
     path: []const u8,
     bytes: []const u8 = &.{},
     status: c_int = 0,
     reported: ?usize = null,
 };
 
-const FakeReader = struct {
-    entries: []const FakeEntry,
+const fake_reader_t = struct {
+    entries: []const fake_entry_t,
     calls: usize = 0,
     last_length: usize = 0,
     paths: [MaxArgs][]const u8 = undefined,
 };
 
 fn fake_read(context: ?*anyopaque, path: [*]const u8, path_length: usize, buffer: [*]u8, capacity: usize, length_out: *usize) callconv(.C) c_int {
-    const fake: *FakeReader = @ptrCast(@alignCast(context.?));
+    const fake: *fake_reader_t = @ptrCast(@alignCast(context.?));
     fake.calls += 1;
     fake.last_length = path_length;
     if (fake.calls <= MaxArgs) fake.paths[fake.calls - 1] = path[0..path_length];
@@ -579,7 +579,7 @@ fn pe_image(buffer: *[256]u8, subsystem: u16) []const u8 {
     return buffer;
 }
 
-fn run(args: []const []const u8, fake: *FakeReader, tty: u32, out: *request_t) open_error_t {
+fn run(args: []const []const u8, fake: *fake_reader_t, tty: u32, out: *request_t) open_error_t {
     // Route the tokens through memory the optimizer cannot see into, so every
     // grammar branch is a run-time decision in the instrumented binary.
     var storage: [MaxArgs + 1][]const u8 = undefined;
@@ -635,10 +635,10 @@ fn decode_group(quoted: []const u8, position: *usize, out: []u8, out_length: *us
 }
 
 test "grammar: app target with device and flags in every legal order" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     var out = std.mem.zeroes(request_t);
-    const Form = struct { args: []const []const u8, key: []const u8 };
-    const forms = [_]Form{
+    const form_t = struct { args: []const []const u8, key: []const u8 };
+    const forms = [_]form_t{
         .{ .args = &.{ "--app", "a-Microsoft_Notepad" }, .key = "a-Microsoft_Notepad" },
         .{ .args = &.{ "-d", "dev-1", "--wait", "--new-console", "--app", "p-x" }, .key = "p-x" },
         .{ .args = &.{ "--device", "dev_2", "--app", "a-x", "--wait" }, .key = "a-x" },
@@ -665,7 +665,7 @@ test "grammar: app target with device and flags in every legal order" {
 }
 
 test "grammar: plain paths, multiple paths and non-executable extensions" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     var out = std.mem.zeroes(request_t);
     try testing.expectEqual(open_error_t.None, run(&.{ "/home/u/notes.txt", "/tmp/a.b", "noext", "trailing.", ".hidden" }, &fake, 1, &out));
     try testing.expectEqual(@as(usize, 5), out.item_count);
@@ -681,8 +681,8 @@ test "grammar: plain paths, multiple paths and non-executable extensions" {
 test "grammar: the --dash form carries EXE and verbatim argument tail" {
     var pe_buffer: [256]u8 = undefined;
     const gui = pe_image(&pe_buffer, 2);
-    const entries = [_]FakeEntry{.{ .path = "C:\\setup.exe", .bytes = gui }};
-    var fake = FakeReader{ .entries = &entries };
+    const entries = [_]fake_entry_t{.{ .path = "C:\\setup.exe", .bytes = gui }};
+    var fake = fake_reader_t{ .entries = &entries };
     var out = std.mem.zeroes(request_t);
     const args = [_][]const u8{ "--", "C:\\setup.exe", "--wait", "", "--", "a b" };
     try testing.expectEqual(open_error_t.None, run(&args, &fake, 1, &out));
@@ -697,8 +697,8 @@ test "grammar: the --dash form carries EXE and verbatim argument tail" {
 test "grammar: the --dash form with no argument tail uses first 0 and count 0" {
     var pe_buffer: [256]u8 = undefined;
     const gui = pe_image(&pe_buffer, 2);
-    const entries = [_]FakeEntry{.{ .path = "x.EXE", .bytes = gui }};
-    var fake = FakeReader{ .entries = &entries };
+    const entries = [_]fake_entry_t{.{ .path = "x.EXE", .bytes = gui }};
+    var fake = fake_reader_t{ .entries = &entries };
     var out = std.mem.zeroes(request_t);
     try testing.expectEqual(open_error_t.None, run(&.{ "--", "x.EXE" }, &fake, 0, &out));
     try testing.expectEqual(item_kind_t.ExeWithArgs, out.items[0].kind);
@@ -707,7 +707,7 @@ test "grammar: the --dash form with no argument tail uses first 0 and count 0" {
 }
 
 test "grammar: installer and shortcut extensions are routed without reading" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     var out = std.mem.zeroes(request_t);
     try testing.expectEqual(open_error_t.None, run(&.{ "/x/setup.MSI", "/x/app.Lnk" }, &fake, 0, &out));
     try testing.expectEqual(item_kind_t.Installer, out.items[0].kind);
@@ -716,7 +716,7 @@ test "grammar: installer and shortcut extensions are routed without reading" {
 }
 
 test "usage errors each report their first triggering token" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     var out = std.mem.zeroes(request_t);
     const cases = [_]struct { args: []const []const u8, expected: open_error_t }{
         .{ .args = &.{}, .expected = .MissingTarget },
@@ -765,7 +765,7 @@ test "usage errors each report their first triggering token" {
 }
 
 test "usage errors are reported in grammar order over bounds" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     var out = std.mem.zeroes(request_t);
     try testing.expectEqual(open_error_t.UnknownOption, run(&.{ "--zzz", "-d" }, &fake, 0, &out));
     try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{ "-d" }, &fake, 0, &out));
@@ -774,7 +774,7 @@ test "usage errors are reported in grammar order over bounds" {
 }
 
 test "boundaries: 64 arguments accepted and 65 rejected" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     var out = std.mem.zeroes(request_t);
     var sixty_four: [MaxArgs][]const u8 = undefined;
     for (&sixty_four) |*slot| slot.* = "f.txt";
@@ -789,7 +789,7 @@ test "boundaries: 64 arguments accepted and 65 rejected" {
 }
 
 test "boundaries: 4096-byte argument accepted and 4097 rejected" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     var out = std.mem.zeroes(request_t);
     const exact = [_]u8{'p'} ** MaxArgBytes;
     try testing.expectEqual(open_error_t.None, run(&.{&exact}, &fake, 0, &out));
@@ -799,7 +799,7 @@ test "boundaries: 4096-byte argument accepted and 4097 rejected" {
 }
 
 test "boundaries: device 63 bytes accepted, 64 rejected; app key 200 accepted, 201 rejected" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     var out = std.mem.zeroes(request_t);
     const device63 = [_]u8{'d'} ** MaxDeviceBytes;
     const device64 = [_]u8{'d'} ** (MaxDeviceBytes + 1);
@@ -817,12 +817,12 @@ test "boundaries: device 63 bytes accepted, 64 rejected; app key 200 accepted, 2
 }
 
 test "boundaries: quoted argument tail of exactly 4096 accepted and 4097 rejected" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     var out = std.mem.zeroes(request_t);
     const exe = "x.exe";
     var pe_buffer: [256]u8 = undefined;
     const gui = pe_image(&pe_buffer, 2);
-    const entries = [_]FakeEntry{.{ .path = exe, .bytes = gui }};
+    const entries = [_]fake_entry_t{.{ .path = exe, .bytes = gui }};
     fake.entries = &entries;
     const fill = [_]u8{'z'} ** 4094;
     try testing.expectEqual(open_error_t.None, run(&.{ "--", exe, &fill }, &fake, 0, &out));
@@ -836,7 +836,7 @@ test "classification table over GUI, CUI, malformed, unknown and TTY states" {
     var cui_storage: [256]u8 = undefined;
     const cui = pe_image(&cui_storage, 3);
     var junk = [_]u8{ 'M', 'Z', 1, 2, 3 };
-    const entries = [_]FakeEntry{
+    const entries = [_]fake_entry_t{
         .{ .path = "g.exe", .bytes = gui },
         .{ .path = "c.exe", .bytes = cui },
         .{ .path = "j.exe", .bytes = &junk },
@@ -845,10 +845,10 @@ test "classification table over GUI, CUI, malformed, unknown and TTY states" {
         .{ .path = "long.exe", .bytes = cui, .reported = PrefixBytes + 1 },
         .{ .path = "C.EXE", .bytes = cui },
     };
-    var fake = FakeReader{ .entries = &entries };
+    var fake = fake_reader_t{ .entries = &entries };
     var out = std.mem.zeroes(request_t);
-    const Row = struct { path: []const u8, tty: u32, new_console: bool, kind: item_kind_t, image: pe_header.image_kind_t };
-    const rows = [_]Row{
+    const row_t = struct { path: []const u8, tty: u32, new_console: bool, kind: item_kind_t, image: pe_header.image_kind_t };
+    const rows = [_]row_t{
         .{ .path = "g.exe", .tty = 0, .new_console = false, .kind = .Path, .image = .Gui },
         .{ .path = "g.exe", .tty = 1, .new_console = true, .kind = .Path, .image = .Gui },
         .{ .path = "c.exe", .tty = 0, .new_console = false, .kind = .Console, .image = .Console },
@@ -879,8 +879,8 @@ test "classification table over GUI, CUI, malformed, unknown and TTY states" {
 test "callback is called once per exe item in argv order with capacity 4096" {
     var pe_buffer: [256]u8 = undefined;
     const gui = pe_image(&pe_buffer, 2);
-    const entries = [_]FakeEntry{ .{ .path = "one.exe", .bytes = gui }, .{ .path = "two.exe", .bytes = gui } };
-    var fake = FakeReader{ .entries = &entries };
+    const entries = [_]fake_entry_t{ .{ .path = "one.exe", .bytes = gui }, .{ .path = "two.exe", .bytes = gui } };
+    var fake = fake_reader_t{ .entries = &entries };
     var out = std.mem.zeroes(request_t);
     try testing.expectEqual(open_error_t.None, run(&.{ "one.exe", "readme.txt", "two.exe", "pkg.msi" }, &fake, 0, &out));
     try testing.expectEqual(@as(usize, 2), fake.calls);
@@ -937,8 +937,8 @@ test "exit tables cover every error value and LaunchResult status" {
 }
 
 test "quoting vectors match the waddle_quote byte sequences" {
-    const Vector = struct { args: []const []const u8, expected: []const u8 };
-    const vectors = [_]Vector{
+    const vector_t = struct { args: []const []const u8, expected: []const u8 };
+    const vectors = [_]vector_t{
         .{ .args = &.{}, .expected = "" },
         .{ .args = &.{""}, .expected = "\"\"" },
         .{ .args = &.{ "a", "" }, .expected = "\"a\" \"\"" },
@@ -1015,8 +1015,8 @@ test "seeded random token streams keep the output contract on every outcome" {
     const tokens = [_][]const u8{ "--app", "--device", "-d", "--wait", "--new-console", "--", "a.txt", "b.exe", "c.msi", "d.lnk", "a-app", "dev", "", "-x", "x.EXE", "p-q_1" };
     var pe_buffer: [256]u8 = undefined;
     const gui = pe_image(&pe_buffer, 2);
-    const entries = [_]FakeEntry{ .{ .path = "b.exe", .bytes = gui }, .{ .path = "x.EXE", .bytes = gui } };
-    var fake = FakeReader{ .entries = &entries };
+    const entries = [_]fake_entry_t{ .{ .path = "b.exe", .bytes = gui }, .{ .path = "x.EXE", .bytes = gui } };
+    var fake = fake_reader_t{ .entries = &entries };
     var succeeded: usize = 0;
     for (0..20000) |_| {
         var stream: [8][]const u8 = undefined;
@@ -1043,7 +1043,7 @@ test "seeded random token streams keep the output contract on every outcome" {
 }
 
 test "C ABI parse maps NULL, count and argument-length conditions" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     const options = options_t{ .read_prefix = fake_read, .read_context = &fake, .stdio_is_tty = 0 };
     var out = std.mem.zeroes(request_t);
     const app = "--app";
@@ -1072,7 +1072,7 @@ test "C ABI parse maps NULL, count and argument-length conditions" {
     var fill_z: [MaxArgBytes:0]u8 = [_:0]u8{0} ** MaxArgBytes;
     @memset(fill_z[0..4095], 'z');
     var exe_name = "x.exe".*;
-    const entries_exe = [_]FakeEntry{.{ .path = "x.exe", .bytes = &.{} }};
+    const entries_exe = [_]fake_entry_t{.{ .path = "x.exe", .bytes = &.{} }};
     fake.entries = &entries_exe;
     const tail_argv = [_][*:0]const u8{ "--", &exe_name, &fill_z };
     try testing.expectEqual(@as(c_int, 15), interop_open_parse(hide(usize, 3), &tail_argv, &options, &out));
@@ -1107,7 +1107,7 @@ test "C ABI quote maps every argument and capacity condition" {
 }
 
 test "C ABI parse rejects NULL pointers without touching the request" {
-    var fake = FakeReader{ .entries = &.{} };
+    var fake = fake_reader_t{ .entries = &.{} };
     const options = options_t{ .read_prefix = fake_read, .read_context = &fake, .stdio_is_tty = 0 };
     var out = std.mem.zeroes(request_t);
     out.item_count = 7;
