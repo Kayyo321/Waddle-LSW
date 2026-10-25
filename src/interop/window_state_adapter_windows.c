@@ -266,9 +266,14 @@ static window_state_adapter_status_t leave_fullscreen(window_state_adapter_t *ad
     }
     if (!adapter->api.is_iconic(context, entry->window, &iconic)) return native_fail(adapter);
     if (!adapter->api.is_zoomed(context, entry->window, &zoomed)) return native_fail(adapter);
-    placement = entry->saved_placement;
-    placement.show_command = iconic != 0 ? WsaShowMinimized : (zoomed != 0 ? WsaShowMaximized : WsaShowNormal);
-    if (!adapter->api.set_placement(context, entry->window, &placement)) return native_fail(adapter);
+    /* A normal window's rcNormalPosition is the rectangle SetWindowPos just applied, so the placement is written
+     * only for a minimized or maximized window, the one case where it is the only call that can. SetWindowPlacement
+     * activates the window (section 11), so it is avoided on the normal path. */
+    if (iconic != 0 || zoomed != 0) {
+        placement = entry->saved_placement;
+        placement.show_command = iconic != 0 ? WsaShowMinimized : WsaShowMaximized;
+        if (!adapter->api.set_placement(context, entry->window, &placement)) return native_fail(adapter);
+    }
     entry->fullscreen = 0;
     return WindowStateAdapterOk;
 }
@@ -276,8 +281,16 @@ static window_state_adapter_status_t leave_fullscreen(window_state_adapter_t *ad
 /**
  * @brief Activate: SetForegroundWindow, with the AttachThreadInput fallback when it fails.
  *
- * The fallback attaches this thread to the foreground window's thread, retries the foreground and
- * active calls, and always detaches when it attached. The first failing call is reported.
+ * The fallback attaches this thread to the foreground window's thread, retries SetForegroundWindow and
+ * calls SetActiveWindow, and always detaches when it attached. Success is decided by the foreground
+ * window itself, not by the return values of the fallback calls:
+ * - SetActiveWindow returns the previously active window, which is NULL both on failure and when no
+ *   window was active. Its result is therefore not used.
+ * - The retry of SetForegroundWindow may fail while the window still becomes the foreground window, so
+ *   its failure is kept only as the reported error when the foreground check fails too.
+ * A failed detach is reported first, because the thread then stays attached. Otherwise the result is Ok
+ * exactly when GetForegroundWindow() equals the window. When it does not, the result is NativeFailure with
+ * the error of the retry, or with the error of the foreground query when the retry succeeded.
  */
 static window_state_adapter_status_t activate(window_state_adapter_t *adapter,
                                               window_state_adapter_entry_t *entry) {
@@ -287,8 +300,9 @@ static window_state_adapter_status_t activate(window_state_adapter_t *adapter,
     uint32_t process_id = 0;
     uint32_t foreground_thread = 0;
     uint32_t self_thread;
+    uint32_t focus_error = 0;
     int attached = 0;
-    int failed = 0;
+    int focus_failed = 0;
 
     status = check_identity(adapter, entry);
     if (status != WindowStateAdapterOk) return status;
@@ -305,18 +319,19 @@ static window_state_adapter_status_t activate(window_state_adapter_t *adapter,
         attached = 1;
     }
     if (!adapter->api.set_foreground_window(context, entry->window)) {
-        status = native_fail(adapter);
-        failed = 1;
+        focus_failed = 1;
+        focus_error = adapter->api.last_error(context);
     }
-    if (!adapter->api.set_active_window(context, entry->window) && failed == 0) {
-        status = native_fail(adapter);
-        failed = 1;
+    (void)adapter->api.set_active_window(context, entry->window);
+    if (attached != 0 && !adapter->api.attach_thread_input(context, self_thread, foreground_thread, 0)) {
+        return native_fail(adapter);
     }
-    if (attached != 0 && !adapter->api.attach_thread_input(context, self_thread, foreground_thread, 0) && failed == 0) {
-        status = native_fail(adapter);
-        failed = 1;
+    if (adapter->api.foreground_window(context) == entry->window) return WindowStateAdapterOk;
+    if (focus_failed != 0) {
+        adapter->last_error = focus_error;
+        return WindowStateAdapterNativeFailure;
     }
-    return failed != 0 ? status : WindowStateAdapterOk;
+    return native_fail(adapter);
 }
 
 /**
@@ -599,6 +614,8 @@ _Static_assert(WsaSwpNoActivate == SWP_NOACTIVATE, "SWP_NOACTIVATE value");
 _Static_assert(WsaSwpFrameChanged == SWP_FRAMECHANGED, "SWP_FRAMECHANGED value");
 _Static_assert(WsaWmClose == WM_CLOSE, "WM_CLOSE value");
 _Static_assert((int)WsaDwmwaExtendedFrameBounds == (int)DWMWA_EXTENDED_FRAME_BOUNDS, "DWMWA_EXTENDED_FRAME_BOUNDS value");
+/** @brief Bound of the responsiveness probe in milliseconds (nat_responsive). */
+#define WsaProbeTimeoutMs 50
 
 static int nat_is_window(void *context, uintptr_t window) {
     (void)context;
@@ -628,6 +645,22 @@ static int nat_is_zoomed(void *context, uintptr_t window, int *zoomed) {
     return 1;
 }
 
+/**
+ * @brief Bounded responsiveness probe before a synchronous cross-thread call.
+ *
+ * SetWindowLongPtr, ShowWindow, SetWindowPos and SetWindowPlacement send messages to the window's thread
+ * and wait for them, so a hung application would block the agent thread. The probe sends WM_NULL with
+ * SMTO_ABORTIFHUNG and a 50 ms bound (the same bound as IMPL 4.5 step 3). The call proceeds only when the
+ * window thread answered; otherwise the caller fails with the probe's error (ERROR_TIMEOUT when hung)
+ * and nothing is changed. The probe does not remove the race between the probe and the call. A thread
+ * that hangs after the probe still blocks the call, which is the residual risk in section 11.
+ */
+static int nat_responsive(uintptr_t window) {
+    DWORD_PTR result = 0;
+    /* SendMessageTimeoutW returns nonzero when the message was processed, whatever the WM_NULL result is. */
+    return SendMessageTimeoutW((HWND)window, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, WsaProbeTimeoutMs, &result) != 0 ? 1 : 0;
+}
+
 static int nat_get_style(void *context, uintptr_t window, int64_t *style) {
     LONG_PTR value;
     (void)context;
@@ -641,6 +674,7 @@ static int nat_get_style(void *context, uintptr_t window, int64_t *style) {
 static int nat_set_style(void *context, uintptr_t window, int64_t style) {
     LONG_PTR previous;
     (void)context;
+    if (!nat_responsive(window)) return 0;
     SetLastError(0);
     previous = SetWindowLongPtrW((HWND)window, GWL_STYLE, (LONG_PTR)(LONG)(DWORD)(uint32_t)style);
     if (previous == 0 && GetLastError() != 0) return 0;
@@ -649,8 +683,9 @@ static int nat_set_style(void *context, uintptr_t window, int64_t style) {
 
 static int nat_show_window(void *context, uintptr_t window, int32_t command) {
     (void)context;
+    if (!nat_responsive(window)) return 0;
     /* ShowWindow reports only prior visibility, not failure. The identity check precedes it, and the
-     * observed state is what the smoke and the reducer verify. */
+     * observed state is what the smoke and the reducer verify. ShowWindowAsync is not used: section 2.1. */
     (void)ShowWindow((HWND)window, (int)command);
     return 1;
 }
@@ -658,6 +693,7 @@ static int nat_show_window(void *context, uintptr_t window, int32_t command) {
 static int nat_set_window_pos(void *context, uintptr_t window, int32_t x, int32_t y, int32_t width,
                               int32_t height, uint32_t flags) {
     (void)context;
+    if (!nat_responsive(window)) return 0;
     return SetWindowPos((HWND)window, NULL, x, y, width, height, (UINT)flags) ? 1 : 0;
 }
 
@@ -695,6 +731,7 @@ static int nat_set_placement(void *context, uintptr_t window, const window_state
     value.rcNormalPosition.top = placement->normal.top;
     value.rcNormalPosition.right = placement->normal.right;
     value.rcNormalPosition.bottom = placement->normal.bottom;
+    if (!nat_responsive(window)) return 0;
     return SetWindowPlacement((HWND)window, &value) ? 1 : 0;
 }
 

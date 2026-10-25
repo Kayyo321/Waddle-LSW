@@ -68,6 +68,7 @@ static uint32_t observe_state(window_state_adapter_t *adapter, HWND window, wind
     return state;
 }
 
+
 static int rect_equals(RECT left, RECT right) {
     return left.left == right.left && left.top == right.top && left.right == right.right && left.bottom == right.bottom;
 }
@@ -82,6 +83,135 @@ static waddle_window_state_action_t act(uint32_t kind) {
 static window_state_adapter_status_t run_one(window_state_adapter_t *adapter, HWND window, const waddle_window_state_action_t *action,
                                              uint64_t *completed) {
     return window_state_adapter_execute(adapter, (uintptr_t)window, 1, 1, action, 1, completed);
+}
+
+/* ---- Second-thread window: a worker thread owns the window; the main thread is the adapter owner ---- */
+
+static volatile LONG WorkerCloseSeen = 0;
+
+static LRESULT CALLBACK worker_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_CLOSE) {
+        InterlockedExchange(&WorkerCloseSeen, 1);
+        return 0;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+/** @brief Hand-off between the worker thread and the main thread. */
+typedef struct worker_t {
+    HWND window;
+    HANDLE ready;
+    HANDLE stop;
+} worker_t;
+
+/** @brief Creates the worker's window, pumps its messages until stop, then destroys it on the same thread. */
+static DWORD WINAPI worker_main(LPVOID argument) {
+    worker_t *worker = (worker_t *)argument;
+    WNDCLASSEXW cls;
+    HWND window = NULL;
+    memset(&cls, 0, sizeof(cls));
+    cls.cbSize = sizeof(cls);
+    cls.lpfnWndProc = worker_window_proc;
+    cls.hInstance = GetModuleHandleW(NULL);
+    cls.lpszClassName = L"WaddleWindowStateSmokeWorker";
+    if (RegisterClassExW(&cls) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+        window = CreateWindowExW(0, L"WaddleWindowStateSmokeWorker", L"waddle window state worker",
+                                 WS_OVERLAPPEDWINDOW, 200, 150, 500, 400, NULL, NULL, GetModuleHandleW(NULL), NULL);
+    }
+    if (window != NULL) {
+        ShowWindow(window, SW_SHOWNORMAL);
+        UpdateWindow(window);
+    }
+    worker->window = window;
+    SetEvent(worker->ready);
+    while (window != NULL && WaitForSingleObject(worker->stop, 0) != WAIT_OBJECT_0) {
+        pump_messages();
+        Sleep(5);
+    }
+    if (window != NULL) DestroyWindow(window);
+    return 0;
+}
+
+/**
+ * @brief Drives the worker-thread window through the adapter on the main thread. Each step asserts the
+ *        observation and the native fact, as the main-window steps do. Uses the identity pair (2, 2).
+ */
+static void run_worker_window_steps(window_state_adapter_t *adapter, HWND window) {
+    window_state_adapter_status_t status;
+    uint64_t completed = 0;
+    uint32_t state;
+    waddle_window_state_action_t action;
+    RECT before_geometry;
+    RECT current;
+    RECT visible;
+    RECT before_fullscreen;
+    RECT monitor_rect;
+    MONITORINFO info;
+    LONG_PTR style_before;
+    LONG_PTR style_now;
+
+    step("admit the worker-thread window", window_state_adapter_admit(adapter, (uintptr_t)window, 2, 2) == WindowStateAdapterOk);
+
+    action = act(WaddleWindowStateActionGuestMinimize);
+    status = window_state_adapter_execute(adapter, (uintptr_t)window, 2, 2, &action, 1, &completed);
+    step("cross-thread minimize completes", status == WindowStateAdapterOk && completed == 1);
+    state = 0xffffffffu;
+    status = window_state_adapter_observe(adapter, (uintptr_t)window, 2, 2, &state);
+    step("cross-thread minimize observed as Minimized", status == WindowStateAdapterOk && (state & WaddleWindowStateMinimized) != 0);
+    step("cross-thread minimize confirmed by IsIconic", IsIconic(window) != 0);
+
+    action = act(WaddleWindowStateActionGuestRestore);
+    status = window_state_adapter_execute(adapter, (uintptr_t)window, 2, 2, &action, 1, &completed);
+    state = 0xffffffffu;
+    status = window_state_adapter_observe(adapter, (uintptr_t)window, 2, 2, &state);
+    step("cross-thread restore observed without Minimized or Maximized",
+         status == WindowStateAdapterOk && (state & (WaddleWindowStateMinimized | WaddleWindowStateMaximized)) == 0);
+
+    GetWindowRect(window, &before_fullscreen);
+    style_before = GetWindowLongPtrW(window, GWL_STYLE);
+    action = act(WaddleWindowStateActionGuestEnterFullscreen);
+    status = window_state_adapter_execute(adapter, (uintptr_t)window, 2, 2, &action, 1, &completed);
+    step("cross-thread enter fullscreen completes", status == WindowStateAdapterOk && completed == 1);
+    memset(&info, 0, sizeof(info));
+    info.cbSize = sizeof(info);
+    GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &info);
+    monitor_rect = info.rcMonitor;
+    GetWindowRect(window, &current);
+    step("cross-thread fullscreen covers the monitor rectangle", rect_equals(current, monitor_rect));
+
+    action = act(WaddleWindowStateActionGuestLeaveFullscreen);
+    status = window_state_adapter_execute(adapter, (uintptr_t)window, 2, 2, &action, 1, &completed);
+    step("cross-thread leave fullscreen completes", status == WindowStateAdapterOk && completed == 1);
+    style_now = GetWindowLongPtrW(window, GWL_STYLE);
+    GetWindowRect(window, &current);
+    step("cross-thread leave restores the style", style_now == style_before);
+    step("cross-thread leave restores the rectangle", rect_equals(current, before_fullscreen));
+
+    GetWindowRect(window, &before_geometry);
+    memset(&action, 0, sizeof(action));
+    action.kind = WaddleWindowStateActionGuestSetGeometry;
+    action.width = 320;
+    action.height = 240;
+    status = window_state_adapter_execute(adapter, (uintptr_t)window, 2, 2, &action, 1, &completed);
+    GetWindowRect(window, &current);
+    DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &visible, sizeof(visible));
+    step("cross-thread geometry completes", status == WindowStateAdapterOk && completed == 1);
+    step("cross-thread geometry keeps the origin", current.left == before_geometry.left && current.top == before_geometry.top);
+    step("cross-thread geometry sets the visible frame size",
+         visible.right - visible.left == 320 && visible.bottom - visible.top == 240);
+
+    action = act(WaddleWindowStateActionGuestActivate);
+    status = window_state_adapter_execute(adapter, (uintptr_t)window, 2, 2, &action, 1, &completed);
+    step("cross-thread activate completes or reports a native failure", status == WindowStateAdapterOk || status == WindowStateAdapterNativeFailure);
+
+    action = act(WaddleWindowStateActionGuestPostClose);
+    status = window_state_adapter_execute(adapter, (uintptr_t)window, 2, 2, &action, 1, &completed);
+    step("cross-thread post close completes", status == WindowStateAdapterOk && completed == 1);
+    for (int wait = 0; wait < 50 && InterlockedCompareExchange(&WorkerCloseSeen, 0, 0) == 0; ++wait) {
+        Sleep(10);
+    }
+    step("worker thread receives WM_CLOSE", InterlockedCompareExchange(&WorkerCloseSeen, 0, 0) == 1);
+    step("release the worker-thread window", window_state_adapter_release(adapter, 2, 2) == WindowStateAdapterOk);
 }
 
 int main(void) {
@@ -239,6 +369,31 @@ int main(void) {
     }
 
     step("release the second window", window_state_adapter_release(adapter, 1, 1) == WindowStateAdapterOk);
+
+    /* A window owned by a worker thread: the adapter's owner is this thread, so every call crosses threads. */
+    {
+        worker_t worker;
+        HANDLE thread;
+        memset(&worker, 0, sizeof(worker));
+        worker.ready = CreateEventW(NULL, TRUE, FALSE, NULL);
+        worker.stop = CreateEventW(NULL, TRUE, FALSE, NULL);
+        thread = CreateThread(NULL, 0, worker_main, &worker, 0, NULL);
+        step("start the worker thread", thread != NULL && worker.ready != NULL && worker.stop != NULL);
+        if (thread != NULL && worker.ready != NULL && WaitForSingleObject(worker.ready, 5000) == WAIT_OBJECT_0 &&
+            worker.window != NULL) {
+            run_worker_window_steps(adapter, worker.window);
+        } else {
+            step("create the worker-thread window", 0);
+        }
+        SetEvent(worker.stop);
+        if (thread != NULL) {
+            WaitForSingleObject(thread, 5000);
+            CloseHandle(thread);
+        }
+        if (worker.ready != NULL) CloseHandle(worker.ready);
+        if (worker.stop != NULL) CloseHandle(worker.stop);
+    }
+
     step("destroy adapter", window_state_adapter_destroy(&adapter) == WindowStateAdapterOk && adapter == NULL);
     if (failures != 0) {
         printf("window_state_adapter_native: %d step(s) failed\n", failures);
