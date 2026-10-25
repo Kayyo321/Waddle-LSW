@@ -1355,24 +1355,31 @@ pub const store_t = struct {
     /// Restore the old manifest for a PREPARED version-3 journal, or do nothing
     /// when the candidate was never published. The artifact is never touched in
     /// this phase, so a changed artifact fails closed with ArtifactConflict.
+    /// A removal never touched its artifact in PREPARED state, so rollback restores
+    /// only the manifest and ignores the artifact whatever the user did to it. A
+    /// recreated artifact is unlinked only when it still carries the recorded
+    /// identity; any other file at that path belongs to the user and is kept.
     fn rollback_prepared_v3(self: *store_t, journal: journal_v3_t) !void {
         const txid = try txid_array(journal.transaction_id);
-        if (v3_is_remove(journal)) try self.expect_v3_artifact(journal);
-        const recreated_present = if (v3_is_recreate(journal)) try self.expect_recreated_artifact_or_absent(journal) else false;
+        const recreated_live = if (v3_is_recreate(journal)) (try self.recorded_artifact_live(journal, v3_new_artifact_info(journal))) != null else false;
         switch (try self.classify_v3_manifest(journal)) {
             .Candidate => try self.restore_displaced_manifest(txid, journal),
             .Original => {},
         }
-        if (recreated_present) try self.unpublish_v3_artifact(journal);
+        if (recreated_live) try self.unpublish_v3_artifact(journal);
     }
 
-    /// Validate a PREPARED recreate journal's artifact before any mutation. Returns
-    /// true when the recorded identity is live (it must be unlinked), false when
-    /// absent (the publish never happened), and ArtifactConflict for any other file.
-    fn expect_recreated_artifact_or_absent(self: *store_t, journal: journal_v3_t) !bool {
-        const current = (try self.inspect_v3_artifact(journal)) orelse return false;
-        if (!same_file_info(current, v3_new_artifact_info(journal))) return error.ArtifactConflict;
-        return true;
+    /// Return the live artifact identity when it is exactly `expected`. Absent,
+    /// unsafe (AccessDenied), or user-changed files all return null so the caller
+    /// keeps them; other errors propagate.
+    fn recorded_artifact_live(self: *store_t, journal: journal_v3_t, expected: file_info_t) !?file_info_t {
+        const found = self.inspect_v3_artifact(journal) catch |err| {
+            if (err == error.AccessDenied) return null;
+            return err;
+        };
+        const current = found orelse return null;
+        if (!same_file_info(current, expected)) return null;
+        return current;
     }
 
     /// Publish a staged recreate artifact with no-clobber semantics. The target
@@ -1422,10 +1429,6 @@ pub const store_t = struct {
         if (!same_file_info(current_manifest, v3_new_manifest_info(journal))) return error.RecoveryRequired;
         try self.validate_displaced_manifest_temp(txid, v3_old_manifest_info(journal));
         if (v3_is_remove(journal)) try self.retire_v3_artifact(journal);
-        if (v3_is_recreate(journal)) {
-            const current = (try self.inspect_v3_artifact(journal)) orelse return error.RecoveryRequired;
-            if (!same_file_info(current, v3_new_artifact_info(journal))) return error.RecoveryRequired;
-        }
 
         const transactions_fd = try self.open_private_dir("transactions");
         defer _ = c.close(transactions_fd);
@@ -1458,8 +1461,7 @@ pub const store_t = struct {
     /// identity is still present. Absence is accepted as a completed unlink.
     fn retire_v3_artifact(self: *store_t, journal: journal_v3_t) !void {
         const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
-        const current = (try self.inspect_v3_artifact(journal)) orelse return;
-        if (!same_file_info(current, v3_artifact_info(journal))) return error.ArtifactConflict;
+        const current = (try self.recorded_artifact_live(journal, v3_artifact_info(journal))) orelse return;
         try self.unlink_owned_artifact(root.fd, journal.relative_path.?, current);
     }
 
@@ -1511,7 +1513,10 @@ pub const store_t = struct {
         }
         if (v3_is_recreate(journal)) {
             const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
-            try self.remove_target_temp(root.fd, journal.relative_path.?, txid, v3_new_artifact_info(journal));
+            // A user-changed file at the staging name is theirs; the journal still finishes.
+            self.remove_target_temp(root.fd, journal.relative_path.?, txid, v3_new_artifact_info(journal)) catch |err| {
+                if (err != error.ArtifactConflict) return err;
+            };
         }
         try self.remove_tx_tree(txid);
     }
@@ -8240,9 +8245,6 @@ test "remove prepared evidence rejects every tampered journal, staged manifest, 
         try std.testing.expectError(error.RecoveryRequired, store.recover());
         replace_transaction_file(fixture.state, txid, "old-manifest", docs.original, 0o600);
 
-        write_status_file(fixture.data, "applications/target.desktop", "tampered artifact", 0o644);
-        try std.testing.expectError(error.ArtifactConflict, store.recover());
-        write_status_file(fixture.data, "applications/target.desktop", "target bytes", 0o644);
 
         if (c.renameat(fixture.state.fd, "manifest.json", fixture.state.fd, "manifest.saved") != 0) @panic("fixture rename");
         write_status_file(fixture.state, "manifest.json", "foreign manifest", 0o600);
@@ -8428,15 +8430,6 @@ test "committed remove evidence rejects tampered artifacts and staged manifests 
     const temp: [:0]const u8 = temp_name[0 .. std.mem.indexOfScalar(u8, &temp_name, 0) orelse unreachable :0];
     const saved_temp: [:0]const u8 = "displaced-saved.tmp";
 
-    write_status_file(fixture.data, "applications/target.desktop", "tampered artifact", 0o644);
-    try std.testing.expectError(error.ArtifactConflict, store.recover());
-    {
-        const still = try fixture.data.readFileAlloc(std.testing.allocator, "applications/target.desktop", 4096);
-        defer std.testing.allocator.free(still);
-        try std.testing.expectEqualStrings("tampered artifact", still);
-    }
-    write_status_file(fixture.data, "applications/target.desktop", "target bytes", 0o644);
-
     if (c.renameat(fixture.state.fd, temp.ptr, fixture.state.fd, saved_temp.ptr) != 0) @panic("fixture rename");
     write_status_file(fixture.state, temp, "foreign displaced manifest", 0o600);
     try std.testing.expectError(error.ArtifactConflict, store.recover());
@@ -8479,14 +8472,6 @@ test "prepared remove evidence rejects absent, relocated, or foreign live state 
     try std.testing.expectEqualStrings("prepared", parsed.value.phase);
     const temp_name = manifest_temp_name(txid);
     const temp: [:0]const u8 = temp_name[0 .. std.mem.indexOfScalar(u8, &temp_name, 0) orelse unreachable :0];
-
-    if (c.renameat(fixture.data.fd, "applications/target.desktop", fixture.data.fd, "applications/target.saved") != 0) @panic("fixture rename");
-    try std.testing.expectError(error.ArtifactConflict, store.recover());
-    if (c.renameat(fixture.data.fd, "applications/target.saved", fixture.data.fd, "applications/target.desktop") != 0) @panic("fixture rename");
-
-    if (c.renameat(fixture.data.fd, "applications", fixture.data.fd, "applications.saved") != 0) @panic("fixture rename");
-    try std.testing.expectError(error.ArtifactConflict, store.recover());
-    if (c.renameat(fixture.data.fd, "applications.saved", fixture.data.fd, "applications") != 0) @panic("fixture rename");
 
     if (c.renameat(fixture.state.fd, "manifest.json", fixture.state.fd, "manifest.saved") != 0) @panic("fixture rename");
     try std.testing.expectError(error.ArtifactConflict, store.recover());
@@ -9259,10 +9244,13 @@ test "recreate refuses a foreign file that appears during a prepared publish and
     try std.testing.expectEqualStrings("prepared", parsed.value.phase);
 
     write_status_file(fixture.data, "applications/handler.desktop", "foreign bytes", 0o644);
-    try std.testing.expectError(error.ArtifactConflict, store.recover());
-    if (c.unlinkat(fixture.data.fd, "applications/handler.desktop", 0) != 0) @panic("fixture unlink");
     try store.recover();
-    try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
+    const kept = try fixture.data.readFileAlloc(std.testing.allocator, "applications/handler.desktop", 4096);
+    defer std.testing.allocator.free(kept);
+    try std.testing.expectEqualStrings("foreign bytes", kept);
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    try std.testing.expectEqualStrings(docs.original, on_disk);
 }
 
 test "ensure_directory creates missing components and refuses unsafe existing components" {
@@ -9295,6 +9283,53 @@ test "manifest_snapshot returns caller-owned bytes or null without writing" {
     const bytes = (try store.manifest_snapshot(std.testing.allocator)) orelse return error.TestExpectedEqual;
     defer std.testing.allocator.free(bytes);
     try std.testing.expectEqualStrings("{\"schema\":1}", bytes);
+}
+
+test "remove journals survive user edits of the artifact and init recovers without touching user bytes" {
+    for (0..3) |edit| {
+        var completed = false;
+        for (1..24) |step| {
+            var fixture = remove_fixture_t.create(std.testing.allocator);
+            defer fixture.destroy(std.testing.allocator);
+            var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena.deinit();
+            const docs = remove_documents(arena.allocator(), fixture.data_path);
+            install_remove_artifacts(&fixture);
+            try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+            const roots = fixture.roots();
+            {
+                var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+                store.fail_after.store(store.checkpoint_count.load(.monotonic) + step, .monotonic);
+                const outcome = store.remove(.{ .record_id = "desktop:target", .candidate_manifest = docs.candidate });
+                store.fail_after.store(0, .monotonic);
+                store.deinit();
+                if (outcome) |_| {
+                    completed = true;
+                } else |err| try std.testing.expectEqual(error.InjectedFailure, err);
+            }
+            // The user edits, deletes, or replaces the artifact between the interrupted
+            // transaction and the next startup.
+            switch (edit) {
+                0 => write_status_file(fixture.data, "applications/target.desktop", "user edited bytes", 0o644),
+                1 => _ = c.unlinkat(fixture.data.fd, "applications/target.desktop", 0),
+                else => {
+                    _ = c.unlinkat(fixture.data.fd, "applications/target.desktop", 0);
+                    write_status_file(fixture.data, "applications/target.desktop", "user replacement", 0o644);
+                },
+            }
+            var reopened = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+            defer reopened.deinit();
+            const snapshot = take_remove_snapshot(&fixture);
+            defer free_remove_snapshot(snapshot);
+            switch (edit) {
+                0 => try std.testing.expectEqualStrings("user edited bytes", snapshot.target orelse return error.TestExpectedEqual),
+                1 => try std.testing.expect(snapshot.target == null),
+                else => try std.testing.expectEqualStrings("user replacement", snapshot.target orelse return error.TestExpectedEqual),
+            }
+            try std.testing.expect(std.mem.eql(u8, snapshot.manifest, docs.original) or std.mem.eql(u8, snapshot.manifest, docs.candidate));
+            if (completed) break;
+        }
+    }
 }
 
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
