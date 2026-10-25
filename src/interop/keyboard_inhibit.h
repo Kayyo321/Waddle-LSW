@@ -6,10 +6,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/** @brief Policy: request only while the focused window is fullscreen or pointer-locked. Default and zero value. */
+#define WaddleKeyboardInhibitFullscreen 0u
 /** @brief Policy: never request an inhibitor. */
-#define WaddleKeyboardInhibitNever 0u
-/** @brief Policy: request only while the focused window is fullscreen or pointer-locked. */
-#define WaddleKeyboardInhibitFullscreen 1u
+#define WaddleKeyboardInhibitNever 1u
 /** @brief Policy: request whenever the window holds input focus. */
 #define WaddleKeyboardInhibitFocused 2u
 
@@ -21,8 +21,8 @@
 #define WaddleKeyboardInhibitEventInhibitorActive 2u
 /** @brief Event kind: compositor reported the inhibitor inactive. */
 #define WaddleKeyboardInhibitEventInhibitorInactive 3u
-/** @brief Event kind: surface fullscreen or pointer-locked changed; uses `fullscreen`. */
-#define WaddleKeyboardInhibitEventSurfaceFullscreen 4u
+/** @brief Event kind: surface fullscreen and pointer-lock flags of a window generation; accepted for unfocused windows. */
+#define WaddleKeyboardInhibitEventSurfaceState 4u
 /** @brief Event kind: user escape chord toggled the override. */
 #define WaddleKeyboardInhibitEventUserToggle 5u
 /** @brief Event kind: window destroyed. */
@@ -36,6 +36,8 @@
 #define WaddleKeyboardInhibitActionDestroy 2u
 /** @brief Upper bound on actions in one result. */
 #define WaddleKeyboardInhibitMaxActions 2u
+/** @brief Bounded number of windows whose flags are remembered. */
+#define WaddleKeyboardInhibitMaxTrackedWindows 16u
 
 /** @brief Result code of every ABI call; Ok is zero. */
 typedef enum waddle_keyboard_inhibit_status_t {
@@ -48,42 +50,66 @@ typedef enum waddle_keyboard_inhibit_status_t {
     /** Event kind is not defined; state and output unchanged. */
     WaddleKeyboardInhibitInvalidKind = 3,
     /** Configure mode is not defined; state and output unchanged. */
-    WaddleKeyboardInhibitInvalidMode = 4
+    WaddleKeyboardInhibitInvalidMode = 4,
+    /** A flag byte is neither 0 nor 1; state and output unchanged. */
+    WaddleKeyboardInhibitInvalidFlag = 5,
+    /** A state byte is out of range; state and output unchanged. */
+    WaddleKeyboardInhibitInvalidState = 6,
+    /** The remembered-window table is full for a new window; state and output unchanged. */
+    WaddleKeyboardInhibitWindowTableFull = 7
 } waddle_keyboard_inhibit_status_t;
 
 /**
- * @brief Policy state. Caller-owned storage; zero-filled storage is the valid
- * initial value (use waddle_keyboard_inhibit_init). Fields are private: callers
- * must not write them. One owner thread per state; no allocation.
+ * @brief One remembered window. Window zero marks a free slot. Private to the module.
+ */
+typedef struct waddle_keyboard_inhibit_entry_t {
+    /** Window identity; zero for a free slot. */
+    uint64_t window;
+    /** Newest generation seen for this window. */
+    uint32_t generation;
+    /** 1 when fullscreen, 0 otherwise. */
+    uint8_t fullscreen;
+    /** 1 when pointer-locked, 0 otherwise. */
+    uint8_t pointer_lock;
+} waddle_keyboard_inhibit_entry_t;
+
+/**
+ * @brief Policy state, 280 bytes. Zero-filled storage is the valid initial value
+ * (policy Fullscreen, unfocused, nothing remembered); waddle_keyboard_inhibit_init
+ * sets the same. Caller owns storage; one owner thread per state; no allocation.
+ * Fields are private: callers must not write them. Every byte is range-checked
+ * by the ABI before use, and an out-of-range byte returns InvalidState.
  */
 typedef struct waddle_keyboard_inhibit_state_t {
-    /** Configured policy; a WaddleKeyboardInhibit mode value. */
+    /** Policy: a WaddleKeyboardInhibit policy value (0 Fullscreen, 1 Never, 2 Focused). */
     uint8_t config;
-    /** Live inhibitor phase: 0 None, 1 Pending, 2 Active. */
+    /** Inhibitor phase: 0 None, 1 Pending, 2 Active. */
     uint8_t phase;
-    /** True while a window holds keyboard focus. */
-    bool focused;
-    /** True while the focused surface is fullscreen or pointer-locked. */
-    bool fullscreen;
-    /** True while the user override suppresses inhibition for this focus. */
-    bool override;
-    /** Focused window identity; meaningful only when `focused`. */
+    /** 1 while a window holds keyboard focus, 0 otherwise. */
+    uint8_t focused;
+    /** 1 while the user override suppresses inhibition for this focus, 0 otherwise. */
+    uint8_t override;
+    /** Focused window identity; meaningful only when `focused` is 1. */
     uint64_t window;
-    /** Focused window generation; meaningful only when `focused`. */
+    /** Focused window generation; meaningful only when `focused` is 1. */
     uint32_t generation;
+    /** Remembered windows. */
+    waddle_keyboard_inhibit_entry_t table[WaddleKeyboardInhibitMaxTrackedWindows];
 } waddle_keyboard_inhibit_state_t;
 
 /**
  * @brief One event for waddle_keyboard_inhibit_apply. Plain value; no ownership.
- * Fields not used by `kind` are ignored.
+ * Both flag bytes must be 0 or 1 for every kind. Fields a kind does not use must be zero.
  */
 typedef struct waddle_keyboard_inhibit_event_t {
     /** One of the WaddleKeyboardInhibitEvent values. */
     uint8_t kind;
     /** Policy value, used only by the Configure event. */
     uint8_t mode;
-    /** Fullscreen flag, used only by the SurfaceFullscreen event. */
-    bool fullscreen;
+    /** 0 or 1: surface is fullscreen. Used only by the SurfaceState event. */
+    uint8_t fullscreen;
+    /** 0 or 1: surface is pointer-locked. Used only by the SurfaceState event. */
+    uint8_t pointer_lock;
     /** Window identity. */
     uint64_t window;
     /** Window generation. */
@@ -114,19 +140,19 @@ typedef struct waddle_keyboard_inhibit_result_t {
 } waddle_keyboard_inhibit_result_t;
 
 /**
- * @brief Set state to the zero value: unfocused, policy Never, no object.
+ * @brief Set state to the zero value: policy Fullscreen, unfocused, nothing remembered.
  * @param state out, non-NULL.
- * @return Ok or NullArgument. Thread-safe per state: caller serializes.
+ * @return Ok or NullArgument. Caller serializes calls per state.
  */
 waddle_keyboard_inhibit_status_t waddle_keyboard_inhibit_init(waddle_keyboard_inhibit_state_t *state);
 
 /**
  * @brief Apply one event to the policy state.
  * @param state inout, non-NULL; written only on Ok.
- * @param event in, non-NULL; copied and validated before state is touched.
+ * @param event in, non-NULL; decoded and validated before state is touched.
  * @param out out, non-NULL; written only on Ok.
- * @return Ok, NullArgument, InvalidIdentity, InvalidKind, or InvalidMode.
- *         Caller serializes calls per state.
+ * @return Ok, NullArgument, InvalidIdentity, InvalidKind, InvalidMode, InvalidFlag,
+ *         InvalidState, or WindowTableFull. Caller serializes calls per state.
  */
 waddle_keyboard_inhibit_status_t waddle_keyboard_inhibit_apply(waddle_keyboard_inhibit_state_t *state, const waddle_keyboard_inhibit_event_t *event, waddle_keyboard_inhibit_result_t *out);
 
