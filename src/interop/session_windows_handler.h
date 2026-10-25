@@ -66,6 +66,7 @@ typedef struct session_windows_counters_t {
     uint64_t frames_queued; /**< Outbound frames stored in the pending list. */
     uint64_t frames_dropped_draining; /**< Outbound frames refused with Draining (closing). */
     uint64_t frames_dropped_no_buffer_layer; /**< FrameReady frames answered with FrameRelease (see the limits). */
+    uint64_t frames_dropped_retired; /**< Pending window frames dropped because their window was retired before they were sent. */
     uint64_t configures_coalesced; /**< Superseded WindowConfigure frames replaced in the pending list. */
     uint64_t pending_overflow; /**< Outbound frames that could not be stored; each one failed the run. */
     uint64_t announces_realized; /**< WindowAnnounce frames that realized a window. */

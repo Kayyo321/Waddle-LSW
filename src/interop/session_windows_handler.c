@@ -185,6 +185,28 @@ static int flush_pending(session_windows_handler_t *handler) {
     return 0;
 }
 
+/**
+ * @brief Drop the pending window frames whose window pair is no longer realized (4.3). A WindowConfigure, WindowClose,
+ * PopupRepositioned or PopupDismissed names a window; once the windows layer retired that window (by a guest retire, a
+ * failed delivery or a reset), sending the frame would tell the guest about a window it no longer has. FrameRelease is
+ * not window-scoped in this sense and is kept. The list keeps its order. Called after every callback that can retire a
+ * window and before that callback flushes.
+ */
+static void purge_retired(session_windows_handler_t *handler) {
+    uint32_t kept = 0;
+    for (uint32_t index = 0; index < handler->pending_count; ++index) {
+        uint32_t type = handler->pending[index].type;
+        int window_scoped = type == InteropMsgWindowConfigure || type == InteropMsgWindowClose || type == InteropMsgPopupRepositioned || type == InteropMsgPopupDismissed;
+        if (window_scoped && !host_wayland_windows_contains(&handler->windows, handler->pending[index].window, handler->pending[index].generation)) {
+            ++handler->counters.frames_dropped_retired;
+            continue;
+        }
+        if (kept != index) handler->pending[kept] = handler->pending[index];
+        ++kept;
+    }
+    handler->pending_count = kept;
+}
+
 /** @brief Flush the Wayland output buffer. WouldBlock is not an error; the poll requests POLLOUT instead. */
 static int flush_core(session_windows_handler_t *handler) {
     if (!handler->wayland_ready) return 0;
@@ -613,6 +635,7 @@ static int on_frame(void *context, uint32_t message_type, uint32_t request_id, c
         default: break;
         }
     }
+    purge_retired(handler);
     if (result == 0) result = flush_pending(handler) || flush_core(handler);
     handler->sender = NULL;
     return handler->failed ? 1 : result;
@@ -639,6 +662,7 @@ static int on_fds(void *context, const struct pollfd *fds, size_t count, uint64_
         host_wayland_core_status_t status = host_wayland_core_dispatch(&handler->core, fds[0].revents);
         if (status != HostWaylandCoreOk && status != HostWaylandCoreWouldBlock) result = fail(handler);
     }
+    purge_retired(handler);
     if (result == 0) result = flush_pending(handler) || flush_core(handler);
     handler->sender = NULL;
     return handler->failed ? 1 : result;

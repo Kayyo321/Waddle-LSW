@@ -1615,6 +1615,392 @@ static int test_api_edges(void) {
     return 0;
 }
 
+/* ---- test 11: randomized sequences ---------------------------------------------------------------- */
+
+static uint64_t rng_state;
+
+/** @brief xorshift64* (Vigna). The seed is never zero. */
+static uint64_t next_random(void) {
+    uint64_t value = rng_state;
+    value ^= value >> 12;
+    value ^= value << 25;
+    value ^= value >> 27;
+    rng_state = value;
+    return value * 0x2545F4914F6CDD1DULL;
+}
+
+static uint32_t below(uint32_t bound) {
+    return (uint32_t)(next_random() % bound);
+}
+
+static uint64_t random_generation;
+static uint32_t random_serial_last;
+static struct wl_seat *random_foreign_seat;
+static unsigned random_frames_by_type[5];
+
+/** @brief Tally of the accepted frames the random run checks, by type. */
+static void count_frame_type(uint32_t type) {
+    switch (type) {
+    case InteropMsgWindowConfigure: ++random_frames_by_type[0]; break;
+    case InteropMsgWindowClose: ++random_frames_by_type[1]; break;
+    case InteropMsgPopupRepositioned: ++random_frames_by_type[2]; break;
+    case InteropMsgPopupDismissed: ++random_frames_by_type[3]; break;
+    case InteropMsgFrameRelease: ++random_frames_by_type[4]; break;
+    default: break;
+    }
+}
+
+typedef struct live_pair_t {
+    uint64_t window;
+    uint64_t generation;
+    uint32_t role;
+} live_pair_t;
+
+static unsigned live_pairs(live_pair_t *out, unsigned capacity) {
+    unsigned count = 0;
+    for (uint32_t index = 0; index < HostWindowMapMaxRealized && count < capacity; ++index) {
+        const host_wayland_record_t *rec = &handler.windows.records[index];
+        if (rec->generation == 0) continue;
+        out[count].window = rec->window;
+        out[count].generation = rec->generation;
+        out[count].role = rec->role;
+        ++count;
+    }
+    return count;
+}
+
+/** @brief Pick a live window of one of the given roles, or report none. */
+static int pick_pair(const live_pair_t *pairs, unsigned count, int toplevels_only, live_pair_t *out) {
+    live_pair_t candidates[HostWindowMapMaxRealized];
+    unsigned found = 0;
+    for (unsigned index = 0; index < count; ++index) {
+        int toplevel = pairs[index].role == InteropRoleToplevel || pairs[index].role == InteropRoleDialog || pairs[index].role == InteropRoleUacConsent;
+        if (toplevels_only ? toplevel : !toplevel) candidates[found++] = pairs[index];
+    }
+    if (found == 0) return 0;
+    *out = candidates[below(found)];
+    return 1;
+}
+
+static void random_announce(const live_pair_t *pairs, unsigned count) {
+    announce_spec_t spec = toplevel_spec(1 + below(12), 1 + random_generation, "a-rand");
+    random_generation++;
+    uint32_t roll = below(100);
+    live_pair_t parent;
+    if (roll < 45) {
+        spec.role = InteropRoleToplevel;
+    } else if (roll < 60 && count > 0) {
+        spec.role = InteropRoleDialog;
+        parent = pairs[below(count)];
+        spec.has_parent = true;
+        spec.parent = parent.window;
+        spec.parent_generation = parent.generation;
+    } else if (roll < 75 && count > 0) {
+        spec.role = InteropRoleMenu;
+        parent = pairs[below(count)];
+        spec.has_parent = true;
+        spec.parent = parent.window;
+        spec.parent_generation = parent.generation;
+    } else if (roll < 80 && count > 0) {
+        spec.role = InteropRoleTooltip;
+        parent = pairs[below(count)];
+        spec.has_parent = true;
+        spec.parent = parent.window;
+        spec.parent_generation = parent.generation;
+    } else if (roll < 90) {
+        spec.role = InteropRoleUacConsent;
+    } else {
+        spec.role = InteropRoleToplevel;
+    }
+    spec.x = (int32_t)below(250) - 50;
+    spec.y = (int32_t)below(250) - 50;
+    spec.width = 1 + below(700);
+    spec.height = 1 + below(500);
+    spec.title = below(3) == 0 ? "random" : NULL;
+    spec.has_min_size = below(4) == 0;
+    spec.min_width = below(200);
+    spec.min_height = below(200);
+    spec.state = below(128) & 0x77u;
+    if (spec.role == InteropRoleMenu && below(4) == 0) {
+        spec.has_serial = 1;
+        spec.serial = random_serial_last ? 1 + random_serial_last % 64 : 1;
+    }
+    /* Duplicates of a live pair are refused by the table; the frame is still sent. */
+    if (below(10) == 0 && count > 0) {
+        spec.window = pairs[0].window;
+        spec.generation = pairs[0].generation;
+    }
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = build_announce(frame, sizeof frame, &spec);
+    if (length) send_frame(InteropMsgWindowAnnounce, frame, length);
+    host_wayland_record_t *rec = record_of(spec.window, spec.generation);
+    if (rec && rec->decoration) fake_queue_decoration_configure(index_of(rec->decoration), below(10) == 0 ? ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE : ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+}
+
+static void random_update(const live_pair_t *pairs, unsigned count) {
+    if (count == 0) return;
+    live_pair_t target = pairs[below(count)];
+    update_spec_t spec;
+    memset(&spec, 0, sizeof spec);
+    spec.window = target.window;
+    spec.generation = target.generation;
+    spec.x = (int32_t)below(250) - 50;
+    spec.y = (int32_t)below(250) - 50;
+    spec.width = 1 + below(700);
+    spec.height = 1 + below(500);
+    spec.state = below(128) & 0x77u;
+    spec.title = below(4) == 0 ? "renamed" : NULL;
+    spec.has_min_size = below(5) == 0;
+    spec.min_width = below(200);
+    spec.min_height = below(200);
+    if (target.role == InteropRoleToplevel && below(4) == 0 && count > 0) {
+        live_pair_t parent;
+        if (pick_pair(pairs, count, 1, &parent) && (parent.window != target.window || parent.generation != target.generation)) {
+            spec.has_parent = true;
+            spec.parent = parent.window;
+            spec.parent_generation = parent.generation;
+        }
+    }
+    send_update(&spec);
+}
+
+static void random_configure(const live_pair_t *pairs, unsigned count) {
+    live_pair_t target;
+    if (!pick_pair(pairs, count, 1, &target)) return;
+    host_wayland_record_t *rec = record_of(target.window, target.generation);
+    if (!rec || !rec->toplevel || !rec->xdg_surface) return;
+    static const uint32_t bits[] = {XDG_TOPLEVEL_STATE_ACTIVATED, XDG_TOPLEVEL_STATE_MAXIMIZED, XDG_TOPLEVEL_STATE_FULLSCREEN};
+    uint32_t states[3];
+    size_t state_count = 0;
+    for (unsigned index = 0; index < 3; ++index) {
+        if (below(2)) states[state_count++] = bits[index];
+    }
+    static const int32_t sizes[] = {0, 1, 320, 700, 20000};
+    int32_t width = sizes[below(5)];
+    int32_t height = below(4) == 0 ? 0 : sizes[1 + below(4)];
+    if (rec->decoration) fake_queue_decoration_configure(index_of(rec->decoration), ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+    fake_queue_toplevel_configure(index_of(rec->toplevel), width, height, states, state_count);
+    fake_queue_surface_configure(index_of(rec->xdg_surface), 1 + below(1000));
+}
+
+static void random_close(const live_pair_t *pairs, unsigned count) {
+    live_pair_t target;
+    if (!pick_pair(pairs, count, 1, &target)) return;
+    host_wayland_record_t *rec = record_of(target.window, target.generation);
+    if (rec && rec->toplevel) fake_queue_toplevel_close(index_of(rec->toplevel));
+}
+
+static void random_popup(const live_pair_t *pairs, unsigned count) {
+    live_pair_t target;
+    if (!pick_pair(pairs, count, 0, &target)) return;
+    host_wayland_record_t *rec = record_of(target.window, target.generation);
+    if (!rec || !rec->popup) return;
+    unsigned popup = index_of(rec->popup);
+    switch (below(3)) {
+    case 0:
+        fake_queue_popup_configure(popup, (int32_t)below(200) - 20, (int32_t)below(200) - 20, 1 + (int32_t)below(100), 1 + (int32_t)below(60));
+        break;
+    case 1:
+        fake_queue_popup_repositioned(popup, below(4));
+        break;
+    default:
+        fake_queue_popup_done(popup);
+        break;
+    }
+}
+
+static void random_press(const live_pair_t *pairs, unsigned count) {
+    uint32_t serial = 1 + below(64);
+    live_pair_t target = {1 + below(12), 1 + below(random_generation + 1), 0};
+    if (count > 0 && below(5) != 0) target = pairs[below(count)];
+    struct wl_seat *seat = below(7) == 0 ? random_foreign_seat : session_seat();
+    uint32_t button = below(10) < 7 ? SessionWindowsButtonLeft : 0x111u;
+    host_wayland_press_input_t input;
+    memset(&input, 0, sizeof input);
+    input.protocol_serial = serial;
+    input.wayland_serial = 1000 + serial;
+    input.seat = seat;
+    input.window = target.window;
+    input.generation = target.generation;
+    input.lease_epoch = below(3);
+    input.kind = below(8) == 0 ? HostWaylandPressTouch : HostWaylandPressPointer;
+    input.button = button;
+    input.now_ms = test_now;
+    session_windows_record_press(&handler, &input);
+    random_serial_last = serial;
+}
+
+static void random_move_resize(const live_pair_t *pairs, unsigned count) {
+    uint32_t serial = 1 + below(64);
+    live_pair_t target = {1 + below(12), 1 + below(random_generation + 1), 0};
+    if (count > 0 && below(4) != 0) target = pairs[below(count)];
+    if (below(2)) {
+        send_move(target.window, target.generation, serial);
+    } else {
+        send_resize(target.window, target.generation, serial, below(12));
+    }
+}
+
+static void random_state(const live_pair_t *pairs, unsigned count) {
+    if (count == 0) return;
+    live_pair_t target = pairs[below(count)];
+    send_state_request(target.window, target.generation, below(128));
+}
+
+static void random_frame_ready(const live_pair_t *pairs, unsigned count) {
+    live_pair_t target = {1 + below(12), 1 + below(random_generation + 1), 0};
+    if (count > 0 && below(3) != 0) target = pairs[below(count)];
+    send_frame_ready(target.window, target.generation, below(4), next_random() & 0xFFFFFFu);
+}
+
+static void random_release(void) {
+    session_windows_release_press(&handler, 1 + below(64));
+}
+
+/** @brief One operation of the random mix. The pump or tick that follows delivers whatever it queued. */
+static void random_operation(void) {
+    live_pair_t pairs[HostWindowMapMaxRealized];
+    unsigned count = live_pairs(pairs, HostWindowMapMaxRealized);
+    uint32_t roll = below(100);
+    if (roll < 10) random_announce(pairs, count);
+    else if (roll < 18) random_update(pairs, count);
+    else if (roll < 23) {
+        if (count > 0) {
+            live_pair_t target = pairs[below(count)];
+            send_retire(target.window, target.generation);
+        }
+    } else if (roll < 33) random_configure(pairs, count);
+    else if (roll < 37) random_close(pairs, count);
+    else if (roll < 42) random_popup(pairs, count);
+    else if (roll < 52) random_press(pairs, count);
+    else if (roll < 56) random_release();
+    else if (roll < 62) random_move_resize(pairs, count);
+    else if (roll < 65) random_state(pairs, count);
+    else if (roll < 68) random_frame_ready(pairs, count);
+    else if (roll < 70) session_windows_set_lease_epoch(&handler, below(3));
+    else if (roll < 74) {
+        uint32_t mode = below(100);
+        fake_send_mode = mode < 70 ? FakeSendAccept : mode < 95 ? FakeSendFull : FakeSendDraining;
+    } else if (roll < 80) test_now += below(150);
+}
+
+/** @brief The invariants of 11, checked after every step. */
+static int random_check(unsigned seed, unsigned step, unsigned protocol_before, unsigned order_before) {
+    if (fake_protocol_errors != protocol_before || fake_order_violations != order_before) {
+        fprintf(stderr, "seed %u step %u: double reported a protocol or order error\n", seed, step);
+        return 1;
+    }
+    Check(!handler.failed);
+    Check(handler.pending_count <= SessionWindowsMaxPending);
+    for (unsigned index = 0; index < fake_frame_count; ++index) {
+        outbound_t out;
+        Check(decode_outbound(fake_frames[index], fake_frame_length[index], &out) == 0);
+        Check(out.request_id == 0);
+        if (out.type == InteropMsgWindowConfigure || out.type == InteropMsgWindowClose || out.type == InteropMsgPopupRepositioned || out.type == InteropMsgPopupDismissed) {
+            if (!host_wayland_windows_contains(&handler.windows, out.window, out.generation)) {
+                fprintf(stderr, "seed %u step %u: frame type %u names an unrealized window %llu/%llu\n", seed, step, out.type,
+                    (unsigned long long)out.window, (unsigned long long)out.generation);
+                return 1;
+            }
+        }
+        count_frame_type(out.type);
+    }
+    for (uint32_t index = 0; index < handler.pending_count; ++index) {
+        uint32_t type = handler.pending[index].type;
+        if (type == InteropMsgWindowConfigure || type == InteropMsgWindowClose || type == InteropMsgPopupRepositioned || type == InteropMsgPopupDismissed) {
+            if (!host_wayland_windows_contains(&handler.windows, handler.pending[index].window, handler.pending[index].generation)) {
+                fprintf(stderr, "seed %u step %u: pending frame type %u names an unrealized window %llu/%llu\n", seed, step, type,
+                    (unsigned long long)handler.pending[index].window, (unsigned long long)handler.pending[index].generation);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int run_random_segment(uint64_t seed, uint32_t numerator, uint32_t denominator, unsigned steps) {
+    rng_state = seed;
+    random_generation = 0;
+    random_serial_last = 0;
+    static struct wl_seat *const foreign = (struct wl_seat *)(void *)&foreign;
+    random_foreign_seat = foreign;
+    memset(random_frames_by_type, 0, sizeof random_frames_by_type);
+    Check(start_session_with(numerator, denominator, GlobalAll, InteropCapWindows) == 0);
+    fake_clear_recording();
+    for (unsigned step = 0; step < steps; ++step) {
+        fake_clear_recording();
+        unsigned protocol_before = fake_protocol_errors;
+        unsigned order_before = fake_order_violations;
+        if (handler.pending_count >= 100) fake_send_mode = FakeSendAccept;
+        random_operation();
+        if (handler.pending_count >= 100) fake_send_mode = FakeSendAccept;
+        int result = (fake_event_tail > fake_event_head || below(2)) ? pump() : tick();
+        if (result != 0) {
+            fprintf(stderr, "seed %llu step %u: dispatch failed\n", (unsigned long long)seed, step);
+            return 1;
+        }
+        Check(random_check((unsigned)seed, step, protocol_before, order_before) == 0);
+        if (fake_send_mode == FakeSendDraining) fake_send_mode = FakeSendAccept;
+    }
+    /* Final: close the session with whatever is left and check the balance of proxies. */
+    fake_send_mode = FakeSendAccept;
+    unsigned protocol_end = fake_protocol_errors;
+    table.on_closing(table.context, 0, FakeSender);
+    Check(fake_protocol_errors == protocol_end);
+    Check(fake_live_count() == 1);
+    Check(fake_creates - fake_destroys == 1);
+    Check(fake_order_violations == 0);
+    Check(end_session() == 0);
+    fprintf(stdout, "random seed 0x%llx: %u steps, frames: configure %u close %u popup_repositioned %u popup_dismissed %u frame_release %u\n",
+        (unsigned long long)seed, steps, random_frames_by_type[0], random_frames_by_type[1], random_frames_by_type[2], random_frames_by_type[3], random_frames_by_type[4]);
+    return 0;
+}
+
+static int test_random_sequences(void) {
+    Check(run_random_segment(0x9E3779B97F4A7C15ULL, 1, 1, 3000) == 0);
+    Check(run_random_segment(0xD1B54A32D192ED03ULL, 2, 1, 3000) == 0);
+    Check(run_random_segment(0x2545F4914F6CDD1DULL, 3, 2, 3000) == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
+/* ---- bug regressions ------------------------------------------------------------------------------ */
+
+/**
+ * @brief A frame queued while the feature queue is full names a window that the guest then retires. The frame must not
+ * be sent after the retire: every window-scoped frame in the pending list names a realized window (4.3).
+ */
+static int test_pending_frames_of_retired_windows(void) {
+    Check(start_session(1, 1) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_mapped(&root) == 0);
+    announce_spec_t child = child_spec(2, 1, InteropRoleDialog, 1, 1, 0, 0, 300, 200);
+    Check(announce_mapped(&child) == 0);
+    unsigned root_toplevel = index_of(record_of(1, 1)->toplevel);
+    unsigned root_surface = index_of(record_of(1, 1)->xdg_surface);
+    unsigned child_toplevel = index_of(record_of(2, 1)->toplevel);
+    fake_clear_recording();
+
+    fake_send_mode = FakeSendFull;
+    fake_queue_toplevel_close(child_toplevel);
+    fake_queue_toplevel_configure(root_toplevel, 500, 400, NULL, 0);
+    fake_queue_surface_configure(root_surface, 1);
+    Check(pump() == 0);
+    Check(handler.pending_count == 2);
+
+    /* Retiring the root removes the dialog too; both pending frames name windows that are gone. */
+    Check(send_retire(1, 1) == 0);
+    Check(!host_wayland_windows_contains(&handler.windows, 1, 1));
+    Check(!host_wayland_windows_contains(&handler.windows, 2, 1));
+    fake_send_mode = FakeSendAccept;
+    Check(tick() == 0);
+    Check(handler.pending_count == 0);
+    Check(fake_frame_count == 0);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
 /* ---- runner ---------------------------------------------------------------------------------------- */
 
 typedef int (*test_fn)(void);
@@ -1655,6 +2041,8 @@ int main(void) {
     run_test("missing globals", test_missing_globals);
     run_test("reducer paths and window lifecycle", test_reducer_paths);
     run_test("API edges", test_api_edges);
+    run_test("randomized sequences", test_random_sequences);
+    run_test("bug: pending frames of retired windows", test_pending_frames_of_retired_windows);
     printf("session windows handler tests: %u run, %u failed\n", tests_run, tests_failed);
     return tests_failed ? 1 : 0;
 }

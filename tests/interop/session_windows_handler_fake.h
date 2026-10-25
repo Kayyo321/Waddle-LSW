@@ -655,6 +655,9 @@ static __attribute__((unused)) unsigned fake_deliver_queued(void) {
         fake_deliver(&event);
         ++delivered;
     }
+    /* Drained: the indices start again, so FakeEvents bounds the queue, not the run. */
+    fake_event_head = 0;
+    fake_event_tail = 0;
     return delivered;
 }
 
