@@ -85,6 +85,8 @@ struct av_wayland_t {
     int64_t axis_carry[2]; /* Continuous remainder, 1/256 wheel-unit numerator; |carry| < 256. */
     uint8_t axis_inverted[2]; /* wl_pointer v9 inverted (natural) scrolling, reset on leave. */
     uint32_t seat_version; /* min(advertised, 9) at bind; the pointer inherits it. */
+    av_wayland_room_t room; /* Optional queue probe for repeats; NULL means always room. */
+    uint32_t repeats_dropped; /* Repeats not sent because the queue was full. */
     av_lease_host_t lease;
     struct wl_callback *lease_sync;
     uint64_t lease_sync_epoch;
@@ -1098,6 +1100,11 @@ static int repeat_service(av_wayland_t *client, uint64_t now) {
         int status = waddle_keyboard_repeat_take_due(&client->repeat, now, &code);
         if (status != WaddleKeyboardRepeatOk) return 0; /* Clock discontinuity already disarmed repeat. */
         if (!code) return 0;
+        if (client->room && !client->room(client->request_context)) {
+            /* Best effort: drop this repeat. take_due already rescheduled the candidate from now. */
+            ++client->repeats_dropped;
+            continue;
+        }
         if (!client->keyboard_window || !controls_enabled(client->keyboard_window) ||
             (lease_mode(client) && client->lease.phase != AvLeaseForwarding)) {
             repeat_cancel(client);
@@ -1107,6 +1114,8 @@ static int repeat_service(av_wayland_t *client, uint64_t now) {
         if (send_input(client, client->keyboard_window, MsgInputKey, 1, code, 0, 0) != 0) return -1;
     }
 }
+void av_wayland_set_room(av_wayland_t *client, av_wayland_room_t room) { client->room = room; }
+uint32_t av_wayland_repeats_dropped(const av_wayland_t *client) { return client->repeats_dropped; }
 static int repeat_timeout(av_wayland_t *client, uint64_t now, int maximum) {
     uint8_t present = 0;
     uint64_t deadline = 0;

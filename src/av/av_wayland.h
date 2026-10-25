@@ -58,6 +58,16 @@ int av_wayland_dispatch(av_wayland_t *client);
  * @note Check before and after poll/dispatch/pump; EINTR never restarts a deadline.
  */
 int av_wayland_timeout(av_wayland_t *client, int maximum);
+/** @brief Optional non-failing queue probe for input repeats.
+ * @param[in] context The request context passed to av_wayland_init. @return 1 when a frame fits, 0 when full.
+ */
+typedef int (*av_wayland_room_t)(void *context);
+/** @brief Install the queue probe used to drop, rather than fail on, a repeat when the queue is full.
+ * @param[in,out] client Nonnull event-thread-owned instance. @param[in] room NULL means room is always available.
+ */
+void av_wayland_set_room(av_wayland_t *client, av_wayland_room_t room);
+/** @brief Diagnostic count of input repeats dropped because the queue was full. @return count since init. */
+uint32_t av_wayland_repeats_dropped(const av_wayland_t *client);
 /** @brief Flush outgoing protocol bytes without blocking.
  * @param[in,out] client Nonnull event-thread-owned instance.
  * @return 0 flushed/would-block, -1 display error; no ownership transfer.

@@ -27,6 +27,9 @@ static int receive_bytes(uintptr_t socket, uint8_t *bytes, size_t length) {
 #endif
 }
 static int fail_peer(av_peer_t *peer) { peer->failed = 1; return -1; }
+int av_peer_has_room(const av_peer_t *peer) {
+    return !peer->failed && peer->head - peer->tail < AvPeerQueueFrames;
+}
 int av_peer_send(av_peer_t *peer, const av_message_t *message) {
     if (peer->failed) return -1;
     if (peer->head - peer->tail >= AvPeerQueueFrames) {

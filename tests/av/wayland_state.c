@@ -751,6 +751,33 @@ static void release_before_due_repeat(void) {
     assert(!live_next(&client, &deadline));
     puts("AV Wayland repeat ordering: a release already queued before the due repeat prevents the repeat passed");
 }
+/* A full peer queue must drop a repeat, not fail the session; the candidate stays armed. */
+static int room_available = 1;
+static int test_room(void *context) { assert(context == &deliveries); return room_available; }
+static void backpressure_repeat(void) {
+    av_wayland_t client; video_window_t *window;
+    live_ready(&client, &window);
+    now_ms = 15000;
+    keyboard_repeat(&client, NULL, 25, 100);
+    live_enter(&client, window);
+    deliveries = 0;
+    live_key(&client, 30, 1);
+    assert(deliveries == 1);
+    av_wayland_set_room(&client, test_room);
+    room_available = 0;
+    now_ms = 15100;
+    assert(av_wayland_timeout(&client, 0) == 0);
+    assert(deliveries == 1 && !client.delivery_failed && av_wayland_repeats_dropped(&client) == 1);
+    uint64_t deadline = 0;
+    assert(live_next(&client, &deadline) && deadline == 15140000000ull); /* rescheduled from now, one period */
+    room_available = 1;
+    now_ms = 15140;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 2 && delivered.width == 30 && delivered.flags == 1);
+    assert(av_wayland_repeats_dropped(&client) == 1);
+    live_key(&client, 30, 0);
+    av_wayland_set_room(&client, NULL);
+    puts("AV Wayland repeat backpressure: a full queue drops the repeat, keeps it armed, never fails the session passed");
+}
 static void live_repeat(void) {
     live_repeat_timing();
     live_repeat_info();
@@ -806,6 +833,7 @@ int main(void) {
     pointer_randomized_live();
     incarnation_wide_repeat();
     release_before_due_repeat();
+    backpressure_repeat();
     lifecycle_callbacks();
     decoration_callbacks();
     lease_callbacks();
