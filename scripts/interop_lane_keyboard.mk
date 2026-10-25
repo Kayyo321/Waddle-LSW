@@ -25,13 +25,51 @@ build/interop_keyboard_inhibit.o: src/interop/keyboard_inhibit.zig | build
 build/interop_keyboard_inhibit_abi_test: tests/interop/keyboard_inhibit_abi.c build/interop_keyboard_inhibit.o src/interop/keyboard_inhibit.h | build
 	$(CC) $(KeyboardLaneSanitizerFlags) $< build/interop_keyboard_inhibit.o $(LDFLAGS) -o $@
 
+# Host session keyboard handler (IMPL_DESC 3.6.2, 3.6.3). The handler is linked against the
+# codec and reducer objects; the test wraps interop_host_feature_send and clock_gettime.
+SessionInputSanitizerFlags = $(KeyboardLaneSanitizerFlags) -Isrc/daemon -Isubmodules/looking_glass/module
+SessionInputObjects = build/session_input_handler.o build/interop_codec.o build/interop_keyboard_lock.o \
+	build/interop_keyboard_layouts.o build/interop_keyboard_inhibit.o build/interop_keyboard_repeat_abi.o \
+	build/interop_keymap_names.o
+build/interop_keymap_names.o: src/interop/keymap_names.zig | build
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -femit-bin=$@
+build/session_input_handler.o: src/interop/session_input_handler.c src/interop/session_input_handler.h src/interop/session_handler.h src/interop/keymap_names.h build/interop_codec.o | build
+	$(CC) $(SessionInputSanitizerFlags) -c $< -o $@
+build/session_input_handler_test.o: tests/interop/session_input_handler_test.c src/interop/session_input_handler.h | build
+	$(CC) $(SessionInputSanitizerFlags) -c $< -o $@
+build/session_input_handler_test: build/session_input_handler_test.o $(SessionInputObjects) | build
+	$(CC) $(SessionInputSanitizerFlags) build/session_input_handler_test.o $(SessionInputObjects) -Wl,--wrap=interop_host_feature_send,--wrap=clock_gettime $(LDFLAGS) -o $@
+
+# Wayland glue for the host keyboard handler (session_input_wayland.h). The keyboard shortcuts
+# inhibit protocol is generated into build/ with the same scanner pattern as scripts/av.mk. The
+# test links the real handler objects and wraps the libwayland entry points the glue calls.
+WaylandProtocolsDir ?= /usr/share/wayland-protocols
+KeyboardShortcutsInhibitXml = $(WaylandProtocolsDir)/unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml
+build/keyboard_shortcuts_inhibit_client.h: $(KeyboardShortcutsInhibitXml) | build
+	wayland-scanner client-header $< $@
+build/keyboard_shortcuts_inhibit_protocol.c: $(KeyboardShortcutsInhibitXml) | build
+	wayland-scanner private-code $< $@
+WaylandGlueFlags = $(SessionInputSanitizerFlags) -Ibuild $(shell pkg-config --cflags wayland-client)
+WaylandGlueLibs = $(shell pkg-config --libs wayland-client)
+build/keyboard_shortcuts_inhibit_protocol.o: build/keyboard_shortcuts_inhibit_protocol.c build/keyboard_shortcuts_inhibit_client.h | build
+	$(CC) $(WaylandGlueFlags) -c $< -o $@
+build/session_input_wayland.o: src/interop/session_input_wayland.c src/interop/session_input_wayland.h src/interop/session_input_handler.h build/keyboard_shortcuts_inhibit_client.h | build
+	$(CC) $(WaylandGlueFlags) -c $< -o $@
+SessionInputWaylandObjects = build/session_input_wayland.o build/keyboard_shortcuts_inhibit_protocol.o
+build/session_input_wayland_test.o: tests/interop/session_input_wayland_test.c src/interop/session_input_wayland.h build/keyboard_shortcuts_inhibit_client.h | build
+	$(CC) $(WaylandGlueFlags) -c $< -o $@
+build/session_input_wayland_test: build/session_input_wayland_test.o $(SessionInputWaylandObjects) $(SessionInputObjects) | build
+	$(CC) $(WaylandGlueFlags) build/session_input_wayland_test.o $(SessionInputWaylandObjects) $(SessionInputObjects) -Wl,--wrap=interop_host_feature_send,--wrap=clock_gettime,--wrap=wl_proxy_add_listener,--wrap=wl_proxy_marshal_flags,--wrap=wl_proxy_get_version $(WaylandGlueLibs) $(LDFLAGS) -o $@
+
 .PHONY: interop-keyboard-lanes-sanitizers
-interop-keyboard-lanes-sanitizers: build/interop_keyboard_lock_abi_test build/interop_keyboard_layouts_abi_test build/interop_keyboard_inhibit_abi_test build/interop_keyboard_repeat_abi_test build/interop_keyboard_repeat_policy_test
+interop-keyboard-lanes-sanitizers: build/interop_keyboard_lock_abi_test build/interop_keyboard_layouts_abi_test build/interop_keyboard_inhibit_abi_test build/interop_keyboard_repeat_abi_test build/interop_keyboard_repeat_policy_test build/session_input_handler_test build/session_input_wayland_test
 	$(KeyboardLaneSanitizerEnv) ./build/interop_keyboard_lock_abi_test
 	$(KeyboardLaneSanitizerEnv) ./build/interop_keyboard_layouts_abi_test
 	$(KeyboardLaneSanitizerEnv) ./build/interop_keyboard_inhibit_abi_test
 	$(KeyboardLaneSanitizerEnv) ./build/interop_keyboard_repeat_abi_test
 	$(KeyboardLaneSanitizerEnv) ./build/interop_keyboard_repeat_policy_test
+	$(KeyboardLaneSanitizerEnv) ./build/session_input_handler_test
+	$(KeyboardLaneSanitizerEnv) ./build/session_input_wayland_test
 
 .PHONY: interop-keyboard-lanes-test
 interop-keyboard-lanes-test: interop-keyboard-lanes-sanitizers
@@ -40,6 +78,7 @@ interop-keyboard-lanes-test: interop-keyboard-lanes-sanitizers
 	$(ZIG) test src/interop/keyboard_inhibit.zig
 	$(ZIG) test src/interop/keyboard_repeat.zig
 	$(ZIG) test src/interop/keyboard_repeat_abi.zig
+	$(ZIG) test src/interop/keymap_names.zig
 
 .PHONY: interop-keyboard-lanes-coverage
 interop-keyboard-lanes-coverage:
@@ -48,6 +87,9 @@ interop-keyboard-lanes-coverage:
 	python3 tests/av/coverage.py keyboard_inhibit
 	python3 tests/av/coverage.py keyboard_repeat
 	python3 tests/av/coverage.py keyboard_repeat_abi
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_input_coverage.py
+	$(MAKE) build/keyboard_shortcuts_inhibit_client.h build/keyboard_shortcuts_inhibit_protocol.o
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_input_wayland_coverage.py
 
 InteropLaneTests += interop-keyboard-lanes-test
 InteropLaneSanitizers += interop-keyboard-lanes-sanitizers
