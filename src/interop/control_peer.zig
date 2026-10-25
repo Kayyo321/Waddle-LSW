@@ -1022,7 +1022,6 @@ pub const peer_t = struct {
         if (c_t.interop_header_decode(frame.ptr, c_t.InteropHeaderBytes, &header) != c_t.InteropErrorNone) return error.InvalidFrame;
         if (@as(usize, header.length) + c_t.InteropHeaderBytes != frame.len) return error.InvalidFrame;
         if (is_control_type(header.type) or is_local_type(header.type)) return error.UnsupportedFrame;
-        const requirement = feature_requirement(header.type) orelse return error.UnsupportedFrame;
         const payload = frame[c_t.InteropHeaderBytes..];
         const payload_pointer: [*c]const u8 = if (payload.len == 0) null else payload.ptr;
         switch (c_t.interop_payload_validate(header.type, self.outgoing_direction(), payload_pointer, payload.len)) {
@@ -1030,7 +1029,7 @@ pub const peer_t = struct {
             c_t.InteropErrorUnsupportedType, c_t.InteropErrorUnsupportedField => return error.UnsupportedFrame,
             else => return error.InvalidFrame,
         }
-        if (!requirement.satisfied_by(self.handshake.negotiated_capabilities)) return error.FeatureNotNegotiated;
+        try check_facility(header.type, self.outgoing_direction(), payload, self.handshake.negotiated_capabilities);
         return header;
     }
 
@@ -1062,6 +1061,21 @@ pub const peer_t = struct {
         return self.event(.Draining);
     }
 };
+
+/// Admit a codec-valid feature type for the negotiated facilities under the 8.45 capability map.
+/// Shared by the outbound admission path and the receive path so the two cannot drift.
+/// @param[in] message_type Frozen feature type that already passed codec validation.
+/// @param[in] producer Producer direction of the frame, not the local role.
+/// @param[in] payload Codec-validated TLV payload.
+/// @param[in] negotiated Ready-session capability intersection.
+/// @errors UnsupportedFrame when no facility is defined for the type/producer; FeatureNotNegotiated
+/// when the defined facility is absent; InvalidFrame when a value-dependent field is malformed.
+/// @ownership Pure function; no state is read or changed.
+/// @thread_safety Pure function.
+pub fn check_facility(message_type: u16, producer: c_t.interop_direction_t, payload: []const u8, negotiated: u64) feature_send_error_t!void {
+    const requirement = (feature_requirement(message_type, producer, payload) catch return error.InvalidFrame) orelse return error.UnsupportedFrame;
+    if (!requirement.satisfied_by(negotiated)) return error.FeatureNotNegotiated;
+}
 
 fn ranges_overlap(left_start: usize, left_end: usize, right_start: usize, right_end: usize) bool {
     return left_start < right_end and right_start < left_end;
@@ -1098,7 +1112,7 @@ const CapKeyboardLayout: u64 = @intCast(c_t.InteropCapKeyboardLayout);
 /// Facility requirement of one feature message type, checked against the negotiated set.
 /// A type is admissible only when every `all` bit is negotiated and, if `any` is nonzero,
 /// at least one `any` bit is negotiated.
-const feature_requirement_t = struct {
+pub const feature_requirement_t = struct {
     /// Every bit in this mask must be negotiated; zero requires nothing.
     all: u64 = 0,
     /// When nonzero, at least one bit in this mask must be negotiated.
@@ -1114,33 +1128,45 @@ const feature_requirement_t = struct {
     }
 };
 
-/// Facility table for every feature message in IMPL_DESC 3.2.5. Window messages require
-/// Windows; transfers are gated by the facility whose request created them (3.2.6), so any
-/// one of those facilities satisfies them. Control and local-only types return null.
+/// Facility table for every feature message in IMPL_DESC 3.2.5 and the 8.45 capability map.
+/// Window messages and ElevationNotice/DesktopSwitch need Windows; UacPrompt/UacDecision need
+/// UacNative; CursorConstraint needs RelativePointer only while pressed; transfers are admitted
+/// by producer role (host: Clipboard or DragDrop; guest: also Catalog or Cursor). Control and
+/// local-only types, unknown types, and transfers from a non-host or non-guest producer return null.
 /// @param[in] message_type Frozen type from a validated header.
+/// @param[in] producer Frame producer direction, InteropFromHost or InteropFromGuest.
+/// @param[in] payload Codec-validated TLV payload; read only for CursorConstraint.
 /// @return Requirement for an admissible feature type, or null for any other type.
-fn feature_requirement(message_type: u16) ?feature_requirement_t {
+/// @errors MalformedField when CursorConstraint's pressed field is absent or malformed.
+/// @ownership Pure function; reads borrowed payload bytes only during the call.
+pub fn feature_requirement(message_type: u16, producer: c_t.interop_direction_t, payload: []const u8) error{MalformedField}!?feature_requirement_t {
     return switch (message_type) {
-        c_t.InteropMsgWindowAnnounce, c_t.InteropMsgWindowUpdate, c_t.InteropMsgWindowRetire, c_t.InteropMsgWindowConfigure, c_t.InteropMsgWindowClose, c_t.InteropMsgWindowMoveRequest, c_t.InteropMsgWindowResizeRequest, c_t.InteropMsgWindowStateRequest, c_t.InteropMsgFrameReady, c_t.InteropMsgFrameRelease, c_t.InteropMsgWindowIconChanged, c_t.InteropMsgPopupRepositioned, c_t.InteropMsgPopupDismissed => .{ .all = CapWindows },
-        c_t.InteropMsgInputFocus, c_t.InteropMsgInputKey, c_t.InteropMsgInputPointerMotion, c_t.InteropMsgInputPointerButton, c_t.InteropMsgInputPointerAxis, c_t.InteropMsgInputRelease, c_t.InteropMsgInputLockState, c_t.InteropMsgInputRepeatInfo, c_t.InteropMsgLeaseRevoked, c_t.InteropMsgLeaseAck, c_t.InteropMsgLeaseReady => .{ .all = CapInput },
+        c_t.InteropMsgWindowAnnounce, c_t.InteropMsgWindowUpdate, c_t.InteropMsgWindowRetire, c_t.InteropMsgWindowConfigure, c_t.InteropMsgWindowClose, c_t.InteropMsgWindowMoveRequest, c_t.InteropMsgWindowResizeRequest, c_t.InteropMsgWindowStateRequest, c_t.InteropMsgFrameReady, c_t.InteropMsgFrameRelease, c_t.InteropMsgWindowIconChanged, c_t.InteropMsgPopupRepositioned, c_t.InteropMsgPopupDismissed, c_t.InteropMsgElevationNotice, c_t.InteropMsgDesktopSwitch => .{ .all = CapWindows },
+        c_t.InteropMsgInputFocus, c_t.InteropMsgInputKey, c_t.InteropMsgInputPointerMotion, c_t.InteropMsgInputPointerButton, c_t.InteropMsgInputPointerAxis, c_t.InteropMsgInputRelease, c_t.InteropMsgInputLockState, c_t.InteropMsgInputRepeatInfo, c_t.InteropMsgLeaseRevoked, c_t.InteropMsgLeaseAck, c_t.InteropMsgLeaseReady, c_t.InteropMsgCaretRect => .{ .all = CapInput },
         c_t.InteropMsgInputPointerRelative => .{ .all = CapInput | CapRelativePointer },
         c_t.InteropMsgInputTouch, c_t.InteropMsgInputTouchFrame, c_t.InteropMsgInputTouchCancel => .{ .all = CapInput | CapTouch },
         c_t.InteropMsgInputTablet, c_t.InteropMsgInputTabletProximity => .{ .all = CapInput | CapTablet },
         c_t.InteropMsgInputGesturePinch => .{ .all = CapInput | CapGestures },
         c_t.InteropMsgInputTextCommit, c_t.InteropMsgInputTextPreedit => .{ .all = CapInput | CapTextInput },
-        c_t.InteropMsgCaretRect => .{ .all = CapTextInput },
         c_t.InteropMsgKeyboardLayout => .{ .all = CapKeyboardLayout },
         c_t.InteropMsgCursorShape => .{ .all = CapCursor },
-        c_t.InteropMsgCursorConstraint => .{ .all = CapCursor | CapRelativePointer },
+        c_t.InteropMsgCursorConstraint => blk: {
+            const pressed = try field_uint(payload, c_t.InteropTagPressed, 1);
+            break :blk .{ .all = CapCursor | (if (pressed != 0) CapRelativePointer else 0) };
+        },
         c_t.InteropMsgClipboardOffer, c_t.InteropMsgClipboardRequest, c_t.InteropMsgClipboardClear => .{ .all = CapClipboard },
         c_t.InteropMsgDndEnter, c_t.InteropMsgDndMotion, c_t.InteropMsgDndLeave, c_t.InteropMsgDndDrop, c_t.InteropMsgDndResult, c_t.InteropMsgDndSourceStart, c_t.InteropMsgDndSourceRequest, c_t.InteropMsgDndSourceFinished => .{ .all = CapDragDrop },
         c_t.InteropMsgCatalogBegin, c_t.InteropMsgCatalogAdd, c_t.InteropMsgCatalogUpdate, c_t.InteropMsgCatalogRemove, c_t.InteropMsgCatalogEnd, c_t.InteropMsgIconRequest => .{ .all = CapCatalog },
         c_t.InteropMsgLaunchRequest, c_t.InteropMsgLaunchResult => .{ .all = CapLaunch },
-        c_t.InteropMsgElevationNotice, c_t.InteropMsgUacPrompt, c_t.InteropMsgUacDecision, c_t.InteropMsgDesktopSwitch => .{ .all = CapUacNative },
+        c_t.InteropMsgUacPrompt, c_t.InteropMsgUacDecision => .{ .all = CapUacNative },
         c_t.InteropMsgAudioStreamOpen, c_t.InteropMsgAudioStreamClose => .{ .all = CapAudio },
         c_t.InteropMsgPrinterSync, c_t.InteropMsgPrinterResult => .{ .all = CapPrinters },
         c_t.InteropMsgDisplayConfig, c_t.InteropMsgDisplayApplied => .{ .all = CapDisplay },
-        c_t.InteropMsgTransferBegin, c_t.InteropMsgTransferChunk, c_t.InteropMsgTransferEnd, c_t.InteropMsgTransferCancel => .{ .any = CapClipboard | CapDragDrop | CapCatalog | CapCursor | CapUacNative },
+        c_t.InteropMsgTransferBegin, c_t.InteropMsgTransferChunk, c_t.InteropMsgTransferEnd, c_t.InteropMsgTransferCancel => switch (producer) {
+            c_t.InteropFromHost => .{ .any = CapClipboard | CapDragDrop },
+            c_t.InteropFromGuest => .{ .any = CapClipboard | CapDragDrop | CapCatalog | CapCursor },
+            else => null,
+        },
         else => null,
     };
 }
@@ -2313,29 +2339,80 @@ fn test_private_bounded_helper_edges() !void {
 /// @errors Test assertion failure.
 /// @ownership Pure scalar checks; no allocation.
 /// @thread_safety Synchronous test-only probe.
+/// Encode a complete CursorConstraint frame and return its payload for requirement tests.
+/// @param[out] buffer Caller-owned scratch frame storage that outlives the returned payload.
+/// @param[in] pressed Pressed flag value, 0 or 1.
+/// @return Payload bytes after the header; the caller keeps buffer alive while using it.
+/// @errors CodecFailure when the fixed scratch buffer cannot hold the frame.
+fn pressed_payload(buffer: []u8, pressed: u64) ![]const u8 {
+    var writer: c_t.interop_writer_t = undefined;
+    c_t.interop_writer_init(&writer, buffer.ptr, buffer.len);
+    if (c_t.interop_put_uint(&writer, c_t.InteropTagWindow, 1) != c_t.InteropErrorNone) return error.CodecFailure;
+    if (c_t.interop_put_uint(&writer, c_t.InteropTagGeneration, 1) != c_t.InteropErrorNone) return error.CodecFailure;
+    if (c_t.interop_put_uint(&writer, c_t.InteropTagPressed, pressed) != c_t.InteropErrorNone) return error.CodecFailure;
+    var length: usize = 0;
+    if (c_t.interop_writer_finish(&writer, c_t.InteropMsgCursorConstraint, 0, c_t.InteropFromGuest, &length) != c_t.InteropErrorNone) return error.CodecFailure;
+    return buffer[c_t.InteropHeaderBytes..length];
+}
+
 fn test_private_feature_requirement_table() !void {
     // Sweep every u16 through the never-inlined table so each prong runs at runtime with a
     // non-folded selector. IMPL_DESC 3.2.5 lists 70 feature types (6 control, 3 local excluded).
+    // Only CursorConstraint reads its payload; the empty payload makes it report MalformedField,
+    // which still proves the entry exists.
+    const empty_payload: []const u8 = &[_]u8{};
     var feature_types: usize = 0;
     for (0..0x1_0000) |value| {
-        if (@call(.never_inline, feature_requirement, .{@as(u16, @intCast(value))})) |_| feature_types += 1;
+        const message_type: u16 = @intCast(value);
+        const outcome = @call(.never_inline, feature_requirement, .{ message_type, c_t.InteropFromHost, empty_payload });
+        if (outcome) |maybe| {
+            if (maybe) |_| feature_types += 1;
+        } else |err| {
+            try std_t.testing.expectEqual(error.MalformedField, err);
+            try std_t.testing.expectEqual(@as(u16, c_t.InteropMsgCursorConstraint), message_type);
+            feature_types += 1;
+        }
     }
     try std_t.testing.expectEqual(@as(usize, 70), feature_types);
     const control_types = [_]u16{ c_t.InteropMsgHello, c_t.InteropMsgHelloAck, c_t.InteropMsgGoodbye, c_t.InteropMsgPing, c_t.InteropMsgPong, c_t.InteropMsgError, 0x7F00, 0x7F01, 0x7F02, 0x0000 };
-    for (control_types) |message_type| try std_t.testing.expectEqual(@as(?feature_requirement_t, null), @call(.never_inline, feature_requirement, .{message_type}));
+    for (control_types) |message_type| try std_t.testing.expectEqual(@as(?feature_requirement_t, null), @call(.never_inline, feature_requirement, .{ message_type, c_t.InteropFromHost, empty_payload }) catch unreachable);
     try std_t.testing.expect(is_local_type(0x7F01));
     try std_t.testing.expect(!is_local_type(0x0700));
-    const window = feature_requirement(c_t.InteropMsgWindowClose).?;
+    const window = (try feature_requirement(c_t.InteropMsgWindowClose, c_t.InteropFromHost, empty_payload)).?;
     try std_t.testing.expect(window.satisfied_by(CapWindows));
     try std_t.testing.expect(!window.satisfied_by(CapInput));
-    const pointer = feature_requirement(c_t.InteropMsgInputPointerRelative).?;
+    // ElevationNotice and DesktopSwitch rely on Windows alone; UAC prompts need UacNative.
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgElevationNotice, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapWindows));
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgDesktopSwitch, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapWindows));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgUacPrompt, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapWindows));
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgUacDecision, c_t.InteropFromHost, empty_payload)).?.satisfied_by(CapUacNative));
+    // CaretRect belongs to Input, not TextInput; KeyboardLayout needs only its own facility.
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgCaretRect, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapInput));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgCaretRect, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapTextInput));
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgKeyboardLayout, c_t.InteropFromHost, empty_payload)).?.satisfied_by(CapKeyboardLayout));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgKeyboardLayout, c_t.InteropFromHost, empty_payload)).?.satisfied_by(CapInput));
+    const pointer = (try feature_requirement(c_t.InteropMsgInputPointerRelative, c_t.InteropFromGuest, empty_payload)).?;
     try std_t.testing.expect(!pointer.satisfied_by(CapInput));
     try std_t.testing.expect(pointer.satisfied_by(CapInput | CapRelativePointer));
-    const transfer = feature_requirement(c_t.InteropMsgTransferCancel).?;
-    try std_t.testing.expect(!transfer.satisfied_by(CapWindows | CapInput));
-    try std_t.testing.expect(transfer.satisfied_by(CapCatalog));
-    try std_t.testing.expect(transfer.satisfied_by(CapUacNative | CapWindows));
-    try std_t.testing.expect(!feature_requirement(c_t.InteropMsgCatalogBegin).?.satisfied_by(CapWindows));
+    // Transfers are admitted per producer role; UacNative never admits them.
+    const host_transfer = (try feature_requirement(c_t.InteropMsgTransferCancel, c_t.InteropFromHost, empty_payload)).?;
+    try std_t.testing.expect(!host_transfer.satisfied_by(CapCatalog | CapCursor));
+    try std_t.testing.expect(host_transfer.satisfied_by(CapClipboard));
+    try std_t.testing.expect(!host_transfer.satisfied_by(CapUacNative | CapWindows));
+    const guest_transfer = (try feature_requirement(c_t.InteropMsgTransferChunk, c_t.InteropFromGuest, empty_payload)).?;
+    try std_t.testing.expect(guest_transfer.satisfied_by(CapCatalog));
+    try std_t.testing.expect(guest_transfer.satisfied_by(CapCursor));
+    try std_t.testing.expect(!guest_transfer.satisfied_by(CapUacNative | CapWindows));
+    try std_t.testing.expectEqual(@as(?feature_requirement_t, null), try feature_requirement(c_t.InteropMsgTransferChunk, c_t.InteropFromLocal, empty_payload));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgCatalogBegin, c_t.InteropFromHost, empty_payload)).?.satisfied_by(CapWindows));
+    // CursorConstraint needs RelativePointer only while pressed.
+    var released_buffer: [c_t.InteropHeaderBytes + 64]u8 = undefined;
+    var pressed_buffer: [c_t.InteropHeaderBytes + 64]u8 = undefined;
+    const cursor_released = try pressed_payload(&released_buffer, 0);
+    const cursor_pressed = try pressed_payload(&pressed_buffer, 1);
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgCursorConstraint, c_t.InteropFromGuest, cursor_released)).?.satisfied_by(CapCursor));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgCursorConstraint, c_t.InteropFromGuest, cursor_pressed)).?.satisfied_by(CapCursor));
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgCursorConstraint, c_t.InteropFromGuest, cursor_pressed)).?.satisfied_by(CapCursor | CapRelativePointer));
     try std_t.testing.expectEqual(error.QueueFull, @call(.never_inline, map_admission_error, .{error.DataCapacityReserved}));
     try std_t.testing.expectEqual(error.QueueFull, @call(.never_inline, map_admission_error, .{error.QueueFull}));
     try std_t.testing.expectEqual(error.OutOfMemory, @call(.never_inline, map_admission_error, .{error.OutOfMemory}));

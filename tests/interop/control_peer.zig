@@ -343,7 +343,7 @@ test "local token time count and short-output errors preserve peer and caller st
     try complete_handshake(&pair, 101);
 
     var feature: [MaxTestFrame]u8 = undefined;
-    const feature_length = try make_empty(&feature, c_t.InteropMsgCatalogBegin, 0, c_t.InteropFromGuest);
+    const feature_length = try make_window_retire(&feature, 55, 2);
     try feed_frame_fragmented(&pair.host, HostToken, feature[0..feature_length], &.{ 2, 1, 9 });
     const pending_before = pair.host.pending_bytes();
     try std_t.testing.expect(pending_before == feature_length);
@@ -375,7 +375,7 @@ test "coalesced feature frames backpressure at one complete frame and preserve e
 
     var first: [MaxTestFrame]u8 = undefined;
     var second: [MaxTestFrame]u8 = undefined;
-    const first_length = try make_empty(&first, c_t.InteropMsgCatalogBegin, 0, c_t.InteropFromGuest);
+    const first_length = try make_window_retire(&first, 54, 1);
     var retire_writer = writer_for(&second);
     try write_uint(&retire_writer, c_t.InteropTagWindow, 55);
     try write_uint(&retire_writer, c_t.InteropTagGeneration, 2);
@@ -1594,6 +1594,15 @@ fn init_pair_caps(allocator: std_t.mem.Allocator, accepted_at_ms: u64, caps: u64
 }
 
 /// Host-to-guest WindowClose (0x0104, Windows): required window and generation.
+fn make_window_retire(buffer: []u8, window: u64, generation: u64) !usize {
+    var writer = writer_for(buffer);
+    try write_uint(&writer, c_t.InteropTagWindow, window);
+    try write_uint(&writer, c_t.InteropTagGeneration, generation);
+    var length: usize = 0;
+    try finish(&writer, c_t.InteropMsgWindowRetire, 0, c_t.InteropFromGuest, &length);
+    return length;
+}
+
 fn make_window_close(buffer: []u8, request_id: u32, window: u64, generation: u64) !usize {
     var writer = writer_for(buffer);
     try write_uint(&writer, c_t.InteropTagWindow, window);
@@ -1604,15 +1613,6 @@ fn make_window_close(buffer: []u8, request_id: u32, window: u64, generation: u64
 }
 
 /// Guest-to-host WindowRetire (0x0102, Windows): required window and generation.
-fn make_window_retire(buffer: []u8, window: u64, generation: u64) !usize {
-    var writer = writer_for(buffer);
-    try write_uint(&writer, c_t.InteropTagWindow, window);
-    try write_uint(&writer, c_t.InteropTagGeneration, generation);
-    var length: usize = 0;
-    try finish(&writer, c_t.InteropMsgWindowRetire, 0, c_t.InteropFromGuest, &length);
-    return length;
-}
-
 /// Host-to-guest InputRelease (0x020E, Input): window, generation, serial, lease epoch.
 fn make_input_release(buffer: []u8, window: u64, generation: u64) !usize {
     var writer = writer_for(buffer);
