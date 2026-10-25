@@ -195,3 +195,14 @@ read-only mode. Windows CI must compile and run these tests; Linux tests do not
 claim native Windows API runtime coverage. Catalog wire transport,
 watchers, icons, host artifacts, backup/restore, and runtime capability
 advertisement remain out of scope.
+
+
+Native path traversal holds at most65recursive search frames. Each frame owns
+one heap allocation containing two32768-unit UTF-16 path buffers (131072bytes)
+and frees it on empty-directory, error and normal exits. Thus traversal path
+storage is bounded by8519680bytes independent of input tree breadth; it does
+not reserve these buffers on each native Windows stack frame. This temporary
+native working set is separate from the16MiB catalog input/snapshot cap.
+An allocation failure aborts the incomplete enumeration with OutOfMemory.
+The native fixture traverses24real nested temporary directories and verifies
+unchanged dedup results plus complete reverse directory cleanup.

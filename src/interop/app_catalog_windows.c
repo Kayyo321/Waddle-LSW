@@ -428,7 +428,12 @@ static bool enumerate_shortcut_directory(catalog_collector_t *collector, const w
     }
     size_t base_length = wcslen(directory);
     if (base_length == 0 || base_length + 3 >= AppCatalogMaxPathUnits) { collector->status = AppCatalogStatusQuota; return false; }
-    wchar_t pattern[AppCatalogMaxPathUnits + 1];
+    /* At most65 active levels; keep large bounded path storage off the native
+     * Windows stack. Each level solely owns and frees these two path buffers. */
+    wchar_t *path_storage = malloc(2u * (AppCatalogMaxPathUnits + 1u) * sizeof(wchar_t));
+    if (path_storage == NULL) { collector->status = AppCatalogStatusOutOfMemory; return false; }
+    wchar_t *pattern = path_storage;
+    wchar_t *child = path_storage + AppCatalogMaxPathUnits + 1u;
     memcpy(pattern, directory, base_length * sizeof(wchar_t));
     size_t pattern_length = base_length;
     if (pattern[pattern_length - 1] != L'\\') pattern[pattern_length++] = L'\\';
@@ -438,6 +443,7 @@ static bool enumerate_shortcut_directory(catalog_collector_t *collector, const w
     HANDLE find = FindFirstFileW(pattern, &data);
     if (find == INVALID_HANDLE_VALUE) {
         DWORD error = GetLastError();
+        free(path_storage);
         if (error == ERROR_FILE_NOT_FOUND) return true;
         collector->status = AppCatalogStatusNativeFailure;
         return false;
@@ -449,7 +455,6 @@ static bool enumerate_shortcut_directory(catalog_collector_t *collector, const w
         if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) continue;
         size_t name_length = wcslen(data.cFileName);
         if (base_length + name_length + 2 >= AppCatalogMaxPathUnits) { collector->status = AppCatalogStatusQuota; ok = false; break; }
-        wchar_t child[AppCatalogMaxPathUnits + 1];
         memcpy(child, directory, base_length * sizeof(wchar_t));
         size_t child_length = base_length;
         if (child_length != 0 && child[child_length - 1] != L'\\') child[child_length++] = L'\\';
@@ -465,6 +470,7 @@ static bool enumerate_shortcut_directory(catalog_collector_t *collector, const w
         ok = false;
     }
     if (ok && error != ERROR_NO_MORE_FILES) { collector->status = AppCatalogStatusNativeFailure; ok = false; }
+    free(path_storage);
     return ok;
 }
 

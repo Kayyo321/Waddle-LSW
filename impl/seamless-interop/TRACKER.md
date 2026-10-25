@@ -1537,7 +1537,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     driver discovery/IOCTL boundaries; installed driver/native20% and deploy30%
     remain open. Separate icon/catalog workflow failures earn no credit.
 
-- **Commit `HEAD`**: `fix(interop): skip stale catalog targets without hiding close failures`
+- **Commit `090291e`**: `fix(interop): skip stale catalog targets without hiding close failures`
   - **Task Impact**: +0% to TODO #27/#34 pending native provider qualification.
   - **Summary**: Real59a1c8d smoke returned NativeFailure/ERROR_INVALID_NAME.
     Treat unreadable individual target metadata according to the contract:
@@ -1545,3 +1545,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     without optional target. Failed native closes and global limits remain
     terminal with exact ownership retained. Add real temporary stale-shortcut
     regression; root strict native SDK/link passes, actual rerun pending.
+
+- **Commit `HEAD`**: `fix(interop): bound recursive catalog path storage on the heap`
+  - **Task Impact**: +0% to TODO #27/#34; native provider gates remain open.
+  - **Summary**: Root review found two64KiB arrays in each of65possible
+    recursive frames, exceeding normal Windows stack limits. Give each frame
+    one owned131072-byte allocation with deterministic free on all exits;
+    total path working storage <=8519680bytes. Add24real nested temporary
+    directories and reverse cleanup. Strict native compile/link passes.

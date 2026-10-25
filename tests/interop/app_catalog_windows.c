@@ -187,6 +187,8 @@ int main(void) {
     wchar_t desktop_link[MAX_PATH];
     wchar_t stale_link[MAX_PATH] = {0};
     wchar_t absent_target[MAX_PATH] = {0};
+    wchar_t nested_paths[24][MAX_PATH] = {{0}};
+    size_t nested_count = 0;
     wchar_t target[MAX_PATH];
     char program_link_hash[65] = {0};
     char desktop_link_hash[65] = {0};
@@ -289,6 +291,13 @@ int main(void) {
     Require(make_child_path(absent_target, MAX_PATH, fixture_root, L"never-created-target.exe"));
     Require(create_shortcut(stale_link, absent_target, L"Stale catalog fixture", L""));
     stale_link_exists = true;
+    for (size_t index = 0; index < 24; index++) {
+        const wchar_t *parent = index == 0 ? roots_storage[0] : nested_paths[index - 1];
+        Require(make_child_path(nested_paths[index], MAX_PATH, parent, L"d"));
+        Require(create_directory(nested_paths[index]));
+        nested_count++;
+    }
+    options.max_nodes = 256;
     Require(app_catalog_windows_enumerate_fixture_roots(allocator, &options, &roots, &before) == AppCatalogStatusOk);
     Require(before.count == 1 && before.entries[0].identity_kind == AppCatalogIdentityCanonicalPath);
     Require(before.entries[0].app_flags == 0 && before.duplicate_launch_conflicts == 0);
@@ -331,6 +340,7 @@ cleanup:
             ok = false;
         }
     }
+    while (nested_count != 0) { nested_count--; if (!RemoveDirectoryW(nested_paths[nested_count])) ok = false; }
     if (stale_link_exists) DeleteFileW(stale_link);
     if (desktop_link_exists) DeleteFileW(desktop_link);
     if (program_link_exists) DeleteFileW(program_link);
