@@ -17,6 +17,9 @@
     } \
 } while (0)
 
+#define DECORATION_CLIENT ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
+#define DECORATION_SERVER ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
+
 /* ---- callback capture -------------------------------------------------------------------------- */
 
 typedef struct capture_t {
@@ -501,6 +504,143 @@ static int check_malformed_and_lifecycle(void) {
     return 0;
 }
 
+
+/* ---- decorations (2.6) --------------------------------------------------------------------------- */
+
+/** @brief Session whose config carries a decoration manager fake. */
+static int begin_decorated_session(void) {
+    fake_begin();
+    capture_reset();
+    host_wayland_config_t config = fake_config("dev0", 5);
+    config.decoration_manager = (struct zxdg_decoration_manager_v1 *)fake_object(fake_new("zxdg_decoration_manager_v1"));
+    fixture_creates = fake_creates;
+    return host_wayland_windows_init(&session_ctx, &config) == HostWaylandOk ? 0 : 1;
+}
+
+/** @brief Index of the nth destroy request on `iface`, or -1. */
+static int fake_find_destroy(const char *iface, unsigned nth) {
+    for (unsigned index = 0; index < fake_request_count; ++index) {
+        if (fake_requests[index].destroy && fake_requests[index].iface && !strcmp(fake_requests[index].iface, iface)) {
+            if (nth == 0) return (int)index;
+            --nth;
+        }
+    }
+    return -1;
+}
+
+static int check_decoration_request(void) {
+    Check(begin_decorated_session() == 0);
+    announce_spec_t spec = toplevel_spec(1, 1, "a-app");
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    unsigned toplevel = fake_nth("xdg_toplevel", 0);
+    unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
+    Check(decoration != FAKE_NONE);
+    int get = fake_find("zxdg_decoration_manager_v1", ZXDG_DECORATION_MANAGER_V1_GET_TOPLEVEL_DECORATION, 0);
+    Check(get >= 0 && fake_requests[get].a0 == (long long)toplevel);
+    int mode = fake_find("zxdg_toplevel_decoration_v1", ZXDG_TOPLEVEL_DECORATION_V1_SET_MODE, 0);
+    Check(mode >= 0 && fake_requests[mode].proxy == decoration && fake_requests[mode].a0 == DECORATION_CLIENT);
+    /* Client-side mode is requested before the first commit. */
+    int commit = fake_find("wl_surface", WL_SURFACE_COMMIT, 0);
+    Check(mode < commit);
+
+    /* Dialogs and consent dialogs are decorated too. */
+    announce_spec_t uac = toplevel_spec(2, 1, "a-consent");
+    uac.role = 5;
+    Check(announce_spec(&session_ctx, &uac) == HostWaylandOk);
+    Check(fake_count_requests("zxdg_decoration_manager_v1", ZXDG_DECORATION_MANAGER_V1_GET_TOPLEVEL_DECORATION) == 2);
+
+    /* Without the manager no decoration is requested and nothing fails. */
+    Check(begin_session("dev0") == 0);
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    Check(fake_nth("zxdg_toplevel_decoration_v1", 0) == FAKE_NONE);
+    return 0;
+}
+
+static int check_decoration_staging(void) {
+    Check(begin_decorated_session() == 0);
+    announce_spec_t spec = toplevel_spec(1, 1, "a-app");
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
+    unsigned xdg_surface = fake_nth("xdg_surface", 0);
+
+    /* The first configuration without a staged mode is acknowledged but keeps the window unmapped. */
+    deliver_surface_configure(xdg_surface, 4);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 1);
+    Check(!host_wayland_windows_is_mapped(&session_ctx, 1, 1));
+    /* A staged mode is applied by the next surface configuration, not by the decoration event itself. */
+    deliver_decoration_configure(decoration, DECORATION_CLIENT);
+    Check(!host_wayland_windows_is_mapped(&session_ctx, 1, 1));
+    deliver_surface_configure(xdg_surface, 5);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 2);
+    Check(host_wayland_windows_is_mapped(&session_ctx, 1, 1));
+    /* Client-side mode is kept: the decoration is not destroyed and later configurations reuse it. */
+    deliver_surface_configure(xdg_surface, 6);
+    Check(host_wayland_windows_is_mapped(&session_ctx, 1, 1));
+    Check(fake_find_destroy("zxdg_toplevel_decoration_v1", 0) < 0);
+    return 0;
+}
+
+static int check_server_side_fallback(void) {
+    Check(begin_decorated_session() == 0);
+    announce_spec_t spec = toplevel_spec(1, 1, "a-app");
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
+    unsigned xdg_surface = fake_nth("xdg_surface", 0);
+    deliver_decoration_configure(decoration, DECORATION_SERVER);
+    deliver_surface_configure(xdg_surface, 6);
+    /* Acknowledge first, then destroy the decoration; the window is mapped with its guest frame. */
+    int ack = fake_find("xdg_surface", XDG_SURFACE_ACK_CONFIGURE, 0);
+    int destroy = fake_find_destroy("zxdg_toplevel_decoration_v1", 0);
+    Check(ack >= 0 && fake_requests[ack].a0 == 6);
+    Check(destroy > ack);
+    Check(host_wayland_windows_is_mapped(&session_ctx, 1, 1));
+    /* The destroyed decoration's late events are no-ops. */
+    deliver_decoration_configure(decoration, DECORATION_CLIENT);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 1);
+    deliver_surface_configure(xdg_surface, 7);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 2);
+    Check(fake_find_destroy("zxdg_toplevel_decoration_v1", 1) < 0);
+    return 0;
+}
+
+static int check_invalid_mode(void) {
+    Check(begin_decorated_session() == 0);
+    announce_spec_t spec = toplevel_spec(1, 1, "a-app");
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
+    unsigned xdg_surface = fake_nth("xdg_surface", 0);
+    /* A mode other than client or server terminates delivery: reported, and the window never maps. */
+    deliver_decoration_configure(decoration, 7);
+    Check(captured.errors == 1 && captured.last_error_code == InteropErrorProtocolViolation);
+    deliver_decoration_configure(decoration, DECORATION_CLIENT);
+    deliver_surface_configure(xdg_surface, 8);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 1);
+    Check(!host_wayland_windows_is_mapped(&session_ctx, 1, 1));
+    return 0;
+}
+
+static int check_decoration_failures(void) {
+    /* Creation failure: no decoration object exists, the window is rolled back and reported. */
+    Check(begin_decorated_session() == 0);
+    fake_fail_create = "zxdg_toplevel_decoration_v1";
+    announce_spec_t spec = toplevel_spec(7, 3, "a-app");
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandRealizeFailed);
+    Check(captured.errors == 1 && captured.last_error_code == InteropErrorUnexpected);
+    Check(host_wayland_windows_window_count(&session_ctx) == 0);
+    Check(fake_creates - fixture_creates == fake_destroys);
+
+    /* Listener failure: the decoration exists and is destroyed before its toplevel (2.6). */
+    Check(begin_decorated_session() == 0);
+    fake_fail_listener = "zxdg_toplevel_decoration_v1";
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandRealizeFailed);
+    int decoration_destroy = fake_find_destroy("zxdg_toplevel_decoration_v1", 0);
+    int toplevel_destroy = fake_find_destroy("xdg_toplevel", 0);
+    Check(decoration_destroy >= 0 && toplevel_destroy > decoration_destroy);
+    Check(fake_creates - fixture_creates == fake_destroys && fake_double_destroys == 0);
+    Check(host_wayland_windows_window_count(&session_ctx) == 0);
+    return 0;
+}
+
 int main(void) {
     if (check_init() != 0) return 1;
     if (check_scale() != 0) return 1;
@@ -512,6 +652,11 @@ int main(void) {
     if (check_refusals() != 0) return 1;
     if (check_rollback_and_stale() != 0) return 1;
     if (check_malformed_and_lifecycle() != 0) return 1;
+    if (check_decoration_request() != 0) return 1;
+    if (check_decoration_staging() != 0) return 1;
+    if (check_server_side_fallback() != 0) return 1;
+    if (check_invalid_mode() != 0) return 1;
+    if (check_decoration_failures() != 0) return 1;
     puts("host_wayland_windows_test: all checks passed");
     return 0;
 }

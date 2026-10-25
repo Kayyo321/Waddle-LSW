@@ -183,12 +183,57 @@ static void emit_error(host_wayland_t *ctx, uint16_t refused_type, uint32_t erro
     }
 }
 
-/* Listener for xdg_surface: configure is the only event. */
+/* Decoration modes (zxdg_toplevel_decoration_v1.mode). */
+#define DECORATION_CLIENT ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
+#define DECORATION_SERVER ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
+
+/** @brief Destroy the decoration object of a record, if any. The record forgets it first. */
+static void destroy_decoration(host_wayland_record_t *rec) {
+    struct zxdg_toplevel_decoration_v1 *decoration = rec->decoration;
+    rec->decoration = NULL;
+    if (decoration) zxdg_toplevel_decoration_v1_destroy(decoration);
+}
+
+/**
+ * @brief xdg_surface.configure: acknowledge the serial, then apply the staged decoration mode (2.6).
+ *
+ * The first configuration of a decorated surface must carry a mode, otherwise the window stays unmapped until
+ * a later configuration does. Server-side mode is acknowledged first and then the decoration is destroyed; the
+ * surface keeps its guest frame. Configurations after that reuse the last mode.
+ */
 static void on_surface_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial) {
     host_wayland_record_t *rec = resolve(data, xdg_surface);
     if (rec == NULL) return;
+    if (rec->decoration != NULL && rec->decoration_pending != 0) {
+        rec->decoration_applied = rec->decoration_pending;
+        rec->decoration_pending = 0;
+    }
+    if (rec->decoration != NULL && rec->decoration_applied == 0) {
+        /* No mode yet: acknowledge so the compositor progresses, but keep buffers ineligible. */
+        xdg_surface_ack_configure(xdg_surface, serial);
+        return;
+    }
     xdg_surface_ack_configure(xdg_surface, serial);
-    rec->mapped = 1;
+    if (rec->decoration != NULL && rec->decoration_applied == DECORATION_SERVER) destroy_decoration(rec);
+    if (!rec->decoration_invalid) rec->mapped = 1;
+}
+
+/**
+ * @brief zxdg_toplevel_decoration_v1.configure: stage the mode for the next surface configuration.
+ *
+ * Any mode other than client or server terminates delivery for the window: it is never mapped.
+ */
+static void on_decoration_configure(void *data, struct zxdg_toplevel_decoration_v1 *decoration, uint32_t mode) {
+    host_wayland_record_t *rec = resolve(data, decoration);
+    if (rec == NULL) return;
+    if (mode == DECORATION_CLIENT || mode == DECORATION_SERVER) {
+        rec->decoration_pending = mode;
+        return;
+    }
+    host_wayland_t *ctx = ((const host_wayland_binding_t *)data)->owner;
+    rec->decoration_invalid = 1;
+    rec->mapped = 0;
+    emit_error(ctx, 0x0100u, InteropErrorProtocolViolation, rec->window, rec->generation);
 }
 
 /** @brief Map a wl_array of xdg_toplevel states onto InteropState bits. Minimized is never reported. */
@@ -233,6 +278,10 @@ static const struct xdg_surface_listener surface_listener = {
 static const struct xdg_toplevel_listener toplevel_listener = {
     .configure = on_toplevel_configure,
     .close = on_toplevel_close,
+};
+
+static const struct zxdg_toplevel_decoration_v1_listener decoration_listener = {
+    .configure = on_decoration_configure,
 };
 
 /* ---- object lifetime --------------------------------------------------------------------------- */
@@ -399,6 +448,14 @@ static int realize_toplevel(host_wayland_t *ctx, host_wayland_record_t *rec, con
     }
     if (req->has_min_size) {
         xdg_toplevel_set_min_size(rec->toplevel, (int32_t)ceil_div_scale(req->min_width, ctx->scale), (int32_t)ceil_div_scale(req->min_height, ctx->scale));
+    }
+    /* Windows frames are drawn by the guest, so ask for client-side mode before the first commit (2.6). A
+     * compositor without the manager simply gets no decoration object. Creation or listener failure rolls back. */
+    if (ctx->config.decoration_manager != NULL) {
+        rec->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(ctx->config.decoration_manager, rec->toplevel);
+        if (rec->decoration == NULL) return -1;
+        if (zxdg_toplevel_decoration_v1_add_listener(rec->decoration, &decoration_listener, &rec->bindings[HostWaylandKindDecoration]) != 0) return -1;
+        zxdg_toplevel_decoration_v1_set_mode(rec->decoration, DECORATION_CLIENT);
     }
     wl_surface_commit(rec->surface);
     return 0;

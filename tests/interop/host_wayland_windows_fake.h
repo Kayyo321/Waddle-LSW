@@ -200,6 +200,11 @@ static unsigned fake_nth(const char *iface, unsigned nth) {
     return FAKE_NONE;
 }
 
+static void deliver_decoration_configure(unsigned index, uint32_t mode) {
+    const struct zxdg_toplevel_decoration_v1_listener *listener = fake_proxies[index].listener;
+    listener->configure(fake_proxies[index].data, (struct zxdg_toplevel_decoration_v1 *)fake_object(index), mode);
+}
+
 /* ---- request queries --------------------------------------------------------------------------- */
 
 /** @brief Index of the first recorded request of `iface`/`opcode` at or after `from`, or -1. */
