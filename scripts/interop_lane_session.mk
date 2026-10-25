@@ -28,8 +28,9 @@ interop-session-app-test: build/session_app_test
 # Fast fixture gate for development: the same control-host runner as interop-host-control-test,
 # without the coverage and sanitizer phases of its script.
 SessionHostFixtureSources = tests/interop/session_control_host.c tests/interop/session_control_host_private.c tests/interop/session_main_private.c
-build/session_control_host_fixture: $(SessionHostFixtureSources) $(SessionAppHeaders) $(SessionAppRuntimeSources) $(SessionAppObjects) src/interop/session_main.c src/interop/session_control_host.c | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG -ffunction-sections -fdata-sections -Isrc/interop -Isubmodules/looking_glass/module $(SessionHostFixtureSources) $(SessionAppRuntimeSources) $(SessionAppObjects) $(LDFLAGS) $(SessionAppWrapFlags) -Wl,--gc-sections -pthread -o $@
+SessionHostFixtureApp = src/interop/session_app.c src/interop/session_supervisor.c src/interop/session_handlers_builtin.c
+build/session_control_host_fixture: $(SessionHostFixtureSources) $(SessionHostFixtureApp) $(SessionAppHeaders) $(SessionAppRuntimeSources) $(SessionAppObjects) src/interop/session_main.c src/interop/session_control_host.c | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG -ffunction-sections -fdata-sections -Isrc/interop -Isubmodules/looking_glass/module $(SessionHostFixtureSources) $(SessionHostFixtureApp) $(SessionAppRuntimeSources) $(SessionAppObjects) $(LDFLAGS) $(SessionAppWrapFlags) -Wl,--gc-sections -pthread -o $@
 .PHONY: interop-session-host-fixture
 interop-session-host-fixture: build/session_control_host_fixture
 	./build/session_control_host_fixture

@@ -5,7 +5,10 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
+#include "session_app.h"
 #include "session_control_host.h"
+#include "session_handlers_builtin.h"
+#include "session_supervisor.h"
 
 #include "daemon_config.h"
 #include "daemon_device.h"
@@ -42,13 +45,18 @@ typedef struct session_cli_options_t {
     const char *device_name;
     interop_mapping_linux_backing_t backing_kind;
     uint32_t run_for_ms;
+    uint32_t max_retries;
+    bool control_only;
     bool help;
 } session_cli_options_t;
 
 static void session_print_help(FILE *stream)
 {
-    fputs("Usage: waddle-session --control-only --device NAME [--backing-kind file|kvmfr] [--run-for-ms N]\n"
-          "Runs bounded protocol control diagnostics only; advertises no feature capabilities.\n"
+    fputs("Usage: waddle-session (--supervised | --control-only) --device NAME\n"
+          "                     [--backing-kind file|kvmfr] [--run-for-ms N] [--max-retries N]\n"
+          "--supervised: each attempt is a fresh admission; retryable refusals and dropped guests\n"
+          "are retried with 250 ms to 4 s backoff. --max-retries 0 retries without limit.\n"
+          "--control-only: one bounded control session; advertises no feature capabilities.\n"
           "The default backing kind is file. N is 1..120000 ms after session admission.\n",
           stream);
 }
@@ -71,7 +79,8 @@ static bool session_parse_decimal(const char *text, uint32_t *value)
 
 static bool session_parse_args(int argc, char **argv, session_cli_options_t *options)
 {
-    bool control_only = false;
+    bool supervised_seen = false;
+    bool retries_seen = false;
     bool backing_seen = false;
     bool run_time_seen = false;
     if (options == NULL || argc < 1 || argv == NULL) return false;
@@ -79,6 +88,8 @@ static bool session_parse_args(int argc, char **argv, session_cli_options_t *opt
         .device_name = NULL,
         .backing_kind = InteropMappingLinuxBackingRegularPrivateFile,
         .run_for_ms = SessionDefaultRunMs,
+        .max_retries = 0,
+        .control_only = false,
         .help = false,
     };
     for (int index = 1; index < argc; ++index) {
@@ -87,8 +98,20 @@ static bool session_parse_args(int argc, char **argv, session_cli_options_t *opt
             continue;
         }
         if (strcmp(argv[index], "--control-only") == 0) {
-            if (control_only) return false;
-            control_only = true;
+            if (options->control_only || supervised_seen) return false;
+            options->control_only = true;
+            continue;
+        }
+        if (strcmp(argv[index], "--supervised") == 0) {
+            if (supervised_seen || options->control_only) return false;
+            supervised_seen = true;
+            continue;
+        }
+        if (strcmp(argv[index], "--max-retries") == 0 && index + 1 < argc) {
+            if (retries_seen) return false;
+            retries_seen = true;
+            if (!session_parse_decimal(argv[++index], &options->max_retries))
+                return false;
             continue;
         }
         if (strcmp(argv[index], "--device") == 0 && index + 1 < argc) {
@@ -117,7 +140,9 @@ static bool session_parse_args(int argc, char **argv, session_cli_options_t *opt
         return false;
     }
     if (options->help) return true;
-    return control_only && options->device_name != NULL &&
+    if (retries_seen && options->control_only) return false;
+    if (!options->control_only && !supervised_seen) return false;
+    return options->device_name != NULL &&
         daemon_device_validate_name(options->device_name) == 0;
 }
 
@@ -297,6 +322,142 @@ static int session_resolve_device(const char *name, device_info_t *device)
  *       the standalone process exits at the process boundary so ownership cannot be lost.
  * @thread_safety Intended only for the process main thread; not reentrant.
  */
+/** @brief Inputs shared by every supervised attempt; borrowed for the whole supervised run. */
+typedef struct session_cli_attempts_t {
+    const device_info_t *device; /**< Resolved device; read only. */
+    const char *mapping_path; /**< Configured AV mapping path; read only. */
+    interop_mapping_linux_backing_t backing_kind; /**< Mapping backing for every attempt. */
+    int stop_fd; /**< Signal descriptor that cancels connection waits and admission. */
+} session_cli_attempts_t;
+
+/**
+ * @brief Run one supervised attempt: connect, open the mapping, read a fresh token, admit and run.
+ * @param[in] context session_cli_attempts_t, read only.
+ * @param[in] app Application config of the run; its control fields are used and its admission
+ *            is replaced for this attempt.
+ * @param[out] owners Zero on entry; holds this attempt's owners.
+ * @param[out] detail Optional detail; NULL allowed. Records the session-layer result when admission
+ *             could not start: DaemonError for a failed daemon connection, OsError for a mapping or
+ *             token failure, ClockError for an unusable monotonic clock.
+ * @return The control outcome; AdmissionFailed when admission could not start.
+ * @note The attempt's descriptors are closed before return. CleanupRequired is retried once here,
+ *       while the mapping descriptor is still open.
+ * @thread_safety Runs on the supervisor's calling thread only.
+ */
+static interop_host_control_result_t session_cli_attempt(void *context,
+    const session_app_config_t *app, interop_host_control_owners_t *owners,
+    interop_host_control_detail_t *detail)
+{
+    const session_cli_attempts_t *attempts = context;
+    session_app_config_t attempt = *app;
+    interop_host_control_result_t outcome;
+    uint64_t started_ms = session_monotonic_ms();
+    uint64_t deadline_ms;
+    uint64_t token = 0;
+    int daemon_fd;
+    int mapping_fd;
+    static const uint8_t agent_version[] = WaddleSessionAgentVersion;
+
+    if (started_ms == UINT64_MAX || started_ms > UINT64_MAX - SessionAdmissionTimeoutMs) {
+        if (detail != NULL) detail->admission_result = HostSessionClockError;
+        return HostControlAdmissionFailed;
+    }
+    deadline_ms = started_ms + SessionAdmissionTimeoutMs;
+    daemon_fd = session_connect_daemon(attempts->device->socket_path, attempts->stop_fd, deadline_ms);
+    if (daemon_fd < 0) {
+        if (detail != NULL) detail->admission_result = HostSessionDaemonError;
+        return HostControlAdmissionFailed;
+    }
+    mapping_fd = open(attempts->mapping_path, O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (mapping_fd < 0) {
+        close(daemon_fd);
+        if (detail != NULL) detail->admission_result = HostSessionOsError;
+        return HostControlAdmissionFailed;
+    }
+    if (session_read_random_token(&token, attempts->stop_fd, deadline_ms) != 0) {
+        close(mapping_fd);
+        close(daemon_fd);
+        if (detail != NULL) detail->admission_result = HostSessionOsError;
+        return HostControlAdmissionFailed;
+    }
+    interop_host_session_config_t admission = {
+        .device = attempts->device,
+        .daemon_fd = daemon_fd,
+        .agent_version = agent_version,
+        .agent_version_bytes = sizeof(agent_version) - 1,
+        .connection_token = token,
+        .local_capabilities = 0,
+        .deadline_ms = deadline_ms,
+        .cancel_fd = attempts->stop_fd,
+        .guest_ready_timeout_ms = SessionGuestReadyTimeoutMs,
+        .drain_timeout_ms = SessionDrainTimeoutMs,
+        .reserved_zero = 0,
+    };
+    attempt.control.admission = &admission;
+    attempt.control.mapping_fd = mapping_fd;
+    attempt.control.backing_kind = attempts->backing_kind;
+    outcome = session_app_run_detailed(&attempt, owners, detail);
+    if (outcome == HostControlCleanupRequired)
+        (void)interop_host_control_retry_cleanup(owners);
+    close(mapping_fd);
+    close(daemon_fd);
+    return outcome;
+}
+
+/**
+ * @brief Run the supervised command: retry fresh admissions until a terminal outcome or stop.
+ * @param[in] device Resolved device; read only.
+ * @param[in] daemon_config Loaded configuration whose mapping path is used.
+ * @param[in] backing_kind Mapping backing for every attempt.
+ * @param[in] run_for_ms Run bound of each attempt, as --run-for-ms.
+ * @param[in] max_retries Retry limit; 0 is unlimited.
+ * @param[in] stop_fd Signal descriptor that ends the run.
+ * @return 0 when the final outcome is Success, otherwise 1. Exits the process only when cleanup
+ *         of a failed attempt remains impossible, as the one-shot command does.
+ */
+static int session_cli_run_supervised(const device_info_t *device,
+    const daemon_config_t *daemon_config, interop_mapping_linux_backing_t backing_kind,
+    uint32_t run_for_ms, uint32_t max_retries, int stop_fd)
+{
+    session_cli_attempts_t attempts = {
+        .device = device,
+        .mapping_path = daemon_config->av_shm_path,
+        .backing_kind = backing_kind,
+        .stop_fd = stop_fd,
+    };
+    size_t handler_count = 0;
+    const session_handler_t *handlers = session_handlers_builtin(&handler_count);
+    session_supervisor_config_t supervisor;
+    session_supervisor_report_t report;
+    interop_host_control_owners_t owners = {0};
+    interop_host_control_result_t outcome;
+
+    memset(&supervisor, 0, sizeof(supervisor));
+    supervisor.app.control.stop_fd = stop_fd;
+    supervisor.app.control.run_for_ms = run_for_ms;
+    supervisor.app.control.backing_kind = backing_kind;
+    supervisor.app.control.reserved_zero = 0;
+    supervisor.app.handlers = handlers;
+    supervisor.app.handler_count = handler_count;
+    supervisor.seams = session_supervisor_system_seams();
+    supervisor.seams.context = &attempts;
+    supervisor.seams.run = session_cli_attempt;
+    supervisor.max_retries = max_retries;
+    outcome = session_supervisor_run(&supervisor, &owners, &report);
+    fprintf(stderr,
+        "waddle-session: supervised attempts=%u retries=%u ready_sessions=%u backoff_ms=%llu\n",
+        (unsigned)report.attempts, (unsigned)report.retries, (unsigned)report.ready_sessions,
+        (unsigned long long)report.backoff_total_ms);
+    if (outcome == HostControlSuccess) return 0;
+    if (outcome == HostControlCleanupRequired &&
+            interop_host_control_retry_cleanup(&owners) != HostControlSuccess) {
+        fprintf(stderr, "waddle-session: local cleanup remains required\n");
+        _exit(1);
+    }
+    fprintf(stderr, "waddle-session: supervised run failed (%u)\n", (unsigned)outcome);
+    return 1;
+}
+
 int waddle_session_main(int argc, char **argv)
 {
     session_cli_options_t options;
@@ -340,6 +501,11 @@ int waddle_session_main(int argc, char **argv)
         return 1;
     }
     signal_mask_changed = true;
+    if (!options.control_only) {
+        exit_code = session_cli_run_supervised(&device, &daemon_config, options.backing_kind,
+            options.run_for_ms, options.max_retries, signal_fd);
+        goto cleanup;
+    }
     daemon_fd = session_connect_daemon(device.socket_path, signal_fd,
                                        admission_deadline_ms);
     if (daemon_fd < 0) {
