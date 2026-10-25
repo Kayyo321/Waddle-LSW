@@ -13,7 +13,7 @@ fn input_valid(message: *const c.av_message_t, kind: u32) bool {
         7 => message.flags <= 1 and message.x == 0 and message.y == 0 and message.width == 0,
         8 => message.flags <= 1 and message.x == 0 and message.y == 0 and message.width >= 1 and message.width <= 127,
         9 => message.flags == 0 and message.width == 0 and message.x >= 0 and message.x < 8192 and message.y >= 0 and message.y < 8192,
-        10 => message.flags <= 1 and message.x == 0 and message.y == 0 and message.width >= 1 and message.width <= 3,
+        10 => message.flags <= 1 and message.x == 0 and message.y == 0 and message.width >= 1 and message.width <= 5,
         11 => message.flags == 0 and message.width == 0 and message.x >= -1200 and message.x <= 1200 and message.y >= -1200 and message.y <= 1200 and (message.x != 0 or message.y != 0),
         12 => message.flags >= 1 and message.flags <= 3 and message.x == 0 and message.y == 0 and message.width == 0,
         else => false,
@@ -493,3 +493,27 @@ test "CreateV3 and epoch opcodes have independent golden fields and canonical pa
     try std.testing.expectEqual(@as(c_int, 0), av_control_decode(&bytes, bytes.len, &decoded));
     try std.testing.expectEqual(@as(u64, 0), decoded.lease_generation);
 }
+
+test "button widths 1 through 5 round trip and 0 or 6 is rejected" {
+    var message = std.mem.zeroes(c.av_message_t);
+    message.type = 10;
+    message.window_id = 1;
+    message.sequence = 1;
+    message.buffer_index = 1;
+    message.flags = 1;
+    var bytes: [c.AvControlBytes]u8 = undefined;
+    for ([_]u32{ 1, 2, 3, 4, 5 }) |button| {
+        message.width = button;
+        try std.testing.expect(input_valid(&message, 10));
+        try std.testing.expectEqual(@as(c_int, 0), av_control_encode(&message, &bytes, bytes.len));
+        var decoded = std.mem.zeroes(c.av_message_t);
+        try std.testing.expectEqual(@as(c_int, 0), av_control_decode(&bytes, bytes.len, &decoded));
+        try std.testing.expectEqual(button, decoded.width);
+    }
+    for ([_]u32{ 0, 6, 128 }) |button| {
+        message.width = button;
+        try std.testing.expect(!input_valid(&message, 10));
+        try std.testing.expectEqual(@as(c_int, -1), av_control_encode(&message, &bytes, bytes.len));
+    }
+}
+

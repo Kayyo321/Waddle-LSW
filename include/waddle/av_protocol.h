@@ -27,7 +27,7 @@ typedef enum av_message_type_t {
     /** Host activates/releases one window incarnation; flags 1/0. */ MsgInputFocus = 7,
     /** Physical evdev code in width, down/up in flags. */ MsgInputKey = 8,
     /** Surface-local integer pixel x/y, bounded again against live geometry. */ MsgInputPointer = 9,
-    /** Button 1 left, 2 right, 3 middle in width; down/up flags. */ MsgInputButton = 10,
+    /** Button in width: 1 left, 2 right, 3 middle, 4 XBUTTON1 (BTN_SIDE), 5 XBUTTON2 (BTN_EXTRA); down/up flags. */ MsgInputButton = 10,
     /** Signed Windows horizontal/vertical wheel units in x/y. */ MsgInputWheel = 11,
     /** Release held keys (1), buttons (2), or both (3); retain focus. */ MsgInputRelease = 12,
     /** Guest announces generation-safe lifecycle support; sequence is nonzero incarnation. */ MsgWindowCreateV2 = 13,
