@@ -451,6 +451,24 @@ static interop_host_control_result_t host_control_refuse_after_ops(
 }
 
 
+/** @brief Decide whether feature descriptors may still receive readiness in this iteration.
+ * Readiness is withheld once drain has begun: the local drain flag, a closed transport, a peer
+ * Draining event, or a fatal remote Error (request identifier zero).
+ * @param[in] ready True once Ready has been committed.
+ * @param[in] draining Local drain flag.
+ * @param[in] work Socket drive result of this iteration; read only.
+ * @return True when on_fds may be called.
+ */
+static bool host_fds_dispatch_allowed(bool ready, bool draining,
+                                      const interop_linux_socket_work_t *work)
+{
+    if (!ready || draining) return false;
+    if (work->state == InteropLinuxSocketTransportClosed) return false;
+    if (work->event.kind == InteropPeerEventDraining) return false;
+    if (work->event.kind == InteropPeerEventError && work->event.request_id == 0) return false;
+    return true;
+}
+
 /** @brief Fold a send-induced drain into the run outcome; idempotent. */
 static void host_feature_observe_drain(interop_host_feature_sender_t *sender,
                                        interop_host_control_result_t *outcome,
@@ -806,8 +824,8 @@ interop_host_control_result_t interop_host_control_run_detailed(
             host_control_record_outcome(&outcome, HostControlPeerFailed);
             break;
         }
-        if (feature_count != 0 && ready && !draining && feature_ops != NULL &&
-                feature_ops->on_fds != NULL && work.state != InteropLinuxSocketTransportClosed) {
+        if (feature_count != 0 && feature_ops != NULL && feature_ops->on_fds != NULL &&
+                host_fds_dispatch_allowed(ready, draining, &work)) {
             bool any_ready = false;
             for (size_t index = 0; index < feature_count; ++index)
                 if (descriptors[feature_base + index].revents != 0) any_ready = true;

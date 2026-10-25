@@ -195,6 +195,25 @@ static void session_control_host_private_feature_tests(void)
     host_feature_close_once(&ops, &sender, &notified, 0, HostControlSuccess);
     assert(notified);
 
+    /* Descriptor readiness is withheld once drain has begun, including a same-iteration peer drain. */
+    {
+        interop_linux_socket_work_t work;
+        memset(&work, 0, sizeof(work));
+        assert(host_fds_dispatch_allowed(true, false, &work));
+        assert(!host_fds_dispatch_allowed(false, false, &work));
+        assert(!host_fds_dispatch_allowed(true, true, &work));
+        work.event.kind = InteropPeerEventDraining;
+        assert(!host_fds_dispatch_allowed(true, false, &work));
+        work.event.kind = InteropPeerEventError;
+        work.event.request_id = 0;
+        assert(!host_fds_dispatch_allowed(true, false, &work));
+        work.event.request_id = 3;
+        assert(host_fds_dispatch_allowed(true, false, &work));
+        work.event.kind = InteropPeerEventNone;
+        work.state = InteropLinuxSocketTransportClosed;
+        assert(!host_fds_dispatch_allowed(true, false, &work));
+    }
+
     /* Drain failures record the outcome; an already draining pump keeps running. */
     outcome = HostControlSuccess;
     draining = false;
