@@ -55,8 +55,143 @@ void session_control_host_private_fail_clock_call(uint32_t call)
     host_control_private_clock_failure_call = call;
 }
 
+static void expect_feature_config_invalid(const interop_host_control_config_t *config)
+{
+    interop_host_control_owners_t owners;
+    memset(&owners, 0, sizeof(owners));
+    assert(interop_host_control_run(config, &owners) == HostControlInvalidArgument);
+    assert(owners.session_owner == NULL && owners.mapping_owner == NULL);
+}
+
+static int private_poll_fds_unused(void *context, struct pollfd *fds, size_t capacity, size_t *count)
+{
+    (void)context;
+    (void)fds;
+    (void)capacity;
+    *count = 0;
+    return 0;
+}
+
+/* Private probes for feature-ops branches that the integration fixture reaches only indirectly. */
+static void session_control_host_private_feature_tests(void)
+{
+    interop_host_session_config_t admission;
+    interop_host_control_config_t config;
+    interop_host_feature_ops_t ops;
+    interop_host_feature_sender_t sender;
+    interop_host_control_result_t outcome = HostControlSuccess;
+    interop_host_feature_result_t mapped;
+    interop_peer_event_t event;
+    uint8_t frame[16];
+    uint32_t request_id = 0;
+    bool notified = false;
+    bool draining = false;
+
+    memset(&admission, 0, sizeof(admission));
+    memset(&config, 0, sizeof(config));
+    memset(&ops, 0, sizeof(ops));
+    memset(frame, 0, sizeof(frame));
+    admission.cancel_fd = 7;
+    admission.daemon_fd = 8;
+    config.admission = &admission;
+    config.mapping_fd = 5;
+    config.backing_kind = InteropMappingLinuxBackingRegularPrivateFile;
+    config.stop_fd = 7;
+
+    /* Capability-zero bounds: run_for_ms must be bounded without feature ops. */
+    config.run_for_ms = 0;
+    expect_feature_config_invalid(&config);
+    config.run_for_ms = 120001;
+    expect_feature_config_invalid(&config);
+
+    /* Feature ops validation: mask, equal offer, descriptor pair and alignment. */
+    config.run_for_ms = 0;
+    config.feature_ops = &ops;
+    ops.local_capabilities = UINT64_C(1) << 63;
+    admission.local_capabilities = ops.local_capabilities;
+    expect_feature_config_invalid(&config);
+    ops.local_capabilities = InteropCapWindows;
+    admission.local_capabilities = InteropCapInput;
+    expect_feature_config_invalid(&config);
+    admission.local_capabilities = InteropCapWindows;
+    ops.poll_fds = private_poll_fds_unused;
+    expect_feature_config_invalid(&config);
+    ops.poll_fds = NULL;
+    config.run_for_ms = 120001;
+    expect_feature_config_invalid(&config);
+    config.run_for_ms = 0;
+    {
+        _Alignas(interop_host_feature_ops_t) uint8_t storage[sizeof(interop_host_feature_ops_t) * 2];
+        config.feature_ops = (const interop_host_feature_ops_t *)(void *)(storage + 1);
+        expect_feature_config_invalid(&config);
+    }
+    /* Valid ops with a zero bound reach the device check, which rejects the NULL device. */
+    config.feature_ops = &ops;
+    expect_feature_config_invalid(&config);
+
+    /* A nested run or retry from a callback is refused before any state is read. */
+    host_control_in_callback = true;
+    expect_feature_config_invalid(&config);
+    assert(interop_host_control_retry_cleanup(NULL) == HostControlInvalidArgument);
+    {
+        interop_host_control_owners_t owners;
+        memset(&owners, 0, sizeof(owners));
+        assert(interop_host_control_retry_cleanup(&owners) == HostControlInvalidArgument);
+    }
+    host_control_in_callback = false;
+
+    /* Senders are invalid unless a callback is running. */
+    assert(interop_host_feature_send_request(NULL, frame, sizeof(frame), &request_id) ==
+           HostFeatureInvalidArgument);
+    assert(interop_host_feature_release_request(NULL, 1) == HostFeatureInvalidArgument);
+    memset(&sender, 0, sizeof(sender));
+    assert(interop_host_feature_send(&sender, frame, sizeof(frame)) == HostFeatureInvalidArgument);
+    assert(interop_host_feature_send_request(&sender, frame, sizeof(frame), &request_id) ==
+           HostFeatureInvalidArgument);
+    assert(interop_host_feature_release_request(&sender, 1) == HostFeatureInvalidArgument);
+    sender.valid = true;
+    assert(interop_host_feature_send_request(&sender, frame, sizeof(frame), NULL) ==
+           HostFeatureInvalidArgument);
+    sender.closing = true;
+    assert(interop_host_feature_send_request(&sender, frame, sizeof(frame), &request_id) ==
+           HostFeatureDraining);
+    assert(interop_host_feature_send(&sender, frame, sizeof(frame)) == HostFeatureDraining);
+    sender.closing = false;
+    assert(interop_host_feature_send(&sender, frame, sizeof(frame)) == HostFeatureInvalidArgument);
+
+    /* Admission results: no event keeps Success; a Draining event marks the run for drain. */
+    sender.drain_observed = false;
+    mapped = host_feature_finish(&sender, InteropLinuxSocketSuccess, NULL);
+    assert(mapped == HostFeatureSuccess && !sender.drain_observed);
+    memset(&event, 0, sizeof(event));
+    event.kind = InteropPeerEventDraining;
+    mapped = host_feature_finish(&sender, InteropLinuxSocketSuccess, &event);
+    assert(mapped == HostFeatureDraining && sender.drain_observed);
+    mapped = host_feature_finish(&sender, InteropLinuxSocketQueueFull, &event);
+    assert(mapped == HostFeatureQueueFull);
+    host_feature_observe_drain(&sender, &outcome, &draining);
+    assert(outcome == HostControlPeerFailed && draining);
+    sender.valid = false;
+
+    /* Closing is announced once; a table without on_closing still records the closing state. */
+    memset(&sender, 0, sizeof(sender));
+    host_feature_close_once(&ops, &sender, &notified, 0, HostControlSuccess);
+    assert(notified && sender.closing);
+    host_feature_close_once(&ops, &sender, &notified, 0, HostControlSuccess);
+    assert(notified);
+
+    /* Drain failures record the outcome; an already draining pump keeps running. */
+    outcome = HostControlSuccess;
+    draining = false;
+    assert(!host_control_fail_and_drain(&outcome, HostControlFeatureFailed, NULL, 1, 0, &draining));
+    assert(outcome == HostControlFeatureFailed && !draining);
+    draining = true;
+    assert(host_control_fail_and_drain(&outcome, HostControlFeatureFailed, NULL, 1, 0, &draining));
+}
+
 void session_control_host_private_tests(void)
 {
+    session_control_host_private_feature_tests();
     assert(interop_host_control_retry_cleanup(NULL) == HostControlInvalidArgument);
     assert(interop_host_control_run(NULL, NULL) == HostControlInvalidArgument);
 

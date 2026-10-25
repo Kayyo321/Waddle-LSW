@@ -31,7 +31,7 @@ typedef struct interop_host_feature_ops_t {
                   interop_host_feature_sender_t *sender);
     int (*on_tick)(void *context, uint64_t now_ms, interop_host_feature_sender_t *sender);
     uint64_t (*next_deadline_ms)(void *context, uint64_t now_ms);
-    void (*on_closing)(void *context, uint32_t reason);
+    void (*on_closing)(void *context, uint32_t reason, interop_host_feature_sender_t *sender);
 } interop_host_feature_ops_t;
 ```
 
@@ -106,10 +106,11 @@ Results are positive enum values, following the project's result-enum convention
 deviates from the earlier brief's "negative errno-like" wording; the values are still a
 closed documented set, and 0 is success.
 
-- `send` admits unsolicited and response frames (`peer` `enqueue_feature`). A Request type
+- `send` admits unsolicited and response frames (the peer's `enqueue_feature`). A Request type
   here returns UnsupportedFrame; a Response with a zero identifier returns InvalidFrame.
-- `send_request` admits Request types through `enqueue_request`; `*out_request_id` is
-  written on success (zero when the deadline drained the peer, with Draining returned).
+- `send_request` admits Request types through the peer's `enqueue_request`;
+  `*out_request_id` is written only when the result is HostFeatureSuccess. A Draining
+  result leaves it untouched.
 - `release_request` releases a feature identifier. It is allowed while closing, because
   dispatchers abandon requests during drain.
 - Every send error leaves the peer unchanged. A Draining result sets an internal flag so the
@@ -141,7 +142,8 @@ invalidated by any admission, so the next iteration polls again.
   callback that calls `interop_host_control_run` or `interop_host_control_retry_cleanup`
   gets InvalidArgument (a `_Thread_local` guard).
 - No callback runs after drain has begun, except `on_closing`.
-- `on_closing(context, reason)` runs exactly once. It runs at the first iteration boundary
+- `on_closing(context, reason, sender)` runs exactly once. The sender is the one defined
+  in section 5: valid during the call, and every admission through it returns Draining. It runs at the first iteration boundary
   after drain begins, or at the end of the run, whichever is first, and always before owner
   cleanup. `reason` is the `interop_host_control_result_t` value recorded at that moment;
   the returned outcome may be more specific. Sends from `on_closing` return Draining.
