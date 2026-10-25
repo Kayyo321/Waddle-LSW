@@ -9,6 +9,7 @@
 #include "session_control_host.h"
 #include "session_handlers_builtin.h"
 #include "session_supervisor.h"
+#include "session_exit_codes.h"
 
 #include "daemon_config.h"
 #include "daemon_device.h"
@@ -40,6 +41,7 @@
 #define SessionDrainTimeoutMs 5000u
 #define SessionDefaultRunMs 30000u
 #define SessionMaximumRunMs 120000u
+#define SessionMaximumRetries 1000u
 
 typedef struct session_cli_options_t {
     const char *device_name;
@@ -52,16 +54,19 @@ typedef struct session_cli_options_t {
 
 static void session_print_help(FILE *stream)
 {
-    fputs("Usage: waddle-session (--supervised | --control-only) --device NAME\n"
-          "                     [--backing-kind file|kvmfr] [--run-for-ms N] [--max-retries N]\n"
-          "--supervised: each attempt is a fresh admission; retryable refusals and dropped guests\n"
-          "are retried with 250 ms to 4 s backoff. --max-retries 0 retries without limit.\n"
+    fputs("Usage: waddle-session --device NAME [--backing-kind file|kvmfr] [--run-for-ms N]\n"
+          "                     [--supervised | --control-only] [--max-retries N]\n"
+          "Default (no mode flag) and --supervised: each attempt is a fresh admission with the built-in\n"
+          "handlers; retryable refusals and dropped guests are retried with 250 ms to 4 s backoff.\n"
+          "--max-retries 0 retries without limit (supervised only).\n"
           "--control-only: one bounded control session; advertises no feature capabilities.\n"
+          "Exit 75: another session holds this device's lock (a handover, not a failure).\n"
           "The default backing kind is file. N is 1..120000 ms after session admission.\n",
           stream);
 }
 
-static bool session_parse_decimal(const char *text, uint32_t *value)
+/* Parse an unsigned decimal in [minimum, maximum]; rejects signs, spaces, and overflow. */
+static bool session_parse_bounded(const char *text, uint64_t minimum, uint64_t maximum, uint32_t *value)
 {
     uint64_t parsed = 0;
     if (text == NULL || text[0] == '\0' || value == NULL) return false;
@@ -72,9 +77,19 @@ static bool session_parse_decimal(const char *text, uint32_t *value)
         if (parsed > (UINT64_MAX - digit) / 10) return false;
         parsed = parsed * 10 + digit;
     }
-    if (parsed < 1 || parsed > SessionMaximumRunMs) return false;
+    if (parsed < minimum || parsed > maximum) return false;
     *value = (uint32_t)parsed;
     return true;
+}
+
+static bool session_parse_decimal(const char *text, uint32_t *value)
+{
+    return session_parse_bounded(text, 1, SessionMaximumRunMs, value);
+}
+
+static bool session_parse_retries(const char *text, uint32_t *value)
+{
+    return session_parse_bounded(text, 0, SessionMaximumRetries, value);
 }
 
 static bool session_parse_args(int argc, char **argv, session_cli_options_t *options)
@@ -110,7 +125,7 @@ static bool session_parse_args(int argc, char **argv, session_cli_options_t *opt
         if (strcmp(argv[index], "--max-retries") == 0 && index + 1 < argc) {
             if (retries_seen) return false;
             retries_seen = true;
-            if (!session_parse_decimal(argv[++index], &options->max_retries))
+            if (!session_parse_retries(argv[++index], &options->max_retries))
                 return false;
             continue;
         }
@@ -141,7 +156,6 @@ static bool session_parse_args(int argc, char **argv, session_cli_options_t *opt
     }
     if (options->help) return true;
     if (retries_seen && options->control_only) return false;
-    if (!options->control_only && !supervised_seen) return false;
     return options->device_name != NULL &&
         daemon_device_validate_name(options->device_name) == 0;
 }
@@ -280,6 +294,17 @@ static int session_read_random_token(uint64_t *token, int stop_fd,
     return -1;
 }
 
+/* Read every queued signal record from the signal descriptor; EAGAIN ends the drain. */
+static void session_signals_drain(int signal_fd)
+{
+    struct signalfd_siginfo record;
+    for (;;) {
+        ssize_t received = read(signal_fd, &record, sizeof(record));
+        if (received < 0 && errno == EINTR) continue;
+        if (received != (ssize_t)sizeof(record)) return;
+    }
+}
+
 static int session_signals_begin(sigset_t *prior_mask)
 {
     sigset_t blocked;
@@ -328,7 +353,14 @@ typedef struct session_cli_attempts_t {
     const char *mapping_path; /**< Configured AV mapping path; read only. */
     interop_mapping_linux_backing_t backing_kind; /**< Mapping backing for every attempt. */
     int stop_fd; /**< Signal descriptor that cancels connection waits and admission. */
+    uint32_t last_admission; /**< Session-layer admission result of the latest attempt; 0 when none. */
 } session_cli_attempts_t;
+
+/** @brief True when a session-layer admission result means another session holds a device lock. */
+static bool session_admission_is_lock_held(uint32_t admission_result)
+{
+    return admission_result == HostSessionBusy || admission_result == HostSessionAvBusy;
+}
 
 /**
  * @brief Run one supervised attempt: connect, open the mapping, read a fresh token, admit and run.
@@ -344,11 +376,24 @@ typedef struct session_cli_attempts_t {
  *       while the mapping descriptor is still open.
  * @thread_safety Runs on the supervisor's calling thread only.
  */
+static interop_host_control_result_t session_cli_attempt_body(session_cli_attempts_t *attempts,
+    const session_app_config_t *app, interop_host_control_owners_t *owners,
+    interop_host_control_detail_t *detail);
+
 static interop_host_control_result_t session_cli_attempt(void *context,
     const session_app_config_t *app, interop_host_control_owners_t *owners,
     interop_host_control_detail_t *detail)
 {
-    const session_cli_attempts_t *attempts = context;
+    session_cli_attempts_t *attempts = context;
+    interop_host_control_result_t outcome = session_cli_attempt_body(attempts, app, owners, detail);
+    attempts->last_admission = detail->admission_result;
+    return outcome;
+}
+
+static interop_host_control_result_t session_cli_attempt_body(session_cli_attempts_t *attempts,
+    const session_app_config_t *app, interop_host_control_owners_t *owners,
+    interop_host_control_detail_t *detail)
+{
     session_app_config_t attempt = *app;
     interop_host_control_result_t outcome;
     uint64_t started_ms = session_monotonic_ms();
@@ -424,6 +469,7 @@ static int session_cli_run_supervised(const device_info_t *device,
         .mapping_path = daemon_config->av_shm_path,
         .backing_kind = backing_kind,
         .stop_fd = stop_fd,
+        .last_admission = 0,
     };
     session_builtin_storage_t builtin_storage;
     session_builtin_config_t builtin = {
@@ -443,7 +489,9 @@ static int session_cli_run_supervised(const device_info_t *device,
     /* The launch handler serves session.sock where the client looks for it: the directory of the
      * daemon socket. The handler's layout is <runtime>/waddle/<device>, so the daemon socket must
      * follow that same layout; otherwise the client and the handler would disagree. */
-    if (runtime_root == NULL || runtime_root[0] != '/' ||
+    /* A relative XDG_RUNTIME_DIR was already refused by device resolution (daemon_device_get_socket_path),
+     * so only a missing one can reach this check with a path that is not the handler's layout. */
+    if (runtime_root == NULL ||
             snprintf(expected_socket, sizeof(expected_socket), "%s/waddle/%s/daemon.sock",
                 runtime_root, device->name) < 0 ||
             strcmp(expected_socket, device->socket_path) != 0) {
@@ -477,7 +525,11 @@ static int session_cli_run_supervised(const device_info_t *device,
         (unsigned)report.attempts, (unsigned)report.retries, (unsigned)report.ready_sessions,
         (unsigned long long)report.backoff_total_ms);
     /* A graceful local stop (LocalStop or a stop signal) is the clean end of a supervised run. */
-    if (outcome == HostControlSuccess || outcome == HostControlCancelled) return 0;
+    if (outcome == HostControlSuccess || outcome == HostControlCancelled) return WaddleSessionExitSuccess;
+    if (outcome == HostControlAdmissionFailed && session_admission_is_lock_held(attempts.last_admission)) {
+        fprintf(stderr, "waddle-session: another session holds this device's lock\n");
+        return WaddleSessionExitLockHeld;
+    }
     if (outcome == HostControlCleanupRequired &&
             interop_host_control_retry_cleanup(&owners) != HostControlSuccess) {
         fprintf(stderr, "waddle-session: local cleanup remains required\n");
@@ -577,9 +629,14 @@ int waddle_session_main(int argc, char **argv)
     };
     fprintf(stderr, "waddle-session: RuntimeControlOnly device=%s capabilities=0\n",
             device.name);
-    interop_host_control_result_t result = interop_host_control_run(&control, &owners);
+    interop_host_control_detail_t run_detail;
+    memset(&run_detail, 0, sizeof(run_detail));
+    interop_host_control_result_t result = interop_host_control_run_detailed(&control, &owners, &run_detail);
     if (result == HostControlSuccess) {
-        exit_code = 0;
+        exit_code = WaddleSessionExitSuccess;
+    } else if (result == HostControlAdmissionFailed && session_admission_is_lock_held(run_detail.admission_result)) {
+        fprintf(stderr, "waddle-session: another session holds this device's lock\n");
+        exit_code = WaddleSessionExitLockHeld;
     } else {
         fprintf(stderr, "waddle-session: control-only run failed (%u)\n",
                 (unsigned)result);
@@ -596,7 +653,12 @@ int waddle_session_main(int argc, char **argv)
 cleanup:
     if (daemon_fd >= 0) close(daemon_fd);
     if (mapping_fd >= 0) close(mapping_fd);
-    if (signal_fd >= 0) close(signal_fd);
+    if (signal_fd >= 0) {
+        /* A stop signal the wait only polled stays pending while the descriptor is blocked. Consume it
+         * here; restoring the prior mask would otherwise deliver it with its default action. */
+        session_signals_drain(signal_fd);
+        close(signal_fd);
+    }
     if (signal_mask_changed) (void)pthread_sigmask(SIG_SETMASK, &prior_mask, NULL);
     return exit_code;
 }
