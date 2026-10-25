@@ -40,11 +40,15 @@ Outside scope:
 
 `window_state_native_api_t` (declared in the header) is a struct of function
 pointers. Every entry takes `void *context` first and a `uintptr_t window` (the
-HWND value) second. Every entry is required (non-NULL) and is called only on the
-adapter's owner thread. The table is copied into the adapter by value at create;
+HWND value) second. Every entry is required (non-NULL). Every entry except
+`current_thread_id` is called only on the adapter's owner thread. The table is copied into the adapter by value at create;
 `context` must stay valid until destroy.
 
-Each mutating or querying entry returns 1 on success and 0 on failure. On failure
+Each mutating or querying entry returns 1 on success and 0 on failure. The two
+window-state queries (`is_iconic`, `is_zoomed`) report their value through an
+out parameter, because the Win32 calls return a plain boolean with no failure
+channel of their own; `is_window` returns 1 when the window exists and never
+fails. On failure
 the implementation has already captured the native error, which
 `last_error` returns. A failing entry never leaves the window partially modified
 by itself, except where the operation documents otherwise (for example
@@ -54,8 +58,8 @@ by itself, except where the operation documents otherwise (for example
 |:--|:--|:--|
 | `is_window` | `IsWindow` | |
 | `window_thread` | `GetWindowThreadProcessId` | Returns 0 when the thread id is 0. |
-| `is_iconic` | `IsIconic` | Returns 1 when minimized. |
-| `is_zoomed` | `IsZoomed` | Returns 1 when maximized. |
+| `is_iconic` | `IsIconic` | Writes 1 to `*iconic` when minimized. |
+| `is_zoomed` | `IsZoomed` | Writes 1 to `*zoomed` when maximized. |
 | `get_style` | `GetWindowLongPtrW(GWL_STYLE)` | Last error cleared before the call; 0 with a set error means failure. |
 | `set_style` | `SetWindowLongPtrW(GWL_STYLE)` | |
 | `show_window` | `ShowWindow` (synchronous) | Command is `SW_MINIMIZE`, `SW_RESTORE` or `SW_MAXIMIZE`. |
@@ -69,7 +73,7 @@ by itself, except where the operation documents otherwise (for example
 | `set_active_window` | `SetActiveWindow` | Used only by the activation fallback. |
 | `attach_thread_input` | `AttachThreadInput(from, to, attach)` | |
 | `post_message` | `PostMessageW` | The adapter uses it only with `WM_CLOSE`. |
-| `current_thread_id` | `GetCurrentThreadId` | Read at create only; defines the owner thread. |
+| `current_thread_id` | `GetCurrentThreadId` | Read at create to define the owner thread, and on every entry to check the caller. The only entry any thread may call. |
 | `last_error` | `GetLastError` | Read after a failed entry. |
 
 `ShowWindowAsync` is not in the table. Asynchronous show returns before the state
@@ -112,8 +116,9 @@ flag, so `observe` reports Fullscreen exactly when the record is present.
 
 ## 4. Guest actions
 
-`execute` processes `actions[0..count)` in order. For each action it first
-performs the identity check (section 3), then the native calls of that action.
+`execute` processes `actions[0..count)` in order. For each action, argument and
+saved-state checks run first; they make no native call. Then the identity check
+(section 3) runs before the first native call of the action.
 If an action fails, execution stops: no later action is attempted, and
 `*out_completed` is the number of actions before the failing one. If every action
 succeeds, `*out_completed` equals `count`. A failure of an action that has already
