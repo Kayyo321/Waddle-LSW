@@ -425,12 +425,37 @@ static int session_cli_run_supervised(const device_info_t *device,
         .backing_kind = backing_kind,
         .stop_fd = stop_fd,
     };
+    session_builtin_storage_t builtin_storage;
+    session_builtin_config_t builtin = {
+        .runtime_dir = NULL,
+        .device_name = device->name,
+        .storage = &builtin_storage,
+    };
+    session_handler_t handlers[SessionAppMaxHandlers];
     size_t handler_count = 0;
-    const session_handler_t *handlers = session_handlers_builtin(&handler_count);
     session_supervisor_config_t supervisor;
     session_supervisor_report_t report;
     interop_host_control_owners_t owners = {0};
     interop_host_control_result_t outcome;
+    char expected_socket[WaddleMaxPathLen];
+    const char *runtime_root = getenv("XDG_RUNTIME_DIR");
+
+    /* The launch handler serves session.sock where the client looks for it: the directory of the
+     * daemon socket. The handler's layout is <runtime>/waddle/<device>, so the daemon socket must
+     * follow that same layout; otherwise the client and the handler would disagree. */
+    if (runtime_root == NULL || runtime_root[0] != '/' ||
+            snprintf(expected_socket, sizeof(expected_socket), "%s/waddle/%s/daemon.sock",
+                runtime_root, device->name) < 0 ||
+            strcmp(expected_socket, device->socket_path) != 0) {
+        fprintf(stderr, "waddle-session: supervised mode needs an absolute XDG_RUNTIME_DIR that holds the daemon socket\n");
+        return 2;
+    }
+    builtin.runtime_dir = runtime_root;
+    memset(&builtin_storage, 0, sizeof(builtin_storage));
+    if (session_handlers_builtin_make(&builtin, handlers, &handler_count) != 0) {
+        fprintf(stderr, "waddle-session: handler registry rejected the device\n");
+        return 1;
+    }
 
     memset(&supervisor, 0, sizeof(supervisor));
     supervisor.app.control.stop_fd = stop_fd;
@@ -439,16 +464,20 @@ static int session_cli_run_supervised(const device_info_t *device,
     supervisor.app.control.reserved_zero = 0;
     supervisor.app.handlers = handlers;
     supervisor.app.handler_count = handler_count;
+    /* Attempts that end before the run bound stop the handlers and remove their socket, so an
+     * ended run never leaves a stale launch endpoint behind. */
     supervisor.seams = session_supervisor_system_seams();
     supervisor.seams.context = &attempts;
     supervisor.seams.run = session_cli_attempt;
     supervisor.max_retries = max_retries;
     outcome = session_supervisor_run(&supervisor, &owners, &report);
+    session_handlers_builtin_destroy(&builtin_storage);
     fprintf(stderr,
         "waddle-session: supervised attempts=%u retries=%u ready_sessions=%u backoff_ms=%llu\n",
         (unsigned)report.attempts, (unsigned)report.retries, (unsigned)report.ready_sessions,
         (unsigned long long)report.backoff_total_ms);
-    if (outcome == HostControlSuccess) return 0;
+    /* A graceful local stop (LocalStop or a stop signal) is the clean end of a supervised run. */
+    if (outcome == HostControlSuccess || outcome == HostControlCancelled) return 0;
     if (outcome == HostControlCleanupRequired &&
             interop_host_control_retry_cleanup(&owners) != HostControlSuccess) {
         fprintf(stderr, "waddle-session: local cleanup remains required\n");

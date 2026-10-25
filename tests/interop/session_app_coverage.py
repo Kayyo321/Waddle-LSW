@@ -24,6 +24,7 @@ Attempt.mkdir(parents=True, exist_ok=False)
 WrapSymbols = sorted(set(re.findall(r"\b__wrap_([a-z_][a-z_0-9]*)\s*\(", Fixture.read_text())))
 WrapFlags = ["-Wl,--wrap=" + name for name in WrapSymbols]
 RuntimeSources = [
+    Root / "src/interop/session_local_handler.c",
     Root / "src/interop/session_host.c",
     Root / "src/interop/linux_session_owner.c",
     Root / "src/interop/linux_socket_owner.c",
@@ -40,12 +41,13 @@ ObjectPaths = [
     Root / "build/interop_control_peer_abi.o",
     Root / "build/interop_codec.o",
     Root / "build/interop_layout_abi.o",
+    Root / "build/interop_activation_store.o",
 ]
 Flags = ["-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-UNDEBUG", "-O0", "-g",
          "-D_GNU_SOURCE", "-Iinclude", "-Isrc/daemon", "-Isrc", "-Isrc/common", "-Isrc/cli",
          "-Isrc/interop", "-Isubmodules/looking_glass/module", "-ffunction-sections",
          "-fdata-sections", "-pthread"]
-Covered = [App, Supervisor]
+Covered = [App, Supervisor, Builtin]
 Inputs = [Path(__file__).resolve(), App, Supervisor, Builtin, AppTest, SupervisorTest, Fixture, Private,
           Root / "src/interop/session_app.h", Root / "src/interop/session_supervisor.h",
           Root / "src/interop/session_handler.h", Root / "src/interop/session_control_host.h",
