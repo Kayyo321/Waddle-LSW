@@ -1,118 +1,149 @@
-//! Activation token validation, environment selection and a bounded
-//! (token, process_id) store with 30 s expiry and fail-closed clock rollback.
-//! Caller-owned storage, no allocation, no I/O.
+//! Activation token validation, environment selection and a bounded store of the
+//! host's own pending tokens, plus a ring of recently spent tokens. Each token is
+//! refused while it is pending or spent within the last 30 s. Fail-closed clock
+//! rollback handling. Caller-owned storage, no allocation, no I/O.
 const std = @import("std");
 
 /// Maximum token length in bytes; the wire field limit is 255.
 pub const MaxTokenBytes: usize = 255;
-/// Maximum stored (token, process_id) pairs.
+/// Caller buffer size for take: the token followed by a NUL terminator.
+pub const TokenBufferBytes: usize = MaxTokenBytes + 1;
+/// Capacity of the pending array and of the spent ring.
 pub const MaxEntries: usize = 32;
-/// Entry lifetime in milliseconds: live while now < inserted + TtlMs.
+/// Lifetime in milliseconds: an entry is live while now < inserted + TtlMs.
 pub const TtlMs: u64 = 30_000;
 /// Byte size of one token slot, including unused tail bytes.
 const TokenSlot: usize = 256;
-/// Caller buffer size for take_for_process: the token followed by a NUL terminator.
-pub const TokenBufferBytes: usize = MaxTokenBytes + 1;
 
-/// Token or process rejection. Every error leaves the store unchanged.
-pub const error_t = error{ InvalidToken, InvalidProcess };
+/// Put refusals and fatal argument errors. Every error leaves the store unchanged.
+pub const error_t = error{ InvalidToken, InvalidProcess, Duplicate, TokenSpent, SpentRingFull };
 
-/// One stored pair. Extern layout (280 bytes) shared with activation_store.h.
+/// One slot of the pending array or the spent ring. Extern layout (280 bytes).
 pub const entry_t = extern struct {
     /// Token bytes; only the first token_length bytes are meaningful.
     token: [TokenSlot]u8,
     /// Token length, 1..255 while occupied; 0 when free.
     token_length: u8,
-    /// 1 while the slot holds a pair (possibly expired but not yet removed), else 0.
+    /// 1 while the slot holds an entry (possibly expired but not yet removed), else 0.
     occupied: u8,
     /// Zero padding that aligns process_id to four bytes.
     reserved: [2]u8,
-    /// Nonzero process identifier while occupied.
+    /// Owning process identifier for a pending entry; 0 in a spent entry.
     process_id: u32,
-    /// Expiry instant: inserted + TtlMs, saturating at the u64 maximum.
+    /// Expiry instant: inserted (or spent) + TtlMs, saturating at the u64 maximum.
     deadline_ms: u64,
-    /// Insertion or replacement order; a larger value is newer.
+    /// Insertion order; a larger value is newer. Used for eviction and newest-wins.
     sequence: u64,
 };
 
-/// Fixed store of at most MaxEntries pairs. Extern layout is 8992 bytes; an
-/// all-zero value is a valid empty store. Not thread-safe; one owner thread.
+/// Store of pending tokens and spent tokens. Extern layout (17960 bytes); an all-zero
+/// value is a valid empty store. Not thread-safe; one owner thread.
 pub const store_t = extern struct {
-    /// Slot array; free slots have occupied 0.
-    entries: [MaxEntries]entry_t,
-    /// Sequence value given to the next insertion or replacement; starts at 0.
+    /// Tokens the host itself obtained and has not yet taken.
+    pending: [MaxEntries]entry_t,
+    /// Tokens returned by take_for_process, refused by put until their deadline.
+    spent: [MaxEntries]entry_t,
+    /// Sequence given to the next insertion; the first insertion gets 0.
     next_sequence: u64,
     /// Most recent accepted clock value; meaningful when clock_started is 1.
     last_now: u64,
-    /// Number of occupied slots.
+    /// Occupied pending slots.
     count: u32,
+    /// Occupied spent slots.
+    spent_count: u32,
     /// 0 before the first timed operation, 1 afterwards.
     clock_started: u32,
-    /// Number of detected clock rollbacks; each one cleared the store.
+    /// Number of detected clock rollbacks; each one cleared pending and spent.
     rollbacks: u32,
     /// Zero padding to an eight-byte multiple.
-    reserved: u32,
+    reserved: [2]u32,
 
-    /// Insert or replace a (token, process_id) pair.
+    /// Insert a pending token. Refusals are decided before the clock is observed,
+    /// so a refused put changes nothing at all.
     /// @param self Store, mutated on success only.
     /// @param token Borrowed token bytes; must satisfy token_valid.
-    /// @param process_id Nonzero process identifier.
+    /// @param process_id Nonzero process identifier that will take the token.
     /// @param now Monotonic milliseconds from the caller clock.
-    /// @return error.InvalidToken or error.InvalidProcess without state change.
+    /// @return error.InvalidToken, error.InvalidProcess, error.Duplicate (live pending
+    ///   copy exists), error.TokenSpent (live spent copy exists), or error.SpentRingFull
+    ///   (all spent slots are live, so a spent token could not be recognized).
     pub fn put(self: *store_t, token: []const u8, process_id: u32, now: u64) error_t!void {
         if (!token_valid(token)) return error.InvalidToken;
         if (process_id == 0) return error.InvalidProcess;
+        if (!self.rolled_back(now)) {
+            if (live_index(&self.pending, token, now) != null) return error.Duplicate;
+            if (live_index(&self.spent, token, now) != null) return error.TokenSpent;
+            if (live_count(&self.spent, now) == MaxEntries) return error.SpentRingFull;
+        }
         self.observe(now);
         _ = self.expire_stale(now);
-        if (self.find_token(token)) |index| {
-            self.fill(index, token, process_id, now);
-            return;
+        if (self.count == MaxEntries) {
+            self.pending[oldest(&self.pending)] = std.mem.zeroes(entry_t);
+            self.count -= 1;
         }
-        if (self.count == MaxEntries) self.remove(self.oldest());
-        self.fill(self.first_free(), token, process_id, now);
+        self.fill(&self.pending, first_free(&self.pending), token, process_id, now +| TtlMs);
+        self.count += 1;
     }
 
-    /// Remove and return the newest live token for a process identifier.
+    /// Remove and return the newest live pending token for a process identifier.
+    /// The token is moved to the spent ring, so put refuses it for the next 30 s.
     /// @param self Store, mutated on success.
     /// @param process_id Nonzero process identifier.
     /// @param now Monotonic milliseconds from the caller clock.
-    /// @param out Caller buffer of TokenBufferBytes (256): the token, then a NUL
-    ///   terminator at index length. Bytes after the terminator are not written.
-    /// @return Token length, or null when no live token matches.
-    /// @note A returned token cannot be returned again.
+    /// @param out Caller buffer of TokenBufferBytes (256): the token, then a NUL at index length.
+    ///   Bytes after the NUL are not written.
+    /// @return Token length, or null when no live pending token matches.
+    /// @note When the spent ring is full, the oldest spent entry is evicted to make room. This
+    ///   is safe: while the ring is full put refuses every token with SpentRingFull, so the
+    ///   evicted token cannot be re-accepted before its own 30 s window ends.
     pub fn take_for_process(self: *store_t, process_id: u32, now: u64, out: *[TokenBufferBytes]u8) error{InvalidProcess}!?usize {
         if (process_id == 0) return error.InvalidProcess;
         self.observe(now);
         _ = self.expire_stale(now);
-        const index = self.newest_for(process_id) orelse return null;
-        const length: usize = self.entries[index].token_length;
-        @memcpy(out[0..length], self.entries[index].token[0..length]);
+        const index = newest_for(&self.pending, process_id) orelse return null;
+        const source = self.pending[index];
+        const length: usize = source.token_length;
+        @memcpy(out[0..length], source.token[0..length]);
         out[length] = 0;
-        self.remove(index);
+        self.pending[index] = std.mem.zeroes(entry_t);
+        self.count -= 1;
+        if (self.spent_count == MaxEntries) {
+            self.spent[oldest(&self.spent)] = std.mem.zeroes(entry_t);
+            self.spent_count -= 1;
+        }
+        self.fill(&self.spent, first_free(&self.spent), source.token[0..length], 0, now +| TtlMs);
+        self.spent_count += 1;
         return length;
     }
 
-    /// Remove every expired pair and return how many were removed.
+    /// Remove every expired pending and spent entry. Returns the pending count removed.
     /// @param self Store, mutated.
     /// @param now Monotonic milliseconds from the caller clock.
-    /// @return Count of pairs removed by this call.
+    /// @return Number of pending entries removed by this call.
     pub fn expire(self: *store_t, now: u64) usize {
         self.observe(now);
         return self.expire_stale(now);
     }
 
-    /// Remove every pair. Clock state and the rollback counter are preserved.
+    /// Remove every pending entry. Spent entries and clock state are kept, so a
+    /// token taken before clear is still refused until its deadline.
     /// @param self Store, mutated.
     pub fn clear(self: *store_t) void {
-        for (&self.entries) |*entry| entry.* = std.mem.zeroes(entry_t);
+        for (&self.pending) |*entry| entry.* = std.mem.zeroes(entry_t);
         self.count = 0;
     }
 
-    /// record_t the clock. A value below the previous one is a rollback: every
-    /// pair is dropped so that no earlier token can be returned.
+    fn rolled_back(self: *const store_t, now: u64) bool {
+        return self.clock_started != 0 and now < self.last_now;
+    }
+
+    /// Record the clock. A value below the last accepted one is a rollback: pending and
+    /// spent entries are both dropped, so no earlier token is refused or returned from them.
     fn observe(self: *store_t, now: u64) void {
-        if (self.clock_started != 0 and now < self.last_now) {
+        if (self.rolled_back(now)) {
             self.clear();
+            for (&self.spent) |*entry| entry.* = std.mem.zeroes(entry_t);
+            self.spent_count = 0;
             self.rollbacks += 1;
         }
         self.clock_started = 1;
@@ -120,65 +151,73 @@ pub const store_t = extern struct {
     }
 
     fn expire_stale(self: *store_t, now: u64) usize {
-        var removed: usize = 0;
-        for (&self.entries, 0..) |*entry, index| {
+        for (&self.spent) |*entry| {
             if (entry.occupied != 0 and now >= entry.deadline_ms) {
-                self.remove(index);
+                entry.* = std.mem.zeroes(entry_t);
+                self.spent_count -= 1;
+            }
+        }
+        var removed: usize = 0;
+        for (&self.pending) |*entry| {
+            if (entry.occupied != 0 and now >= entry.deadline_ms) {
+                entry.* = std.mem.zeroes(entry_t);
+                self.count -= 1;
                 removed += 1;
             }
         }
         return removed;
     }
 
-    fn remove(self: *store_t, index: usize) void {
-        self.entries[index] = std.mem.zeroes(entry_t);
-        self.count -= 1;
-    }
-
-    fn fill(self: *store_t, index: usize, token: []const u8, process_id: u32, now: u64) void {
-        const entry = &self.entries[index];
-        if (entry.occupied == 0) self.count += 1;
+    fn fill(self: *store_t, slots: []entry_t, index: usize, token: []const u8, process_id: u32, deadline: u64) void {
+        const entry = &slots[index];
         @memcpy(entry.token[0..token.len], token);
         entry.token_length = @intCast(token.len);
         entry.occupied = 1;
         entry.process_id = process_id;
-        entry.deadline_ms = now +| TtlMs;
+        entry.deadline_ms = deadline;
         entry.sequence = self.next_sequence;
         self.next_sequence += 1;
     }
-
-    fn find_token(self: *const store_t, token: []const u8) ?usize {
-        for (&self.entries, 0..) |*entry, index| {
-            if (entry.occupied != 0 and std.mem.eql(u8, entry.token[0..entry.token_length], token)) return index;
-        }
-        return null;
-    }
-
-    fn oldest(self: *const store_t) usize {
-        var best: ?usize = null;
-        for (&self.entries, 0..) |*entry, index| {
-            if (entry.occupied == 0) continue;
-            if (best == null or entry.sequence < self.entries[best.?].sequence) best = index;
-        }
-        return best orelse unreachable;
-    }
-
-    fn newest_for(self: *const store_t, process_id: u32) ?usize {
-        var best: ?usize = null;
-        for (&self.entries, 0..) |*entry, index| {
-            if (entry.occupied == 0 or entry.process_id != process_id) continue;
-            if (best == null or entry.sequence > self.entries[best.?].sequence) best = index;
-        }
-        return best;
-    }
-
-    fn first_free(self: *const store_t) usize {
-        for (&self.entries, 0..) |*entry, index| {
-            if (entry.occupied == 0) return index;
-        }
-        unreachable;
-    }
 };
+
+fn live_index(slots: []const entry_t, token: []const u8, now: u64) ?usize {
+    for (slots, 0..) |entry, index| {
+        if (entry.occupied != 0 and now < entry.deadline_ms and std.mem.eql(u8, entry.token[0..entry.token_length], token)) return index;
+    }
+    return null;
+}
+
+fn live_count(slots: []const entry_t, now: u64) usize {
+    var count: usize = 0;
+    for (slots) |entry| count += @intFromBool(entry.occupied != 0 and now < entry.deadline_ms);
+    return count;
+}
+
+/// Index of the occupied slot with the smallest sequence. Callers guarantee one exists.
+fn oldest(slots: []const entry_t) usize {
+    var best: ?usize = null;
+    for (slots, 0..) |entry, index| {
+        if (entry.occupied == 0) continue;
+        if (best == null or entry.sequence < slots[best.?].sequence) best = index;
+    }
+    return best orelse unreachable;
+}
+
+fn newest_for(slots: []const entry_t, process_id: u32) ?usize {
+    var best: ?usize = null;
+    for (slots, 0..) |entry, index| {
+        if (entry.occupied == 0 or entry.process_id != process_id) continue;
+        if (best == null or entry.sequence > slots[best.?].sequence) best = index;
+    }
+    return best;
+}
+
+fn first_free(slots: []const entry_t) usize {
+    for (slots, 0..) |entry, index| {
+        if (entry.occupied == 0) return index;
+    }
+    unreachable;
+}
 
 /// Check the frozen token rule: 1..255 bytes, each in 0x21..0x7E.
 /// @param token Borrowed candidate bytes.
@@ -207,35 +246,36 @@ pub fn pick_token(xdg: ?[]const u8, desktop_startup_id: ?[]const u8) ?[]const u8
 }
 
 /// C ABI: initialize caller storage to an empty store.
-/// @param[out] store Nonnull; 8992 writable bytes, 8-byte aligned.
+/// @param[out] store Nonnull; InteropActivationStoreBytes writable bytes, 8-byte aligned.
 /// @return 0 on success, 1 when store is NULL.
-/// @note Zeroed storage is already valid; this call is for clarity.
 export fn interop_activation_store_init(store: ?*store_t) c_int {
     const target = store orelse return 1;
     target.* = std.mem.zeroes(store_t);
     return 0;
 }
 
-/// C ABI: insert or replace a pair.
+/// C ABI: insert a pending token. Maps store_t.put errors to status codes 2..6.
 /// @param[in,out] store Nonnull store.
 /// @param[in] token Readable token bytes; NULL is allowed only when token_length is 0.
 /// @param[in] token_length Byte count, 0..255 valid.
 /// @param[in] process_id Nonzero process identifier.
 /// @param[in] now_ms Monotonic milliseconds.
 /// @return 0 Ok; 1 InvalidArgument (NULL store, or NULL token with length above 0);
-///         2 InvalidToken; 3 InvalidProcess.
-/// @note Not thread-safe; the caller serializes calls on one store.
+///         2 InvalidToken; 3 InvalidProcess; 4 Duplicate; 5 TokenSpent; 6 SpentRingFull.
 export fn interop_activation_put(store: ?*store_t, token: ?[*]const u8, token_length: usize, process_id: u32, now_ms: u64) c_int {
     const target = store orelse return 1;
     const bytes: []const u8 = if (token_length == 0) &.{} else (token orelse return 1)[0..token_length];
     target.put(bytes, process_id, now_ms) catch |err| return switch (err) {
         error.InvalidToken => 2,
         error.InvalidProcess => 3,
+        error.Duplicate => 4,
+        error.TokenSpent => 5,
+        error.SpentRingFull => 6,
     };
     return 0;
 }
 
-/// C ABI: remove and copy the newest live token for a process identifier.
+/// C ABI: remove and copy the newest live pending token for a process identifier.
 /// The output is the token followed by a NUL terminator; bytes after it are not written.
 /// @param[in,out] store Nonnull store.
 /// @param[in] process_id Nonzero process identifier.
@@ -252,16 +292,16 @@ export fn interop_activation_take(store: ?*store_t, process_id: u32, now_ms: u64
     return 0;
 }
 
-/// C ABI: remove every expired pair.
+/// C ABI: remove expired pending and spent entries.
 /// @param[in,out] store Store; NULL returns 0.
 /// @param[in] now_ms Monotonic milliseconds.
-/// @return Number of pairs removed.
+/// @return Number of pending entries removed.
 export fn interop_activation_expire(store: ?*store_t, now_ms: u64) usize {
     const target = store orelse return 0;
     return target.expire(now_ms);
 }
 
-/// C ABI: remove every pair; NULL is a no-op.
+/// C ABI: remove every pending entry; NULL is a no-op. Spent entries are kept.
 /// @param[in,out] store Store.
 export fn interop_activation_clear(store: ?*store_t) void {
     const target = store orelse return;
@@ -293,6 +333,8 @@ fn bounded_candidate(candidate: ?[*:0]const u8) ?[]const u8 {
 }
 
 // Test-only fixtures.
+const testing = std.testing;
+
 fn opaque_value(comptime value_t: type, value: value_t) value_t {
     var copy = value;
     std.mem.doNotOptimizeAway(&copy);
@@ -355,22 +397,23 @@ fn c_take(store: ?*store_t, process_id: u32, now: u64, out: ?*[TokenBufferBytes]
     return interop_activation_take(opaque_value(?*store_t, store), opaque_value(u32, process_id), opaque_value(u64, now), opaque_value(?*[TokenBufferBytes]u8, out), opaque_value(?*usize, length_out));
 }
 
-const testing = std.testing;
-
 test "extern layouts match activation_store.h byte for byte" {
     try testing.expectEqual(@as(usize, 280), @sizeOf(entry_t));
-    try testing.expectEqual(@as(usize, 8992), @sizeOf(store_t));
+    try testing.expectEqual(@as(usize, 17960), @sizeOf(store_t));
     try testing.expectEqual(@as(usize, 8), @alignOf(store_t));
     try testing.expectEqual(@as(usize, 256), @offsetOf(entry_t, "token_length"));
     try testing.expectEqual(@as(usize, 257), @offsetOf(entry_t, "occupied"));
     try testing.expectEqual(@as(usize, 260), @offsetOf(entry_t, "process_id"));
     try testing.expectEqual(@as(usize, 264), @offsetOf(entry_t, "deadline_ms"));
     try testing.expectEqual(@as(usize, 272), @offsetOf(entry_t, "sequence"));
-    try testing.expectEqual(@as(usize, 8960), @offsetOf(store_t, "next_sequence"));
-    try testing.expectEqual(@as(usize, 8968), @offsetOf(store_t, "last_now"));
-    try testing.expectEqual(@as(usize, 8976), @offsetOf(store_t, "count"));
-    try testing.expectEqual(@as(usize, 8980), @offsetOf(store_t, "clock_started"));
-    try testing.expectEqual(@as(usize, 8984), @offsetOf(store_t, "rollbacks"));
+    try testing.expectEqual(@as(usize, 8960), @offsetOf(store_t, "spent"));
+    try testing.expectEqual(@as(usize, 17920), @offsetOf(store_t, "next_sequence"));
+    try testing.expectEqual(@as(usize, 17928), @offsetOf(store_t, "last_now"));
+    try testing.expectEqual(@as(usize, 17936), @offsetOf(store_t, "count"));
+    try testing.expectEqual(@as(usize, 17940), @offsetOf(store_t, "spent_count"));
+    try testing.expectEqual(@as(usize, 17944), @offsetOf(store_t, "clock_started"));
+    try testing.expectEqual(@as(usize, 17948), @offsetOf(store_t, "rollbacks"));
+    try testing.expectEqual(@as(usize, 17952), @offsetOf(store_t, "reserved"));
 }
 
 test "token rule accepts exact printable bounds and rejects everything else" {
@@ -408,8 +451,9 @@ test "put and take return a token exactly once to the matching process" {
     try testing.expectEqual(@as(u32, 1), store.count);
     const length = (try take_at(&store, 42, 1001, &out)).?;
     try testing.expectEqualSlices(u8, "token-a", out[0..length]);
-    try testing.expectEqual(@as(?usize, null), try take_at(&store, 42, 1002, &out));
     try testing.expectEqual(@as(u32, 0), store.count);
+    try testing.expectEqual(@as(u32, 1), store.spent_count);
+    try testing.expectEqual(@as(?usize, null), try take_at(&store, 42, 1002, &out));
 }
 
 test "invalid token or process leaves the store and clock untouched" {
@@ -425,6 +469,63 @@ test "invalid token or process leaves the store and clock untouched" {
     try testing.expectEqual(@as(u64, 100), store.last_now);
 }
 
+test "a refused put changes nothing, including the clock baseline" {
+    var store = std.mem.zeroes(store_t);
+    try put_at(&store, "dup", 1, 0);
+    try testing.expectError(error.Duplicate, put_at(&store, "dup", 2, 20_000));
+    try testing.expectEqual(@as(u64, 0), store.last_now);
+    try testing.expectEqual(@as(u32, 1), store.count);
+    var out: [TokenBufferBytes]u8 = undefined;
+    const length = (try take_at(&store, 1, 20_001, &out)).?;
+    try testing.expectEqualSlices(u8, "dup", out[0..length]);
+}
+
+test "a taken token is refused as TokenSpent for exactly 30 s and then accepted again" {
+    var store = std.mem.zeroes(store_t);
+    var out: [TokenBufferBytes]u8 = undefined;
+    try put_at(&store, "spent-token", 1, 0);
+    _ = (try take_at(&store, 1, 1000, &out)).?;
+    try testing.expectError(error.TokenSpent, put_at(&store, "spent-token", 2, 1000));
+    try testing.expectError(error.TokenSpent, put_at(&store, "spent-token", 2, 1000 + TtlMs - 1));
+    try testing.expectEqual(@as(u32, 1), store.spent_count);
+    try put_at(&store, "spent-token", 2, 1000 + TtlMs);
+    try testing.expectEqual(@as(u32, 0), store.spent_count);
+}
+
+test "a full spent ring refuses new tokens with SpentRingFull until an entry expires" {
+    var store = std.mem.zeroes(store_t);
+    var out: [TokenBufferBytes]u8 = undefined;
+    var name_buffer: [16]u8 = undefined;
+    for (0..MaxEntries) |index| {
+        const name = try std.fmt.bufPrint(&name_buffer, "s{d}", .{index});
+        try put_at(&store, name, @intCast(index + 1), 0);
+        _ = (try take_at(&store, @intCast(index + 1), 0, &out)).?;
+    }
+    try testing.expectEqual(@as(u32, MaxEntries), store.spent_count);
+    try testing.expectError(error.SpentRingFull, put_at(&store, "fresh", 99, 0));
+    try testing.expectError(error.SpentRingFull, put_at(&store, "fresh", 99, TtlMs - 1));
+    try testing.expectEqual(@as(u32, 0), store.count);
+    try put_at(&store, "fresh", 99, TtlMs);
+    try testing.expectEqual(@as(u32, 0), store.spent_count);
+}
+
+test "take evicts the oldest spent entry when full, and the evicted token stays refused" {
+    var store = std.mem.zeroes(store_t);
+    var out: [TokenBufferBytes]u8 = undefined;
+    var name_buffer: [16]u8 = undefined;
+    try put_at(&store, "pending", 7, 0);
+    for (0..MaxEntries) |index| {
+        const name = try std.fmt.bufPrint(&name_buffer, "s{d}", .{index});
+        try put_at(&store, name, @intCast(index + 1), 0);
+        _ = (try take_at(&store, @intCast(index + 1), 0, &out)).?;
+    }
+    const length = (try take_at(&store, 7, 0, &out)).?;
+    try testing.expectEqualSlices(u8, "pending", out[0..length]);
+    try testing.expectEqual(@as(u32, MaxEntries), store.spent_count);
+    try testing.expectError(error.TokenSpent, put_at(&store, "pending", 8, 0));
+    try testing.expectError(error.SpentRingFull, put_at(&store, "s0", 1, 0));
+}
+
 test "entries are live strictly before inserted plus ttl and expire at the boundary" {
     var out: [TokenBufferBytes]u8 = undefined;
     var live = std.mem.zeroes(store_t);
@@ -437,7 +538,7 @@ test "entries are live strictly before inserted plus ttl and expire at the bound
     try testing.expectEqual(@as(u32, 0), expiring.rollbacks);
 }
 
-test "expire removes only stale pairs and reports the removed count" {
+test "expire removes only stale pending entries and reports the removed count" {
     var store = std.mem.zeroes(store_t);
     try put_at(&store, "old-1", 1, 0);
     try put_at(&store, "old-2", 2, 10);
@@ -450,17 +551,7 @@ test "expire removes only stale pairs and reports the removed count" {
     try testing.expectEqual(@as(u32, 0), store.rollbacks);
 }
 
-test "duplicate token replaces the pid and refreshes the deadline" {
-    var store = std.mem.zeroes(store_t);
-    var out: [TokenBufferBytes]u8 = undefined;
-    try put_at(&store, "dup", 1, 0);
-    try put_at(&store, "dup", 2, 20_000);
-    try testing.expectEqual(@as(u32, 1), store.count);
-    try testing.expectEqual(@as(?usize, null), try take_at(&store, 1, 20_001, &out));
-    try testing.expect((try take_at(&store, 2, 40_000, &out)) != null);
-}
-
-test "full store expires stale pairs before evicting and evicts the oldest" {
+test "full pending store expires stale entries before evicting and evicts the oldest" {
     var store = std.mem.zeroes(store_t);
     var name_buffer: [16]u8 = undefined;
     for (0..MaxEntries) |index| {
@@ -495,24 +586,26 @@ test "newest token wins when one process holds several live tokens" {
     try testing.expectEqualSlices(u8, "first", out[0..next]);
 }
 
-test "clock rollback clears every pair and never returns an earlier token" {
+test "clock rollback clears pending and spent entries and never returns an earlier token" {
     var store = std.mem.zeroes(store_t);
     var out: [TokenBufferBytes]u8 = undefined;
     try put_at(&store, "before", 9, 1000);
+    _ = (try take_at(&store, 9, 1000, &out)).?;
+    try put_at(&store, "pending", 4, 1000);
     try testing.expectEqual(@as(?usize, null), try take_at(&store, 9, 500, &out));
     try testing.expectEqual(@as(u32, 1), store.rollbacks);
+    try testing.expectEqual(@as(u32, 0), store.spent_count);
     try testing.expectEqual(@as(u32, 0), store.count);
-    try put_at(&store, "after", 9, 600);
+    try put_at(&store, "before", 9, 600);
+    const length = (try take_at(&store, 9, 601, &out)).?;
+    try testing.expectEqualSlices(u8, "before", out[0..length]);
     try testing.expectEqual(@as(usize, 0), expire_at(&store, 601));
-    try testing.expectEqual(@as(u32, 1), store.count);
-    try testing.expectEqual(@as(usize, 1), expire_at(&store, 600 + TtlMs));
     try put_at(&store, "again", 9, 30_700);
-    try testing.expectEqual(@as(u32, 1), store.count);
     try testing.expectEqual(@as(usize, 1), expire_at(&store, 30_700 + TtlMs));
     try testing.expectEqual(@as(u32, 1), store.rollbacks);
 }
 
-test "rollback during put clears old pairs and still inserts the new token" {
+test "rollback during put clears old entries and still inserts the new token" {
     var store = std.mem.zeroes(store_t);
     var out: [TokenBufferBytes]u8 = undefined;
     try put_at(&store, "old", 1, 9000);
@@ -533,16 +626,49 @@ test "clock may move forward by any amount without rollback" {
     try testing.expect((try take_at(&store, 4, std.math.maxInt(u64) - 1, &out)) != null);
 }
 
-test "seeded operation streams match a reference model step by step" {
+test "a deadline saturated at the u64 maximum expires at the last representable instant" {
+    var store = std.mem.zeroes(store_t);
+    try put_at(&store, "last", 5, std.math.maxInt(u64));
+    try testing.expectEqual(std.math.maxInt(u64), store.pending[0].deadline_ms);
+    var before_end = std.mem.zeroes(store_t);
+    try put_at(&before_end, "last", 5, std.math.maxInt(u64) - 1);
+    try testing.expectEqual(@as(usize, 0), expire_at(&before_end, std.math.maxInt(u64) - 2));
+    try testing.expectEqual(@as(usize, 1), expire_at(&store, std.math.maxInt(u64)));
+}
+
+test "oldest scans past free slots and prefers the smallest sequence" {
+    var store = std.mem.zeroes(store_t);
+    try put_at(&store, "x", 1, 0);
+    try put_at(&store, "y", 2, 0);
+    var out: [TokenBufferBytes]u8 = undefined;
+    _ = try take_at(&store, 1, 0, &out);
+    try put_at(&store, "z", 3, 0);
+    try testing.expectEqual(@as(usize, 1), oldest(&store.pending));
+}
+
+test "take writes a NUL terminator after the token and leaves the tail alone" {
+    var store = std.mem.zeroes(store_t);
+    var out: [TokenBufferBytes]u8 = [_]u8{0xaa} ** TokenBufferBytes;
+    try put_at(&store, "abc", 4, 0);
+    const length = (try take_at(&store, 4, 1, &out)).?;
+    try testing.expectEqual(@as(usize, 3), length);
+    try testing.expectEqualSlices(u8, "abc", out[0..length]);
+    try testing.expectEqual(@as(u8, 0), out[length]);
+    try testing.expectEqual(@as(u8, 0xaa), out[length + 1]);
+    try testing.expectEqual(@as(usize, 256), TokenBufferBytes);
+}
+
+test "seeded operation streams match a reference model step by step, including spent refusals" {
     var prng = std.Random.DefaultPrng.init(0x61637476_73746f72);
     const random = prng.random();
     var store = std.mem.zeroes(store_t);
 
-    // Reference model: an unordered list. Liveness is judged by the elapsed
-    // time since insertion, not by stored deadlines, and eviction by an
-    // explicit order counter, so neither shares code with store_t.
-    const record_t = struct { token: [8]u8 = undefined, token_length: usize = 0, process_id: u32 = 0, inserted: u64 = 0, order: u64 = 0, live: bool = false };
-    var records = [_]record_t{.{}} ** 48;
+    // Reference model: two unordered lists. Liveness is judged from elapsed time since
+    // insertion or spend, and eviction by an explicit order counter. No code is shared
+    // with store_t. A refused put leaves the model clock untouched, as in the store.
+    const model_t = struct { token: [8]u8 = undefined, token_length: usize = 0, process_id: u32 = 0, at: u64 = 0, order: u64 = 0, live: bool = false };
+    var pending = [_]model_t{.{}} ** 48;
+    var spent = [_]model_t{.{}} ** 48;
     var model_started = false;
     var model_last: u64 = 0;
     var model_rollbacks: u32 = 0;
@@ -551,92 +677,188 @@ test "seeded operation streams match a reference model step by step" {
     var name_buffer: [8]u8 = undefined;
     var out: [TokenBufferBytes]u8 = undefined;
     var model_out: [8]u8 = undefined;
+    var outcomes = [_]usize{0} ** 4;
 
-    for (0..20000) |_| {
+    for (0..30000) |_| {
         if (random.uintLessThan(u32, 25) == 0) {
             now -|= random.uintLessThan(u64, now + 1);
         } else {
-            now += random.uintLessThan(u64, 12_000);
+            now += random.uintLessThan(u64, 9_000);
         }
-        if (model_started and now < model_last) {
-            for (&records) |*record| record.live = false;
-            model_rollbacks += 1;
-        }
-        model_started = true;
-        model_last = now;
-        var expired_now: usize = 0;
-        for (&records) |*record| {
-            if (record.live and now - record.inserted >= TtlMs) {
-                record.live = false;
-                expired_now += 1;
+        const rolled = model_started and now < model_last;
+        const choice = random.uintLessThan(u32, 10);
+        const index = random.uintLessThan(u32, 40);
+        const token = try std.fmt.bufPrint(&name_buffer, "s{d}", .{index});
+        const pid: u32 = 1 + random.uintLessThan(u32, 5);
+
+        if (choice <= 3) {
+            // Put: refusals are decided on the pre-rollback state, and change nothing.
+            var expected_error: ?error_t = null;
+            if (!rolled) {
+                var pending_live: ?usize = null;
+                var spent_live: ?usize = null;
+                var spent_count: usize = 0;
+                for (&pending, 0..) |*entry, slot| {
+                    if (entry.live and now - entry.at < TtlMs and std.mem.eql(u8, entry.token[0..entry.token_length], token)) pending_live = slot;
+                }
+                for (&spent, 0..) |*entry, slot| {
+                    if (entry.live and now - entry.at < TtlMs) spent_count += 1;
+                    if (entry.live and now - entry.at < TtlMs and std.mem.eql(u8, entry.token[0..entry.token_length], token)) spent_live = slot;
+                }
+                if (pending_live != null) expected_error = error.Duplicate else if (spent_live != null) expected_error = error.TokenSpent else if (spent_count == MaxEntries) expected_error = error.SpentRingFull;
             }
+            if (expected_error == null) {
+                model_started = true;
+                if (rolled) {
+                    for (&pending) |*entry| entry.live = false;
+                    for (&spent) |*entry| entry.live = false;
+                    model_rollbacks += 1;
+                }
+                model_last = now;
+                for (&pending) |*entry| {
+                    if (entry.live and now - entry.at >= TtlMs) entry.live = false;
+                }
+                for (&spent) |*entry| {
+                    if (entry.live and now - entry.at >= TtlMs) entry.live = false;
+                }
+                var live_pending: usize = 0;
+                for (&pending) |*entry| live_pending += @intFromBool(entry.live);
+                if (live_pending == MaxEntries) {
+                    var victim: ?*model_t = null;
+                    for (&pending) |*entry| {
+                        if (entry.live and (victim == null or entry.order < victim.?.order)) victim = entry;
+                    }
+                    victim.?.live = false;
+                }
+                for (&pending) |*entry| {
+                    if (entry.live) continue;
+                    @memcpy(entry.token[0..token.len], token);
+                    entry.token_length = token.len;
+                    entry.process_id = pid;
+                    entry.at = now;
+                    model_order += 1;
+                    entry.order = model_order;
+                    entry.live = true;
+                    break;
+                }
+            }
+            const actual = put_at(&store, token, pid, now);
+            if (expected_error) |expected| {
+                try testing.expectError(expected, actual);
+                outcomes[1 + @as(usize, switch (expected) {
+                    error.Duplicate => 0,
+                    error.TokenSpent => 1,
+                    else => 2,
+                })] += 1;
+            } else {
+                try actual;
+                outcomes[0] += 1;
+            }
+        } else if (choice <= 6) {
+            // Take: observe the clock, expire, newest live pending for the process, then spend it.
+            if (rolled) {
+                for (&pending) |*entry| entry.live = false;
+                for (&spent) |*entry| entry.live = false;
+                model_rollbacks += 1;
+            }
+            model_started = true;
+            model_last = now;
+            for (&pending) |*entry| {
+                if (entry.live and now - entry.at >= TtlMs) entry.live = false;
+            }
+            for (&spent) |*entry| {
+                if (entry.live and now - entry.at >= TtlMs) entry.live = false;
+            }
+            var best: ?*model_t = null;
+            for (&pending) |*entry| {
+                if (entry.live and entry.process_id == pid and (best == null or entry.order > best.?.order)) best = entry;
+            }
+            const actual = try take_at(&store, pid, now, &out);
+            if (best) |chosen| {
+                @memcpy(model_out[0..chosen.token_length], chosen.token[0..chosen.token_length]);
+                try testing.expectEqual(@as(?usize, chosen.token_length), actual);
+                try testing.expectEqualSlices(u8, model_out[0..chosen.token_length], out[0..chosen.token_length]);
+                try testing.expectEqual(@as(u8, 0), out[chosen.token_length]);
+                var live_spent: usize = 0;
+                for (&spent) |*entry| live_spent += @intFromBool(entry.live);
+                if (live_spent == MaxEntries) {
+                    var victim: ?*model_t = null;
+                    for (&spent) |*entry| {
+                        if (entry.live and (victim == null or entry.order < victim.?.order)) victim = entry;
+                    }
+                    victim.?.live = false;
+                }
+                const moved_token = chosen.token[0..chosen.token_length];
+                const moved_pid = chosen.process_id;
+                _ = moved_pid;
+                chosen.live = false;
+                for (&spent) |*entry| {
+                    if (entry.live) continue;
+                    @memcpy(entry.token[0..moved_token.len], moved_token);
+                    entry.token_length = moved_token.len;
+                    entry.at = now;
+                    model_order += 1;
+                    entry.order = model_order;
+                    entry.live = true;
+                    break;
+                }
+            } else {
+                try testing.expectEqual(@as(?usize, null), actual);
+            }
+        } else {
+            // Expire: observe, then count the live pending entries that lapse.
+            if (rolled) {
+                for (&pending) |*entry| entry.live = false;
+                for (&spent) |*entry| entry.live = false;
+                model_rollbacks += 1;
+            }
+            model_started = true;
+            model_last = now;
+            var lapsed: usize = 0;
+            for (&pending) |*entry| {
+                if (entry.live and now - entry.at >= TtlMs) {
+                    entry.live = false;
+                    lapsed += 1;
+                }
+            }
+            for (&spent) |*entry| {
+                if (entry.live and now - entry.at >= TtlMs) entry.live = false;
+            }
+            try testing.expectEqual(lapsed, expire_at(&store, now));
         }
 
-        switch (random.uintLessThan(u32, 10)) {
-            0...5 => {
-                const index = random.uintLessThan(u32, 40);
-                const token = try std.fmt.bufPrint(&name_buffer, "s{d}", .{index});
-                const pid: u32 = 1 + random.uintLessThan(u32, 5);
-                try put_at(&store, token, pid, now);
-                var found: ?*record_t = null;
-                var live_count: usize = 0;
-                for (&records) |*record| {
-                    if (!record.live) continue;
-                    live_count += 1;
-                    if (std.mem.eql(u8, record.token[0..record.token_length], token)) found = record;
-                }
-                if (found) |record| {
-                    record.process_id = pid;
-                    record.inserted = now;
-                    model_order += 1;
-                    record.order = model_order;
-                } else {
-                    if (live_count == MaxEntries) {
-                        var victim: ?*record_t = null;
-                        for (&records) |*record| {
-                            if (record.live and (victim == null or record.order < victim.?.order)) victim = record;
-                        }
-                        victim.?.live = false;
-                    }
-                    for (&records) |*record| {
-                        if (record.live) continue;
-                        @memcpy(record.token[0..token.len], token);
-                        record.token_length = token.len;
-                        record.process_id = pid;
-                        record.inserted = now;
-                        model_order += 1;
-                        record.order = model_order;
-                        record.live = true;
-                        break;
-                    }
-                }
-            },
-            6, 7 => {
-                const pid: u32 = 1 + random.uintLessThan(u32, 5);
-                var best: ?*record_t = null;
-                for (&records) |*record| {
-                    if (record.live and record.process_id == pid and (best == null or record.order > best.?.order)) best = record;
-                }
-                const actual = try take_at(&store, pid, now, &out);
-                if (best) |chosen| {
-                    @memcpy(model_out[0..chosen.token_length], chosen.token[0..chosen.token_length]);
-                    try testing.expectEqual(@as(?usize, chosen.token_length), actual);
-                    try testing.expectEqualSlices(u8, model_out[0..chosen.token_length], out[0..chosen.token_length]);
-                    chosen.live = false;
-                } else {
-                    try testing.expectEqual(@as(?usize, null), actual);
-                }
-            },
-            else => {
-                try testing.expectEqual(expired_now, expire_at(&store, now));
-            },
-        }
-        var live_total: usize = 0;
-        for (records) |record| live_total += @intFromBool(record.live);
-        try testing.expectEqual(@as(u32, @intCast(live_total)), store.count);
+        // Liveness is judged by elapsed time, as in the store: a refused put does not run
+        // expiry, so an expired entry may keep its flag until the next expiring operation.
+        var live_pending: usize = 0;
+        var live_spent: usize = 0;
+        for (&pending) |*entry| live_pending += @intFromBool(entry.live and now - entry.at < TtlMs);
+        for (&spent) |*entry| live_spent += @intFromBool(entry.live and now - entry.at < TtlMs);
+        try testing.expectEqual(live_pending, live_count(&store.pending, now));
+        try testing.expectEqual(live_spent, live_count(&store.spent, now));
         try testing.expectEqual(model_rollbacks, store.rollbacks);
     }
     try testing.expect(model_rollbacks > 0);
+    try testing.expect(outcomes[0] > 1000);
+    try testing.expect(outcomes[1] > 0);
+    try testing.expect(outcomes[2] > 0);
+}
+
+test "C ABI put maps Duplicate, TokenSpent and SpentRingFull to statuses 4, 5 and 6" {
+    var store: store_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), interop_activation_store_init(&store));
+    try testing.expectEqual(@as(c_int, 0), c_put(&store, "abc", 3, 11, 100));
+    try testing.expectEqual(@as(c_int, 4), c_put(&store, "abc", 3, 12, 100));
+    var out: [TokenBufferBytes]u8 = undefined;
+    var length: usize = 0;
+    try testing.expectEqual(@as(c_int, 0), c_take(&store, 11, 100, &out, &length));
+    try testing.expectEqual(@as(c_int, 5), c_put(&store, "abc", 3, 13, 101));
+    var name_buffer: [16]u8 = undefined;
+    for (1..MaxEntries) |index| {
+        const name = try std.fmt.bufPrint(&name_buffer, "f{d}", .{index});
+        try testing.expectEqual(@as(c_int, 0), c_put(&store, name.ptr, name.len, @intCast(index), 101));
+        try testing.expectEqual(@as(c_int, 0), c_take(&store, @intCast(index), 101, &out, &length));
+    }
+    try testing.expectEqual(@as(c_int, 6), c_put(&store, "late", 4, 40, 102));
 }
 
 test "C ABI put take expire and clear map every status" {
@@ -684,26 +906,4 @@ test "C ABI pick reports found, none and invalid output arguments" {
     try testing.expectEqual(@as(c_int, 1), interop_activation_pick_token(&long, absent_string(), &pointer, &length));
     try testing.expectEqual(@as(c_int, 0), interop_activation_pick_token(&long, "ok", &pointer, &length));
     try testing.expectEqual(@as(usize, 2), length);
-}
-
-test "oldest scans past free slots and prefers the smallest sequence" {
-    var store = std.mem.zeroes(store_t);
-    try put_at(&store, "x", 1, 0);
-    try put_at(&store, "y", 2, 0);
-    var out: [TokenBufferBytes]u8 = undefined;
-    _ = try take_at(&store, 1, 0, &out);
-    try put_at(&store, "z", 3, 0);
-    try testing.expectEqual(@as(usize, 1), store.oldest());
-}
-
-test "take writes a NUL terminator after the token and leaves the tail alone" {
-    var store = std.mem.zeroes(store_t);
-    var out: [TokenBufferBytes]u8 = [_]u8{0xaa} ** TokenBufferBytes;
-    try put_at(&store, "abc", 4, 0);
-    const length = (try take_at(&store, 4, 1, &out)).?;
-    try testing.expectEqual(@as(usize, 3), length);
-    try testing.expectEqualSlices(u8, "abc", out[0..length]);
-    try testing.expectEqual(@as(u8, 0), out[length]);
-    try testing.expectEqual(@as(u8, 0xaa), out[length + 1]);
-    try testing.expectEqual(@as(usize, 256), TokenBufferBytes);
 }

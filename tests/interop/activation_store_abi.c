@@ -35,6 +35,7 @@ static void check_layout(void) {
     assert(sizeof(interop_activation_store_t) % 8u == 0u);
     assert(InteropActivationMaxEntries == 32u && InteropActivationTtlMs == 30000u);
     assert(InteropActivationTokenBufferBytes == InteropActivationMaxTokenBytes + 1u);
+    assert(sizeof(interop_activation_store_t) == 17960u);
 }
 
 static void check_put_take(void) {
@@ -89,14 +90,32 @@ static void check_expiry_boundary(void) {
 static void check_duplicates_and_newest(void) {
     interop_activation_store_t store = { { 0 } };
     assert(put_text(&store, "dup", 1, 0) == InteropActivationPutOk);
-    assert(put_text(&store, "dup", 2, 20000) == InteropActivationPutOk);
-    assert(take_text(&store, 1, 20001, NULL) == InteropActivationTakeNotFound);
+    /* A live pending copy is refused; the existing owner keeps the token. */
+    assert(put_text(&store, "dup", 2, 20000) == InteropActivationPutDuplicate);
+    assert(take_text(&store, 2, 20001, NULL) == InteropActivationTakeNotFound);
+    assert(take_text(&store, 1, 20001, "dup") == InteropActivationTakeFound);
+    /* Once taken, the token is refused as spent for the next 30 s, whoever asks. */
+    assert(put_text(&store, "dup", 2, 20002) == InteropActivationPutTokenSpent);
     assert(put_text(&store, "older", 2, 20010) == InteropActivationPutOk);
     assert(put_text(&store, "newer", 2, 20020) == InteropActivationPutOk);
     assert(take_text(&store, 2, 20030, "newer") == InteropActivationTakeFound);
     assert(take_text(&store, 2, 20031, "older") == InteropActivationTakeFound);
-    assert(take_text(&store, 2, 20032, "dup") == InteropActivationTakeFound);
-    assert(take_text(&store, 2, 20033, NULL) == InteropActivationTakeNotFound);
+    assert(take_text(&store, 2, 20032, NULL) == InteropActivationTakeNotFound);
+}
+
+static void check_spent_ring(void) {
+    interop_activation_store_t store = { { 0 } };
+    char name[16];
+    uint8_t out[InteropActivationTokenBufferBytes];
+    size_t length = 0;
+    for (uint32_t index = 0; index < InteropActivationMaxEntries; index++) {
+        snprintf(name, sizeof(name), "s%u", (unsigned)index);
+        assert(put_text(&store, name, index + 1u, 0) == InteropActivationPutOk);
+        assert(interop_activation_take(&store, index + 1u, 0, out, &length) == InteropActivationTakeFound);
+    }
+    assert(put_text(&store, "fresh", 99, 0) == InteropActivationPutSpentRingFull);
+    assert(put_text(&store, "fresh", 99, InteropActivationTtlMs - 1u) == InteropActivationPutSpentRingFull);
+    assert(put_text(&store, "fresh", 99, InteropActivationTtlMs) == InteropActivationPutOk);
 }
 
 static void check_eviction(void) {
@@ -166,6 +185,7 @@ int main(void) {
     check_validity_bounds();
     check_expiry_boundary();
     check_duplicates_and_newest();
+    check_spent_ring();
     check_eviction();
     check_rollback();
     check_pick();

@@ -13,7 +13,7 @@
 /** @brief Bytes of the take output buffer: the token plus a NUL terminator. */
 #define InteropActivationTokenBufferBytes 256u
 /** @brief Byte size of the store; must equal sizeof(interop_activation_store_t). */
-#define InteropActivationStoreBytes 8992u
+#define InteropActivationStoreBytes 17960u
 
 /**
  * @brief Opaque-to-C store storage: caller-owned, 8-byte aligned, no pointers.
@@ -25,12 +25,15 @@ typedef struct interop_activation_store_t {
 
 _Static_assert(sizeof(interop_activation_store_t) == InteropActivationStoreBytes, "store size is part of the ABI");
 
-/** @brief Status of interop_activation_put. */
+/** @brief Status of interop_activation_put. A refusal (3..6 except invalid process) changes nothing. */
 typedef enum interop_activation_put_status_t {
-    InteropActivationPutOk = 0, /**< Pair inserted or replaced. */
+    InteropActivationPutOk = 0, /**< Token stored as pending. */
     InteropActivationPutInvalidArgument = 1, /**< NULL store, or NULL token with length above 0. */
     InteropActivationPutInvalidToken = 2, /**< Token is empty, longer than 255 bytes, or outside 0x21..0x7E. */
-    InteropActivationPutInvalidProcess = 3 /**< process_id is zero. */
+    InteropActivationPutInvalidProcess = 3, /**< process_id is zero. */
+    InteropActivationPutDuplicate = 4, /**< The same token is already pending and live. */
+    InteropActivationPutTokenSpent = 5, /**< The same token was taken within the last 30 s. */
+    InteropActivationPutSpentRingFull = 6 /**< All 32 spent slots are live; the token cannot be checked. */
 } interop_activation_put_status_t;
 
 /** @brief Status of interop_activation_take. */
@@ -62,8 +65,9 @@ int interop_activation_store_init(interop_activation_store_t *store);
  * @param[in] token_length Byte count, 0..255 valid.
  * @param[in] process_id Nonzero process identifier.
  * @param[in] now_ms Monotonic milliseconds; a value below the previous one clears the store.
- * @return An interop_activation_put_status_t value.
- * @note Stale pairs are expired before any eviction; the oldest pair is evicted only when full.
+ * @return An interop_activation_put_status_t value. Refusals change nothing, including the clock.
+ * @note Stale pending entries are expired before any eviction; the oldest pending entry is
+ *       evicted only when the pending array is full. The host stores only its own tokens.
  */
 int interop_activation_put(interop_activation_store_t *store, const uint8_t *token, size_t token_length, uint32_t process_id, uint64_t now_ms);
 
@@ -80,7 +84,7 @@ int interop_activation_put(interop_activation_store_t *store, const uint8_t *tok
 int interop_activation_take(interop_activation_store_t *store, uint32_t process_id, uint64_t now_ms, uint8_t out[InteropActivationTokenBufferBytes], size_t *length_out);
 
 /**
- * @brief Remove every expired pair.
+ * @brief Remove every expired pending entry.
  * @param[in,out] store Store; NULL returns 0.
  * @param[in] now_ms Monotonic milliseconds.
  * @return Number of pairs removed by this call.
@@ -88,7 +92,7 @@ int interop_activation_take(interop_activation_store_t *store, uint32_t process_
 size_t interop_activation_expire(interop_activation_store_t *store, uint64_t now_ms);
 
 /**
- * @brief Remove every pair. Clock state and the rollback counter are kept.
+ * @brief Remove every pending entry. Spent tokens and clock state are kept.
  * @param[in,out] store Store; NULL is a no-op.
  */
 void interop_activation_clear(interop_activation_store_t *store);
