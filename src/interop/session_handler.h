@@ -12,8 +12,10 @@
  * the run. The application runtime never frees handler contexts. Descriptors a handler
  * reports through @c poll_fds are borrowed and are never closed by the runtime.
  *
- * Failure model: a nonzero return from @c on_ready, @c on_frame, @c on_fds or @c on_tick
- * makes the whole run fail with HostControlFeatureFailed and drain; a handler that can
+ * Failure model: a callback returns zero for success, @c SessionHandlerRequestStop to ask
+ * for a graceful local stop (the runtime begins drain and ends the run with
+ * HostControlCancelled; no other handler is failed), or any other nonzero value, which
+ * makes the whole run fail with HostControlFeatureFailed and drain. A handler that can
  * recover from its own errors must handle them itself and return zero. @c on_closing is
  * called exactly once per registered handler, in reverse registration order, and every
  * send through the closing sender returns Draining.
@@ -30,6 +32,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/** @brief Callback return value requesting a graceful local stop (see the failure model). */
+enum { SessionHandlerRequestStop = 1 };
 
 /** @brief Maximum extra descriptors one handler may report from @c poll_fds. */
 enum { SessionHandlerMaxDescriptors = 4 };
