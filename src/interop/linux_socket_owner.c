@@ -1106,6 +1106,172 @@ int interop_linux_socket_begin_drain(interop_linux_socket_t *owner,
     return InteropLinuxSocketSuccess;
 }
 
+/** @brief Socket result for each peer result; -1 marks an internal peer fault that terminalizes the owner.
+ * @note A table keeps the mapping free of per-case branches. Every entry is a fixed constant.
+ */
+static const int PeerToSocketResult[InteropPeerRequestRetired + 1] = {
+    [InteropPeerSuccess] = InteropLinuxSocketSuccess,
+    [InteropPeerInvalidArgument] = InteropLinuxSocketInvalidArgument,
+    [InteropPeerOutOfMemory] = InteropLinuxSocketOutOfMemory,
+    [InteropPeerWrongToken] = InteropLinuxSocketWrongToken,
+    [InteropPeerTimeWentBackwards] = InteropLinuxSocketTimeWentBackwards,
+    [InteropPeerWrongPhase] = InteropLinuxSocketWrongPhase,
+    [InteropPeerOutputTooSmall] = -1,
+    [InteropPeerInvalidWriteCount] = -1,
+    [InteropPeerNoQueuedFrame] = -1,
+    [InteropPeerInternalInvariant] = -1,
+    [InteropPeerMappingFailed] = -1,
+    [InteropPeerClosed] = InteropLinuxSocketClosed,
+    [InteropPeerInvalidFrame] = InteropLinuxSocketInvalidFrame,
+    [InteropPeerUnsupportedFrame] = InteropLinuxSocketUnsupportedFrame,
+    [InteropPeerFeatureNotNegotiated] = InteropLinuxSocketFeatureNotNegotiated,
+    [InteropPeerQueueFull] = InteropLinuxSocketQueueFull,
+    [InteropPeerRequestIdsFull] = InteropLinuxSocketRequestIdsFull,
+    [InteropPeerUnknownRequestId] = InteropLinuxSocketUnknownRequestId,
+    [InteropPeerRequestRetired] = InteropLinuxSocketRequestRetired,
+};
+
+/** @brief Map a non-success peer result for a feature or identifier operation.
+ * @param[in,out] owner Owner whose transport is terminalized on an internal peer fault.
+ * @param[in] peer_result Result returned by one peer ABI call.
+ * @return The socket result, or PeerFailure after an internal fault closed the transport.
+ * @note Local refusals leave owner state unchanged; internal faults abort the transport.
+ */
+static int map_peer_result(interop_linux_socket_t *owner, int peer_result)
+{
+    int mapped;
+
+    /* Peer results are the enumerated InteropPeerResult values; the table covers every one. */
+    mapped = PeerToSocketResult[peer_result];
+    if (mapped < 0) {
+        close_peer_failure(owner, NULL);
+        return InteropLinuxSocketPeerFailure;
+    }
+    return mapped;
+}
+
+/** @brief Validate one optional borrowed outbound frame against owner and output storage. */
+static bool valid_borrowed_frame(const interop_linux_socket_t *owner, const uint8_t *bytes,
+                                 size_t length, const void *output, size_t output_length)
+{
+    if (length == 0)
+        return true;
+    return bytes != NULL && range_valid(bytes, length, 1) &&
+           output_disjoint_from_owner(owner, bytes, length) &&
+           !ranges_overlap(bytes, length, output, output_length);
+}
+
+/** @brief Check the event output shared by every feature admission. */
+static bool valid_admission_event(const interop_linux_socket_t *owner,
+                                  const interop_peer_event_t *event)
+{
+    return range_valid(event, sizeof(*event), _Alignof(interop_peer_event_t)) &&
+           output_disjoint_from_owner(owner, event, sizeof(*event));
+}
+
+/** @brief Commit one accepted peer admission: time, poll snapshot, drain observation and event.
+ * @note Admission never sets InteropPeerAbortTransport (peer contract section 8), so no abort path
+ *       exists here. A drain observed at the Ready deadline is recorded by observe_phase.
+ */
+static int commit_admission(interop_linux_socket_t *owner, uint64_t now_ms,
+                            interop_peer_event_t *event, interop_peer_event_t *out_event)
+{
+    commit_time(owner, now_ms);
+    invalidate_cookie(owner);
+    if (!observe_phase(owner, event->phase, now_ms, event)) {
+        close_peer_failure(owner, NULL);
+        return InteropLinuxSocketPeerFailure;
+    }
+    copy_event(out_event, event);
+    return InteropLinuxSocketSuccess;
+}
+
+/** @copydoc interop_linux_socket_enqueue_feature */
+int interop_linux_socket_enqueue_feature(interop_linux_socket_t *owner, uint64_t token,
+                                         uint64_t now_ms, const uint8_t *bytes,
+                                         size_t length, interop_peer_event_t *out_event)
+{
+    interop_peer_event_t event;
+    int result;
+    int peer_result;
+
+    if (owner == NULL || out_event == NULL || !valid_admission_event(owner, out_event) ||
+        !valid_borrowed_frame(owner, bytes, length, out_event, sizeof(*out_event)))
+        return InteropLinuxSocketInvalidArgument;
+    result = check_owner_token(owner, token);
+    if (result != InteropLinuxSocketSuccess)
+        return result;
+    if (owner->closed)
+        return InteropLinuxSocketClosed;
+    result = check_time(owner, now_ms);
+    if (result != InteropLinuxSocketSuccess)
+        return result;
+
+    clear_event(&event);
+    peer_result = interop_peer_enqueue_feature(owner->peer, owner->token, now_ms,
+                                               bytes, length, &event);
+    if (peer_result != InteropPeerSuccess)
+        return map_peer_result(owner, peer_result);
+    return commit_admission(owner, now_ms, &event, out_event);
+}
+
+/** @copydoc interop_linux_socket_enqueue_request */
+int interop_linux_socket_enqueue_request(interop_linux_socket_t *owner, uint64_t token,
+                                         uint64_t now_ms, const uint8_t *bytes,
+                                         size_t length, uint32_t *out_request_id,
+                                         interop_peer_event_t *out_event)
+{
+    interop_peer_event_t event;
+    uint32_t request_id = 0;
+    int result;
+    int peer_result;
+
+    if (owner == NULL || out_request_id == NULL || out_event == NULL ||
+        !range_valid(out_request_id, sizeof(*out_request_id), _Alignof(uint32_t)) ||
+        !output_disjoint_from_owner(owner, out_request_id, sizeof(*out_request_id)) ||
+        !valid_admission_event(owner, out_event) ||
+        ranges_overlap(out_request_id, sizeof(*out_request_id), out_event, sizeof(*out_event)) ||
+        !valid_borrowed_frame(owner, bytes, length, out_event, sizeof(*out_event)) ||
+        (length != 0 && ranges_overlap(bytes, length, out_request_id, sizeof(*out_request_id))))
+        return InteropLinuxSocketInvalidArgument;
+    result = check_owner_token(owner, token);
+    if (result != InteropLinuxSocketSuccess)
+        return result;
+    if (owner->closed)
+        return InteropLinuxSocketClosed;
+    result = check_time(owner, now_ms);
+    if (result != InteropLinuxSocketSuccess)
+        return result;
+
+    clear_event(&event);
+    peer_result = interop_peer_enqueue_request(owner->peer, owner->token, now_ms,
+                                               bytes, length, &request_id, &event);
+    if (peer_result != InteropPeerSuccess)
+        return map_peer_result(owner, peer_result);
+    result = commit_admission(owner, now_ms, &event, out_event);
+    if (result == InteropLinuxSocketSuccess)
+        *out_request_id = request_id;
+    return result;
+}
+
+/** @copydoc interop_linux_socket_release_request */
+int interop_linux_socket_release_request(interop_linux_socket_t *owner, uint64_t token,
+                                         uint32_t request_id)
+{
+    int result;
+    int peer_result;
+
+    if (owner == NULL)
+        return InteropLinuxSocketInvalidArgument;
+    result = check_owner_token(owner, token);
+    if (result != InteropLinuxSocketSuccess)
+        return result;
+    peer_result = interop_peer_release_request(owner->peer, owner->token, request_id);
+    if (peer_result == InteropPeerSuccess)
+        return InteropLinuxSocketSuccess;
+    return map_peer_result(owner, peer_result);
+}
+
 /** @copydoc interop_linux_socket_abort */
 int interop_linux_socket_abort(interop_linux_socket_t *owner, uint64_t token,
                                interop_linux_socket_work_t *out_work)

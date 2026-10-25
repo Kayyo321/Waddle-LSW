@@ -2925,6 +2925,351 @@ static void test_step_boundary_rechecks_completed_peer_frame(void)
 }
 
 
+/* Connection tokens shared by the feature pass-through helpers below. */
+static const uint64_t HostToken = 0x301;
+static const uint64_t GuestToken = 0x302;
+
+/** @brief Build a complete Ready-capable config with an explicit facility offer. */
+static interop_linux_socket_config_t make_config_caps(uint32_t role, uint64_t token, uint64_t caps)
+{
+    interop_linux_socket_config_t config = make_config(role, token);
+
+    config.peer_config.local_capabilities = caps;
+    return config;
+}
+
+static interop_linux_socket_t *create_owner_caps(int fd, uint32_t role, uint64_t token, uint64_t caps)
+{
+    interop_linux_socket_config_t config = make_config_caps(role, token, caps);
+    interop_linux_socket_t *owner = NULL;
+
+    Check(interop_linux_socket_create(fd, &config, &owner) == InteropLinuxSocketSuccess);
+    Check(owner != NULL);
+    return owner;
+}
+
+/** @brief Drive one poll snapshot and copy any admitted frame into the caller's buffer. */
+static int poll_drive_into(interop_linux_socket_t *owner, uint64_t token, uint64_t now_ms,
+                           size_t rx_budget, size_t tx_budget, uint8_t *frame,
+                           interop_linux_socket_work_t *work)
+{
+    interop_linux_socket_poll_t poll_state;
+    struct pollfd descriptor;
+    int poll_result;
+
+    Check(interop_linux_socket_poll_events(owner, token, now_ms, &poll_state) == InteropLinuxSocketSuccess);
+    descriptor.fd = poll_state.fd;
+    descriptor.events = (short)poll_state.events;
+    descriptor.revents = 0;
+    poll_result = poll(&descriptor, 1, 0);
+    Check(poll_result >= 0);
+    return interop_linux_socket_drive(owner, token, poll_state.poll_cookie, now_ms,
+                                      (uint32_t)(unsigned short)descriptor.revents,
+                                      rx_budget, tx_budget, 16, frame,
+                                      InteropLinuxSocketFrameCapacity, work);
+}
+
+/** @brief Complete the handshake over a fresh socketpair using the same bounded steps as the fragmented test. */
+static void make_ready_pair(uint64_t caps, int pair[2], interop_linux_socket_t **host_out,
+                            interop_linux_socket_t **guest_out, uint64_t *now_out)
+{
+    interop_linux_socket_t *host;
+    interop_linux_socket_t *guest;
+    interop_peer_event_t guest_map_event;
+    interop_peer_event_t host_map_event;
+    interop_peer_event_t host_ready_event;
+    interop_linux_socket_work_t work;
+    uint8_t frame[InteropLinuxSocketFrameCapacity];
+    uint64_t now_ms = 100;
+    unsigned index;
+
+    create_pair(pair);
+    host = create_owner_caps(pair[0], InteropPeerHost, HostToken, caps);
+    guest = create_owner_caps(pair[1], InteropPeerGuest, GuestToken, caps);
+    Check(interop_linux_socket_mapping_result(guest, GuestToken, now_ms, 0x4455,
+          InteropLayoutVersion, 1, &guest_map_event) == InteropLinuxSocketSuccess);
+    memset(&host_map_event, 0, sizeof(host_map_event));
+    for (index = 0; index < 256 && host_map_event.kind != InteropPeerEventValidateMapping; ++index) {
+        ++now_ms;
+        Check(poll_drive_into(guest, GuestToken, now_ms, 0, 1, frame, &work) == InteropLinuxSocketSuccess);
+        Check(poll_drive_into(host, HostToken, now_ms, 1, 0, frame, &work) == InteropLinuxSocketSuccess);
+        if (work.event.kind != InteropPeerEventNone)
+            host_map_event = work.event;
+    }
+    Check(host_map_event.kind == InteropPeerEventValidateMapping);
+    Check(interop_linux_socket_mapping_result(host, HostToken, now_ms,
+          host_map_event.session_epoch, host_map_event.layout_version, 1,
+          &host_ready_event) == InteropLinuxSocketSuccess);
+    memset(&work, 0, sizeof(work));
+    for (index = 0; index < 256 && work.event.kind != InteropPeerEventReady; ++index) {
+        ++now_ms;
+        Check(poll_drive_into(host, HostToken, now_ms, 0, 1, frame, &work) == InteropLinuxSocketSuccess);
+        Check(poll_drive_into(guest, GuestToken, now_ms, 1, 0, frame, &work) == InteropLinuxSocketSuccess);
+    }
+    Check(work.event.kind == InteropPeerEventReady);
+    *host_out = host;
+    *guest_out = guest;
+    *now_out = now_ms;
+}
+
+/** @brief Flush sender bytes and receive until the receiver reports one feature frame. */
+static void deliver_feature(interop_linux_socket_t *sender, uint64_t sender_token,
+                            interop_linux_socket_t *receiver, uint64_t receiver_token,
+                            uint64_t *now_ms, uint8_t *frame, interop_linux_socket_work_t *received)
+{
+    interop_linux_socket_work_t sender_work;
+    unsigned index;
+
+    memset(received, 0, sizeof(*received));
+    for (index = 0; index < 64 && received->event.kind != InteropPeerEventFeatureFrame; ++index) {
+        ++*now_ms;
+        Check(poll_drive_into(sender, sender_token, *now_ms, 0, 64, frame, &sender_work) == InteropLinuxSocketSuccess);
+        Check(poll_drive_into(receiver, receiver_token, *now_ms, 64, 0, frame, received) == InteropLinuxSocketSuccess);
+    }
+    Check(received->event.kind == InteropPeerEventFeatureFrame);
+}
+
+/** @brief Encode a frame with two unsigned fields, optionally carrying a request identifier. */
+static size_t make_two_uint_frame(uint8_t *frame, size_t capacity, uint16_t type,
+                                  uint32_t request_id, interop_direction_t direction,
+                                  uint16_t tag_a, uint64_t value_a, uint16_t tag_b, uint64_t value_b)
+{
+    interop_writer_t writer;
+    size_t frame_length = 0;
+
+    interop_writer_init(&writer, frame, capacity);
+    Check(interop_put_uint(&writer, tag_a, value_a) == InteropErrorNone);
+    Check(interop_put_uint(&writer, tag_b, value_b) == InteropErrorNone);
+    Check(interop_writer_finish(&writer, type, request_id, direction, &frame_length) == InteropErrorNone);
+    return frame_length;
+}
+
+/** @brief Encode a KeyboardLayout frame, a facility this connection never negotiates. */
+static size_t make_layout_frame(uint8_t *frame, size_t capacity)
+{
+    static const uint8_t Layout[] = "00000409";
+    interop_writer_t writer;
+    size_t frame_length = 0;
+
+    interop_writer_init(&writer, frame, capacity);
+    Check(interop_put_bytes(&writer, InteropTagLayout, Layout, sizeof(Layout) - 1) == InteropErrorNone);
+    Check(interop_writer_finish(&writer, InteropMsgKeyboardLayout, 0, InteropFromHost, &frame_length) == InteropErrorNone);
+    return frame_length;
+}
+
+/** @brief Encode a LaunchRequest; AppKey precedes LaunchKind to keep tags increasing. */
+static size_t make_launch_request_frame(uint8_t *frame, size_t capacity, uint32_t request_id)
+{
+    static const uint8_t AppKey[] = "a-Microsoft_Windows_Explorer";
+    interop_writer_t writer;
+    size_t frame_length = 0;
+
+    interop_writer_init(&writer, frame, capacity);
+    Check(interop_put_bytes(&writer, InteropTagAppKey, AppKey, sizeof(AppKey) - 1) == InteropErrorNone);
+    Check(interop_put_uint(&writer, InteropTagLaunchKind, InteropLaunchApp) == InteropErrorNone);
+    Check(interop_writer_finish(&writer, InteropMsgLaunchRequest, request_id, InteropFromHost, &frame_length) == InteropErrorNone);
+    return frame_length;
+}
+
+/** @brief Encode a LaunchResult; ProcessId precedes Status to keep tags increasing. */
+static size_t make_launch_result_frame(uint8_t *frame, size_t capacity, uint32_t request_id)
+{
+    interop_writer_t writer;
+    size_t frame_length = 0;
+
+    interop_writer_init(&writer, frame, capacity);
+    Check(interop_put_uint(&writer, InteropTagProcessId, 4242) == InteropErrorNone);
+    Check(interop_put_uint(&writer, InteropTagStatus, InteropOk) == InteropErrorNone);
+    Check(interop_writer_finish(&writer, InteropMsgLaunchResult, request_id, InteropFromGuest, &frame_length) == InteropErrorNone);
+    return frame_length;
+}
+
+static void test_feature_pass_through_admission(void)
+{
+    static uint8_t frame[InteropLinuxSocketFrameCapacity];
+    static uint8_t received_frame[InteropLinuxSocketFrameCapacity];
+    const uint64_t Caps = InteropCapWindows | InteropCapInput | InteropCapLaunch;
+    interop_linux_socket_work_t work;
+    interop_linux_socket_poll_t poll_state;
+    interop_linux_socket_t *host = NULL;
+    interop_linux_socket_t *guest = NULL;
+    interop_peer_event_t event;
+    uint64_t now;
+    uint32_t request_id = 0xDEAD;
+    int pair[2];
+    size_t length;
+
+    make_ready_pair(Caps, pair, &host, &guest, &now);
+    length = make_two_uint_frame(frame, sizeof(frame), InteropMsgWindowClose, 0, InteropFromHost,
+                                 InteropTagWindow, 0x55, InteropTagGeneration, 2);
+    Check(interop_linux_socket_enqueue_feature(NULL, HostToken, now + 1, frame, length, &event) == InteropLinuxSocketInvalidArgument);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, length, NULL) == InteropLinuxSocketInvalidArgument);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, length,
+          (interop_peer_event_t *)(void *)frame) == InteropLinuxSocketInvalidArgument);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, NULL, length, &event) == InteropLinuxSocketInvalidArgument);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, 0, &event) == InteropLinuxSocketInvalidFrame);
+    Check(interop_linux_socket_enqueue_feature(host, GuestToken, now + 1, frame, length, &event) == InteropLinuxSocketWrongToken);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now - 1, frame, length, &event) == InteropLinuxSocketTimeWentBackwards);
+
+    /* Output and input ranges must be aligned, disjoint from the owner and disjoint from each other. */
+    {
+        static uint8_t misaligned_event[sizeof(interop_peer_event_t) + 16];
+        static uint8_t misaligned_id[sizeof(uint32_t) + 16];
+        uint8_t *storage = (uint8_t *)host;
+        length = make_two_uint_frame(frame, sizeof(frame), InteropMsgWindowClose, 0, InteropFromHost,
+                                     InteropTagWindow, 0x55, InteropTagGeneration, 2);
+        Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, length,
+              (interop_peer_event_t *)(void *)(misaligned_event + 1)) == InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, length,
+              (interop_peer_event_t *)(void *)host) == InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, storage, 16, &event) ==
+              InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, 0, (uint32_t *)(void *)(misaligned_id + 1), &event) ==
+              InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, 0, (uint32_t *)(void *)host, &event) ==
+              InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, 0, &request_id,
+              (interop_peer_event_t *)(void *)&request_id) == InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, storage, 16, &request_id, &event) ==
+              InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, 16, (uint32_t *)(void *)(frame + 12), &event) ==
+              InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, 16, &request_id,
+              (interop_peer_event_t *)(void *)(frame + 8)) == InteropLinuxSocketInvalidArgument);
+        Check(request_id == 0xDEAD);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, length, &request_id,
+              (interop_peer_event_t *)(void *)(misaligned_event + 1)) == InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, length, &request_id,
+              (interop_peer_event_t *)(void *)host) == InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now - 1, frame, length, &request_id, &event) ==
+              InteropLinuxSocketTimeWentBackwards);
+        Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, (const uint8_t *)(UINTPTR_MAX - 4), 16, &event) ==
+              InteropLinuxSocketInvalidArgument);
+        Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, (const uint8_t *)(UINTPTR_MAX - 4), 16, &request_id, &event) ==
+              InteropLinuxSocketInvalidArgument);
+        Check(request_id == 0xDEAD);
+    }
+    length = make_launch_request_frame(frame, sizeof(frame), 0);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, length, &event) == InteropLinuxSocketUnsupportedFrame);
+    length = make_layout_frame(frame, sizeof(frame));
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, length, &event) == InteropLinuxSocketFeatureNotNegotiated);
+    length = make_launch_result_frame(frame, sizeof(frame), 0);
+    Check(interop_linux_socket_enqueue_feature(guest, GuestToken, now + 1, frame, length, &event) == InteropLinuxSocketInvalidFrame);
+
+    /* A successful admission invalidates the earlier snapshot and asks for POLLOUT next. */
+    length = make_two_uint_frame(frame, sizeof(frame), InteropMsgWindowClose, 0, InteropFromHost,
+                                 InteropTagWindow, 0x55, InteropTagGeneration, 2);
+    Check(interop_linux_socket_poll_events(host, HostToken, now + 1, &poll_state) == InteropLinuxSocketSuccess);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 2, frame, length, &event) == InteropLinuxSocketSuccess);
+    Check(event.kind == InteropPeerEventNone && event.phase == InteropPeerReady);
+    Check(interop_linux_socket_drive(host, HostToken, poll_state.poll_cookie, now + 2, 0, 0, 0, 0,
+          received_frame, sizeof(received_frame), &work) == InteropLinuxSocketStalePoll);
+    Check(interop_linux_socket_poll_events(host, HostToken, now + 2, &poll_state) == InteropLinuxSocketSuccess);
+    Check((poll_state.events & (uint32_t)POLLOUT) != 0);
+    now = now + 2;
+    deliver_feature(host, HostToken, guest, GuestToken, &now, received_frame, &work);
+    Check(work.event.message_type == InteropMsgWindowClose && work.event.request_id == 0);
+    Check(work.event.copied_bytes == length && memcmp(received_frame, frame, length) == 0);
+
+    /* Request identifiers: refusals leave the caller's identifier untouched, then stamp, echo and release. */
+    length = make_launch_request_frame(frame, sizeof(frame), 0);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, length, NULL, &event) == InteropLinuxSocketInvalidArgument);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, length, &request_id, NULL) == InteropLinuxSocketInvalidArgument);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, length,
+          (uint32_t *)(void *)frame, &event) == InteropLinuxSocketInvalidArgument);
+    Check(interop_linux_socket_enqueue_request(host, GuestToken, now + 1, frame, length, &request_id, &event) == InteropLinuxSocketWrongToken);
+    length = make_two_uint_frame(frame, sizeof(frame), InteropMsgWindowClose, 0, InteropFromHost,
+                                 InteropTagWindow, 0x55, InteropTagGeneration, 2);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, length, &request_id, &event) == InteropLinuxSocketUnsupportedFrame);
+    Check(request_id == 0xDEAD);
+    length = make_launch_request_frame(frame, sizeof(frame), 5);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, length, &request_id, &event) == InteropLinuxSocketInvalidFrame);
+    length = make_launch_request_frame(frame, sizeof(frame), 0);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 2, frame, length, &request_id, &event) == InteropLinuxSocketSuccess);
+    Check(request_id == 1 && event.kind == InteropPeerEventNone);
+    now = now + 2;
+    deliver_feature(host, HostToken, guest, GuestToken, &now, received_frame, &work);
+    Check(work.event.message_type == InteropMsgLaunchRequest && work.event.request_id == 1);
+    Check(interop_linux_socket_release_request(host, GuestToken, 1) == InteropLinuxSocketWrongToken);
+    Check(interop_linux_socket_release_request(host, HostToken, 0) == InteropLinuxSocketInvalidArgument);
+    Check(interop_linux_socket_release_request(host, HostToken, 1) == InteropLinuxSocketSuccess);
+    Check(interop_linux_socket_release_request(host, HostToken, 1) == InteropLinuxSocketUnknownRequestId);
+    Check(interop_linux_socket_release_request(NULL, HostToken, 1) == InteropLinuxSocketInvalidArgument);
+
+    /* The guest echoes the identifier; the host receives the same value. */
+    length = make_launch_result_frame(frame, sizeof(frame), 9);
+    Check(interop_linux_socket_enqueue_feature(guest, GuestToken, now + 1, frame, length, &event) == InteropLinuxSocketSuccess);
+    now = now + 1;
+    deliver_feature(guest, GuestToken, host, HostToken, &now, received_frame, &work);
+    Check(work.event.message_type == InteropMsgLaunchResult && work.event.request_id == 9);
+
+    interop_linux_socket_destroy(&host);
+    interop_linux_socket_destroy(&guest);
+    close(pair[0]);
+    close(pair[1]);
+}
+
+static void test_feature_pass_through_queue_and_drain(void)
+{
+    static uint8_t frame[InteropLinuxSocketFrameCapacity];
+    const uint64_t Caps = InteropCapWindows | InteropCapInput | InteropCapLaunch;
+    interop_linux_socket_work_t work;
+    interop_linux_socket_t *host = NULL;
+    interop_linux_socket_t *guest = NULL;
+    interop_peer_event_t event;
+    uint64_t now;
+    uint32_t request_id = 0xDEAD;
+    unsigned filled;
+    int pair[2];
+    size_t length;
+
+    /* A full, unflushed Data class refuses both entry points and keeps the identifier cursor. */
+    make_ready_pair(Caps, pair, &host, &guest, &now);
+    for (filled = 0; filled < 504; ++filled) {
+        length = make_two_uint_frame(frame, sizeof(frame), InteropMsgWindowClose, 0, InteropFromHost,
+                                     InteropTagWindow, filled + 1, InteropTagGeneration, 1);
+        Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, length, &event) == InteropLinuxSocketSuccess);
+    }
+    length = make_launch_request_frame(frame, sizeof(frame), 0);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, length, &request_id, &event) == InteropLinuxSocketQueueFull);
+    Check(request_id == 0xDEAD);
+    length = make_two_uint_frame(frame, sizeof(frame), InteropMsgWindowClose, 0, InteropFromHost,
+                                 InteropTagWindow, 1, InteropTagGeneration, 1);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, length, &event) == InteropLinuxSocketQueueFull);
+    interop_linux_socket_destroy(&host);
+    interop_linux_socket_destroy(&guest);
+    close(pair[0]);
+    close(pair[1]);
+
+    /* Ready deadline expiry drains without queueing; further admissions are WrongPhase. */
+    make_ready_pair(Caps, pair, &host, &guest, &now);
+    length = make_two_uint_frame(frame, sizeof(frame), InteropMsgWindowClose, 0, InteropFromHost,
+                                 InteropTagWindow, 7, InteropTagGeneration, 1);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 60000, frame, length, &event) == InteropLinuxSocketSuccess);
+    Check(event.kind == InteropPeerEventDraining && event.phase == InteropPeerDraining);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 60001, frame, length, &event) == InteropLinuxSocketWrongPhase);
+    length = make_launch_request_frame(frame, sizeof(frame), 0);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 60001, frame, length, &request_id, &event) == InteropLinuxSocketWrongPhase);
+    interop_linux_socket_destroy(&host);
+    interop_linux_socket_destroy(&guest);
+    close(pair[0]);
+    close(pair[1]);
+
+    /* Transport closure retires identifiers; admissions then report Closed. */
+    make_ready_pair(Caps, pair, &host, &guest, &now);
+    length = make_launch_request_frame(frame, sizeof(frame), 0);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 1, frame, length, &request_id, &event) == InteropLinuxSocketSuccess);
+    Check(request_id == 1);
+    Check(interop_linux_socket_abort(host, HostToken, &work) == InteropLinuxSocketSuccess);
+    Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 2, frame, length, &event) == InteropLinuxSocketClosed);
+    Check(interop_linux_socket_enqueue_request(host, HostToken, now + 2, frame, length, &request_id, &event) == InteropLinuxSocketClosed);
+    Check(interop_linux_socket_release_request(host, HostToken, 1) == InteropLinuxSocketRequestRetired);
+    interop_linux_socket_destroy(&host);
+    interop_linux_socket_destroy(&guest);
+    close(pair[0]);
+    close(pair[1]);
+}
+
 int main(void)
 {
     test_descriptor_transfer_and_preflight();
@@ -2968,6 +3313,8 @@ int main(void)
     test_step_boundary_rechecks_completed_peer_frame();
     test_full_send_buffer_keeps_pollout_guidance();
     test_mapping_wait_fills_carry_without_read_spin();
+    test_feature_pass_through_admission();
+    test_feature_pass_through_queue_and_drain();
     interop_linux_socket_test_guards();
     test_linux_socket_owner_private();
     puts("linux_socket_owner: all tests passed");

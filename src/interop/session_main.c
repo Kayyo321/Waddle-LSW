@@ -378,6 +378,7 @@ int waddle_session_main(int argc, char **argv)
         .stop_fd = signal_fd,
         .run_for_ms = options.run_for_ms,
         .reserved_zero = 0,
+        .feature_ops = NULL,
     };
     fprintf(stderr, "waddle-session: RuntimeControlOnly device=%s capabilities=0\n",
             device.name);

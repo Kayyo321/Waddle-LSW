@@ -168,6 +168,24 @@ fn map_feature_error(err: anyerror) c_int {
         error.InvalidConnectionToken => c_t.InteropPeerInvalidArgument,
         error.TimeWentBackwards => c_t.InteropPeerTimeWentBackwards,
         error.PeerClosed => c_t.InteropPeerClosed,
+        error.RequestIdsFull => c_t.InteropPeerRequestIdsFull,
+        else => c_t.InteropPeerInternalInvariant,
+    };
+}
+
+/// Map a release_request error to its frozen C result; unknown errors are internal faults.
+/// @param[in] err Error from control_peer.release_request.
+/// @return Stable interop_peer_result_t value.
+/// @ownership Scalar mapping only.
+/// @thread_safety Pure function.
+fn map_release_error(err: anyerror) c_int {
+    return switch (err) {
+        error.InvalidRequestId => c_t.InteropPeerInvalidArgument,
+        error.UnknownRequestId => c_t.InteropPeerUnknownRequestId,
+        error.RequestIdRetired => c_t.InteropPeerRequestRetired,
+        error.WrongConnectionToken => c_t.InteropPeerWrongToken,
+        error.InvalidConnectionToken => c_t.InteropPeerInvalidArgument,
+        error.PeerClosed => c_t.InteropPeerClosed,
         else => c_t.InteropPeerInternalInvariant,
     };
 }
@@ -378,6 +396,47 @@ export fn interop_peer_enqueue_feature(owner_address: usize, token: u64, now_ms:
     const event = owner.peer.enqueue_feature(token, now_ms, const_byte_slice(bytes_address, length)) catch |err| return map_feature_error(err);
     const output: *c_t.struct_interop_peer_event_t = @ptrFromInt(event_address);
     output.* = copy_event(owner, event);
+    return c_t.InteropPeerSuccess;
+}
+
+/// Atomically reserve a feature request identifier and admit one Request frame.
+/// @param[in,out] owner_address Raw owner pointer word; operation is serialized.
+/// @param[in] token/now_ms captured connection token and monotonic admission time.
+/// @param[in] bytes_address/length borrowed complete request frame; header identifier must be zero.
+/// @param[out] request_id_address Aligned disjoint uint32 output, written only on success (zero when drained).
+/// @param[out] event_address Aligned disjoint event, written only on success.
+/// @return Fixed C result; every error leaves the queue, identifiers, clock and both outputs unchanged.
+/// @ownership Copies the stamped frame into peer-owned queue storage before return.
+/// @thread_safety Caller serializes admission with every other peer operation.
+export fn interop_peer_enqueue_request(owner_address: usize, token: u64, now_ms: u64, bytes_address: usize, length: usize, request_id_address: usize, event_address: usize) c_int {
+    const owner = resolve_owner(owner_address) orelse return c_t.InteropPeerInvalidArgument;
+    if (!valid_byte_range(bytes_address, length) or
+        !valid_output(owner, request_id_address, @sizeOf(u32), @alignOf(u32)) or
+        !valid_output(owner, event_address, @sizeOf(c_t.struct_interop_peer_event_t), @alignOf(c_t.struct_interop_peer_event_t)) or
+        owner_overlaps(owner, bytes_address, length) or
+        !valid_disjoint_ranges(bytes_address, length, request_id_address, @sizeOf(u32)) or
+        !valid_disjoint_ranges(bytes_address, length, event_address, @sizeOf(c_t.struct_interop_peer_event_t)) or
+        !valid_disjoint_ranges(request_id_address, @sizeOf(u32), event_address, @sizeOf(c_t.struct_interop_peer_event_t))) return c_t.InteropPeerInvalidArgument;
+    if (preflight_token(owner, token)) |result| return result;
+    if (preflight_time(owner, now_ms)) |result| return result;
+    const admitted = owner.peer.enqueue_request(token, now_ms, const_byte_slice(bytes_address, length)) catch |err| return map_feature_error(err);
+    const id_output: *u32 = @ptrFromInt(request_id_address);
+    id_output.* = admitted.request_id;
+    const event_output: *c_t.struct_interop_peer_event_t = @ptrFromInt(event_address);
+    event_output.* = copy_event(owner, admitted.event);
+    return c_t.InteropPeerSuccess;
+}
+
+/// Release one feature-owned request identifier.
+/// @param[in,out] owner_address Raw owner pointer word; operation is serialized.
+/// @param[in] token captured connection token; @param[in] request_id identifier from enqueue_request.
+/// @return Fixed C result; UnknownRequestId and RequestRetired change nothing.
+/// @ownership Releases only the identifier reservation; queued bytes are unaffected.
+/// @thread_safety Caller serializes release with every other peer operation.
+export fn interop_peer_release_request(owner_address: usize, token: u64, request_id: u32) c_int {
+    const owner = resolve_owner(owner_address) orelse return c_t.InteropPeerInvalidArgument;
+    if (preflight_token(owner, token)) |result| return result;
+    owner.peer.release_request(token, request_id) catch |err| return map_release_error(err);
     return c_t.InteropPeerSuccess;
 }
 

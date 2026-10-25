@@ -12,6 +12,9 @@ const agent_version_t = @import("agent_version.zig");
 
 /// Maximum original frame bytes stored in internal completion metadata.
 pub const QueueCapacity: usize = queue_mod_t.QueueCapacity;
+/// Maximum live feature-owned request identifiers. The remaining 64 identifiers of the 4096-entry
+/// request_ids namespace stay available for Ping and the handshake identifier (IMPL_DESC 8.45).
+pub const FeatureRequestCapacity: usize = 4032;
 /// Maximum configured full agent-version bytes copied by init.
 pub const MaxVersionBytes: usize = 32;
 /// Public endpoint role alias from the frozen handshake helper.
@@ -143,6 +146,29 @@ pub const control_peer_error_t = error{
     InternalState,
 };
 
+/// Result of enqueue_request: the reserved identifier (zero when the frame was not queued) and the event.
+/// @ownership Scalar copy only.
+pub const request_admission_t = struct {
+    /// Request identifier stamped into the queued header; zero when the Ready deadline drained the peer.
+    request_id: u32,
+    /// None after queueing, or Draining when the Ready deadline expired at now_ms.
+    event: event_t,
+};
+
+/// Errors returned by release_request. RequestIdRetired is the benign result after transport loss
+/// retired every identifier; every other error leaves the peer state unchanged.
+/// @ownership Compile-time error set; no runtime storage.
+pub const request_release_error_t = error{
+    /// The identifier is zero, which no request ever carries.
+    InvalidRequestId,
+    /// The identifier is not a live feature-owned reservation (liveness, Hello, released or unknown).
+    UnknownRequestId,
+    /// transport_lost retired all identifiers; nothing remains to release.
+    RequestIdRetired,
+    /// Internal bookkeeping disagreed; the owner must abort the connection.
+    InternalState,
+};
+
 /// Errors returned by outbound feature admission. Each error leaves peer, queue and caller
 /// state unchanged. Ready-deadline expiry is not an error: it is reported as a Draining event.
 /// @ownership Compile-time error set; no runtime storage.
@@ -162,6 +188,23 @@ pub const feature_send_error_t = error{
     /// The owned copy of the frame could not be allocated.
     OutOfMemory,
 };
+
+/// Outbound admission class of a feature type (IMPL_DESC 8.45 request identifiers).
+pub const feature_class_t = enum { Unsolicited, Request, Response };
+
+/// Return the request-identifier class of a feature type. Request types allocate an identifier
+/// through enqueue_request; Response types echo a nonzero identifier; all others carry zero.
+/// Transfer frames carry zero here and use their own transfer identifiers in the payload.
+/// @param[in] message_type Frozen feature type from a validated header.
+/// @return Class of the type; unknown types are Unsolicited and rejected by the facility table.
+/// @ownership Pure function.
+pub fn feature_class(message_type: u16) feature_class_t {
+    return switch (message_type) {
+        c_t.InteropMsgLaunchRequest, c_t.InteropMsgPrinterSync, c_t.InteropMsgDisplayConfig, c_t.InteropMsgDndDrop => .Request,
+        c_t.InteropMsgLaunchResult, c_t.InteropMsgPrinterResult, c_t.InteropMsgDisplayApplied, c_t.InteropMsgDndResult => .Response,
+        else => .Unsolicited,
+    };
+}
 
 const send_kind_t = enum { None, Hello, HelloAck, Ping, Pong, Error, Goodbye, Feature };
 const send_record_t = struct {
@@ -207,6 +250,11 @@ pub const peer_t = struct {
     send_count: usize = 0,
     /// Guest-owned Hello ID or Host peer-Hello ID retained for control correlation.
     pending_hello_id: u32 = 0,
+    /// Feature-owned request identifiers currently occupying request_ids; the only identifiers
+    /// release_request accepts. Liveness and Hello identifiers are never recorded here.
+    feature_request_ids: [FeatureRequestCapacity]u32 = [_]u32{0} ** FeatureRequestCapacity,
+    /// Number of live entries at the front of feature_request_ids, always at most FeatureRequestCapacity.
+    feature_request_count: usize = 0,
     /// Last committed monotonic callback timestamp.
     last_now_ms: u64,
     /// Authoritative phase latch; terminal values never reopen.
@@ -268,6 +316,7 @@ pub const peer_t = struct {
         if (!self.live) return;
         self.queue.deinit();
         self.request_ids.retire_all();
+        self.feature_request_count = 0;
         self.allocator.free(self.local_version);
         self.local_version = &.{};
         self.send_records = [_]send_record_t{.{}} ** QueueCapacity;
@@ -640,7 +689,7 @@ pub const peer_t = struct {
         try self.check_live_token(connection_token);
         try self.check_time(now_ms);
         if (self.connection_phase != .Ready) return error.WrongPhase;
-        const header = try self.validate_feature_frame(frame);
+        const header = try self.validate_feature_frame(frame, .Feature);
         if (self.deadline_expired(now_ms)) {
             self.enter_draining_at(now_ms, .TransportLost);
             return self.event(.Draining);
@@ -651,6 +700,77 @@ pub const peer_t = struct {
         self.send_count += 1;
         self.last_now_ms = now_ms;
         return self.event(.None);
+    }
+
+    /// Atomically reserve a feature request identifier, stamp it into the frame and admit the frame.
+    /// The frame must be a Request type (LaunchRequest, PrinterSync, DisplayConfig, DndDrop) whose
+    /// header request_id is zero. The reservation, the copy with bytes 12..16 stamped, the Data-class
+    /// enqueue and the feature-owned record are one step: any failure restores request_ids and the
+    /// tracking array exactly, so the identifier cursor does not advance either.
+    /// @param[in,out] self Live Ready peer; changed only on admission or deadline drain.
+    /// @param[in] connection_token Captured token identifying this connection instance.
+    /// @param[in] now_ms Monotonic admission time; committed only on success.
+    /// @param[in] frame Borrowed complete request frame with header request_id zero; never mutated.
+    /// @return Admission record: the identifier the frame carries (zero when not queued) and the event
+    /// (None after queueing, Draining when the Ready deadline expired at now_ms, frame not queued).
+    /// @errors WrongConnectionToken, InvalidConnectionToken, PeerClosed, TimeWentBackwards and WrongPhase
+    /// as for enqueue_feature; InvalidFrame for a nonzero header request_id or a malformed frame;
+    /// UnsupportedFrame for a non-request type; FeatureNotNegotiated; RequestIdsFull when 4032
+    /// feature identifiers are live or the namespace is full; QueueFull; OutOfMemory.
+    /// @ownership The queue owns one stamped copy. The identifier stays reserved until release_request.
+    /// @thread_safety Caller serializes with every other peer method.
+    pub fn enqueue_request(self: *peer_t, connection_token: u64, now_ms: u64, frame: []const u8) (control_peer_error_t || feature_send_error_t)!request_admission_t {
+        try self.check_live_token(connection_token);
+        try self.check_time(now_ms);
+        if (self.connection_phase != .Ready) return error.WrongPhase;
+        _ = try self.validate_feature_frame(frame, .Request);
+        if (self.deadline_expired(now_ms)) {
+            self.enter_draining_at(now_ms, .TransportLost);
+            return .{ .event = self.event(.Draining), .request_id = 0 };
+        }
+        if (self.feature_request_count == FeatureRequestCapacity) return error.RequestIdsFull;
+        const saved_ids = self.request_ids;
+        const request_id = self.request_ids.reserve() catch return error.RequestIdsFull;
+        var stamped: [queue_mod_t.MaxFrameBytes]u8 = undefined;
+        @memcpy(stamped[0..frame.len], frame);
+        std_t.mem.writeInt(u32, stamped[12..16], request_id, .little);
+        self.queue.enqueue(stamped[0..frame.len], .Data) catch |err| {
+            self.request_ids = saved_ids;
+            return map_admission_error(err);
+        };
+        self.feature_request_ids[self.feature_request_count] = request_id;
+        self.feature_request_count += 1;
+        const index = (self.send_head + self.send_count) % QueueCapacity;
+        self.send_records[index] = .{ .kind = .Feature, .request_id = request_id, .total_bytes = frame.len, .remaining_bytes = frame.len };
+        self.send_count += 1;
+        self.last_now_ms = now_ms;
+        return .{ .event = self.event(.None), .request_id = request_id };
+    }
+
+    /// Release one feature-owned request identifier after its response arrived or the request was abandoned.
+    /// Only identifiers returned by enqueue_request are accepted. Liveness identifiers and the Hello
+    /// identifier are not in the feature set, so they report UnknownRequestId and stay reserved.
+    /// @param[in,out] self Peer whose feature tracking and request_ids change only on success.
+    /// @param[in] connection_token Captured token identifying this connection instance.
+    /// @param[in] request_id Identifier previously returned by enqueue_request.
+    /// @errors InvalidRequestId for zero; UnknownRequestId for any identifier that is not a live
+    /// feature reservation; RequestIdRetired after transport_lost retired every identifier (benign);
+    /// WrongConnectionToken, InvalidConnectionToken or PeerClosed from the token check.
+    /// @ownership Frees no queue storage; only the identifier namespace changes.
+    /// @thread_safety Caller serializes with every other peer method.
+    pub fn release_request(self: *peer_t, connection_token: u64, request_id: u32) (control_peer_error_t || request_release_error_t)!void {
+        try self.check_live_token(connection_token);
+        if (request_id == 0) return error.InvalidRequestId;
+        if (self.connection_phase == .Closed) return error.RequestIdRetired;
+        var index: usize = 0;
+        while (index < self.feature_request_count) : (index += 1) {
+            if (self.feature_request_ids[index] == request_id) break;
+        }
+        if (index == self.feature_request_count) return error.UnknownRequestId;
+        self.request_ids.release(request_id) catch return error.InternalState;
+        self.feature_request_count -= 1;
+        self.feature_request_ids[index] = self.feature_request_ids[self.feature_request_count];
+        self.feature_request_ids[self.feature_request_count] = 0;
     }
 
     /// Begin local orderly protocol drain and best-effort queue Goodbye(status Cancelled, ID zero).
@@ -692,6 +812,8 @@ pub const peer_t = struct {
         try self.check_live_token(connection_token);
         if (self.connection_phase == .Closed) return self.event(.Draining);
         self.request_ids.retire_all();
+        self.feature_request_ids = [_]u32{0} ** FeatureRequestCapacity;
+        self.feature_request_count = 0;
         self.connection_phase = .Closed;
         return self.event(.Draining);
     }
@@ -995,6 +1117,20 @@ pub const peer_t = struct {
             result.copied_bytes = view.frame.len;
             return .{ .event = result, .required_bytes = view.frame.len };
         }
+        // IMPL_DESC 3.2.7 step 4: a frame whose facility is not negotiated is UnsupportedType.
+        // It takes the same Error-and-drain path as a codec-level UnsupportedType rejection.
+        check_facility(view.header.type, self.reader.direction, view.payload, self.handshake.negotiated_capabilities) catch {
+            self.enter_draining_at(now_ms, .WireError);
+            if (!self.enqueue_error(c_t.InteropErrorUnsupportedType, view.header.request_id, view.header.type)) self.terminal_send_failed = true;
+            try self.reader.consume();
+            self.last_now_ms = now_ms;
+            // The Draining event names the refused type so callers can report it precisely.
+            var refused = self.event(.Draining);
+            refused.error_code = c_t.InteropErrorUnsupportedType;
+            refused.message_type = view.header.type;
+            refused.request_id = view.header.request_id;
+            return .{ .event = refused };
+        };
         @memcpy(output[0..view.frame.len], view.frame);
         try self.reader.consume();
         self.last_now_ms = now_ms;
@@ -1016,13 +1152,12 @@ pub const peer_t = struct {
     /// @errors InvalidFrame, UnsupportedFrame or FeatureNotNegotiated in the order documented on enqueue_feature.
     /// @ownership No allocation; the returned header is a scalar copy.
     /// @thread_safety Serialized with every other peer method.
-    fn validate_feature_frame(self: *const peer_t, frame: []const u8) feature_send_error_t!c_t.interop_header_t {
+    fn validate_feature_frame(self: *const peer_t, frame: []const u8, entry: feature_entry_t) feature_send_error_t!c_t.interop_header_t {
         if (frame.len < c_t.InteropHeaderBytes or frame.len > queue_mod_t.MaxFrameBytes) return error.InvalidFrame;
         var header: c_t.interop_header_t = undefined;
         if (c_t.interop_header_decode(frame.ptr, c_t.InteropHeaderBytes, &header) != c_t.InteropErrorNone) return error.InvalidFrame;
         if (@as(usize, header.length) + c_t.InteropHeaderBytes != frame.len) return error.InvalidFrame;
         if (is_control_type(header.type) or is_local_type(header.type)) return error.UnsupportedFrame;
-        const requirement = feature_requirement(header.type) orelse return error.UnsupportedFrame;
         const payload = frame[c_t.InteropHeaderBytes..];
         const payload_pointer: [*c]const u8 = if (payload.len == 0) null else payload.ptr;
         switch (c_t.interop_payload_validate(header.type, self.outgoing_direction(), payload_pointer, payload.len)) {
@@ -1030,7 +1165,19 @@ pub const peer_t = struct {
             c_t.InteropErrorUnsupportedType, c_t.InteropErrorUnsupportedField => return error.UnsupportedFrame,
             else => return error.InvalidFrame,
         }
-        if (!requirement.satisfied_by(self.handshake.negotiated_capabilities)) return error.FeatureNotNegotiated;
+        try check_facility(header.type, self.outgoing_direction(), payload, self.handshake.negotiated_capabilities);
+        // IMPL_DESC 8.45 request-identifier classes. The entry point decides who may allocate.
+        switch (entry) {
+            .Feature => switch (feature_class(header.type)) {
+                .Request => return error.UnsupportedFrame,
+                .Response => if (header.request_id == 0) return error.InvalidFrame,
+                .Unsolicited => if (header.request_id != 0) return error.InvalidFrame,
+            },
+            .Request => {
+                if (feature_class(header.type) != .Request) return error.UnsupportedFrame;
+                if (header.request_id != 0) return error.InvalidFrame;
+            },
+        }
         return header;
     }
 
@@ -1063,9 +1210,27 @@ pub const peer_t = struct {
     }
 };
 
+/// Admit a codec-valid feature type for the negotiated facilities under the 8.45 capability map.
+/// Shared by the outbound admission path and the receive path so the two cannot drift.
+/// @param[in] message_type Frozen feature type that already passed codec validation.
+/// @param[in] producer Producer direction of the frame, not the local role.
+/// @param[in] payload Codec-validated TLV payload.
+/// @param[in] negotiated Ready-session capability intersection.
+/// @errors UnsupportedFrame when no facility is defined for the type/producer; FeatureNotNegotiated
+/// when the defined facility is absent; InvalidFrame when a value-dependent field is malformed.
+/// @ownership Pure function; no state is read or changed.
+/// @thread_safety Pure function.
+pub fn check_facility(message_type: u16, producer: c_t.interop_direction_t, payload: []const u8, negotiated: u64) feature_send_error_t!void {
+    const requirement = (feature_requirement(message_type, producer, payload) catch return error.InvalidFrame) orelse return error.UnsupportedFrame;
+    if (!requirement.satisfied_by(negotiated)) return error.FeatureNotNegotiated;
+}
+
 fn ranges_overlap(left_start: usize, left_end: usize, right_start: usize, right_end: usize) bool {
     return left_start < right_end and right_start < left_end;
 }
+
+/// Outbound entry point selecting the request-identifier rules of validate_feature_frame.
+const feature_entry_t = enum { Feature, Request };
 
 fn is_control_type(message_type: u16) bool {
     return message_type >= c_t.InteropMsgHello and message_type <= c_t.InteropMsgError;
@@ -1098,7 +1263,7 @@ const CapKeyboardLayout: u64 = @intCast(c_t.InteropCapKeyboardLayout);
 /// Facility requirement of one feature message type, checked against the negotiated set.
 /// A type is admissible only when every `all` bit is negotiated and, if `any` is nonzero,
 /// at least one `any` bit is negotiated.
-const feature_requirement_t = struct {
+pub const feature_requirement_t = struct {
     /// Every bit in this mask must be negotiated; zero requires nothing.
     all: u64 = 0,
     /// When nonzero, at least one bit in this mask must be negotiated.
@@ -1114,33 +1279,45 @@ const feature_requirement_t = struct {
     }
 };
 
-/// Facility table for every feature message in IMPL_DESC 3.2.5. Window messages require
-/// Windows; transfers are gated by the facility whose request created them (3.2.6), so any
-/// one of those facilities satisfies them. Control and local-only types return null.
+/// Facility table for every feature message in IMPL_DESC 3.2.5 and the 8.45 capability map.
+/// Window messages and ElevationNotice/DesktopSwitch need Windows; UacPrompt/UacDecision need
+/// UacNative; CursorConstraint needs RelativePointer only while pressed; transfers are admitted
+/// by producer role (host: Clipboard or DragDrop; guest: also Catalog or Cursor). Control and
+/// local-only types, unknown types, and transfers from a non-host or non-guest producer return null.
 /// @param[in] message_type Frozen type from a validated header.
+/// @param[in] producer Frame producer direction, InteropFromHost or InteropFromGuest.
+/// @param[in] payload Codec-validated TLV payload; read only for CursorConstraint.
 /// @return Requirement for an admissible feature type, or null for any other type.
-fn feature_requirement(message_type: u16) ?feature_requirement_t {
+/// @errors MalformedField when CursorConstraint's pressed field is absent or malformed.
+/// @ownership Pure function; reads borrowed payload bytes only during the call.
+pub fn feature_requirement(message_type: u16, producer: c_t.interop_direction_t, payload: []const u8) error{MalformedField}!?feature_requirement_t {
     return switch (message_type) {
-        c_t.InteropMsgWindowAnnounce, c_t.InteropMsgWindowUpdate, c_t.InteropMsgWindowRetire, c_t.InteropMsgWindowConfigure, c_t.InteropMsgWindowClose, c_t.InteropMsgWindowMoveRequest, c_t.InteropMsgWindowResizeRequest, c_t.InteropMsgWindowStateRequest, c_t.InteropMsgFrameReady, c_t.InteropMsgFrameRelease, c_t.InteropMsgWindowIconChanged, c_t.InteropMsgPopupRepositioned, c_t.InteropMsgPopupDismissed => .{ .all = CapWindows },
-        c_t.InteropMsgInputFocus, c_t.InteropMsgInputKey, c_t.InteropMsgInputPointerMotion, c_t.InteropMsgInputPointerButton, c_t.InteropMsgInputPointerAxis, c_t.InteropMsgInputRelease, c_t.InteropMsgInputLockState, c_t.InteropMsgInputRepeatInfo, c_t.InteropMsgLeaseRevoked, c_t.InteropMsgLeaseAck, c_t.InteropMsgLeaseReady => .{ .all = CapInput },
+        c_t.InteropMsgWindowAnnounce, c_t.InteropMsgWindowUpdate, c_t.InteropMsgWindowRetire, c_t.InteropMsgWindowConfigure, c_t.InteropMsgWindowClose, c_t.InteropMsgWindowMoveRequest, c_t.InteropMsgWindowResizeRequest, c_t.InteropMsgWindowStateRequest, c_t.InteropMsgFrameReady, c_t.InteropMsgFrameRelease, c_t.InteropMsgWindowIconChanged, c_t.InteropMsgPopupRepositioned, c_t.InteropMsgPopupDismissed, c_t.InteropMsgElevationNotice, c_t.InteropMsgDesktopSwitch => .{ .all = CapWindows },
+        c_t.InteropMsgInputFocus, c_t.InteropMsgInputKey, c_t.InteropMsgInputPointerMotion, c_t.InteropMsgInputPointerButton, c_t.InteropMsgInputPointerAxis, c_t.InteropMsgInputRelease, c_t.InteropMsgInputLockState, c_t.InteropMsgInputRepeatInfo, c_t.InteropMsgLeaseRevoked, c_t.InteropMsgLeaseAck, c_t.InteropMsgLeaseReady, c_t.InteropMsgCaretRect => .{ .all = CapInput },
         c_t.InteropMsgInputPointerRelative => .{ .all = CapInput | CapRelativePointer },
         c_t.InteropMsgInputTouch, c_t.InteropMsgInputTouchFrame, c_t.InteropMsgInputTouchCancel => .{ .all = CapInput | CapTouch },
         c_t.InteropMsgInputTablet, c_t.InteropMsgInputTabletProximity => .{ .all = CapInput | CapTablet },
         c_t.InteropMsgInputGesturePinch => .{ .all = CapInput | CapGestures },
         c_t.InteropMsgInputTextCommit, c_t.InteropMsgInputTextPreedit => .{ .all = CapInput | CapTextInput },
-        c_t.InteropMsgCaretRect => .{ .all = CapTextInput },
         c_t.InteropMsgKeyboardLayout => .{ .all = CapKeyboardLayout },
         c_t.InteropMsgCursorShape => .{ .all = CapCursor },
-        c_t.InteropMsgCursorConstraint => .{ .all = CapCursor | CapRelativePointer },
+        c_t.InteropMsgCursorConstraint => blk: {
+            const pressed = try field_uint(payload, c_t.InteropTagPressed, 1);
+            break :blk .{ .all = CapCursor | (if (pressed != 0) CapRelativePointer else 0) };
+        },
         c_t.InteropMsgClipboardOffer, c_t.InteropMsgClipboardRequest, c_t.InteropMsgClipboardClear => .{ .all = CapClipboard },
         c_t.InteropMsgDndEnter, c_t.InteropMsgDndMotion, c_t.InteropMsgDndLeave, c_t.InteropMsgDndDrop, c_t.InteropMsgDndResult, c_t.InteropMsgDndSourceStart, c_t.InteropMsgDndSourceRequest, c_t.InteropMsgDndSourceFinished => .{ .all = CapDragDrop },
         c_t.InteropMsgCatalogBegin, c_t.InteropMsgCatalogAdd, c_t.InteropMsgCatalogUpdate, c_t.InteropMsgCatalogRemove, c_t.InteropMsgCatalogEnd, c_t.InteropMsgIconRequest => .{ .all = CapCatalog },
         c_t.InteropMsgLaunchRequest, c_t.InteropMsgLaunchResult => .{ .all = CapLaunch },
-        c_t.InteropMsgElevationNotice, c_t.InteropMsgUacPrompt, c_t.InteropMsgUacDecision, c_t.InteropMsgDesktopSwitch => .{ .all = CapUacNative },
+        c_t.InteropMsgUacPrompt, c_t.InteropMsgUacDecision => .{ .all = CapUacNative },
         c_t.InteropMsgAudioStreamOpen, c_t.InteropMsgAudioStreamClose => .{ .all = CapAudio },
         c_t.InteropMsgPrinterSync, c_t.InteropMsgPrinterResult => .{ .all = CapPrinters },
         c_t.InteropMsgDisplayConfig, c_t.InteropMsgDisplayApplied => .{ .all = CapDisplay },
-        c_t.InteropMsgTransferBegin, c_t.InteropMsgTransferChunk, c_t.InteropMsgTransferEnd, c_t.InteropMsgTransferCancel => .{ .any = CapClipboard | CapDragDrop | CapCatalog | CapCursor | CapUacNative },
+        c_t.InteropMsgTransferBegin, c_t.InteropMsgTransferChunk, c_t.InteropMsgTransferEnd, c_t.InteropMsgTransferCancel => switch (producer) {
+            c_t.InteropFromHost => .{ .any = CapClipboard | CapDragDrop },
+            c_t.InteropFromGuest => .{ .any = CapClipboard | CapDragDrop | CapCatalog | CapCursor },
+            else => null,
+        },
         else => null,
     };
 }
@@ -2313,29 +2490,80 @@ fn test_private_bounded_helper_edges() !void {
 /// @errors Test assertion failure.
 /// @ownership Pure scalar checks; no allocation.
 /// @thread_safety Synchronous test-only probe.
+/// Encode a complete CursorConstraint frame and return its payload for requirement tests.
+/// @param[out] buffer Caller-owned scratch frame storage that outlives the returned payload.
+/// @param[in] pressed Pressed flag value, 0 or 1.
+/// @return Payload bytes after the header; the caller keeps buffer alive while using it.
+/// @errors CodecFailure when the fixed scratch buffer cannot hold the frame.
+fn pressed_payload(buffer: []u8, pressed: u64) ![]const u8 {
+    var writer: c_t.interop_writer_t = undefined;
+    c_t.interop_writer_init(&writer, buffer.ptr, buffer.len);
+    if (c_t.interop_put_uint(&writer, c_t.InteropTagWindow, 1) != c_t.InteropErrorNone) return error.CodecFailure;
+    if (c_t.interop_put_uint(&writer, c_t.InteropTagGeneration, 1) != c_t.InteropErrorNone) return error.CodecFailure;
+    if (c_t.interop_put_uint(&writer, c_t.InteropTagPressed, pressed) != c_t.InteropErrorNone) return error.CodecFailure;
+    var length: usize = 0;
+    if (c_t.interop_writer_finish(&writer, c_t.InteropMsgCursorConstraint, 0, c_t.InteropFromGuest, &length) != c_t.InteropErrorNone) return error.CodecFailure;
+    return buffer[c_t.InteropHeaderBytes..length];
+}
+
 fn test_private_feature_requirement_table() !void {
     // Sweep every u16 through the never-inlined table so each prong runs at runtime with a
     // non-folded selector. IMPL_DESC 3.2.5 lists 70 feature types (6 control, 3 local excluded).
+    // Only CursorConstraint reads its payload; the empty payload makes it report MalformedField,
+    // which still proves the entry exists.
+    const empty_payload: []const u8 = &[_]u8{};
     var feature_types: usize = 0;
     for (0..0x1_0000) |value| {
-        if (@call(.never_inline, feature_requirement, .{@as(u16, @intCast(value))})) |_| feature_types += 1;
+        const message_type: u16 = @intCast(value);
+        const outcome = @call(.never_inline, feature_requirement, .{ message_type, c_t.InteropFromHost, empty_payload });
+        if (outcome) |maybe| {
+            if (maybe) |_| feature_types += 1;
+        } else |err| {
+            try std_t.testing.expectEqual(error.MalformedField, err);
+            try std_t.testing.expectEqual(@as(u16, c_t.InteropMsgCursorConstraint), message_type);
+            feature_types += 1;
+        }
     }
     try std_t.testing.expectEqual(@as(usize, 70), feature_types);
     const control_types = [_]u16{ c_t.InteropMsgHello, c_t.InteropMsgHelloAck, c_t.InteropMsgGoodbye, c_t.InteropMsgPing, c_t.InteropMsgPong, c_t.InteropMsgError, 0x7F00, 0x7F01, 0x7F02, 0x0000 };
-    for (control_types) |message_type| try std_t.testing.expectEqual(@as(?feature_requirement_t, null), @call(.never_inline, feature_requirement, .{message_type}));
+    for (control_types) |message_type| try std_t.testing.expectEqual(@as(?feature_requirement_t, null), @call(.never_inline, feature_requirement, .{ message_type, c_t.InteropFromHost, empty_payload }) catch unreachable);
     try std_t.testing.expect(is_local_type(0x7F01));
     try std_t.testing.expect(!is_local_type(0x0700));
-    const window = feature_requirement(c_t.InteropMsgWindowClose).?;
+    const window = (try feature_requirement(c_t.InteropMsgWindowClose, c_t.InteropFromHost, empty_payload)).?;
     try std_t.testing.expect(window.satisfied_by(CapWindows));
     try std_t.testing.expect(!window.satisfied_by(CapInput));
-    const pointer = feature_requirement(c_t.InteropMsgInputPointerRelative).?;
+    // ElevationNotice and DesktopSwitch rely on Windows alone; UAC prompts need UacNative.
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgElevationNotice, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapWindows));
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgDesktopSwitch, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapWindows));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgUacPrompt, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapWindows));
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgUacDecision, c_t.InteropFromHost, empty_payload)).?.satisfied_by(CapUacNative));
+    // CaretRect belongs to Input, not TextInput; KeyboardLayout needs only its own facility.
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgCaretRect, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapInput));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgCaretRect, c_t.InteropFromGuest, empty_payload)).?.satisfied_by(CapTextInput));
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgKeyboardLayout, c_t.InteropFromHost, empty_payload)).?.satisfied_by(CapKeyboardLayout));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgKeyboardLayout, c_t.InteropFromHost, empty_payload)).?.satisfied_by(CapInput));
+    const pointer = (try feature_requirement(c_t.InteropMsgInputPointerRelative, c_t.InteropFromGuest, empty_payload)).?;
     try std_t.testing.expect(!pointer.satisfied_by(CapInput));
     try std_t.testing.expect(pointer.satisfied_by(CapInput | CapRelativePointer));
-    const transfer = feature_requirement(c_t.InteropMsgTransferCancel).?;
-    try std_t.testing.expect(!transfer.satisfied_by(CapWindows | CapInput));
-    try std_t.testing.expect(transfer.satisfied_by(CapCatalog));
-    try std_t.testing.expect(transfer.satisfied_by(CapUacNative | CapWindows));
-    try std_t.testing.expect(!feature_requirement(c_t.InteropMsgCatalogBegin).?.satisfied_by(CapWindows));
+    // Transfers are admitted per producer role; UacNative never admits them.
+    const host_transfer = (try feature_requirement(c_t.InteropMsgTransferCancel, c_t.InteropFromHost, empty_payload)).?;
+    try std_t.testing.expect(!host_transfer.satisfied_by(CapCatalog | CapCursor));
+    try std_t.testing.expect(host_transfer.satisfied_by(CapClipboard));
+    try std_t.testing.expect(!host_transfer.satisfied_by(CapUacNative | CapWindows));
+    const guest_transfer = (try feature_requirement(c_t.InteropMsgTransferChunk, c_t.InteropFromGuest, empty_payload)).?;
+    try std_t.testing.expect(guest_transfer.satisfied_by(CapCatalog));
+    try std_t.testing.expect(guest_transfer.satisfied_by(CapCursor));
+    try std_t.testing.expect(!guest_transfer.satisfied_by(CapUacNative | CapWindows));
+    try std_t.testing.expectEqual(@as(?feature_requirement_t, null), try feature_requirement(c_t.InteropMsgTransferChunk, c_t.InteropFromLocal, empty_payload));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgCatalogBegin, c_t.InteropFromHost, empty_payload)).?.satisfied_by(CapWindows));
+    // CursorConstraint needs RelativePointer only while pressed.
+    var released_buffer: [c_t.InteropHeaderBytes + 64]u8 = undefined;
+    var pressed_buffer: [c_t.InteropHeaderBytes + 64]u8 = undefined;
+    const cursor_released = try pressed_payload(&released_buffer, 0);
+    const cursor_pressed = try pressed_payload(&pressed_buffer, 1);
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgCursorConstraint, c_t.InteropFromGuest, cursor_released)).?.satisfied_by(CapCursor));
+    try std_t.testing.expect(!(try feature_requirement(c_t.InteropMsgCursorConstraint, c_t.InteropFromGuest, cursor_pressed)).?.satisfied_by(CapCursor));
+    try std_t.testing.expect((try feature_requirement(c_t.InteropMsgCursorConstraint, c_t.InteropFromGuest, cursor_pressed)).?.satisfied_by(CapCursor | CapRelativePointer));
     try std_t.testing.expectEqual(error.QueueFull, @call(.never_inline, map_admission_error, .{error.DataCapacityReserved}));
     try std_t.testing.expectEqual(error.QueueFull, @call(.never_inline, map_admission_error, .{error.QueueFull}));
     try std_t.testing.expectEqual(error.OutOfMemory, @call(.never_inline, map_admission_error, .{error.OutOfMemory}));

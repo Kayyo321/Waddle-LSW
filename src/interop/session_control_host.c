@@ -1,6 +1,6 @@
 /**
  * @file session_control_host.c
- * @brief Sole-thread control-only host admission, mapping validation, and socket pump.
+ * @brief Sole-thread control-only host admission, mapping validation, socket pump and feature ops.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -28,6 +28,20 @@
 #define HostControlRxBudget InteropLinuxSocketMaxRxBudgetBytes
 #define HostControlTxBudget InteropLinuxSocketMaxTxBudgetBytes
 #define HostControlSyscallBudget InteropLinuxSocketMaxSyscallBudget
+#define HostControlDescriptorCapacity (3u + InteropHostFeatureFdCapacity)
+
+/** @brief Concrete sender; one instance lives on the run's stack and is opened per callback. */
+struct interop_host_feature_sender_t {
+    interop_linux_socket_t *socket_owner; /**< Borrowed owner of the run; NULL before admission. */
+    uint64_t token; /**< Connection token of the run. */
+    uint64_t now_ms; /**< Pump time committed before each callback. */
+    bool valid; /**< True only while a callback is running. */
+    bool closing; /**< True once drain has begun; every send then returns Draining. */
+    bool drain_observed; /**< Set when an admission reported Draining; the run then drains. */
+};
+
+/** @brief True while a feature callback runs on this thread; blocks nested run and cleanup calls. */
+static _Thread_local bool host_control_in_callback = false;
 
 static uint64_t host_control_monotonic_ms(void)
 {
@@ -43,13 +57,30 @@ static uint64_t host_control_monotonic_ms(void)
 static bool host_control_config_valid(const interop_host_control_config_t *config,
                                       const interop_host_control_owners_t *owners)
 {
-    return config != NULL && owners != NULL && config->admission != NULL &&
-        config->mapping_fd >= 0 &&
+    const interop_host_feature_ops_t *ops;
+    bool capabilities_valid;
+    bool run_bound_valid;
+
+    if (config == NULL || owners == NULL || config->admission == NULL) return false;
+    ops = config->feature_ops;
+    if (ops != NULL && ((uintptr_t)ops % _Alignof(interop_host_feature_ops_t)) != 0)
+        return false;
+    if (ops == NULL) {
+        capabilities_valid = config->admission->local_capabilities == 0;
+        run_bound_valid = config->run_for_ms >= 1;
+    } else {
+        capabilities_valid = (ops->local_capabilities & ~InteropCapabilityMask) == 0 &&
+            config->admission->local_capabilities == ops->local_capabilities;
+        run_bound_valid = true;
+        if ((ops->poll_fds == NULL) != (ops->on_fds == NULL))
+            return false;
+    }
+    return config->mapping_fd >= 0 &&
         (config->backing_kind == InteropMappingLinuxBackingRegularPrivateFile ||
          config->backing_kind == InteropMappingLinuxBackingKvmfrCharacter) &&
-        config->stop_fd >= 0 && config->run_for_ms >= 1 &&
+        config->stop_fd >= 0 && run_bound_valid &&
         config->run_for_ms <= 120000 && config->reserved_zero == 0 &&
-        config->admission->local_capabilities == 0 &&
+        capabilities_valid &&
         config->admission->cancel_fd == config->stop_fd &&
         config->stop_fd != config->mapping_fd &&
         config->stop_fd != config->admission->daemon_fd &&
@@ -93,7 +124,7 @@ static interop_host_control_result_t host_control_cleanup_owners(
 interop_host_control_result_t interop_host_control_retry_cleanup(
     interop_host_control_owners_t *owners)
 {
-    if (owners == NULL) return HostControlInvalidArgument;
+    if (owners == NULL || host_control_in_callback) return HostControlInvalidArgument;
     return host_control_cleanup_owners(owners);
 }
 
@@ -176,6 +207,191 @@ static void host_control_record_outcome(
     if (*outcome == HostControlSuccess) *outcome = next;
 }
 
+/** @brief Record a feature-side failure and start drain unless drain already began.
+ * @return False when the drain itself failed and the pump must stop.
+ */
+static bool host_control_fail_and_drain(
+    interop_host_control_result_t *outcome,
+    interop_host_control_result_t reason,
+    interop_linux_socket_t *socket_owner,
+    uint64_t token,
+    uint64_t now_ms,
+    bool *draining)
+{
+    host_control_record_outcome(outcome, reason);
+    if (*draining) return true;
+    if (host_control_begin_drain(socket_owner, token, now_ms) != HostControlSuccess)
+        return false;
+    *draining = true;
+    return true;
+}
+
+/** @brief Map one socket owner result to the sender result space. */
+static const interop_host_feature_result_t SocketToFeatureResult[InteropLinuxSocketRequestRetired + 1] = {
+    [InteropLinuxSocketSuccess] = HostFeatureSuccess,
+    [InteropLinuxSocketInvalidArgument] = HostFeatureInvalidArgument,
+    [InteropLinuxSocketOutOfMemory] = HostFeatureOutOfMemory,
+    [InteropLinuxSocketWrongToken] = HostFeatureTransportFailed,
+    [InteropLinuxSocketWrongThread] = HostFeatureTransportFailed,
+    [InteropLinuxSocketTimeWentBackwards] = HostFeatureTransportFailed,
+    [InteropLinuxSocketWrongPhase] = HostFeatureNotReady,
+    [InteropLinuxSocketStalePoll] = HostFeatureTransportFailed,
+    [InteropLinuxSocketPollCookieExhausted] = HostFeatureTransportFailed,
+    [InteropLinuxSocketClosed] = HostFeatureClosed,
+    [InteropLinuxSocketPeerFailure] = HostFeatureTransportFailed,
+    [InteropLinuxSocketCloseDiagnostic] = HostFeatureTransportFailed,
+    [InteropLinuxSocketMappingFailed] = HostFeatureTransportFailed,
+    [InteropLinuxSocketInvalidFrame] = HostFeatureInvalidFrame,
+    [InteropLinuxSocketUnsupportedFrame] = HostFeatureUnsupportedFrame,
+    [InteropLinuxSocketFeatureNotNegotiated] = HostFeatureNotNegotiated,
+    [InteropLinuxSocketQueueFull] = HostFeatureQueueFull,
+    [InteropLinuxSocketRequestIdsFull] = HostFeatureRequestIdsFull,
+    [InteropLinuxSocketUnknownRequestId] = HostFeatureUnknownRequestId,
+    [InteropLinuxSocketRequestRetired] = HostFeatureRequestRetired,
+};
+
+/** @brief Translate a socket result and note an admission that drained the connection. */
+static interop_host_feature_result_t host_feature_finish(
+    interop_host_feature_sender_t *sender,
+    int socket_result,
+    const interop_peer_event_t *event)
+{
+    interop_host_feature_result_t mapped = SocketToFeatureResult[socket_result];
+    if (mapped == HostFeatureSuccess && event != NULL &&
+            event->kind == InteropPeerEventDraining) {
+        sender->drain_observed = true;
+        return HostFeatureDraining;
+    }
+    return mapped;
+}
+
+static void host_feature_open(interop_host_feature_sender_t *sender, uint64_t now_ms)
+{
+    sender->now_ms = now_ms;
+    sender->valid = true;
+    host_control_in_callback = true;
+}
+
+static void host_feature_close(interop_host_feature_sender_t *sender)
+{
+    host_control_in_callback = false;
+    sender->valid = false;
+}
+
+int interop_host_feature_send(interop_host_feature_sender_t *sender,
+                              const uint8_t *frame, size_t length)
+{
+    interop_peer_event_t event;
+    int result;
+
+    if (sender == NULL || !sender->valid) return HostFeatureInvalidArgument;
+    if (sender->closing) return HostFeatureDraining;
+    memset(&event, 0, sizeof(event));
+    result = interop_linux_socket_enqueue_feature(sender->socket_owner, sender->token,
+        sender->now_ms, frame, length, &event);
+    return (int)host_feature_finish(sender, result, &event);
+}
+
+int interop_host_feature_send_request(interop_host_feature_sender_t *sender,
+                                      const uint8_t *frame, size_t length,
+                                      uint32_t *out_request_id)
+{
+    interop_peer_event_t event;
+    uint32_t request_id = 0;
+    interop_host_feature_result_t mapped;
+    int result;
+
+    if (sender == NULL || !sender->valid || out_request_id == NULL)
+        return HostFeatureInvalidArgument;
+    if (sender->closing) return HostFeatureDraining;
+    memset(&event, 0, sizeof(event));
+    result = interop_linux_socket_enqueue_request(sender->socket_owner, sender->token,
+        sender->now_ms, frame, length, &request_id, &event);
+    mapped = host_feature_finish(sender, result, &event);
+    if (mapped == HostFeatureSuccess) *out_request_id = request_id;
+    return (int)mapped;
+}
+
+int interop_host_feature_release_request(interop_host_feature_sender_t *sender,
+                                         uint32_t request_id)
+{
+    if (sender == NULL || !sender->valid) return HostFeatureInvalidArgument;
+    return (int)SocketToFeatureResult[interop_linux_socket_release_request(
+        sender->socket_owner, sender->token, request_id)];
+}
+
+/** @brief Invoke on_ready once with the negotiated set; returns the callback status. */
+static int host_feature_call_ready(const interop_host_feature_ops_t *ops,
+                                   uint64_t negotiated, uint64_t now_ms,
+                                   interop_host_feature_sender_t *sender)
+{
+    int status;
+    if (ops->on_ready == NULL) return 0;
+    host_feature_open(sender, now_ms);
+    status = ops->on_ready(ops->context, negotiated, sender);
+    host_feature_close(sender);
+    return status;
+}
+
+static int host_feature_call_frame(const interop_host_feature_ops_t *ops,
+                                   uint32_t message_type, uint32_t request_id,
+                                   const uint8_t *frame, size_t length, uint64_t now_ms,
+                                   interop_host_feature_sender_t *sender)
+{
+    int status;
+    host_feature_open(sender, now_ms);
+    status = ops->on_frame(ops->context, message_type, request_id, frame, length, sender);
+    host_feature_close(sender);
+    return status;
+}
+
+static int host_feature_call_tick(const interop_host_feature_ops_t *ops, uint64_t now_ms,
+                                  interop_host_feature_sender_t *sender)
+{
+    int status;
+    if (ops->on_tick == NULL) return 0;
+    host_feature_open(sender, now_ms);
+    status = ops->on_tick(ops->context, now_ms, sender);
+    host_feature_close(sender);
+    return status;
+}
+
+static int host_feature_call_fds(const interop_host_feature_ops_t *ops,
+                                 const struct pollfd *fds, size_t count, uint64_t now_ms,
+                                 interop_host_feature_sender_t *sender)
+{
+    int status;
+    host_feature_open(sender, now_ms);
+    status = ops->on_fds(ops->context, fds, count, now_ms, sender);
+    host_feature_close(sender);
+    return status;
+}
+
+/** @brief Announce closing exactly once; the sender refuses admissions from then on. */
+static void host_feature_close_once(const interop_host_feature_ops_t *ops,
+                                    interop_host_feature_sender_t *sender,
+                                    bool *notified, uint64_t now_ms,
+                                    interop_host_control_result_t reason)
+{
+    if (ops == NULL || *notified) return;
+    *notified = true;
+    sender->closing = true;
+    if (ops->on_closing == NULL) return;
+    host_feature_open(sender, now_ms);
+    ops->on_closing(ops->context, (uint32_t)reason, sender);
+    host_feature_close(sender);
+}
+
+/** @brief Fold a send-induced drain into the run outcome; idempotent. */
+static void host_feature_observe_drain(interop_host_feature_sender_t *sender,
+                                       interop_host_control_result_t *outcome,
+                                       bool *draining)
+{
+    if (!sender->drain_observed) return;
+    host_control_record_outcome(outcome, HostControlPeerFailed);
+    *draining = true;
+}
+
 interop_host_control_result_t interop_host_control_run(
     const interop_host_control_config_t *config,
     interop_host_control_owners_t *out_owners)
@@ -185,19 +401,24 @@ interop_host_control_result_t interop_host_control_run(
     interop_shm_header_snapshot_t snapshot;
     interop_linux_socket_poll_t poll_request;
     interop_linux_socket_work_t work;
-    interop_linux_socket_t *socket_owner;
+    interop_linux_socket_t *socket_owner = NULL;
+    interop_host_feature_sender_t sender;
+    const interop_host_feature_ops_t *feature_ops;
     uint8_t frame[HostControlFrameBytes];
     uint64_t token;
     uint64_t run_deadline;
-    uint64_t now_ms;
+    uint64_t now_ms = 0;
     uint64_t last_heartbeat = 0;
     uint64_t next_heartbeat_ms = UINT64_MAX;
     bool view_published = false;
     bool ready = false;
     bool draining = false;
+    bool closing_notified = false;
 
     memset(&view, 0, sizeof(view));
     memset(&snapshot, 0, sizeof(snapshot));
+    memset(&sender, 0, sizeof(sender));
+    if (host_control_in_callback) return HostControlInvalidArgument;
     if (config == NULL || out_owners == NULL ||
         (uintptr_t)config % _Alignof(interop_host_control_config_t) != 0 ||
         (uintptr_t)out_owners % _Alignof(interop_host_control_owners_t) != 0 ||
@@ -217,6 +438,7 @@ interop_host_control_result_t interop_host_control_run(
         return HostControlInvalidArgument;
     if (!host_control_config_valid(config, out_owners))
         return HostControlInvalidArgument;
+    feature_ops = config->feature_ops;
     uintptr_t device_start = (uintptr_t)config->admission->device;
     uintptr_t version_start = (uintptr_t)config->admission->agent_version;
     if (device_start == 0 || version_start == 0 ||
@@ -248,7 +470,6 @@ interop_host_control_result_t interop_host_control_run(
     if (token == 0) return HostControlInvalidArgument;
 
     interop_host_session_config_t admission = *config->admission;
-    admission.local_capabilities = 0;
     interop_host_session_result_t admitted = interop_host_session_admit(
         &admission, &out_owners->session_owner,
         &(uint32_t){0});
@@ -257,11 +478,12 @@ interop_host_control_result_t interop_host_control_run(
         goto cleanup;
     }
     now_ms = host_control_monotonic_ms();
-    if (now_ms == UINT64_MAX || now_ms > UINT64_MAX - config->run_for_ms) {
+    if (now_ms == UINT64_MAX ||
+        (config->run_for_ms != 0 && now_ms > UINT64_MAX - config->run_for_ms)) {
         outcome = HostControlOsError;
         goto cleanup;
     }
-    run_deadline = now_ms + config->run_for_ms;
+    run_deadline = config->run_for_ms == 0 ? UINT64_MAX : now_ms + config->run_for_ms;
     if (interop_mapping_linux_create(&out_owners->mapping_owner) !=
         InteropMappingLinuxOk) {
         outcome = HostControlMappingFailed;
@@ -277,9 +499,13 @@ interop_host_control_result_t interop_host_control_run(
         outcome = HostControlPeerFailed;
         goto cleanup;
     }
+    sender.socket_owner = socket_owner;
+    sender.token = token;
     while (true) {
-        struct pollfd descriptors[3];
+        struct pollfd descriptors[HostControlDescriptorCapacity];
         nfds_t descriptor_count = 0;
+        size_t feature_count = 0;
+        size_t feature_base = 0;
         int socket_index = -1;
         int daemon_index = -1;
         int stop_index = -1;
@@ -316,6 +542,15 @@ interop_host_control_result_t interop_host_control_run(
                 else break;
             }
         }
+        if (draining) host_feature_close_once(feature_ops, &sender, &closing_notified,
+                                              now_ms, outcome);
+        if (ready && !draining && feature_ops != NULL) {
+            int tick_status = host_feature_call_tick(feature_ops, now_ms, &sender);
+            host_feature_observe_drain(&sender, &outcome, &draining);
+            if (tick_status != 0 && !host_control_fail_and_drain(&outcome,
+                    HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                break;
+        }
         if (interop_linux_socket_poll_events(socket_owner, token, now_ms,
                 &poll_request) != InteropLinuxSocketSuccess) {
             host_control_record_outcome(&outcome, HostControlPeerFailed);
@@ -341,11 +576,31 @@ interop_host_control_result_t interop_host_control_run(
             .events = POLLIN,
             .revents = 0,
         };
+        if (ready && !draining && feature_ops != NULL && feature_ops->poll_fds != NULL) {
+            size_t supplied = 0;
+            int fds_status = feature_ops->poll_fds(feature_ops->context,
+                &descriptors[descriptor_count], InteropHostFeatureFdCapacity, &supplied);
+            if (fds_status != 0 || supplied > InteropHostFeatureFdCapacity) {
+                if (!host_control_fail_and_drain(&outcome, HostControlFeatureFailed,
+                        socket_owner, token, now_ms, &draining))
+                    break;
+            } else {
+                feature_base = descriptor_count;
+                feature_count = supplied;
+                descriptor_count += (nfds_t)supplied;
+                for (size_t index = 0; index < supplied; ++index)
+                    descriptors[feature_base + index].revents = 0;
+            }
+        }
         uint32_t suggested_ms = poll_request.timeout_ms;
         if (suggested_ms > HostControlMaxPollMs) suggested_ms = HostControlMaxPollMs;
         wait_deadline = draining ? UINT64_MAX : run_deadline;
         if (ready && !draining && next_heartbeat_ms < wait_deadline)
             wait_deadline = next_heartbeat_ms;
+        if (ready && !draining && feature_ops != NULL && feature_ops->next_deadline_ms != NULL) {
+            uint64_t feature_deadline = feature_ops->next_deadline_ms(feature_ops->context, now_ms);
+            if (feature_deadline < wait_deadline) wait_deadline = feature_deadline;
+        }
         if (now_ms >= wait_deadline) timeout_ms = 0;
         else {
             uint64_t remaining = wait_deadline - now_ms;
@@ -471,6 +726,20 @@ interop_host_control_result_t interop_host_control_run(
             host_control_record_outcome(&outcome, HostControlPeerFailed);
             break;
         }
+        if (feature_count != 0 && ready && !draining && feature_ops != NULL &&
+                feature_ops->on_fds != NULL && work.state != InteropLinuxSocketTransportClosed) {
+            bool any_ready = false;
+            for (size_t index = 0; index < feature_count; ++index)
+                if (descriptors[feature_base + index].revents != 0) any_ready = true;
+            if (any_ready) {
+                int fds_status = host_feature_call_fds(feature_ops,
+                    &descriptors[feature_base], feature_count, now_ms, &sender);
+                host_feature_observe_drain(&sender, &outcome, &draining);
+                if (fds_status != 0 && !host_control_fail_and_drain(&outcome,
+                        HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                    break;
+            }
+        }
         if (work.event.kind == InteropPeerEventValidateMapping) {
             interop_host_control_result_t mapping_result = host_control_report_mapping(out_owners->mapping_owner,
                 socket_owner, token, &work.event, now_ms, &view, &snapshot,
@@ -486,7 +755,8 @@ interop_host_control_result_t interop_host_control_run(
                 else break;
             }
         } else if (work.event.kind == InteropPeerEventReady) {
-            if (work.event.capabilities != 0 || !view_published) {
+            uint64_t offered = feature_ops == NULL ? 0 : feature_ops->local_capabilities;
+            if ((work.event.capabilities & ~offered) != 0 || !view_published) {
                 host_control_record_outcome(&outcome, HostControlPeerFailed);
                 if (host_control_begin_drain(socket_owner, token, now_ms) ==
                     HostControlSuccess) draining = true;
@@ -496,18 +766,47 @@ interop_host_control_result_t interop_host_control_run(
                 last_heartbeat = snapshot.host_heartbeat;
                 next_heartbeat_ms = now_ms > UINT64_MAX - HostControlHeartbeatMs
                     ? UINT64_MAX : now_ms + HostControlHeartbeatMs;
+                if (feature_ops != NULL) {
+                    int ready_status = host_feature_call_ready(feature_ops,
+                        work.event.capabilities, now_ms, &sender);
+                    host_feature_observe_drain(&sender, &outcome, &draining);
+                    if (ready_status != 0 && !host_control_fail_and_drain(&outcome,
+                            HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                        break;
+                }
             }
         } else if (work.event.kind == InteropPeerEventFeatureFrame) {
-            if (outcome == HostControlSuccess)
-                host_control_record_outcome(&outcome, HostControlUnexpectedFeature);
-            if (!draining && host_control_begin_drain(socket_owner, token, now_ms) ==
-                    HostControlSuccess) draining = true;
-            else if (!draining) break;
+            if (feature_ops == NULL || feature_ops->on_frame == NULL || !ready || draining) {
+                if (outcome == HostControlSuccess)
+                    host_control_record_outcome(&outcome, HostControlUnexpectedFeature);
+                if (!draining && host_control_begin_drain(socket_owner, token, now_ms) ==
+                        HostControlSuccess) draining = true;
+                else if (!draining) break;
+            } else {
+                int frame_status = host_feature_call_frame(feature_ops,
+                    work.event.message_type, work.event.request_id, frame,
+                    work.event.copied_bytes, now_ms, &sender);
+                host_feature_observe_drain(&sender, &outcome, &draining);
+                if (frame_status != 0 && !host_control_fail_and_drain(&outcome,
+                        HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                    break;
+            }
         } else if (work.event.kind == InteropPeerEventError ||
                    work.event.kind == InteropPeerEventDraining) {
-            if (!draining) draining = true;
-            host_control_record_outcome(&outcome, HostControlPeerFailed);
+            /* A refused unnegotiated feature frame is still an unexpected feature here. */
+            if (work.event.kind == InteropPeerEventDraining &&
+                    work.event.error_code == InteropErrorUnsupportedType)
+                host_control_record_outcome(&outcome, HostControlUnexpectedFeature);
+            else
+                host_control_record_outcome(&outcome, HostControlPeerFailed);
+            /* A remote Error can leave the peer Ready, so the drain starts here. */
+            if (!draining) {
+                if (host_control_begin_drain(socket_owner, token, now_ms) == HostControlSuccess)
+                    draining = true;
+                else break;
+            }
         }
+        host_feature_observe_drain(&sender, &outcome, &draining);
         if (work.state == InteropLinuxSocketTransportClosed) {
             if (!draining) host_control_record_outcome(&outcome, HostControlPeerFailed);
             break;
@@ -515,6 +814,7 @@ interop_host_control_result_t interop_host_control_run(
     }
 
 cleanup:
+    host_feature_close_once(feature_ops, &sender, &closing_notified, now_ms, outcome);
     if (view_published) {
         /* The pump is synchronous and no other thread ever receives this view. */
         view_published = false;
