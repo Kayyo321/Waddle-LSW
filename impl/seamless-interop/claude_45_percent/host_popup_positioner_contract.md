@@ -102,11 +102,13 @@ No logical extent check applies to `restore`; only the overflow checks do.
 The `PopupRepositioned` consumer reads `x` and `y` only. The width and height
 results are informational.
 
-## Overflow decision
+## Scaling decision
 
-Multiplying `width` and `height` as well as `x` and `y` is the stricter reading
-of "multiply by scale with overflow checks". It removes a case in which the
-guest receives a size that would silently wrap.
+`restore` scales all four fields: `x`, `y`, `width` and `height`. The lead
+confirmed this reading of section 8.44, whose text names only `x` and `y`. It is
+the stricter choice, because the guest never receives a size that wrapped. Each
+field has its own overflow check. The `PopupRepositioned` consumer still reads
+only `x` and `y`.
 
 ## Errors and status
 
