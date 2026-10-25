@@ -35,7 +35,7 @@ pub const ExitNotFound: u8 = 127;
 pub const open_error_t = enum(u32) {
     /// Success; the request output is valid.
     None = 0,
-    /// C ABI NULL or aliasing pointer, a caller defect. Maps to 125.
+    /// C ABI NULL output, options or argv pointer, a caller defect. Maps to 125.
     InvalidArgument = 1,
     /// Token beginning with `-` that is not a recognized option.
     UnknownOption = 2,
@@ -77,6 +77,12 @@ pub const open_error_t = enum(u32) {
     GuestUnreachable = 20,
     /// Caller-reported: guest reported a launch failure (exit 1).
     GuestLaunchFailed = 21,
+    /// Usage: more than one DelegateExec item, or DelegateExec mixed with sent items.
+    /// Depends on classification, so it is reported after the read callback has run.
+    DelegateConflict = 22,
+    /// Usage: a PATH, the EXE token or an argument-tail token is not valid UTF-8.
+    /// The codec requires UTF-8 for TargetPath and Arguments, so the request could not be sent.
+    InvalidUtf8 = 23,
 };
 
 /// Launch item kind before path translation. Unused is the zero value of empty slots.
@@ -113,8 +119,15 @@ pub const item_kind_t = enum(u32) {
     }
 };
 
+/// Callback status: the prefix was read.
+pub const ReadStatusOk: c_int = 0;
+/// Callback status: the path does not exist (parser reports NotFound, exit 127).
+pub const ReadStatusNotFound: c_int = 1;
+
 /// Read callback: fills up to `capacity` leading bytes of one path and reports the count.
-/// Returns 0 on success, nonzero on read failure. The callee must not retain pointers.
+/// Returns ReadStatusOk on success, ReadStatusNotFound when the path is missing, and any
+/// other nonzero value when the file exists but cannot be read (exit 126). The callee must
+/// not retain pointers.
 pub const read_prefix_fn_t = *const fn (?*anyopaque, [*]const u8, usize, [*]u8, usize, *usize) callconv(.C) c_int;
 
 /// Caller-supplied options; borrowed for the duration of one parse call.
@@ -229,6 +242,8 @@ pub fn exit_code_for_error(err: open_error_t) u8 {
         .TooManyArgs,
         .ArgumentTooLong,
         .QuotedArgumentsTooLong,
+        .DelegateConflict,
+        .InvalidUtf8,
         => ExitUsage,
         .ImageUnreadable, .OutsideShare => ExitNotExecutable,
         .NotFound => ExitNotFound,
@@ -312,43 +327,55 @@ fn error_code(err: open_error_t) c_int {
     return @intCast(@intFromEnum(err));
 }
 
-const scan_state_t = struct {
+/// Result of the grammar pass: borrowed argv indices and flags. Filled without any I/O.
+const plan_t = struct {
+    app: ?[]const u8 = null,
     device: ?[]const u8 = null,
     wait: bool = false,
     new_console: bool = false,
-    app: ?[]const u8 = null,
-    paths: bool = false,
-    item_count: usize = 0,
+    path_indices: [MaxItems]usize = undefined,
+    path_count: usize = 0,
+    exe_index: ?usize = null,
+    tail_first: usize = 0,
+    tail_count: usize = 0,
 };
 
 fn parse_tokens(args: []const []const u8, options: *const options_t, result: *request_t) open_error_t {
+    var plan = plan_t{};
+    const grammar = plan_tokens(args, &plan);
+    if (grammar != .None) return grammar;
+    return classify_plan(args, options, &plan, result);
+}
+
+/// Pass one: every usage and bounds decision over the whole argv. Performs no
+/// classification and never calls the read callback.
+fn plan_tokens(args: []const []const u8, plan: *plan_t) open_error_t {
     if (args.len > MaxArgs) return .TooManyArgs;
     for (args) |arg| if (arg.len > MaxArgBytes) return .ArgumentTooLong;
     if (args.len == 0) return .MissingTarget;
-    var scan = scan_state_t{};
     var index: usize = 0;
     while (index < args.len) {
         const token = args[index];
         if (eql(token, "--")) {
-            if (scan.app != null or scan.paths) return .MixedTargets;
-            return parse_exe(args, index + 1, options, result, &scan);
+            if (plan.app != null or plan.path_count > 0) return .MixedTargets;
+            return plan_exe(args, index + 1, plan);
         } else if (eql(token, "--app")) {
-            if (scan.paths) return .MixedTargets;
-            if (scan.app != null) return .DuplicateOption;
+            if (plan.path_count > 0) return .MixedTargets;
+            if (plan.app != null) return .DuplicateOption;
             const value = value_at(args, index + 1) orelse return .MissingOptionValue;
             if (!app_key_valid(value)) return .InvalidAppKey;
-            scan.app = value;
+            plan.app = value;
             index += 2;
         } else if (eql(token, "--device") or eql(token, "-d")) {
-            if (scan.paths) return .OptionAfterTarget;
-            if (scan.device != null) return .DuplicateOption;
+            if (plan.app != null or plan.path_count > 0) return .OptionAfterTarget;
+            if (plan.device != null) return .DuplicateOption;
             const value = value_at(args, index + 1) orelse return .MissingOptionValue;
             if (!device_valid(value)) return .InvalidDevice;
-            scan.device = value;
+            plan.device = value;
             index += 2;
         } else if (eql(token, "--wait") or eql(token, "--new-console")) {
-            if (scan.paths) return .OptionAfterTarget;
-            const flag = if (eql(token, "--wait")) &scan.wait else &scan.new_console;
+            if (plan.app != null or plan.path_count > 0) return .OptionAfterTarget;
+            const flag = if (eql(token, "--wait")) &plan.wait else &plan.new_console;
             if (flag.*) return .DuplicateOption;
             flag.* = true;
             index += 1;
@@ -356,52 +383,64 @@ fn parse_tokens(args: []const []const u8, options: *const options_t, result: *re
             return .UnknownOption;
         } else {
             if (token.len == 0) return .EmptyPath;
-            if (scan.app != null) return .MixedTargets;
-            var kind: item_kind_t = .Unused;
-            var image: pe_header.image_kind_t = .Gui;
-            const status = route_path(token, options, scan.new_console, &kind, &image);
-            if (status != .None) return status;
-            result.items[scan.item_count] = .{ .kind = kind, .image = image, .text = token.ptr, .text_length = token.len, .argument_first = 0, .argument_count = 0 };
-            scan.item_count += 1;
-            scan.paths = true;
+            if (plan.app != null) return .MixedTargets;
+            if (!std.unicode.utf8ValidateSlice(token)) return .InvalidUtf8;
+            plan.path_indices[plan.path_count] = index;
+            plan.path_count += 1;
             index += 1;
         }
     }
-    if (scan.app) |key| {
-        result.items[0] = .{ .kind = .App, .image = .Gui, .text = key.ptr, .text_length = key.len, .argument_first = 0, .argument_count = 0 };
-        scan.item_count = 1;
-    } else if (!scan.paths) return .MissingTarget;
-    return finish(result, &scan);
+    if (plan.app == null and plan.path_count == 0) return .MissingTarget;
+    return .None;
 }
 
-fn parse_exe(args: []const []const u8, exe_index: usize, options: *const options_t, result: *request_t, scan: *scan_state_t) open_error_t {
+fn plan_exe(args: []const []const u8, exe_index: usize, plan: *plan_t) open_error_t {
     if (exe_index >= args.len) return .EmptyExecutable;
     const exe = args[exe_index];
     if (exe.len == 0) return .EmptyExecutable;
     if (!is_exe_path(exe)) return .ExecutableNotExe;
+    if (!std.unicode.utf8ValidateSlice(exe)) return .InvalidUtf8;
     const tail = args[exe_index + 1 ..];
+    for (tail) |arg| if (!std.unicode.utf8ValidateSlice(arg)) return .InvalidUtf8;
     _ = quoted_length(tail) catch return .QuotedArgumentsTooLong;
-    var kind: item_kind_t = .Unused;
-    var image: pe_header.image_kind_t = .Gui;
-    const status = route_exe(exe, options, scan.new_console, .ExeWithArgs, &kind, &image);
-    if (status != .None) return status;
-    result.items[0] = .{
-        .kind = kind,
-        .image = image,
-        .text = exe.ptr,
-        .text_length = exe.len,
-        .argument_first = if (tail.len == 0) 0 else exe_index + 1,
-        .argument_count = tail.len,
-    };
-    scan.item_count = 1;
-    return finish(result, scan);
+    plan.exe_index = exe_index;
+    plan.tail_first = if (tail.len == 0) 0 else exe_index + 1;
+    plan.tail_count = tail.len;
+    return .None;
 }
 
-fn finish(result: *request_t, scan: *const scan_state_t) open_error_t {
-    result.item_count = scan.item_count;
-    result.wait = @intFromBool(scan.wait);
-    result.new_console = @intFromBool(scan.new_console);
-    if (scan.device) |device| {
+/// Pass two: classify the planned items. The only place the read callback runs.
+fn classify_plan(args: []const []const u8, options: *const options_t, plan: *const plan_t, result: *request_t) open_error_t {
+    var count: usize = 0;
+    if (plan.app) |key| {
+        result.items[0] = .{ .kind = .App, .image = .Gui, .text = key.ptr, .text_length = key.len, .argument_first = 0, .argument_count = 0 };
+        count = 1;
+    } else if (plan.exe_index) |exe_index| {
+        const exe = args[exe_index];
+        var kind: item_kind_t = .Unused;
+        var image: pe_header.image_kind_t = .Gui;
+        const status = route_exe(exe, options, plan.new_console, .ExeWithArgs, &kind, &image);
+        if (status != .None) return status;
+        result.items[0] = .{ .kind = kind, .image = image, .text = exe.ptr, .text_length = exe.len, .argument_first = plan.tail_first, .argument_count = plan.tail_count };
+        count = 1;
+    } else {
+        for (plan.path_indices[0..plan.path_count]) |index| {
+            const token = args[index];
+            var kind: item_kind_t = .Unused;
+            var image: pe_header.image_kind_t = .Gui;
+            const status = route_path(token, options, plan.new_console, &kind, &image);
+            if (status != .None) return status;
+            result.items[count] = .{ .kind = kind, .image = image, .text = token.ptr, .text_length = token.len, .argument_first = 0, .argument_count = 0 };
+            count += 1;
+        }
+    }
+    var delegated: usize = 0;
+    for (result.items[0..count]) |item| delegated += @intFromBool(item.kind == .DelegateExec);
+    if (delegated > 1 or (delegated == 1 and count > 1)) return .DelegateConflict;
+    result.item_count = count;
+    result.wait = @intFromBool(plan.wait);
+    result.new_console = @intFromBool(plan.new_console);
+    if (plan.device) |device| {
         result.device = device.ptr;
         result.device_length = device.len;
     }
@@ -426,7 +465,8 @@ fn route_path(path: []const u8, options: *const options_t, new_console: bool, ki
 fn route_exe(path: []const u8, options: *const options_t, new_console: bool, gui_kind: item_kind_t, kind: *item_kind_t, image: *pe_header.image_kind_t) open_error_t {
     var prefix: [PrefixBytes]u8 = undefined;
     var length: usize = 0;
-    if (!read_header(path, options, &prefix, &length)) return .ImageUnreadable;
+    const read_status = read_header(path, options, &prefix, &length);
+    if (read_status != .None) return read_status;
     image.* = pe_header.classify(prefix[0..length]);
     if (image.* == .Gui) {
         kind.* = gui_kind;
@@ -438,20 +478,23 @@ fn route_exe(path: []const u8, options: *const options_t, new_console: bool, gui
     return .None;
 }
 
-fn read_header(path: []const u8, options: *const options_t, buffer: *[PrefixBytes]u8, length: *usize) bool {
-    const reader = options.read_prefix orelse return false;
+fn read_header(path: []const u8, options: *const options_t, buffer: *[PrefixBytes]u8, length: *usize) open_error_t {
+    const reader = options.read_prefix orelse return .ImageUnreadable;
     var reported: usize = 0;
-    if (reader(options.read_context, path.ptr, path.len, buffer, PrefixBytes, &reported) != 0) return false;
-    if (reported > PrefixBytes) return false;
+    const status = reader(options.read_context, path.ptr, path.len, buffer, PrefixBytes, &reported);
+    if (status == ReadStatusNotFound) return .NotFound;
+    if (status != ReadStatusOk) return .ImageUnreadable;
+    if (reported > PrefixBytes) return .ImageUnreadable;
     length.* = reported;
-    return true;
+    return .None;
 }
 
+/// An option value is always the next token, whatever its spelling. Its own
+/// validator (device name or app key) decides whether it is acceptable. A
+/// missing next token is MissingOptionValue.
 fn value_at(args: []const []const u8, index: usize) ?[]const u8 {
     if (index >= args.len) return null;
-    const value = args[index];
-    if (value.len != 0 and value[0] == '-') return null;
-    return value;
+    return args[index];
 }
 
 fn device_valid(value: []const u8) bool {
@@ -641,7 +684,7 @@ test "grammar: app target with device and flags in every legal order" {
     const forms = [_]form_t{
         .{ .args = &.{ "--app", "a-Microsoft_Notepad" }, .key = "a-Microsoft_Notepad" },
         .{ .args = &.{ "-d", "dev-1", "--wait", "--new-console", "--app", "p-x" }, .key = "p-x" },
-        .{ .args = &.{ "--device", "dev_2", "--app", "a-x", "--wait" }, .key = "a-x" },
+        .{ .args = &.{ "--device", "dev_2", "--wait", "--app", "a-x" }, .key = "a-x" },
         .{ .args = &.{ "--new-console", "--wait", "-d", "d", "--app", "a-Q" }, .key = "a-Q" },
     };
     for (forms) |form| {
@@ -729,9 +772,9 @@ test "usage errors each report their first triggering token" {
         .{ .args = &.{ "--wait", "--wait", "--app", "a-x" }, .expected = .DuplicateOption },
         .{ .args = &.{ "--new-console", "--new-console", "a.txt" }, .expected = .DuplicateOption },
         .{ .args = &.{"--app"}, .expected = .MissingOptionValue },
-        .{ .args = &.{ "--app", "--wait" }, .expected = .MissingOptionValue },
+        .{ .args = &.{ "--app", "--wait" }, .expected = .InvalidAppKey },
         .{ .args = &.{"-d"}, .expected = .MissingOptionValue },
-        .{ .args = &.{ "-d", "-x", "--app", "a-x" }, .expected = .MissingOptionValue },
+        .{ .args = &.{ "--wait", "-d" }, .expected = .MissingOptionValue },
         .{ .args = &.{ "--app", "" }, .expected = .InvalidAppKey },
         .{ .args = &.{ "--app", "a" }, .expected = .InvalidAppKey },
         .{ .args = &.{ "--app", "ax-y" }, .expected = .InvalidAppKey },
@@ -924,6 +967,8 @@ test "exit tables cover every error value and LaunchResult status" {
         .{ .err = .LocalFailure, .code = 125 },
         .{ .err = .GuestUnreachable, .code = 125 },
         .{ .err = .GuestLaunchFailed, .code = 1 },
+        .{ .err = .DelegateConflict, .code = 2 },
+        .{ .err = .InvalidUtf8, .code = 2 },
     };
     for (expected) |case| {
         try testing.expectEqual(case.code, exit_code_for_error(case.err));
@@ -1009,37 +1054,208 @@ test "quoting round trips through the Win32 decoder over seeded random arguments
     }
 }
 
-test "seeded random token streams keep the output contract on every outcome" {
-    var prng = std.Random.DefaultPrng.init(0x7061727365);
-    const random = prng.random();
-    const tokens = [_][]const u8{ "--app", "--device", "-d", "--wait", "--new-console", "--", "a.txt", "b.exe", "c.msi", "d.lnk", "a-app", "dev", "", "-x", "x.EXE", "p-q_1" };
-    var pe_buffer: [256]u8 = undefined;
-    const gui = pe_image(&pe_buffer, 2);
-    const entries = [_]fake_entry_t{ .{ .path = "b.exe", .bytes = gui }, .{ .path = "x.EXE", .bytes = gui } };
-    var fake = fake_reader_t{ .entries = &entries };
-    var succeeded: usize = 0;
-    for (0..20000) |_| {
-        var stream: [8][]const u8 = undefined;
-        const count = 1 + random.uintLessThan(usize, stream.len);
-        for (0..count) |index| stream[index] = tokens[random.uintLessThan(usize, tokens.len)];
-        var out = std.mem.zeroes(request_t);
-        const status = run(stream[0..count], &fake, random.uintLessThan(u32, 2), &out);
-        if (status != .None) {
-            try testing.expectEqual(@as(usize, 0), out.item_count);
-            try testing.expect(out.device == null);
-            continue;
-        }
-        succeeded += 1;
-        try testing.expect(out.item_count >= 1 and out.item_count <= MaxItems);
-        for (0..out.item_count) |index| {
-            const text = out.item_text(index);
-            var found = false;
-            for (stream[0..count]) |token| found = found or (token.ptr == text.ptr and token.len == text.len);
-            try testing.expect(found);
-            try testing.expect(out.items[index].kind != .Unused);
+/// Prediction of one parse: the status, the item kinds in argv order, and the number of
+/// read-callback invocations before the outcome. Written as one token walk with explicit
+/// state, independent of plan_tokens and classify_plan.
+const predicted_t = struct {
+    status: open_error_t = .None,
+    count: usize = 0,
+    kinds: [8]item_kind_t = [_]item_kind_t{.Unused} ** 8,
+    calls: usize = 0,
+};
+
+/// Reader table used by both the fake callback and the reference: returns the callback status
+/// and the PE subsystem (2 GUI, 3 CUI) for the names the random streams can produce.
+fn reference_reader(name: []const u8) struct { status: c_int, subsystem: u16 } {
+    if (std.mem.eql(u8, name, "g.exe")) return .{ .status = 0, .subsystem = 2 };
+    if (std.mem.eql(u8, name, "c.exe") or std.mem.eql(u8, name, "c2.exe")) return .{ .status = 0, .subsystem = 3 };
+    if (std.mem.eql(u8, name, "missing.exe")) return .{ .status = 1, .subsystem = 0 };
+    if (std.mem.eql(u8, name, "locked.exe")) return .{ .status = 5, .subsystem = 0 };
+    return .{ .status = 2, .subsystem = 0 };
+}
+
+fn reference_device_ok(name: []const u8) bool {
+    if (name.len == 0 or name.len > 63) return false;
+    for (name) |c| {
+        const letter = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9');
+        if (!(letter or c == '-' or c == '_')) return false;
+    }
+    return true;
+}
+
+fn reference_app_ok(name: []const u8) bool {
+    if (name.len < 3 or name.len > 200) return false;
+    if (name[0] != 'a' and name[0] != 'p') return false;
+    if (name[1] != '-') return false;
+    for (name) |c| {
+        const letter = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9');
+        if (!(letter or c == '-' or c == '_')) return false;
+    }
+    return true;
+}
+
+fn predict(tokens: []const []const u8, tty: bool) predicted_t {
+    var out = predicted_t{};
+    if (tokens.len == 0) {
+        out.status = .MissingTarget;
+        return out;
+    }
+    var has_app = false;
+    var has_device = false;
+    var has_wait = false;
+    var has_new_console = false;
+    var paths: [8][]const u8 = undefined;
+    var path_count: usize = 0;
+    var exe_form: ?[]const u8 = null;
+    var index: usize = 0;
+    while (index < tokens.len) : (index += 1) {
+        const token = tokens[index];
+        if (std.mem.eql(u8, token, "--")) {
+            if (has_app or path_count > 0) return fail(out, .MixedTargets);
+            if (index + 1 >= tokens.len or tokens[index + 1].len == 0) return fail(out, .EmptyExecutable);
+            const exe = tokens[index + 1];
+            if (!std.ascii.endsWithIgnoreCase(exe, ".exe")) return fail(out, .ExecutableNotExe);
+            if (!std.unicode.utf8ValidateSlice(exe)) return fail(out, .InvalidUtf8);
+            for (tokens[index + 2 ..]) |arg| {
+                if (!std.unicode.utf8ValidateSlice(arg)) return fail(out, .InvalidUtf8);
+            }
+            exe_form = exe;
+            break;
+        } else if (std.mem.eql(u8, token, "--app")) {
+            if (path_count > 0) return fail(out, .MixedTargets);
+            if (has_app) return fail(out, .DuplicateOption);
+            if (index + 1 >= tokens.len) return fail(out, .MissingOptionValue);
+            if (!reference_app_ok(tokens[index + 1])) return fail(out, .InvalidAppKey);
+            has_app = true;
+            index += 1;
+        } else if (std.mem.eql(u8, token, "--device") or std.mem.eql(u8, token, "-d")) {
+            if (has_app or path_count > 0) return fail(out, .OptionAfterTarget);
+            if (has_device) return fail(out, .DuplicateOption);
+            if (index + 1 >= tokens.len) return fail(out, .MissingOptionValue);
+            if (!reference_device_ok(tokens[index + 1])) return fail(out, .InvalidDevice);
+            has_device = true;
+            index += 1;
+        } else if (std.mem.eql(u8, token, "--wait") or std.mem.eql(u8, token, "--new-console")) {
+            if (has_app or path_count > 0) return fail(out, .OptionAfterTarget);
+            const seen = if (std.mem.eql(u8, token, "--wait")) &has_wait else &has_new_console;
+            if (seen.*) return fail(out, .DuplicateOption);
+            seen.* = true;
+        } else if (token.len > 0 and token[0] == '-') {
+            return fail(out, .UnknownOption);
+        } else {
+            if (token.len == 0) return fail(out, .EmptyPath);
+            if (has_app) return fail(out, .MixedTargets);
+            if (!std.unicode.utf8ValidateSlice(token)) return fail(out, .InvalidUtf8);
+            paths[path_count] = token;
+            path_count += 1;
         }
     }
-    try testing.expect(succeeded > 0);
+    if (!has_app and path_count == 0 and exe_form == null) return fail(out, .MissingTarget);
+
+    // Classification, in argv order; the first failure stops the walk.
+    const new_console = has_new_console;
+    var delegated: usize = 0;
+    if (has_app) {
+        out.kinds[0] = .App;
+        out.count = 1;
+    } else if (exe_form) |exe| {
+        const item = classify_reference(exe, true, tty, new_console, &out) orelse return out;
+        out.kinds[0] = item;
+        out.count = 1;
+    } else {
+        for (paths[0..path_count]) |path| {
+            const item = classify_reference(path, false, tty, new_console, &out) orelse return out;
+            out.kinds[out.count] = item;
+            out.count += 1;
+        }
+    }
+    for (out.kinds[0..out.count]) |kind| delegated += @intFromBool(kind == .DelegateExec);
+    if (delegated > 1 or (delegated == 1 and out.count > 1)) return fail(out, .DelegateConflict);
+    return out;
+}
+
+fn fail(out: predicted_t, status: open_error_t) predicted_t {
+    var result = out;
+    result.status = status;
+    result.count = 0;
+    return result;
+}
+
+/// Kind of one target, or null after recording a classification failure in out.
+fn classify_reference(name: []const u8, exe_form: bool, tty: bool, new_console: bool, out: *predicted_t) ?item_kind_t {
+    if (std.ascii.endsWithIgnoreCase(name, ".msi")) return .Installer;
+    if (std.ascii.endsWithIgnoreCase(name, ".lnk")) return .Shortcut;
+    if (!std.ascii.endsWithIgnoreCase(name, ".exe")) return .Path;
+    out.calls += 1;
+    const reader = reference_reader(name);
+    if (reader.status == 1) {
+    out.status = .NotFound;
+    out.count = 0;
+    return null;
+    }
+    if (reader.status != 0) {
+        out.status = .ImageUnreadable;
+        out.count = 0;
+        return null;
+    }
+    if (reader.subsystem == 2) return if (exe_form) .ExeWithArgs else .Path;
+    if (tty and !new_console) return .DelegateExec;
+    return .Console;
+}
+
+test "seeded random argv streams match the reference model in status, kinds and callbacks" {
+    var prng = std.Random.DefaultPrng.init(0x6f70656e5f726571);
+    const random = prng.random();
+    const tokens = [_][]const u8{
+        "--app", "a-x", "p-q_1", "dev", "--device", "-d", "-dev", "--wait", "--new-console",
+        "--", "g.exe", "c.exe", "c2.exe", "missing.exe", "locked.exe", "x.msi", "y.lnk",
+        "notes.txt", "./-z", "-bad", "", "\xff", "bad name", "EXE-z.EXE", "--wait",
+    };
+    var pe_gui_buffer: [256]u8 = undefined;
+    var pe_cui_buffer: [256]u8 = undefined;
+    const gui = pe_image(&pe_gui_buffer, 2);
+    const cui = pe_image(&pe_cui_buffer, 3);
+    const entries = [_]fake_entry_t{
+        .{ .path = "g.exe", .bytes = gui },
+        .{ .path = "c.exe", .bytes = cui },
+        .{ .path = "c2.exe", .bytes = cui },
+        .{ .path = "missing.exe", .status = 1 },
+        .{ .path = "locked.exe", .status = 5 },
+    };
+    var fake = fake_reader_t{ .entries = &entries };
+    var seen_status = [_]usize{0} ** 32;
+    var successes: usize = 0;
+    var delegated_successes: usize = 0;
+    for (0..30000) |_| {
+        var stream: [6][]const u8 = undefined;
+        const count = 1 + random.uintLessThan(usize, stream.len);
+        for (0..count) |index| stream[index] = tokens[random.uintLessThan(usize, tokens.len)];
+        const tty = random.uintLessThan(u32, 2);
+        fake.calls = 0;
+        var out = std.mem.zeroes(request_t);
+        const actual = run(stream[0..count], &fake, tty, &out);
+        const expected = predict(stream[0..count], tty == 1);
+        seen_status[@intCast(@intFromEnum(actual))] += 1;
+        testing.expectEqual(expected.status, actual) catch |err| {
+            std.debug.print("argv count {d} tty {d}\n", .{ count, tty });
+            return err;
+        };
+        try testing.expectEqual(expected.calls, fake.calls);
+        if (actual != .None) {
+            try testing.expectEqual(@as(usize, 0), out.item_count);
+            continue;
+        }
+        successes += 1;
+        try testing.expectEqual(expected.count, out.item_count);
+        for (0..out.item_count) |index| try testing.expectEqual(expected.kinds[index], out.items[index].kind);
+        if (expected.count == 1 and expected.kinds[0] == .DelegateExec) delegated_successes += 1;
+    }
+    try testing.expect(successes > 1000);
+    try testing.expect(delegated_successes > 0);
+    try testing.expect(seen_status[@intFromEnum(open_error_t.NotFound)] > 0);
+    try testing.expect(seen_status[@intFromEnum(open_error_t.ImageUnreadable)] > 0);
+    try testing.expect(seen_status[@intFromEnum(open_error_t.DelegateConflict)] > 0);
+    try testing.expect(seen_status[@intFromEnum(open_error_t.InvalidUtf8)] > 0);
 }
 
 test "C ABI parse maps NULL, count and argument-length conditions" {
@@ -1130,4 +1346,124 @@ test "extern layouts match open_request.h byte for byte" {
     try testing.expectEqual(@as(usize, 24), @offsetOf(request_t, "device_length"));
     try testing.expectEqual(@as(usize, 8), @offsetOf(options_t, "read_context"));
     try testing.expectEqual(@as(usize, 16), @offsetOf(options_t, "stdio_is_tty"));
+}
+
+test "callback status 1 is NotFound (127) and other nonzero statuses are unreadable (126)" {
+    const entries = [_]fake_entry_t{ .{ .path = "missing.exe", .status = 1 }, .{ .path = "locked.exe", .status = 5 } };
+    var fake = fake_reader_t{ .entries = &entries };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.NotFound, run(&.{"missing.exe"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.NotFound, run(&.{ "--", "missing.exe", "a" }, &fake, 0, &out));
+    try testing.expectEqual(ExitNotFound, exit_code_for_error(.NotFound));
+    try testing.expectEqual(@as(usize, 0), out.item_count);
+    try testing.expectEqual(open_error_t.ImageUnreadable, run(&.{"locked.exe"}, &fake, 0, &out));
+    try testing.expectEqual(ExitNotExecutable, exit_code_for_error(.ImageUnreadable));
+}
+
+test "usage errors win over classification: an invalid argv never invokes the callback" {
+    const gui = pe_image_fixture();
+    const entries = [_]fake_entry_t{
+        .{ .path = "missing.exe", .status = 1 },
+        .{ .path = "g.exe", .bytes = &gui },
+        .{ .path = "h.exe", .bytes = &gui },
+    };
+    var fake = fake_reader_t{ .entries = &entries };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.OptionAfterTarget, run(&.{ "missing.exe", "--wait" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
+    try testing.expectEqual(open_error_t.UnknownOption, run(&.{ "g.exe", "--bogus" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
+    try testing.expectEqual(open_error_t.EmptyPath, run(&.{ "g.exe", "h.exe", "" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
+    try testing.expectEqual(@as(usize, 0), out.item_count);
+    try testing.expectEqual(open_error_t.None, run(&.{ "g.exe", "h.exe" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 2), fake.calls);
+}
+
+fn pe_image_fixture() [256]u8 {
+    var buffer: [256]u8 = undefined;
+    _ = pe_image(&buffer, 2);
+    return buffer;
+}
+
+test "option values are the next token and are checked by their own rule" {
+    var fake = fake_reader_t{ .entries = &.{} };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.None, run(&.{ "-d", "-dev", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "-dev", out.device.?[0..out.device_length]);
+    try testing.expectEqual(open_error_t.None, run(&.{ "--device", "-dev", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "-dev", out.device.?[0..out.device_length]);
+    try testing.expectEqual(open_error_t.None, run(&.{ "-d", "--wait", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "--wait", out.device.?[0..out.device_length]);
+    try testing.expectEqual(@as(u32, 0), out.wait);
+    try testing.expectEqual(open_error_t.InvalidAppKey, run(&.{ "--app", "--wait" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.InvalidDevice, run(&.{ "-d", "", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{"-d"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{"--device"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{ "--wait", "--app" }, &fake, 0, &out));
+}
+
+test "flags may precede the target in any order; options after --app are usage errors" {
+    var fake = fake_reader_t{ .entries = &.{} };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.None, run(&.{ "--wait", "--new-console", "-d", "dev", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.None, run(&.{ "--new-console", "--device", "dev", "--wait", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.OptionAfterTarget, run(&.{ "--app", "a-x", "--wait" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.OptionAfterTarget, run(&.{ "--app", "a-x", "-d", "dev" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.OptionAfterTarget, run(&.{ "--app", "a-x", "--new-console" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.DuplicateOption, run(&.{ "--app", "a-x", "--app", "a-y" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.MixedTargets, run(&.{ "--app", "a-x", "a.txt" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), out.item_count);
+}
+
+test "DelegateExec must be the only item: two delegated executables or a mix are usage errors" {
+    var pe_cui: [256]u8 = undefined;
+    const cui = pe_image(&pe_cui, 3);
+    const entries = [_]fake_entry_t{
+        .{ .path = "c1.exe", .bytes = cui },
+        .{ .path = "c2.exe", .bytes = cui },
+    };
+    var fake = fake_reader_t{ .entries = &entries };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.DelegateConflict, run(&.{ "c1.exe", "c2.exe" }, &fake, 1, &out));
+    try testing.expectEqual(open_error_t.DelegateConflict, run(&.{ "c1.exe", "notes.txt" }, &fake, 1, &out));
+    try testing.expectEqual(open_error_t.DelegateConflict, run(&.{ "notes.txt", "c1.exe" }, &fake, 1, &out));
+    try testing.expectEqual(@as(usize, 0), out.item_count);
+    try testing.expectEqual(ExitUsage, exit_code_for_error(.DelegateConflict));
+    try testing.expectEqual(open_error_t.None, run(&.{ "c1.exe", "c2.exe" }, &fake, 0, &out));
+    try testing.expectEqual(item_kind_t.Console, out.items[1].kind);
+    try testing.expectEqual(open_error_t.None, run(&.{ "--new-console", "c1.exe", "c2.exe" }, &fake, 1, &out));
+    try testing.expectEqual(open_error_t.None, run(&.{ "c1.exe" }, &fake, 1, &out));
+    try testing.expectEqual(item_kind_t.DelegateExec, out.items[0].kind);
+    try testing.expectEqual(open_error_t.None, run(&.{ "--", "c1.exe", "x" }, &fake, 1, &out));
+    try testing.expectEqual(item_kind_t.DelegateExec, out.items[0].kind);
+}
+
+test "non-UTF-8 PATH, EXE or argument-tail bytes are usage errors before any callback" {
+    const gui = pe_image_fixture();
+    const entries = [_]fake_entry_t{.{ .path = "g.exe", .bytes = &gui }};
+    var fake = fake_reader_t{ .entries = &entries };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.InvalidUtf8, run(&.{"\xff.txt"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.InvalidUtf8, run(&.{ "g.exe", "\xc3" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.InvalidUtf8, run(&.{ "--", "\xffx.exe" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.InvalidUtf8, run(&.{ "--", "g.exe", "ok", "\xed\xa0\x80" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
+    try testing.expectEqual(@as(usize, 0), out.item_count);
+    try testing.expectEqual(ExitUsage, exit_code_for_error(.InvalidUtf8));
+    try testing.expectEqual(open_error_t.None, run(&.{"caf\xc3\xa9.txt"}, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "caf\xc3\xa9.txt", out.item_text(0));
+    try testing.expectEqual(open_error_t.None, run(&.{ "--", "g.exe", "\xc3\xa9t\xc3\xa9" }, &fake, 0, &out));
+}
+
+test "dash-prefixed targets: ./-x is a PATH, -x is UnknownOption, -- notes.txt is usage" {
+    var fake = fake_reader_t{ .entries = &.{} };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.None, run(&.{"./-x.txt"}, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "./-x.txt", out.item_text(0));
+    try testing.expectEqual(item_kind_t.Path, out.items[0].kind);
+    try testing.expectEqual(open_error_t.UnknownOption, run(&.{"-x.txt"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.ExecutableNotExe, run(&.{ "--", "notes.txt" }, &fake, 0, &out));
+    try testing.expectEqual(ExitUsage, exit_code_for_error(.ExecutableNotExe));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
 }
