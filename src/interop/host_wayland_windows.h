@@ -121,6 +121,7 @@ typedef struct host_wayland_record_t {
     struct xdg_surface *xdg_surface; /**< Owned xdg_surface, NULL when absent. */
     struct xdg_toplevel *toplevel; /**< Owned xdg_toplevel, NULL unless a toplevel role. */
     struct xdg_popup *popup; /**< Owned xdg_popup, NULL unless a popup role. */
+    struct xdg_positioner *positioner; /**< Owned positioner while the popup is being created; NULL afterwards. */
     struct zxdg_toplevel_decoration_v1 *decoration; /**< Owned decoration, NULL when absent or destroyed. */
     host_wayland_binding_t bindings[HostWaylandKindCount]; /**< Listener contexts, one per kind. */
 } host_wayland_record_t;

@@ -203,7 +203,7 @@ static void destroy_decoration(host_wayland_record_t *rec) {
  */
 static void on_surface_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial) {
     host_wayland_record_t *rec = resolve(data, xdg_surface);
-    if (rec == NULL) return;
+    if (rec == NULL || rec->dismissed) return;
     if (rec->decoration != NULL && rec->decoration_pending != 0) {
         rec->decoration_applied = rec->decoration_pending;
         rec->decoration_pending = 0;
@@ -284,6 +284,54 @@ static const struct zxdg_toplevel_decoration_v1_listener decoration_listener = {
     .configure = on_decoration_configure,
 };
 
+/* xdg_popup.configure: the compositor's position, converted to guest pixels (PopupRepositioned). A dismissed
+ * popup accepts no further configure. */
+static void on_popup_configure(void *data, struct xdg_popup *popup, int32_t x, int32_t y, int32_t width, int32_t height) {
+    (void)width;
+    (void)height;
+    host_wayland_record_t *rec = resolve(data, popup);
+    if (rec == NULL || rec->dismissed) return;
+    host_wayland_t *ctx = ((const host_wayland_binding_t *)data)->owner;
+    host_popup_rect_t guest;
+    guest.x = rec->guest_x;
+    guest.y = rec->guest_y;
+    guest.width = rec->guest_width;
+    guest.height = rec->guest_height;
+    host_popup_rect_t repositioned;
+    if (host_popup_positioner_reposition(&guest, rec->scale, &rec->request, x, y, &repositioned) != HostPopupOk) {
+        emit_error(ctx, 0x0103u, InteropErrorUnexpected, rec->window, rec->generation);
+        return;
+    }
+    if (ctx->config.callbacks.on_popup_repositioned) {
+        ctx->config.callbacks.on_popup_repositioned(ctx->config.callbacks.user, rec->window, rec->generation, repositioned.x, repositioned.y, repositioned.width, repositioned.height);
+    }
+}
+
+/* xdg_popup.popup_done: the compositor dismissed the popup. The window stays realized until retired. */
+static void on_popup_done(void *data, struct xdg_popup *popup) {
+    host_wayland_record_t *rec = resolve(data, popup);
+    if (rec == NULL || rec->dismissed) return;
+    host_wayland_t *ctx = ((const host_wayland_binding_t *)data)->owner;
+    host_window_ref_t id;
+    id.window = rec->window;
+    id.generation = rec->generation;
+    if (host_window_map_mark_dismissed(&ctx->map, id) != HostWindowMapDismissed) return;
+    rec->dismissed = 1;
+    if (ctx->config.callbacks.on_popup_dismissed) ctx->config.callbacks.on_popup_dismissed(ctx->config.callbacks.user, rec->window, rec->generation);
+}
+
+static void on_popup_repositioned(void *data, struct xdg_popup *popup, uint32_t token) {
+    (void)data;
+    (void)popup;
+    (void)token;
+}
+
+static const struct xdg_popup_listener popup_listener = {
+    .configure = on_popup_configure,
+    .popup_done = on_popup_done,
+    .repositioned = on_popup_repositioned,
+};
+
 /* ---- object lifetime --------------------------------------------------------------------------- */
 
 /**
@@ -297,11 +345,13 @@ static void destroy_record_objects(host_wayland_record_t *rec) {
     struct zxdg_toplevel_decoration_v1 *decoration = rec->decoration;
     struct xdg_toplevel *toplevel = rec->toplevel;
     struct xdg_popup *popup = rec->popup;
+    struct xdg_positioner *positioner = rec->positioner;
     struct xdg_surface *xdg_surface = rec->xdg_surface;
     struct wl_surface *surface = rec->surface;
     rec->decoration = NULL;
     rec->toplevel = NULL;
     rec->popup = NULL;
+    rec->positioner = NULL;
     rec->xdg_surface = NULL;
     rec->surface = NULL;
     rec->generation = 0;
@@ -309,6 +359,7 @@ static void destroy_record_objects(host_wayland_record_t *rec) {
     if (decoration) zxdg_toplevel_decoration_v1_destroy(decoration);
     if (toplevel) xdg_toplevel_destroy(toplevel);
     if (popup) xdg_popup_destroy(popup);
+    if (positioner) xdg_positioner_destroy(positioner);
     if (xdg_surface) xdg_surface_destroy(xdg_surface);
     if (surface) wl_surface_destroy(surface);
 }
@@ -421,6 +472,70 @@ static bool build_app_id(const host_wayland_t *ctx, const announce_t *req, char 
     return written > 0 && (size_t)written < capacity;
 }
 
+/* ---- popups (8.44, 3.6.2) -------------------------------------------------------------------- */
+
+/** @brief Window pair of the toplevel a popup chain belongs to: its ancestors followed until a non-popup. */
+static host_window_ref_t root_of(const host_wayland_t *ctx, host_window_ref_t id) {
+    for (unsigned step = 0; step <= HostWindowMapMaxRealized; ++step) {
+        host_window_entry_t entry;
+        if (!host_window_map_lookup(&ctx->map, id, &entry)) break;
+        if (!role_is_popup(entry.role)) return id;
+        id.window = entry.parent.window;
+        id.generation = entry.parent.generation;
+    }
+    return id;
+}
+
+/**
+ * @brief Grab for a Menu whose trigger press is live (3.6.2): same root family, not expired, and the protocol
+ * serial T matches. Other popups, and every stale, expired or unmatched trigger, are created ungrabbed.
+ */
+static void maybe_grab(host_wayland_t *ctx, host_wayland_record_t *rec, const announce_t *req, uint64_t now_ms) {
+    if (rec->role != ROLE_MENU || !req->has_serial) return;
+    host_wayland_press_t *press = press_find(ctx, req->serial, now_ms);
+    if (press == NULL || press->seat == NULL) return;
+    host_window_ref_t trigger_root = root_of(ctx, (host_window_ref_t){press->window, press->generation});
+    host_window_ref_t popup_root = root_of(ctx, (host_window_ref_t){req->parent, req->parent_generation});
+    if (trigger_root.window != popup_root.window || trigger_root.generation != popup_root.generation) return;
+    xdg_popup_grab(rec->popup, press->seat, press->wayland_serial);
+}
+
+/**
+ * @brief Create the popup objects of one record and commit the initial buffer-less surface.
+ *
+ * The positioner is built from the pure positioner values, passed to get_popup under the DIRECT parent's
+ * xdg_surface, destroyed as soon as the popup exists, and the grab (if any) precedes the first commit.
+ */
+static int realize_popup(host_wayland_t *ctx, host_wayland_record_t *rec, const announce_t *req, host_wayland_record_t *parent, uint64_t now_ms) {
+    rec->surface = wl_compositor_create_surface(ctx->config.compositor);
+    if (rec->surface == NULL) return -1;
+    rec->xdg_surface = xdg_wm_base_get_xdg_surface(ctx->config.wm_base, rec->surface);
+    if (rec->xdg_surface == NULL) return -1;
+    if (xdg_surface_add_listener(rec->xdg_surface, &surface_listener, &rec->bindings[HostWaylandKindXdgSurface]) != 0) return -1;
+
+    rec->positioner = xdg_wm_base_create_positioner(ctx->config.wm_base);
+    if (rec->positioner == NULL) return -1;
+    const host_popup_request_t *request = &rec->request;
+    xdg_positioner_set_size(rec->positioner, (int32_t)request->width, (int32_t)request->height);
+    xdg_positioner_set_anchor_rect(rec->positioner, request->anchor_x, request->anchor_y, (int32_t)request->anchor_width, (int32_t)request->anchor_height);
+    xdg_positioner_set_anchor(rec->positioner, request->anchor);
+    xdg_positioner_set_gravity(rec->positioner, request->gravity);
+    xdg_positioner_set_offset(rec->positioner, request->offset_x, request->offset_y);
+    xdg_positioner_set_constraint_adjustment(rec->positioner, request->constraint_adjustment);
+    if (ctx->config.wm_base_version >= 3) xdg_positioner_set_reactive(rec->positioner);
+
+    rec->popup = xdg_surface_get_popup(rec->xdg_surface, parent->xdg_surface, rec->positioner);
+    if (rec->popup == NULL) return -1;
+    if (xdg_popup_add_listener(rec->popup, &popup_listener, &rec->bindings[HostWaylandKindPopup]) != 0) return -1;
+    struct xdg_positioner *positioner = rec->positioner;
+    rec->positioner = NULL;
+    xdg_positioner_destroy(positioner);
+
+    maybe_grab(ctx, rec, req, now_ms);
+    wl_surface_commit(rec->surface);
+    return 0;
+}
+
 /**
  * @brief Create the toplevel objects of one record and commit the initial buffer-less surface.
  *
@@ -462,7 +577,7 @@ static int realize_toplevel(host_wayland_t *ctx, host_wayland_record_t *rec, con
 }
 
 /** @brief Give the window table the window and roll back on any failure: no partial window is published. */
-static host_wayland_status_t fail_realization(host_wayland_t *ctx, host_wayland_record_t *rec, uint64_t window, uint64_t generation) {
+static host_wayland_status_t fail_realization(host_wayland_t *ctx, host_wayland_record_t *rec, uint64_t window, uint64_t generation, uint32_t error_code) {
     destroy_record_objects(rec);
     host_window_ref_t id;
     id.window = window;
@@ -470,18 +585,16 @@ static host_wayland_status_t fail_realization(host_wayland_t *ctx, host_wayland_
     host_window_ref_t removed[HostWindowMapMaxOutput];
     uint32_t count = 0;
     (void)host_window_map_retire(&ctx->map, id, removed, HostWindowMapMaxOutput, &count);
-    emit_error(ctx, 0x0100u, InteropErrorUnexpected, window, generation);
+    emit_error(ctx, 0x0100u, error_code, window, generation);
     return HostWaylandRealizeFailed;
 }
 
 static host_wayland_status_t handle_announce(host_wayland_t *ctx, const uint8_t *payload, size_t length, uint64_t now_ms) {
-    (void)now_ms;
     announce_t req;
     if (decode_announce(payload, length, &req) != 0) return HostWaylandMalformedFrame;
-    if (role_is_popup(req.role)) return HostWaylandUnsupportedType;
-    if (!role_is_toplevel(req.role)) return HostWaylandMalformedFrame;
+    if (!role_is_popup(req.role) && !role_is_toplevel(req.role)) return HostWaylandMalformedFrame;
     char app_id[7 + 64 + 1 + InteropMaxAppKeyBytes + 1];
-    if (!build_app_id(ctx, &req, app_id, sizeof app_id)) return HostWaylandMalformedFrame;
+    if (role_is_toplevel(req.role) && !build_app_id(ctx, &req, app_id, sizeof app_id)) return HostWaylandMalformedFrame;
 
     host_window_ref_t window_id;
     window_id.window = req.window;
@@ -515,7 +628,27 @@ static host_wayland_status_t handle_announce(host_wayland_t *ctx, const uint8_t 
         rec->bindings[kind].slot = result.slot;
         rec->bindings[kind].kind = kind;
     }
-    if (realize_toplevel(ctx, rec, &req, app_id) != 0) return fail_realization(ctx, rec, req.window, req.generation);
+    if (role_is_popup(req.role)) {
+        /* The popup geometry is relative to the direct parent's logical size (8.44). */
+        host_wayland_record_t *parent = find_record(ctx, req.parent, req.parent_generation);
+        /* The table only realizes a popup under a realized parent, so this is a defensive refusal. */
+        if (parent == NULL) return fail_realization(ctx, rec, req.window, req.generation, InteropErrorStaleWindow);
+        uint32_t parent_width = ceil_div_scale(parent->guest_width, ctx->scale);
+        uint32_t parent_height = ceil_div_scale(parent->guest_height, ctx->scale);
+        if (parent_width == 0) parent_width = 1;
+        if (parent_height == 0) parent_height = 1;
+        host_popup_rect_t guest;
+        guest.x = req.x;
+        guest.y = req.y;
+        guest.width = req.width;
+        guest.height = req.height;
+        if (host_popup_positioner_request(&guest, ctx->scale, parent_width, parent_height, &rec->request) != HostPopupOk) {
+            return fail_realization(ctx, rec, req.window, req.generation, InteropErrorMalformedFrame);
+        }
+        if (realize_popup(ctx, rec, &req, parent, now_ms) != 0) return fail_realization(ctx, rec, req.window, req.generation, InteropErrorUnexpected);
+        return HostWaylandOk;
+    }
+    if (realize_toplevel(ctx, rec, &req, app_id) != 0) return fail_realization(ctx, rec, req.window, req.generation, InteropErrorUnexpected);
     return HostWaylandOk;
 }
 

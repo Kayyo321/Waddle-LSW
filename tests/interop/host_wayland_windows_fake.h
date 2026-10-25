@@ -205,6 +205,16 @@ static void deliver_decoration_configure(unsigned index, uint32_t mode) {
     listener->configure(fake_proxies[index].data, (struct zxdg_toplevel_decoration_v1 *)fake_object(index), mode);
 }
 
+static void deliver_popup_configure(unsigned index, int32_t x, int32_t y, int32_t width, int32_t height) {
+    const struct xdg_popup_listener *listener = fake_proxies[index].listener;
+    listener->configure(fake_proxies[index].data, (struct xdg_popup *)fake_object(index), x, y, width, height);
+}
+
+static void deliver_popup_done(unsigned index) {
+    const struct xdg_popup_listener *listener = fake_proxies[index].listener;
+    listener->popup_done(fake_proxies[index].data, (struct xdg_popup *)fake_object(index));
+}
+
 /* ---- request queries --------------------------------------------------------------------------- */
 
 /** @brief Index of the first recorded request of `iface`/`opcode` at or after `from`, or -1. */
