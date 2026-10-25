@@ -3843,3 +3843,17 @@ fixtures; entire fixed source98.10%lines/90.47%taken arcs. Shared-owner Linux
 ASan/LSan/UBSan is independently rerun. Exact evidence is in
 icon_windows_evidence_2026_10_25/four_bitmap_eb01019; the temporarily withdrawn
 15%native extraction allocation is restored, with other #27 scopes still open.
+
+### Native catalog source acceptance — 2026-10-25
+
+Exact6318a3d native workflow40225302430 passes build, Windows execution and
+both entire-source line/taken-arc gates. Provider coverage is100%lines and
+90.15%taken arcs. Temporary Shell links include stale canonical targets and a
+24-level real directory tree; actual AppsFolder/known folders are enumerated
+read-only. Private COM/output/failure seams exercise bounded malformed and
+allocation/close recovery paths. Matching immutable inputs, compiler notes,
+genuine Windows data and logs are in
+app_catalog_evidence_2026_10_25/native_provider_6318a3d. This earns only the
+20%native enumeration allocation of#27; enrichment/watch15%, wire/runtime10%
+and integrated native10%remain open. Linux sanitizer evidence belongs to the
+portable core and does not claim Windows provider sanitizer execution.

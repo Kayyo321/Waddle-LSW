@@ -1,0 +1,17 @@
+{
+  "commit": "6318a3d530954b74330cbba6c8c2a7c6b83cec5a",
+  "workflow": 40225302430,
+  "workflow_conclusion": "success",
+  "windows_job": 121265606598,
+  "line": {
+    "covered": 414,
+    "total": 414
+  },
+  "taken_arcs": {
+    "covered": 494,
+    "total": 548
+  },
+  "source_sha256": "8747e10768aea54e5fd02f1e38287ba9ddc077357d9e1c08d957263a0e287cc7",
+  "functional": "success; real temporary Shell links/deep tree/stale targets and real read-only AppsFolder/known-folder smoke; authentic retained Win32 handle retries, bounded allocation sweeps and COM acquisition/property guards",
+  "qualification_boundary": "Native provider enumeration20% only. Private COM objects/syscall-result seams cover error contracts; ordinary successful system APIs remain genuine. Provider C source is executed/profiled on Windows, not claimed to run under Linux sanitizers. Portable catalog core/validator already have independent Linux ownership/coverage/sanitizer evidence. Watches/enrichment, wire/runtime and integrated native qualification remain open."
+}
