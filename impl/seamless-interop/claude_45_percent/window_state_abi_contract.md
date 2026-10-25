@@ -368,14 +368,13 @@ Sanitizers: the C test under `-fsanitize=address,leak,undefined` with
 allocations go through libc `malloc`, so LeakSanitizer sees them. Zig ownership is
 proven by `std.testing.allocator` in the Zig tests, not by a sanitizer.
 
-Coverage: `python3 tests/av/coverage.py window_state_abi`. The recorder needs
-`-Isrc/interop` for this module's `@cInclude("window_state.h")`, which requires
-the one-line change described in the lane commit. With that change, measured on
-the patched recorder: branch 100.00% (34 of 34), line 97.04% (131 of 135). The four
-line records not attributed are the `return switch (err)` header lines of
+Coverage: `python3 tests/av/coverage.py window_state_abi`. The tracked script
+passes `-Isrc/interop` for this mode (commit `381e30b`, merged from the 45 percent
+branch). Measured by that run: branch 100.00% (34 of 34), line 97.16% (137 of 141).
+The four line records not attributed are the `return switch (err)` header lines of
 `status_of_input_error`, `status_of_plan_error`, `status_of_complete_error` and
 `status_of_decode_error`. Every arm those switches dispatch to is covered by the
-branch measure and by the mapping test. The recorder does not report a hit for the
+branch measure and by the mapping table. The recorder does not report a hit for the
 header instruction itself; the cause is not established.
 
 Known gaps: none in the portable surface. Native adapters, the compositor
