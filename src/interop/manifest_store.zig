@@ -458,6 +458,20 @@ pub const remove_request_t = struct {
     candidate_manifest: []const u8,
 };
 
+/// Final state of a recorded artifact name after a removal transaction.
+pub const artifact_disposition_t = union(enum) {
+    /// The recorded identity was moved aside, verified, and unlinked.
+    Unlinked,
+    /// The name was already absent; nothing was removed.
+    AlreadyAbsent,
+    /// The name held a file that is not the recorded identity. It was returned to
+    /// its name and left in place.
+    KeptUnchanged,
+    /// A file that failed verification could not be returned to its name. It stays
+    /// at this private staging name (`.waddle-<txid>.tmp` in the artifact's directory).
+    KeptAtTempName: [44]u8,
+};
+
 /// Decision made by `remove` under the held store lock. Record deletions are
 /// journaled; the caller restores any prior value before it asks for a deletion.
 pub const remove_outcome_t = enum {
@@ -522,6 +536,8 @@ pub const remove_receipt_t = struct {
     /// Prior value of the record for the caller's restoration step. The store
     /// never restores a prior value itself. `None` when no record was found.
     prior: prior_copy_t,
+    /// Final state of the artifact name for a `Removed` outcome; null otherwise.
+    artifact: ?artifact_disposition_t = null,
 };
 
 /// Exclusive manifest lock and owned artifact roots.
@@ -1117,7 +1133,7 @@ pub const store_t = struct {
             .Foreign => return .{ .outcome = .KeptForeign, .record_found = true, .prior = prior },
         };
         try validate_removal(parsed.records, candidate.records, request.record_id);
-        _ = try self.run_manifest_transaction(.{
+        const transaction = try self.run_manifest_transaction(.{
             .operation = "remove",
             .record_id = request.record_id,
             .root = target.root,
@@ -1127,7 +1143,7 @@ pub const store_t = struct {
             .old_info = snapshot.info,
             .candidate = request.candidate_manifest,
         });
-        return .{ .outcome = .Removed, .record_found = true, .prior = prior };
+        return .{ .outcome = .Removed, .record_found = true, .prior = prior, .artifact = transaction.artifact };
     }
 
     /// Rewrite the manifest-level schema metadata for one recorded artifact
@@ -1212,7 +1228,7 @@ pub const store_t = struct {
         const target = (try self.resolve_for_record(old_record.*)) orelse return error.InvalidPath;
         defer self.allocator.free(target.relative);
         if ((try self.inspect(target.root.fd, target.relative)) != null) return error.ArtifactConflict;
-        const staged = (try self.run_manifest_transaction(.{
+        const transaction = try self.run_manifest_transaction(.{
             .operation = "recreate",
             .record_id = request.record_id,
             .root = target.root,
@@ -1222,7 +1238,8 @@ pub const store_t = struct {
             .candidate = request.candidate_manifest,
             .new_artifact_bytes = request.artifact_bytes,
             .new_artifact_mode = request.artifact_mode,
-        })) orelse return error.RecoveryRequired;
+        });
+        const staged = transaction.staged orelse return error.RecoveryRequired;
         return .{ .target = identity_from_info(staged) };
     }
 
@@ -1307,7 +1324,11 @@ pub const store_t = struct {
     /// PREPARED publishes the candidate manifest; COMMITTED unlinks a removed
     /// artifact only after the manifest is durable. Any error after the journal
     /// is written is left to `recover` and the journal stays as evidence.
-    fn run_manifest_transaction(self: *store_t, spec: transaction_spec_t) !?file_info_t {
+    /// Result of one version-3 transaction: the staged artifact identity for a
+    /// recreate, and the final artifact disposition for a removal.
+    const transaction_result_t = struct { staged: ?file_info_t, artifact: ?artifact_disposition_t };
+
+    fn run_manifest_transaction(self: *store_t, spec: transaction_spec_t) !transaction_result_t {
         const transaction_id = try random_id();
         var has_journal = false;
         var staged_manifest: ?file_info_t = null;
@@ -1360,11 +1381,11 @@ pub const store_t = struct {
         try self.checkpoint();
         try self.publish_phase(transaction_id, journal, "committed");
         try self.checkpoint();
-        try self.apply_committed_v3(journal);
+        const disposition = try self.apply_committed_v3(journal);
         try self.remove_displaced_manifest_temp(transaction_id, v3_old_manifest_info(journal));
         if (v3_is_recreate(journal)) try self.remove_target_temp(spec.root.?.fd, spec.relative.?, transaction_id, v3_new_artifact_info(journal));
         try self.remove_tx_tree(transaction_id);
-        return staged_artifact;
+        return .{ .staged = staged_artifact, .artifact = disposition };
     }
 
     /// Publish the candidate manifest for a PREPARED version-3 journal. The
@@ -1434,7 +1455,7 @@ pub const store_t = struct {
     /// Unlink a recreated artifact during rollback when its recorded identity is live.
     fn unpublish_v3_artifact(self: *store_t, journal: journal_v3_t) !void {
         const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
-        try self.unlink_owned_artifact(root.fd, journal.relative_path.?, v3_new_artifact_info(journal));
+        _ = try self.unlink_owned_artifact(root.fd, journal.relative_path.?, v3_new_artifact_info(journal), try txid_array(journal.transaction_id));
     }
 
     /// Identify the live manifest as the recorded candidate or the recorded old
@@ -1459,12 +1480,12 @@ pub const store_t = struct {
     /// candidate. A removal unlinks the artifact only if it still has the recorded
     /// identity; an already absent artifact is the result of an earlier attempt.
     /// Every parent, the state directory, the root, and the journal are synced.
-    fn apply_committed_v3(self: *store_t, journal: journal_v3_t) !void {
+    fn apply_committed_v3(self: *store_t, journal: journal_v3_t) !?artifact_disposition_t {
         const txid = try txid_array(journal.transaction_id);
         const current_manifest = (try self.inspect_manifest()) orelse return error.RecoveryRequired;
         if (!same_file_info(current_manifest, v3_new_manifest_info(journal))) return error.RecoveryRequired;
         try self.validate_displaced_manifest_temp(txid, v3_old_manifest_info(journal));
-        if (v3_is_remove(journal)) try self.retire_v3_artifact(journal);
+        const disposition: ?artifact_disposition_t = if (v3_is_remove(journal)) try self.retire_v3_artifact(journal) else null;
 
         const transactions_fd = try self.open_private_dir("transactions");
         defer _ = c.close(transactions_fd);
@@ -1483,6 +1504,7 @@ pub const store_t = struct {
             defer _ = c.close(parent.fd);
             if (io_fsync(parent.fd) != 0 or io_fsync(root.fd) != 0) return native_error();
         }
+        return disposition;
     }
 
     /// Verify the live artifact of a removal journal in PREPARED state. Absence
@@ -1495,10 +1517,9 @@ pub const store_t = struct {
 
     /// Unlink the removed artifact of a COMMITTED journal when its recorded
     /// identity is still present. Absence is accepted as a completed unlink.
-    fn retire_v3_artifact(self: *store_t, journal: journal_v3_t) !void {
+    fn retire_v3_artifact(self: *store_t, journal: journal_v3_t) !artifact_disposition_t {
         const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
-        const current = (try self.recorded_artifact_live(journal, v3_artifact_info(journal))) orelse return;
-        try self.unlink_owned_artifact(root.fd, journal.relative_path.?, current);
+        return self.unlink_owned_artifact(root.fd, journal.relative_path.?, v3_artifact_info(journal), try txid_array(journal.transaction_id));
     }
 
     /// Inspect the artifact named by a removal journal. A missing parent or leaf
@@ -1544,7 +1565,7 @@ pub const store_t = struct {
             try self.rollback_prepared_v3(journal);
             try self.remove_state_temp(txid, v3_new_manifest_info(journal));
         } else {
-            try self.apply_committed_v3(journal);
+            _ = try self.apply_committed_v3(journal);
             try self.remove_displaced_manifest_temp(txid, v3_old_manifest_info(journal));
         }
         if (v3_is_recreate(journal)) {
@@ -1873,7 +1894,7 @@ pub const store_t = struct {
         if (manifest_published) {
             if (old_manifest) |previous| restored_manifest = try self.create_or_reuse_old_manifest_temp(txid, journal, previous);
         }
-        if (artifact_published) try self.unlink_owned_artifact(root.fd, journal.relative_path, artifact_info);
+        if (artifact_published) _ = try self.unlink_owned_artifact(root.fd, journal.relative_path, artifact_info, try txid_array(journal.transaction_id));
         if (manifest_published) {
             if (old_manifest != null) {
                 const restored = restored_manifest orelse return error.RecoveryRequired;
@@ -2490,19 +2511,44 @@ pub const store_t = struct {
         }
     }
 
-    fn unlink_owned_artifact(self: *store_t, root_fd: c_int, relative: []const u8, expected: file_info_t) !void {
-        const current = (try self.inspect(root_fd, relative)) orelse return error.ArtifactConflict;
-        if (!same_file_info(current, expected)) return error.ArtifactConflict;
+    /// Unlink the artifact at `relative` only when the inode it names has exactly the
+    /// `expected` identity. The name is first moved atomically to the transaction's
+    /// private staging name with no-clobber semantics, so no later name lookup can
+    /// race the check. The moved inode is verified by device, inode, mode, and digest
+    /// before it is unlinked. A moved file that fails verification is returned to its
+    /// name with no-clobber semantics; if that return fails it stays at the staging name
+    /// and KeptAtTempName reports that name. A staging file left by an interrupted
+    /// attempt is removed only when it has the expected identity.
+    fn unlink_owned_artifact(self: *store_t, root_fd: c_int, relative: []const u8, expected: file_info_t, txid: [32]u8) !artifact_disposition_t {
         const parent = try self.open_parent(root_fd, relative);
         defer _ = c.close(parent.fd);
-        var leaf: [256]u8 = undefined;
-        @memcpy(leaf[0..parent.leaf.len], parent.leaf);
-        leaf[parent.leaf.len] = 0;
-        var st: c.struct_stat = undefined;
-        if (io_fstatat(parent.fd, &leaf, &st, c.AT_SYMLINK_NOFOLLOW) != 0 or
-            @as(u64, @intCast(st.st_dev)) != expected.device or @as(u64, @intCast(st.st_ino)) != expected.inode) return error.ArtifactConflict;
-        if (io_unlinkat(parent.fd, &leaf, 0) != 0 or io_fsync(parent.fd) != 0) return native_error();
+        const leaf = try self.allocator.dupeZ(u8, parent.leaf);
+        defer self.allocator.free(leaf);
+        const staging = artifact_temp_name(txid);
+        const staging_name: [:0]const u8 = staging[0..44 :0];
+        const disposition_kept = artifact_disposition_t{ .KeptAtTempName = staging[0..44].* };
+        if (try self.inspect_named(parent.fd, staging_name.ptr)) |residue| {
+            if (!same_file_info(residue, expected)) return disposition_kept;
+            try unlink_named_if_matches(self.allocator, parent.fd, staging_name.ptr, residue);
+            if (io_fsync(parent.fd) != 0) return native_error();
+            try self.checkpoint();
+            return .Unlinked;
+        }
+        if (io_renameat2(parent.fd, leaf.ptr, parent.fd, staging_name.ptr, c.RENAME_NOREPLACE) != 0) {
+            if (errno_value() == c.ENOENT) return .AlreadyAbsent;
+            return native_error();
+        }
         try self.checkpoint();
+        unlink_named_if_matches(self.allocator, parent.fd, staging_name.ptr, expected) catch |err| {
+            if (err != error.ArtifactConflict) return err;
+            if (io_renameat2(parent.fd, staging_name.ptr, parent.fd, leaf.ptr, c.RENAME_NOREPLACE) != 0) return disposition_kept;
+            if (io_fsync(parent.fd) != 0) return native_error();
+            try self.checkpoint();
+            return .KeptUnchanged;
+        };
+        if (io_fsync(parent.fd) != 0) return native_error();
+        try self.checkpoint();
+        return .Unlinked;
     }
 
     fn unlink_owned_manifest(self: *store_t, expected: file_info_t) !void {
@@ -7212,10 +7258,11 @@ test "ownership helpers accept exact files and reject foreign inode mode link ty
         }
     }
 
-    try store.unlink_owned_artifact(data.fd, "applications/temp-owned", temp_artifact);
-    try std.testing.expectError(error.ArtifactConflict, store.unlink_owned_artifact(data.fd, "applications/temp-owned", temp_artifact));
-    try std.testing.expectError(error.AccessDenied, store.unlink_owned_artifact(data.fd, "applications/owned.desktop", temp_artifact));
-    try std.testing.expectError(error.ArtifactConflict, store.unlink_owned_artifact(data.fd, "applications/missing", artifact));
+    const txid: [32]u8 = "0123456789abcdef0123456789abcdef".*;
+    try std.testing.expect(std.meta.activeTag(try store.unlink_owned_artifact(data.fd, "applications/temp-owned", temp_artifact, txid)) == .Unlinked);
+    try std.testing.expect(std.meta.activeTag(try store.unlink_owned_artifact(data.fd, "applications/temp-owned", temp_artifact, txid)) == .AlreadyAbsent);
+    try std.testing.expect(std.meta.activeTag(try store.unlink_owned_artifact(data.fd, "applications/owned.desktop", temp_artifact, txid)) == .KeptUnchanged);
+    try std.testing.expect(std.meta.activeTag(try store.unlink_owned_artifact(data.fd, "applications/missing", artifact, txid)) == .AlreadyAbsent);
     try store.unlink_owned_manifest(owned_manifest);
     try std.testing.expectError(error.ArtifactConflict, store.unlink_owned_manifest(owned_manifest));
 
@@ -7286,22 +7333,45 @@ test "ownership helpers accept exact files and reject foreign inode mode link ty
     }
 
     var artifact_fault_success = false;
-    for (1..13) |fault_index| {
+    for (1..40) |fault_index| {
         try write_test_file(applications.fd, "unlink-fault.desktop", "unlink fault", 0o644);
         const expected = (try store.inspect(data.fd, "applications/unlink-fault.desktop")).?;
         injected_io_count = 0;
         injected_io_at = fault_index;
-        const result = store.unlink_owned_artifact(data.fd, "applications/unlink-fault.desktop", expected);
+        const result = store.unlink_owned_artifact(data.fd, "applications/unlink-fault.desktop", expected, txid);
         const faulted = injected_io_at == 0;
         injected_io_at = 0;
         injected_io_count = 0;
-        if (result) |_| {
-            try std.testing.expect(!faulted);
+        if (result) |disposition| {
+            // A fault on the return rename is reported as a kept staging file, not an error.
+            // An injected fault inside verification is reported as a changed file and the
+            // file is returned to its name; an injected fault on the return rename keeps it
+            // at the staging name. Neither deletes the inode.
+            if (faulted) {
+                switch (disposition) {
+                    .KeptUnchanged => {},
+                    .KeptAtTempName => |name| {
+                        var staged_name: [45]u8 = [_]u8{0} ** 45;
+                        @memcpy(staged_name[0..44], &name);
+                        const staged: [:0]const u8 = staged_name[0..44 :0];
+                        if (c.unlinkat(applications.fd, staged.ptr, 0) != 0) return error.IoError;
+                    },
+                    else => return error.TestUnexpectedResult,
+                }
+                if (applications.access("unlink-fault.desktop", .{})) |_| {
+                    if (c.unlinkat(applications.fd, "unlink-fault.desktop", 0) != 0) return error.IoError;
+                } else |_| {}
+            } else {
+                try std.testing.expect(std.meta.activeTag(disposition) == .Unlinked);
+            }
             artifact_fault_success = true;
             break;
         } else |err| {
             try std.testing.expect(faulted);
             try std.testing.expect(err == error.IoError or err == error.ArtifactConflict);
+            // The recorded inode may sit at the staging name after an I/O error; the next
+            // attempt's residue rule removes it, and this test clears it for the next case.
+            _ = c.unlinkat(applications.fd, ".waddle-0123456789abcdef0123456789abcdef.tmp", 0);
             if (applications.access("unlink-fault.desktop", .{})) |_| {
                 if (c.unlinkat(applications.fd, "unlink-fault.desktop", 0) != 0) return error.IoError;
             } else |_| {}
@@ -7310,15 +7380,10 @@ test "ownership helpers accept exact files and reject foreign inode mode link ty
     try std.testing.expect(artifact_fault_success);
 
     try write_test_file(applications.fd, "race-target.desktop", "owned before race", 0o644);
-    try write_test_file(applications.fd, "race-source.desktop", "foreign replacement", 0o644);
     const race_artifact = (try store.inspect(data.fd, "applications/race-target.desktop")).?;
-    injected_replace_fstatat_fd = applications.fd;
-    injected_replace_fstatat_source = "race-source.desktop";
-    injected_replace_fstatat_target = "race-target.desktop";
-    injected_replace_fstatat_count = 0;
-    injected_replace_fstatat_at = 1;
-    try std.testing.expectError(error.ArtifactConflict, store.unlink_owned_artifact(data.fd, "applications/race-target.desktop", race_artifact));
-    injected_replace_fstatat_at = 0;
+    try write_test_file(applications.fd, "race-source.desktop", "foreign replacement", 0o644);
+    if (c.renameat(applications.fd, "race-source.desktop", applications.fd, "race-target.desktop") != 0) return error.IoError;
+    try std.testing.expect(std.meta.activeTag(try store.unlink_owned_artifact(data.fd, "applications/race-target.desktop", race_artifact, txid)) == .KeptUnchanged);
     const raced_artifact = try applications.readFileAlloc(std.testing.allocator, "race-target.desktop", 4096);
     defer std.testing.allocator.free(raced_artifact);
     try std.testing.expectEqualStrings("foreign replacement", raced_artifact);
@@ -9460,6 +9525,51 @@ test "forget recovers at every injected checkpoint and a second recovery is a no
         if (completed) break;
     }
     try std.testing.expect(completed);
+}
+
+test "artifact unlink moves the name aside, verifies the moved inode, and returns a changed file to its name" {
+    defer {
+        injected_renameat2_at = 0;
+        injected_renameat2_count = 0;
+    }
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    const txid: [32]u8 = "0123456789abcdef0123456789abcdef".*;
+    const staging = "applications/.waddle-0123456789abcdef0123456789abcdef.tmp";
+
+    install_remove_artifacts(&fixture);
+    const original = (try store.inspect(fixture.data.fd, "applications/target.desktop")) orelse return error.TestExpectedEqual;
+    write_status_file(fixture.data, "applications/target.desktop", "user edit", 0o644);
+    const kept = try store.unlink_owned_artifact(fixture.data.fd, "applications/target.desktop", original, txid);
+    try std.testing.expect(std.meta.activeTag(kept) == .KeptUnchanged);
+    const still = try fixture.data.readFileAlloc(std.testing.allocator, "applications/target.desktop", 4096);
+    defer std.testing.allocator.free(still);
+    try std.testing.expectEqualStrings("user edit", still);
+    try std.testing.expectError(error.FileNotFound, fixture.data.access(staging, .{}));
+
+    injected_renameat2_count = 0;
+    injected_renameat2_at = 2;
+    const stranded = try store.unlink_owned_artifact(fixture.data.fd, "applications/target.desktop", original, txid);
+    injected_renameat2_at = 0;
+    injected_renameat2_count = 0;
+    try std.testing.expect(std.meta.activeTag(stranded) == .KeptAtTempName);
+    const moved = try fixture.data.readFileAlloc(std.testing.allocator, staging, 4096);
+    defer std.testing.allocator.free(moved);
+    try std.testing.expectEqualStrings("user edit", moved);
+    try std.testing.expectError(error.FileNotFound, fixture.data.access("applications/target.desktop", .{}));
+    if (c.unlinkat(fixture.data.fd, staging, 0) != 0) @panic("fixture unlink");
+
+    write_status_file(fixture.data, "applications/target.desktop", "target bytes", 0o644);
+    const current = (try store.inspect(fixture.data.fd, "applications/target.desktop")) orelse return error.TestExpectedEqual;
+    const removed = try store.unlink_owned_artifact(fixture.data.fd, "applications/target.desktop", current, txid);
+    try std.testing.expect(std.meta.activeTag(removed) == .Unlinked);
+    try std.testing.expectError(error.FileNotFound, fixture.data.access("applications/target.desktop", .{}));
+    try std.testing.expectError(error.FileNotFound, fixture.data.access(staging, .{}));
+    const again = try store.unlink_owned_artifact(fixture.data.fd, "applications/target.desktop", current, txid);
+    try std.testing.expect(std.meta.activeTag(again) == .AlreadyAbsent);
 }
 
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
