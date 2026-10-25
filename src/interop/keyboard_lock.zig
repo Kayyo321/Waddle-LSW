@@ -125,8 +125,8 @@ pub const status_t = enum(c_int) {
     InvalidEpoch = 5,
 };
 
-const ToggleEntry = struct { bit: u8, vk: u16 };
-const toggle_table = [_]ToggleEntry{
+const toggle_entry_t = struct { bit: u8, vk: u16 };
+const toggle_table = [_]toggle_entry_t{
     .{ .bit = LockCaps, .vk = VkCapital },
     .{ .bit = LockNum, .vk = VkNumlock },
     .{ .bit = LockScroll, .vk = VkScroll },
