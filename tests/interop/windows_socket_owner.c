@@ -603,6 +603,7 @@ static int poll_drive(interop_windows_socket_t *owner, uint64_t token,
     Check(interop_windows_socket_poll_events(owner, token, now_ms, &poll_state) == InteropWindowsSocketSuccess);
     descriptor.fd = (int)poll_state.socket_value;
     descriptor.events = (short)poll_state.events;
+    Check((poll_state.events & ~(uint32_t)(POLLRDNORM | POLLWRNORM)) == 0);
     descriptor.revents = windows_socket_owner_test_poll_revents(
         descriptor.fd, descriptor.events);
     poll_result = 1;

@@ -1306,10 +1306,18 @@ its uncompiled draft earns no credit until current acceptance passes.
     MinGW strict compile pass; Windows CI executes it. New isolated guest now
     reaches desktop and stops cleanly; guest-exec is still unreachable.
 
-- **Commit `HEAD`**: `fix(interop): preserve Windows bootstrap names on private ISO`
+- **Commit `bb19964`**: `fix(interop): preserve Windows bootstrap names on private ISO`
   - **Task Impact**: +0% to TODO #34; execution/native acceptance still open.
   - **Summary**: Real specialize command returned31 before finding its script.
     A separate nonsecret ISO probe reproduces ISO9660 hyphen-to-underscore
     renaming; Joliet preserves exact script/executable paths for Windows.
     Add -J to new media and require it in all16 preparation tests. Existing
     private answer media and secrets were not inspected or rewritten.
+
+- **Commit `HEAD`**: `fix(interop): request only supported WinSock poll interests`
+  - **Task Impact**: +0% to TODO #6; native Windows gate pending.
+  - **Summary**: Exact6083a9f native CI exposed WSAEINVAL10022 because output-only
+    error/hangup/invalid flags were requested as WSAPoll interests. Request
+    normal read/write only while preserving returned error handling; fixtures
+    assert the input mask. Normal build,96.45% lines/90.22% taken arcs, real
+    leak-enabled ASan/LSan/UBSan and SDK link pass; native rerun required.

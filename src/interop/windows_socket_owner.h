@@ -105,7 +105,7 @@ typedef struct interop_windows_socket_config_t {
 /** @brief Fresh poll interests and timer guidance, with a single-use cookie. */
 typedef struct interop_windows_socket_poll_t {
     uintptr_t socket_value; /**< Exact SOCKET value represented as uintptr_t; 0 when closed. */
-    uint32_t events; /**< WSAPoll POLLRDNORM/POLLWRNORM/POLLERR/POLLHUP/POLLNVAL bits. */
+    uint32_t events; /**< WSAPoll input interests: POLLRDNORM/POLLWRNORM only. */
     uint32_t timeout_ms; /**< Recommended wait, always 0..100 ms. */
     uint32_t immediate_work; /**< Exactly 0 or 1. */
     uint32_t reserved_zero; /**< Always zero. */

@@ -20,6 +20,8 @@ The public owner has ten operations: create, poll-interest snapshot, drive, mapp
 
 Each drive accepts at most 8192 RX bytes, 65536 TX bytes, 64 combined `recv`/`send` calls, and 64 peer/helper operations. RX carry is exactly 8192 bytes. The peer ABI assembles partial protocol frames; the owner reads one complete outward event/frame per drive into a caller-owned 65536-byte frame buffer. Partial sends are copied into a fixed 65536-byte owner TX array and resumed on later drives. A successful `send` count is ACKed immediately and exactly before another send call. WSAEINTR consumes one syscall attempt and may retry only while budget remains; WSAEWOULDBLOCK ends that direction for the current drive. Fatal errors close admission and initiate exactly one native close attempt.
 
+`poll_events` returns only POLLRDNORM/POLLWRNORM input interests; error/hangup/invalid status is accepted in returned revents but is never requested. Microsoft WSAPoll rejects output-only error flags as input with WSAEINVAL.
+
 `poll_events` performs no I/O or wait. It returns the current socket identity, WSAPoll interests, a timeout from zero through 100 milliseconds, an immediate-work bit, and a fresh nonzero single-use cookie. The caller invokes `WSAPoll` and submits its `revents` to one `drive`. Any successful owner mutation invalidates the previous cookie. The caller supplies nondecreasing monotonic milliseconds; timer-driving calls occur at least every 100ms. The first transition to Draining fixes a saturating absolute deadline from `drain_timeout_ms` in `[1, 60000]`; later calls cannot extend it.
 
 ## Handshake and mapping gate
@@ -67,3 +69,5 @@ Acceptance requires Windows CI to run and pass real AF_INET loopback sessions th
 - [`closesocket`](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-closesocket): nonblocking `WSAEWOULDBLOCK` with nonzero linger timeout leaves the handle valid; socket values can be reused immediately after successful close.
 - [Socket IOCTL opcode summary](https://learn.microsoft.com/en-us/windows/win32/winsock/summary-of-socket-ioctl-opcodes-2): FIONBIO enables/disables nonblocking mode and has no output query.
 - [`ioctlsocket`](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-ioctlsocket): FIONBIO is a mode-setting operation.
+
+- [WSAPoll](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsapoll): request only provider-supported input interests; error status is returned automatically.

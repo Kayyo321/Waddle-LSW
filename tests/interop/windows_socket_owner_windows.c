@@ -129,6 +129,8 @@ static void drive_one(interop_windows_socket_t *owner, uint64_t token,
            InteropWindowsSocketSuccess, "owner poll snapshot");
     descriptor.fd = (SOCKET)poll_state.socket_value;
     descriptor.events = (SHORT)poll_state.events;
+    expect((poll_state.events & ~(uint32_t)(POLLRDNORM | POLLWRNORM)) == 0,
+           "WSAPoll input interests exclude output-only error flags");
     descriptor.revents = 0;
     result = WSAPoll(&descriptor, 1,
                      poll_state.immediate_work != 0 ? 0 : (INT)poll_state.timeout_ms);

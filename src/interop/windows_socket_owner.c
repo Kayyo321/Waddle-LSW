@@ -636,7 +636,8 @@ int interop_windows_socket_poll_events(interop_windows_socket_t *owner,
             return InteropWindowsSocketPeerFailure;
         }
         poll_result.socket_value = (uintptr_t)owner->socket_value;
-        poll_result.events = (uint32_t)(POLLERR | POLLHUP | POLLNVAL);
+        /* WSAPoll rejects output-only status flags in its input interests. */
+        poll_result.events = 0;
         if ((owner->state == InteropWindowsSocketActive ||
              owner->state == InteropWindowsSocketMappingWait) &&
             owner->rx_length < sizeof(owner->rx_carry))
