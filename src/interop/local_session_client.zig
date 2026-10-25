@@ -291,3 +291,79 @@ test "read_exact maps poll results to boundary, partial, timeout and failure" {
     var broken = Script{ .steps = &.{.failed} };
     try testing.expectEqual(ReadExact.failed, read_exact(&broken, Script.poll, 0, &buffer, 1));
 }
+
+test "connect reports a missing socket, a refused socket, a live one, and an over-long path" {
+    const testing = std.testing;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(base);
+    const missing = try std.fmt.allocPrint(testing.allocator, "{s}/none.sock", .{base});
+    defer testing.allocator.free(missing);
+    try testing.expectError(error.NotFound, connect(missing));
+
+    // A socket file whose owner has closed it refuses connections.
+    const stale = try std.fmt.allocPrint(testing.allocator, "{s}/stale.sock", .{base});
+    defer testing.allocator.free(stale);
+    const stale_addr = try std.net.Address.initUnix(stale);
+    const bound = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0);
+    try std.posix.bind(bound, &stale_addr.any, stale_addr.getOsSockLen());
+    std.posix.close(bound);
+    try testing.expectError(error.Refused, connect(stale));
+
+    // A listening socket accepts; the peer is this process, so the credential check passes.
+    const live = try std.fmt.allocPrint(testing.allocator, "{s}/live.sock", .{base});
+    defer testing.allocator.free(live);
+    const live_addr = try std.net.Address.initUnix(live);
+    const listener = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0);
+    defer std.posix.close(listener);
+    try std.posix.bind(listener, &live_addr.any, live_addr.getOsSockLen());
+    try std.posix.listen(listener, 1);
+    const fd = try connect(live);
+    close(fd);
+
+    // Paths longer than sun_path cannot be addressed at all.
+    const long = "/" ++ ("p" ** 200);
+    try testing.expectError(error.Failed, connect(long));
+}
+
+test "write_all reports a failed write; poll_read reports timeout, data, end of stream and a closed descriptor" {
+    const testing = std.testing;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(base);
+    const file_path = try std.fmt.allocPrint(testing.allocator, "{s}/readonly", .{base});
+    defer testing.allocator.free(file_path);
+    _ = try tmp.dir.createFile("readonly", .{});
+    const read_only = try std.posix.open(file_path, .{}, 0);
+    defer std.posix.close(read_only);
+    try testing.expectError(error.Failed, write_all(read_only, "x"));
+
+    var pair: [2]std.posix.fd_t = undefined;
+    const rc = std.os.linux.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair);
+    try testing.expectEqual(@as(usize, 0), rc);
+    const a = pair[0];
+    const b = pair[1];
+    var buffer: [8]u8 = undefined;
+    try testing.expectError(error.Timeout, poll_read(a, &buffer, 0));
+    try write_all(b, "hi");
+    try testing.expectEqual(@as(usize, 2), try poll_read(a, &buffer, 1000));
+    try testing.expectEqualSlices(u8, "hi", buffer[0..2]);
+    try write_all(a, "yo");
+    try testing.expectEqual(@as(usize, 2), try poll_read(b, &buffer, 1000));
+    close(b);
+    try testing.expectEqual(@as(usize, 0), try poll_read(a, &buffer, 1000));
+    close(a);
+    // A closed descriptor is reported ready with POLLNVAL, and the read then fails.
+    try testing.expectError(error.Failed, poll_read(a, &buffer, 1000));
+}
+
+test "Message formats numbers without leading zeros, including zero and the largest u64" {
+    var zero = Message{};
+    zero.add_number(0);
+    try std.testing.expectEqualSlices(u8, "0", zero.slice());
+    var largest = Message{};
+    largest.add_number(std.math.maxInt(u64));
+    try std.testing.expectEqualSlices(u8, "18446744073709551615", largest.slice());
+}
