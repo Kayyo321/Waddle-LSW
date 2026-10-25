@@ -298,7 +298,9 @@ static DWORD WINAPI fixture_host_thread(LPVOID opaque) {
         descriptor.revents = 0;
         int ready = WSAPoll(&descriptor, 1, 25);
         if (ready == SOCKET_ERROR) { fixture_fail(host, WSAGetLastError()); break; }
-        if ((descriptor.revents & POLLRDNORM) != 0) {
+        /* Windows may report orderly peer shutdown as HUP without RDNORM.
+         * Only recv==0 records EOF; HUP alone is not detach proof. */
+        if ((descriptor.revents & (POLLRDNORM | POLLHUP | POLLERR)) != 0) {
             int received = recv(socket_value, (char *)rx, sizeof(rx), 0);
             if (received == 0) {
                 InterlockedExchange(&host->transport_eof_seen, 1);

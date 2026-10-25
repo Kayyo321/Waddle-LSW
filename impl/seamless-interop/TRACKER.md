@@ -1487,10 +1487,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     fixture contract; retain the separate necessary alignment correction.
     Strict SDK/link passes, and production native gates remain open.
 
-- **Commit `HEAD`**: `ci(interop): execute and measure read-only native catalog adapter`
+- **Commit `9fcd919`**: `ci(interop): execute and measure read-only native catalog adapter`
   - **Task Impact**: +0% to TODO #27/#34; native provider not yet accepted.
   - **Summary**: Extend fast native job with actual catalog enumeration, owned
     temporary shortcut fixtures and exact close-retry tests. Capture genuine
     Windows gcda and gate the complete native provider source at90%lines/arcs.
     Keep independent failing steps/profile upload so one fixture cannot conceal
     another. Native icon allocator diagnostic reports actual status/error.
+
+- **Commit `HEAD`**: `test(interop): consume native socket hangup through recv before recording EOF`
+  - **Task Impact**: +0% to TODO #6/#34; rerun required.
+  - **Summary**: Actual9fcd919 reaches Hello/map/Ack/Ready and repeated guest
+    heartbeats, then times out waiting for EOF. Poll HUP/ERR also drive the
+    nonblocking recv path; only actual recv0 records EOF, with no remote-detach
+    inference. Keep the existing absolute deadline and all lifecycle assertions.
