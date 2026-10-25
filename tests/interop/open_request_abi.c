@@ -47,6 +47,9 @@ static int read_image(void *context, const char *path, size_t path_length, uint8
     return 0;
 }
 
+/* The callback typedef is a _t type; this line fails to compile until it is renamed. */
+static const interop_open_read_prefix_fn_t reader_callback = read_image;
+
 static int parse_argv(size_t argc, const char *const *argv, uint32_t tty, reader_t *reader, interop_open_request_t *request) {
     interop_open_options_t options = { read_image, reader, tty };
     return interop_open_parse(argc, argv, &options, request);
@@ -56,7 +59,7 @@ static void check_app_form(void) {
     reader_t reader = { 0, 0, 0, 2, 0 };
     interop_open_request_t request;
     memset(&request, 0xa5, sizeof(request));
-    const char *argv[] = { "--app", "a-Microsoft_Notepad", "--wait" };
+    const char *argv[] = { "--wait", "--app", "a-Microsoft_Notepad" };
     assert(parse_argv(3, argv, 0, &reader, &request) == InteropOpenErrorNone);
     assert(request.item_count == 1);
     assert(request.wait == 1 && request.new_console == 0);
@@ -64,6 +67,8 @@ static void check_app_form(void) {
     assert(request.items[0].kind == InteropOpenItemApp);
     assert(request.items[0].text_length == strlen("a-Microsoft_Notepad"));
     assert(memcmp(request.items[0].text, "a-Microsoft_Notepad", request.items[0].text_length) == 0);
+    const char *late[] = { "--app", "a-Microsoft_Notepad", "--wait" };
+    assert(parse_argv(3, late, 0, &reader, &request) == InteropOpenErrorOptionAfterTarget);
     assert(request.items[0].argument_count == 0 && request.items[0].argument_first == 0);
     assert(reader.calls == 0);
 }
@@ -118,6 +123,9 @@ static void check_read_failures(void) {
     assert(parse_argv(1, argv, 0, &reader, &request) == InteropOpenErrorImageUnreadable);
     assert(request.item_count == 0 && request.device == NULL);
     assert(interop_open_exit_code(InteropOpenErrorImageUnreadable) == InteropOpenExitNotExecutable);
+    reader.fail = 1;
+    assert(parse_argv(1, argv, 0, &reader, &request) == InteropOpenErrorNotFound);
+    assert(interop_open_exit_code(InteropOpenErrorNotFound) == InteropOpenExitNotFound);
     reader.fail = 0;
     reader.reported = InteropOpenPrefixBytes + 1;
     assert(parse_argv(1, argv, 0, &reader, &request) == InteropOpenErrorImageUnreadable);
@@ -227,6 +235,8 @@ static void check_exit_tables(void) {
     assert(interop_open_exit_code(InteropOpenErrorLocalFailure) == InteropOpenExitLocalError);
     assert(interop_open_exit_code(InteropOpenErrorGuestUnreachable) == InteropOpenExitLocalError);
     assert(interop_open_exit_code(InteropOpenErrorGuestLaunchFailed) == InteropOpenExitGuestFailure);
+    assert(interop_open_exit_code(InteropOpenErrorDelegateConflict) == InteropOpenExitUsage);
+    assert(interop_open_exit_code(InteropOpenErrorInvalidUtf8) == InteropOpenExitUsage);
     assert(interop_open_exit_code(999u) == InteropOpenExitLocalError);
     assert(interop_open_launch_exit_code(0) == InteropOpenExitOk);
     assert(interop_open_launch_exit_code(1) == InteropOpenExitGuestFailure);
@@ -318,6 +328,7 @@ static void check_quote_limits(void) {
 }
 
 int main(void) {
+    (void)reader_callback;
     check_app_form();
     check_paths_and_device();
     check_dash_form_and_tail();

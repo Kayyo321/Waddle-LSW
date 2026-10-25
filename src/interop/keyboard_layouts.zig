@@ -29,47 +29,95 @@ pub const entry_t = struct {
     klid: [KlidBytes]u8,
 };
 
-/// Fixed mapping table. Each KLID is the keyboard that the Microsoft "Default input
-/// profiles (input locales) in Windows" page lists for a locale whose physical layout
-/// equals the xkb layout (verified against the 2024-09-02 revision). Rows whose Windows
-/// default is an IME, or whose KLID the page does not confirm, are absent. Pairs are
-/// unique. Lookup is exact: a variant without a row is unmapped, never its layout default.
+/// Fixed mapping table: 82 (layout, variant) rows, each with the Windows KLID of the
+/// keyboard it names (the contract lists the keyboard name for every row). Rows are
+/// page-confirmed against Microsoft's default input profile list, except the seven rows
+/// the contract marks as lead-specified. Pairs are unique. Lookup is exact: a variant
+/// without a row is unmapped, never its layout default, and uppercase variants never
+/// match.
 pub const KeyboardLayoutTable = [_]entry_t{
     .{ .layout = "us", .variant = "", .klid = "00000409".* },
     .{ .layout = "us", .variant = "intl", .klid = "00020409".* },
+    .{ .layout = "us", .variant = "altgr-intl", .klid = "00020409".* },
+    .{ .layout = "us", .variant = "dvorak", .klid = "00010409".* },
     .{ .layout = "gb", .variant = "", .klid = "00000809".* },
+    .{ .layout = "gb", .variant = "extd", .klid = "00000452".* },
     .{ .layout = "ie", .variant = "", .klid = "00001809".* },
     .{ .layout = "au", .variant = "", .klid = "00000409".* },
-    .{ .layout = "ara", .variant = "", .klid = "00000401".* },
+    .{ .layout = "nz", .variant = "", .klid = "00001409".* },
+    .{ .layout = "ca", .variant = "", .klid = "00001009".* },
+    .{ .layout = "latam", .variant = "", .klid = "0000080A".* },
+    .{ .layout = "be", .variant = "", .klid = "0000080C".* },
     .{ .layout = "de", .variant = "", .klid = "00000407".* },
-    .{ .layout = "ch", .variant = "", .klid = "00000807".* },
+    .{ .layout = "de", .variant = "nodeadkeys", .klid = "00000407".* },
     .{ .layout = "at", .variant = "", .klid = "00000407".* },
+    .{ .layout = "ch", .variant = "", .klid = "00000807".* },
+    .{ .layout = "ch", .variant = "fr", .klid = "0000100C".* },
     .{ .layout = "fr", .variant = "", .klid = "0000040C".* },
     .{ .layout = "es", .variant = "", .klid = "0000040A".* },
     .{ .layout = "it", .variant = "", .klid = "00000410".* },
     .{ .layout = "pt", .variant = "", .klid = "00000816".* },
-    .{ .layout = "br", .variant = "", .klid = "00000416".* },
+    .{ .layout = "br", .variant = "", .klid = "00010416".* },
     .{ .layout = "se", .variant = "", .klid = "0000041D".* },
+    .{ .layout = "se", .variant = "smi", .klid = "0000083B".* },
     .{ .layout = "no", .variant = "", .klid = "00000414".* },
+    .{ .layout = "no", .variant = "smi", .klid = "0000043B".* },
     .{ .layout = "dk", .variant = "", .klid = "00000406".* },
     .{ .layout = "fi", .variant = "", .klid = "0000040B".* },
+    .{ .layout = "fi", .variant = "smi", .klid = "0001083B".* },
     .{ .layout = "is", .variant = "", .klid = "0000040F".* },
     .{ .layout = "pl", .variant = "", .klid = "00000415".* },
     .{ .layout = "cz", .variant = "", .klid = "00000405".* },
     .{ .layout = "sk", .variant = "", .klid = "0000041B".* },
     .{ .layout = "hu", .variant = "", .klid = "0000040E".* },
-    .{ .layout = "ro", .variant = "", .klid = "00010418".* },
+    .{ .layout = "ro", .variant = "std", .klid = "00010418".* },
     .{ .layout = "hr", .variant = "", .klid = "0000041A".* },
     .{ .layout = "si", .variant = "", .klid = "00000424".* },
+    .{ .layout = "rs", .variant = "", .klid = "0000081A".* },
     .{ .layout = "ee", .variant = "", .klid = "00000425".* },
     .{ .layout = "lv", .variant = "", .klid = "00020426".* },
+    .{ .layout = "lt", .variant = "", .klid = "00010427".* },
     .{ .layout = "ru", .variant = "", .klid = "00000419".* },
+    .{ .layout = "ru", .variant = "tt", .klid = "00010444".* },
     .{ .layout = "ua", .variant = "", .klid = "00020422".* },
     .{ .layout = "by", .variant = "", .klid = "00000423".* },
+    .{ .layout = "bg", .variant = "", .klid = "00030402".* },
+    .{ .layout = "mk", .variant = "", .klid = "0001042F".* },
     .{ .layout = "gr", .variant = "", .klid = "00000408".* },
     .{ .layout = "tr", .variant = "", .klid = "0000041F".* },
+    .{ .layout = "al", .variant = "", .klid = "0000041C".* },
+    .{ .layout = "mt", .variant = "", .klid = "0000043A".* },
+    .{ .layout = "ge", .variant = "", .klid = "00010437".* },
+    .{ .layout = "am", .variant = "", .klid = "0002042B".* },
+    .{ .layout = "az", .variant = "", .klid = "0000042C".* },
+    .{ .layout = "az", .variant = "cyrillic", .klid = "0000082C".* },
+    .{ .layout = "kz", .variant = "", .klid = "0000043F".* },
+    .{ .layout = "mn", .variant = "", .klid = "00000450".* },
+    .{ .layout = "tj", .variant = "", .klid = "00000428".* },
+    .{ .layout = "tm", .variant = "", .klid = "00000442".* },
+    .{ .layout = "kg", .variant = "", .klid = "00000440".* },
+    .{ .layout = "af", .variant = "", .klid = "00000463".* },
+    .{ .layout = "pk", .variant = "", .klid = "00000420".* },
+    .{ .layout = "ir", .variant = "", .klid = "00000429".* },
     .{ .layout = "il", .variant = "", .klid = "0002040D".* },
+    .{ .layout = "ara", .variant = "", .klid = "00000401".* },
+    .{ .layout = "ara", .variant = "azerty", .klid = "00020401".* },
+    .{ .layout = "eg", .variant = "", .klid = "00000401".* },
+    .{ .layout = "sy", .variant = "", .klid = "0000045A".* },
+    .{ .layout = "np", .variant = "", .klid = "00000461".* },
+    .{ .layout = "lk", .variant = "", .klid = "0000045B".* },
+    .{ .layout = "in", .variant = "", .klid = "00000439".* },
     .{ .layout = "th", .variant = "", .klid = "0000041E".* },
+    .{ .layout = "vn", .variant = "", .klid = "0000042A".* },
+    .{ .layout = "jp", .variant = "", .klid = "00000411".* },
+    .{ .layout = "kr", .variant = "", .klid = "00000412".* },
+    .{ .layout = "cn", .variant = "", .klid = "00000804".* },
+    .{ .layout = "tw", .variant = "", .klid = "00000404".* },
+    .{ .layout = "cn", .variant = "ug", .klid = "00010480".* },
+    .{ .layout = "mao", .variant = "", .klid = "00000481".* },
+    .{ .layout = "kh", .variant = "", .klid = "00000453".* },
+    .{ .layout = "la", .variant = "", .klid = "00000454".* },
+    .{ .layout = "bt", .variant = "", .klid = "00000C51".* },
 };
 
 /// Send-on-change classification for one observation.
@@ -132,7 +180,9 @@ pub fn validate_name(name: []const u8) error_t!void {
     }
 }
 
-/// Accept an XKB variant name: 0 through MaxNameBytes bytes from [a-z0-9_-].
+/// Accept an XKB variant name: 0 through MaxNameBytes bytes from [A-Za-z0-9_-].
+/// Uppercase is accepted so that names such as T3 reach the table and read as
+/// unmapped, not as malformed.
 /// Parameter is a borrowed slice (in). Empty means the layout default.
 /// Errors: InvalidName for a longer name or any other byte.
 /// Thread safety: pure.
@@ -209,7 +259,7 @@ fn is_layout_byte(byte: u8) bool {
 }
 
 fn is_variant_byte(byte: u8) bool {
-    return is_layout_byte(byte) or byte == '-';
+    return is_layout_byte(byte) or byte == '-' or (byte >= 'A' and byte <= 'Z');
 }
 
 fn hex_value(byte: u8) ?u8 {
@@ -242,7 +292,7 @@ fn bytes_arg(ptr: ?[*]const u8, len: usize, max: usize) abi_error_t![]const u8 {
 /// `text` and `out` must be non-NULL when len is nonzero (`out` always).
 /// Returns Ok, NullArgument, or InvalidKlid. Writes `out` only on Ok.
 /// Thread safety: pure.
-export fn waddle_keyboard_layout_validate_klid(text: ?[*]const u8, len: usize, out: ?*klid_t) callconv(.C) status_t {
+export fn waddle_keyboard_layouts_validate_klid(text: ?[*]const u8, len: usize, out: ?*klid_t) callconv(.C) status_t {
     const o = out orelse return .NullArgument;
     const bytes = bytes_arg(text, len, KlidBytes) catch |err| return status_of(err);
     o.* = validate_klid(bytes) catch return .InvalidKlid;
@@ -254,7 +304,7 @@ export fn waddle_keyboard_layout_validate_klid(text: ?[*]const u8, len: usize, o
 /// with variant_len 0 for the default variant. `state` is inout, `out` is out.
 /// Returns Ok, NullArgument, or InvalidName. State and `out` change only on Ok.
 /// Thread safety: caller serializes calls on one state.
-export fn waddle_keyboard_layout_observe(state: ?*state_t, layout: ?[*]const u8, layout_len: usize, variant: ?[*]const u8, variant_len: usize, out: ?*outcome_abi_t) callconv(.C) status_t {
+export fn waddle_keyboard_layouts_observe(state: ?*state_t, layout: ?[*]const u8, layout_len: usize, variant: ?[*]const u8, variant_len: usize, out: ?*outcome_abi_t) callconv(.C) status_t {
     const s = state orelse return .NullArgument;
     const o = out orelse return .NullArgument;
     const layout_name = bytes_arg(layout, layout_len, MaxNameBytes) catch |err| return status_of(err);
@@ -266,7 +316,7 @@ export fn waddle_keyboard_layout_observe(state: ?*state_t, layout: ?[*]const u8,
 
 /// C ABI: clear the last-sent KLID. `state` is inout. Returns Ok or NullArgument.
 /// Thread safety: caller serializes calls on one state.
-export fn waddle_keyboard_layout_reset(state: ?*state_t) callconv(.C) status_t {
+export fn waddle_keyboard_layouts_reset(state: ?*state_t) callconv(.C) status_t {
     const s = state orelse return .NullArgument;
     reset(s);
     return .Ok;
@@ -293,7 +343,9 @@ test "variant names allow a dash and the empty default" {
     try validate_variant(rt([]const u8, "nodeadkeys"));
     try validate_variant(rt([]const u8, &[_]u8{'-'} ** MaxNameBytes));
     try std.testing.expectError(error.InvalidName, validate_variant(rt([]const u8, &[_]u8{'-'} ** (MaxNameBytes + 1))));
-    try std.testing.expectError(error.InvalidName, validate_variant(rt([]const u8, "Dvorak")));
+    try validate_variant(rt([]const u8, "Dvorak"));
+    try validate_variant(rt([]const u8, "T3"));
+    try validate_variant(rt([]const u8, "phonetic_YAZHERTY"));
     try std.testing.expectError(error.InvalidName, validate_variant(rt([]const u8, "a.b")));
     try std.testing.expectError(error.InvalidName, validate_variant(rt([]const u8, "a b")));
 }
@@ -321,22 +373,25 @@ test "every table row is a valid name pair with a canonical KLID and pairs are u
             try std.testing.expect(!same_pair);
         }
     }
-    try std.testing.expect(KeyboardLayoutTable.len <= 128);
+    try std.testing.expect(KeyboardLayoutTable.len >= 80);
 }
 
 test "lookup maps exact pairs and reports unmapped pairs as null" {
     try std.testing.expectEqualSlices(u8, "00000409", &(try lookup(rt([]const u8, "us"), "")).?.bytes);
     try std.testing.expectEqualSlices(u8, "00020409", &(try lookup(rt([]const u8, "us"), "intl")).?.bytes);
     try std.testing.expectEqualSlices(u8, "00020426", &(try lookup(rt([]const u8, "lv"), "")).?.bytes);
-    try std.testing.expect((try lookup(rt([]const u8, "us"), "dvorak")) == null);
-    try std.testing.expect((try lookup(rt([]const u8, "de"), "nodeadkeys")) == null);
-    try std.testing.expectEqualSlices(u8, "00000416", &(try lookup(rt([]const u8, "br"), "")).?.bytes);
+    try std.testing.expectEqualSlices(u8, "00010409", &(try lookup(rt([]const u8, "us"), "dvorak")).?.bytes);
+    try std.testing.expectEqualSlices(u8, "00000407", &(try lookup(rt([]const u8, "de"), "nodeadkeys")).?.bytes);
+    try std.testing.expectEqualSlices(u8, "00010416", &(try lookup(rt([]const u8, "br"), "")).?.bytes);
     try std.testing.expect((try lookup(rt([]const u8, "xx"), "")) == null);
     try std.testing.expect((try lookup(rt([]const u8, "de"), "neo")) == null);
     try std.testing.expect((try lookup(rt([]const u8, "us"), "dvorak-x")) == null);
     try std.testing.expectError(error.InvalidName, lookup(rt([]const u8, ""), ""));
     try std.testing.expectError(error.InvalidName, lookup(rt([]const u8, "US"), ""));
-    try std.testing.expectError(error.InvalidName, lookup(rt([]const u8, "us"), "Intl"));
+    try std.testing.expect((try lookup(rt([]const u8, "us"), "Intl")) == null);
+    try std.testing.expect((try lookup(rt([]const u8, "de"), "T3")) == null);
+    try std.testing.expect((try lookup(rt([]const u8, "ru"), "phonetic_YAZHERTY")) == null);
+    try std.testing.expect((try lookup(rt([]const u8, "us"), "colemak")) == null);
 }
 
 test "observe sends on first mapping and on change, never on duplicates" {
@@ -371,7 +426,8 @@ test "unmapped layouts keep the guest layout and do not reset duplicate suppress
 test "invalid names fail without changing state and reset forces the next send" {
     var state = state_t{ .has_applied = false, .applied = std.mem.zeroes(klid_t) };
     try std.testing.expectError(error.InvalidName, observe(&state, rt([]const u8, ""), ""));
-    try std.testing.expectError(error.InvalidName, observe(&state, rt([]const u8, "us"), "BAD"));
+    try std.testing.expectError(error.InvalidName, observe(&state, rt([]const u8, "us"), "a.b"));
+    try std.testing.expectEqual(outcome_kind_t.NoMapping, (try observe(&state, rt([]const u8, "us"), "BAD")).kind);
     try std.testing.expectEqualDeep(state_t{ .has_applied = false, .applied = std.mem.zeroes(klid_t) }, state);
 
     _ = try observe(&state, rt([]const u8, "fr"), "");
@@ -387,44 +443,46 @@ test "C ABI validates arguments, maps outcomes and reports every status" {
     const null_state = rt(?*state_t, null);
     const null_text = rt(?[*]const u8, null);
     const null_outcome = rt(?*outcome_abi_t, null);
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_observe(null_state, us, us.len, null_text, 0, &outcome));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_observe(&state, us, us.len, null_text, 0, null_outcome));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_observe(&state, null_text, rt(usize, 2), null_text, 0, &outcome));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_observe(&state, us, us.len, null_text, rt(usize, 3), &outcome));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_observe(null_state, us, us.len, null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_observe(&state, us, us.len, null_text, 0, null_outcome));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_observe(&state, null_text, rt(usize, 2), null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_observe(&state, us, us.len, null_text, rt(usize, 3), &outcome));
     try std.testing.expectEqual(@as(u8, 0xEE), outcome.kind);
 
-    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layout_observe(&state, us, rt(usize, 0), null_text, 0, &outcome));
-    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layout_observe(&state, "U", 1, null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layouts_observe(&state, us, rt(usize, 0), null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layouts_observe(&state, "U", 1, null_text, 0, &outcome));
     const long = [_]u8{'a'} ** (MaxNameBytes + 1);
-    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layout_observe(&state, &long, rt(usize, long.len), null_text, 0, &outcome));
-    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layout_observe(&state, us, us.len, "B", 1, &outcome));
+    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layouts_observe(&state, &long, rt(usize, long.len), null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layouts_observe(&state, us, us.len, "b.x", 3, &outcome));
     try std.testing.expectEqual(@as(u8, 0xEE), outcome.kind);
     try std.testing.expect(!state.has_applied);
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_observe(&state, us, us.len, "T3", 2, &outcome));
+    try std.testing.expectEqual(@as(u8, @intFromEnum(outcome_kind_t.NoMapping)), outcome.kind);
 
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_observe(&state, us, us.len, null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_observe(&state, us, us.len, null_text, 0, &outcome));
     try std.testing.expectEqual(@as(u8, @intFromEnum(outcome_kind_t.Send)), outcome.kind);
     try std.testing.expectEqualSlices(u8, "00000409", &outcome.klid.bytes);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_observe(&state, us, us.len, "intl", 4, &outcome));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_observe(&state, us, us.len, "intl", 4, &outcome));
     try std.testing.expectEqual(@as(u8, @intFromEnum(outcome_kind_t.Send)), outcome.kind);
     try std.testing.expectEqualSlices(u8, "00020409", &outcome.klid.bytes);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_observe(&state, "zz", 2, null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_observe(&state, "zz", 2, null_text, 0, &outcome));
     try std.testing.expectEqual(@as(u8, @intFromEnum(outcome_kind_t.NoMapping)), outcome.kind);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_observe(&state, us, us.len, "intl", 4, &outcome));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_observe(&state, us, us.len, "intl", 4, &outcome));
     try std.testing.expectEqual(@as(u8, @intFromEnum(outcome_kind_t.Unchanged)), outcome.kind);
 
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_reset(null_state));
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_reset(&state));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_reset(null_state));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_reset(&state));
     try std.testing.expect(!state.has_applied);
 
     var klid = std.mem.zeroes(klid_t);
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_validate_klid("00000409", 8, rt(?*klid_t, null)));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_validate_klid(null_text, 8, &klid));
-    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layout_validate_klid("0000040g", 8, &klid));
-    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layout_validate_klid("00000409", 7, &klid));
-    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layout_validate_klid("000004090", 9, &klid));
-    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layout_validate_klid(null_text, rt(usize, 0), &klid));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_validate_klid("00000409", 8, rt(?*klid_t, null)));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_validate_klid(null_text, 8, &klid));
+    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layouts_validate_klid("0000040g", 8, &klid));
+    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layouts_validate_klid("00000409", 7, &klid));
+    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layouts_validate_klid("000004090", 9, &klid));
+    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layouts_validate_klid(null_text, rt(usize, 0), &klid));
     try std.testing.expectEqualSlices(u8, &[_]u8{0} ** KlidBytes, &klid.bytes);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_validate_klid("0000abcd", 8, &klid));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_validate_klid("0000abcd", 8, &klid));
     try std.testing.expectEqualSlices(u8, "0000ABCD", &klid.bytes);
 }
 

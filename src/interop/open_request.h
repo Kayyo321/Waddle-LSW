@@ -33,7 +33,7 @@ typedef enum interop_open_exit_t {
 /** @brief Parse, local and caller outcome codes; zero is success. */
 typedef enum interop_open_error_t {
     InteropOpenErrorNone = 0, /**< Success; request output is valid. */
-    InteropOpenErrorInvalidArgument = 1, /**< NULL or aliasing pointer; output untouched. Maps to 125. */
+    InteropOpenErrorInvalidArgument = 1, /**< NULL output, options or argv pointer; output untouched. Maps to 125. */
     InteropOpenErrorUnknownOption = 2, /**< Unrecognized token beginning with `-`. */
     InteropOpenErrorDuplicateOption = 3, /**< Single-occurrence option or flag repeated. */
     InteropOpenErrorMissingOptionValue = 4, /**< Value option without a value, or value begins with `-`. */
@@ -53,7 +53,9 @@ typedef enum interop_open_error_t {
     InteropOpenErrorNotFound = 18, /**< Caller-reported: local path missing (127). */
     InteropOpenErrorLocalFailure = 19, /**< Caller-reported: local failure (125). */
     InteropOpenErrorGuestUnreachable = 20, /**< Caller-reported: guest not reachable in 120 s (125). */
-    InteropOpenErrorGuestLaunchFailed = 21 /**< Caller-reported: guest launch failure (1). */
+    InteropOpenErrorGuestLaunchFailed = 21, /**< Caller-reported: guest launch failure (1). */
+    InteropOpenErrorDelegateConflict = 22, /**< Usage: several DelegateExec items, or DelegateExec mixed with sent items. Reported after the read callback. */
+    InteropOpenErrorInvalidUtf8 = 23 /**< Usage: PATH, EXE or argument-tail bytes are not valid UTF-8 (codec requirement). */
 } interop_open_error_t;
 
 /** @brief Launch item kinds; Unused is the zero value of slots beyond item_count. */
@@ -76,14 +78,15 @@ typedef enum interop_open_item_kind_t {
  * @param[out] buffer Writable parser-owned buffer of capacity bytes, valid for this call only.
  * @param[in] capacity Bytes writable in buffer; always InteropOpenPrefixBytes.
  * @param[out] length_out Nonnull; receives the byte count written, 0..capacity.
- * @return 0 on success; nonzero is a read failure (exit 126).
+ * @return 0 on success; 1 when the path does not exist (NotFound, exit 127); any other
+ *         nonzero value when the file cannot be read (ImageUnreadable, exit 126).
  * @note Runs synchronously on the calling thread. Must not retain any pointer.
  */
-typedef int (*interop_open_read_prefix_fn)(void *context, const char *path, size_t path_length, uint8_t *buffer, size_t capacity, size_t *length_out);
+typedef int (*interop_open_read_prefix_fn_t)(void *context, const char *path, size_t path_length, uint8_t *buffer, size_t capacity, size_t *length_out);
 
 /** @brief Caller-supplied parse options; borrowed for one call. */
 typedef struct interop_open_options_t {
-    interop_open_read_prefix_fn read_prefix; /**< In, nullable; NULL makes every .exe item ImageUnreadable. */
+    interop_open_read_prefix_fn_t read_prefix; /**< In, nullable; NULL makes every .exe item ImageUnreadable. */
     void *read_context; /**< In, opaque; never dereferenced by the parser. */
     uint32_t stdio_is_tty; /**< In; 1 only when stdin and stdout are both terminals. */
 } interop_open_options_t;

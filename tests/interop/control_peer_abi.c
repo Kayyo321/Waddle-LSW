@@ -669,6 +669,118 @@ static void test_drain_aborts_unfinished_ack(void)
     Check(interop_peer_destroy(&host) == InteropPeerSuccess);
 }
 
+static size_t make_window_close(uint8_t *frame, size_t capacity, uint64_t window, uint64_t generation)
+{
+    interop_writer_t writer;
+    size_t frame_length = 0;
+    interop_writer_init(&writer, frame, capacity);
+    Check(interop_put_uint(&writer, InteropTagWindow, window) == InteropErrorNone);
+    Check(interop_put_uint(&writer, InteropTagGeneration, generation) == InteropErrorNone);
+    Check(interop_writer_finish(&writer, InteropMsgWindowClose, 0, InteropFromHost, &frame_length) == InteropErrorNone);
+    return frame_length;
+}
+
+static size_t make_clipboard_clear(uint8_t *frame, size_t capacity, interop_direction_t direction, uint64_t epoch)
+{
+    interop_writer_t writer;
+    size_t frame_length = 0;
+    interop_writer_init(&writer, frame, capacity);
+    Check(interop_put_uint(&writer, InteropTagClipboardEpoch, epoch) == InteropErrorNone);
+    Check(interop_writer_finish(&writer, InteropMsgClipboardClear, 0, direction, &frame_length) == InteropErrorNone);
+    return frame_length;
+}
+
+static void establish_ready(interop_peer_t *host, interop_peer_t *guest, uint64_t now_ms)
+{
+    interop_peer_event_t event;
+    uint8_t output[MaxFrame];
+    Check(interop_peer_mapping_result(guest, GuestToken, now_ms, Epoch, InteropLayoutVersion, 1, &event) == InteropPeerSuccess);
+    expect_event(&event, InteropPeerEventNone, InteropPeerAwaitHelloSent);
+    send_front(guest, GuestToken, host, HostToken, now_ms, &event);
+    expect_event(&event, InteropPeerEventNone, InteropPeerAwaitHelloAck);
+    Check(interop_peer_next_event(host, HostToken, now_ms, output, sizeof(output), &event) == InteropPeerSuccess);
+    expect_event(&event, InteropPeerEventValidateMapping, InteropPeerAwaitMapping);
+    Check(interop_peer_mapping_result(host, HostToken, now_ms, Epoch, InteropLayoutVersion, 1, &event) == InteropPeerSuccess);
+    expect_event(&event, InteropPeerEventNone, InteropPeerAwaitHelloAckSent);
+    send_front(host, HostToken, guest, GuestToken, now_ms, &event);
+    expect_event(&event, InteropPeerEventReady, InteropPeerReady);
+    Check(interop_peer_next_event(guest, GuestToken, now_ms, output, sizeof(output), &event) == InteropPeerSuccess);
+    expect_event(&event, InteropPeerEventReady, InteropPeerReady);
+}
+
+static void test_outbound_feature_admission(void)
+{
+    interop_peer_config_t host_config = peer_config(InteropPeerHost, HostToken, Capabilities);
+    interop_peer_config_t guest_config = peer_config(InteropPeerGuest, GuestToken, Capabilities);
+    interop_peer_t *host = NULL;
+    interop_peer_t *guest = NULL;
+    interop_peer_event_t event;
+    interop_peer_event_t before;
+    _Alignas(8) uint8_t frame[InteropHeaderBytes + 32];
+    uint8_t tx[MaxFrame];
+    size_t frame_length = 0;
+    size_t length = 0;
+    size_t index;
+
+    Check(interop_peer_create(&host_config, &host) == InteropPeerSuccess && host != NULL);
+    Check(interop_peer_create(&guest_config, &guest) == InteropPeerSuccess && guest != NULL);
+    establish_ready(host, guest, 100);
+
+    frame_length = make_window_close(frame, sizeof(frame), 0x55, 2);
+    Check(frame_length == 40);
+    memset(&event, 0xA5, sizeof(event));
+    before = event;
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, NULL, 0, &event) == InteropPeerInvalidFrame);
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, NULL, frame_length, &event) == InteropPeerInvalidArgument);
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length, NULL) == InteropPeerInvalidArgument);
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length, (interop_peer_event_t *)(void *)frame) == InteropPeerInvalidArgument);
+    Check(interop_peer_enqueue_feature(host, GuestToken, 101, frame, frame_length, &event) == InteropPeerWrongToken);
+    Check(interop_peer_enqueue_feature(host, HostToken, 99, frame, frame_length, &event) == InteropPeerTimeWentBackwards);
+    Check(memcmp(&event, &before, sizeof(event)) == 0);
+
+    frame[0] ^= 0xFF;
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length, &event) == InteropPeerInvalidFrame);
+    frame[0] ^= 0xFF;
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length - 4, &event) == InteropPeerInvalidFrame);
+    Check(memcmp(&event, &before, sizeof(event)) == 0);
+
+    frame_length = make_frame(frame, sizeof(frame), InteropMsgPing, 1, InteropFromHost, 0);
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length, &event) == InteropPeerUnsupportedFrame);
+    frame_length = make_frame(frame, sizeof(frame), InteropMsgCatalogBegin, 0, InteropFromGuest, 1);
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length, &event) == InteropPeerUnsupportedFrame);
+    frame_length = make_clipboard_clear(frame, sizeof(frame), InteropFromHost, 3);
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length, &event) == InteropPeerFeatureNotNegotiated);
+    Check(memcmp(&event, &before, sizeof(event)) == 0);
+    Check(interop_peer_tx_bytes(host, HostToken, &length) == InteropPeerSuccess && length == 0);
+
+    frame_length = make_window_close(frame, sizeof(frame), 0x55, 2);
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length, &event) == InteropPeerSuccess);
+    expect_event(&event, InteropPeerEventNone, InteropPeerReady);
+    Check(interop_peer_tx_bytes(host, HostToken, &length) == InteropPeerSuccess && length == frame_length);
+    Check(copy_tx(host, HostToken, tx, sizeof(tx)) == frame_length && memcmp(tx, frame, frame_length) == 0);
+
+    for (index = 1; index < 504; index++) {
+        frame_length = make_window_close(frame, sizeof(frame), index + 1, 1);
+        Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length, &event) == InteropPeerSuccess);
+    }
+    frame_length = make_window_close(frame, sizeof(frame), 9999, 3);
+    memset(&event, 0xA5, sizeof(event));
+    before = event;
+    Check(interop_peer_enqueue_feature(host, HostToken, 101, frame, frame_length, &event) == InteropPeerQueueFull);
+    Check(memcmp(&event, &before, sizeof(event)) == 0);
+    Check(interop_peer_tx_bytes(host, HostToken, &length) == InteropPeerSuccess && length == 40);
+    Check(interop_peer_ack_tx(host, HostToken, 102, length, &event) == InteropPeerSuccess);
+    expect_event(&event, InteropPeerEventNone, InteropPeerReady);
+    Check(interop_peer_enqueue_feature(host, HostToken, 102, frame, frame_length, &event) == InteropPeerSuccess);
+
+    Check(interop_peer_enqueue_feature(host, HostToken, 101 + InteropPingTimeoutMs, frame, frame_length, &event) == InteropPeerSuccess);
+    expect_event(&event, InteropPeerEventDraining, InteropPeerDraining);
+    Check(interop_peer_enqueue_feature(host, HostToken, 101 + InteropPingTimeoutMs + 1, frame, frame_length, &event) == InteropPeerWrongPhase);
+
+    Check(interop_peer_destroy(&guest) == InteropPeerSuccess);
+    Check(interop_peer_destroy(&host) == InteropPeerSuccess);
+}
+
 int main(void)
 {
     test_invalid_create_and_runtime_pointer_guards();
@@ -681,6 +793,7 @@ int main(void)
     test_local_errors_drain_abort_and_closed_state();
     test_host_mapping_rejection_drains_without_readiness();
     test_drain_aborts_unfinished_ack();
+    test_outbound_feature_admission();
     puts("control peer C ABI tests passed");
     return 0;
 }

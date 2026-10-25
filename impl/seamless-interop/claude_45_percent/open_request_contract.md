@@ -43,15 +43,17 @@ spawning, catalog lookup, and `working_dir`. The parser never reads
 | `read_context` | opaque pointer | Passed unchanged to the callback. Not dereferenced by the parser. |
 | `stdio_is_tty` | u32, 0 or 1 | Caller sets 1 only when stdin and stdout are both terminals. |
 
-`read_prefix` callback contract (C typedef `interop_open_read_prefix_fn`):
+`read_prefix` callback contract (C typedef `interop_open_read_prefix_fn_t`):
 
 - Signature: `int (*)(void *context, const char *path, size_t path_length, uint8_t *buffer, size_t capacity, size_t *length_out)`.
 - `path` is not necessarily NUL terminated. Use `path_length` (1..4096 bytes).
 - `buffer` has `capacity` == 4096 writable bytes owned by the parser for the
   duration of the call. The callback writes at most `capacity` bytes and sets
   `*length_out` to the count written (0..4096).
-- Return 0 on success. Any nonzero return, or `*length_out > 4096`, is a read
-  failure.
+- Return `ReadStatusOk` (0) on success. `ReadStatusNotFound` (1) means the path does not
+  exist: the parser returns `NotFound`, exit 127. Any other nonzero value means the path
+  exists or its state is unknown but it cannot be read: `ImageUnreadable`, exit 126.
+  A reported length above 4096 is also `ImageUnreadable`.
 - Thread safety: the callback runs synchronously on the calling thread.
 - A NULL `read_prefix` makes every `.exe` item a read failure (`ImageUnreadable`).
 
@@ -91,22 +93,29 @@ Accepted token forms (exact spelling only):
 - `--wait`, `--new-console`: flags.
 - `--`: introduces the EXE form. Everything after it is EXE then ARG tokens.
 - Any other token beginning with `-` (including a lone `-`, `--device=NAME`,
-  `--app=KEY`) is `UnknownOption`. Targets that begin with `-` cannot be given
-  as a PATH; they must use the `--` form.
+  `--app=KEY`, `-x.txt`) is `UnknownOption`. A PATH whose spelling begins with
+  `-` is named with a leading path component, for example `./-x.txt`. The `--`
+  form does not help here: it accepts only an executable (next rule).
 - Any other token is a PATH.
 
 Rules:
 
-1. **Options before positional items.** An option token is accepted only while
-   no PATH and no `--` has been seen. After a PATH or `--`, a `--device`, `-d`,
-   `--wait` or `--new-console` token is `OptionAfterTarget`. Repeating `--app`
-   after a PATH is `MixedTargets`.
+1. **Options before the target.** `--device`, `-d`, `--wait` and `--new-console`
+   may appear in any order, but only before the target. The target is the
+   first of `--app APP_KEY`, a PATH, or `--`. Any of those four options after
+   `--app` or after a PATH is `OptionAfterTarget` (exit 2). A PATH or `--`
+   after `--app` is `MixedTargets`. `--app` after a PATH is `MixedTargets`.
 2. **Repetition.** Repeating any of `--device`/`-d`, `--app`, `--wait`,
    `--new-console` is `DuplicateOption`, even when the values are identical.
    `-d X --device Y` is a duplicate.
-3. **Values.** A value option with no following token, or whose following token
-   begins with `-`, is `MissingOptionValue`. A value is never consumed from the
-   token after a value option when that token is a recognized flag or `--`.
+3. **Values.** An option value is always the next argv token, whatever its
+   spelling. A value option with no next token is `MissingOptionValue`. A
+   next token that fails its own validator is `InvalidDevice` or
+   `InvalidAppKey`. Consequently `-d -dev` and `--device -dev` name the device
+   `-dev`, and `-d --wait` names a device called `--wait`: the device validator
+   (below) accepts these spellings, and no token is re-interpreted as an option.
+   `--app --wait` is `InvalidAppKey`. Write the value after the option; there
+   is no `--opt=value` form.
 4. **Device name.** 1..63 bytes of `[A-Za-z0-9_-]`, matching
    `daemon_device_validate_name` (WaddleMaxDeviceNameLen 64 including NUL).
    Otherwise `InvalidDevice`.
@@ -119,7 +128,11 @@ Rules:
 7. **Missing target.** No `--app`, PATH or `--` is `MissingTarget`. This includes
    an argv made only of options.
 8. **Empty PATH.** A zero-length PATH token is `EmptyPath`.
-9. **EXE form.** `--` must be followed by an EXE token. Missing EXE, or a
+9. **EXE form.** The frozen grammar defines `-- EXE [ARG...]` only, so `--` is
+   an executable-launch form and every other target is a PATH. `-- notes.txt`
+   is therefore `ExecutableNotExe` (usage, exit 2), not a silent PATH. Silently
+   dropping the arguments of a non-executable would lose information, and
+   honoring them would extend the frozen grammar. `--` must be followed by an EXE token. Missing EXE, or a
    zero-length EXE, is `EmptyExecutable`. The EXE token must end with `.exe`
    (case-insensitive) after the extension rule of section 4, otherwise
    `ExecutableNotExe`. Tokens after EXE are ARG tokens, verbatim, including
@@ -129,7 +142,12 @@ Rules:
     `quote_into` (section 6), must be at most **4096** bytes
     (`InteropMaxStringBytes`, the wire limit of `LaunchRequest.arguments`).
     Longer tails are `QuotedArgumentsTooLong`.
-11. Targets are parsed left to right. Each token is consumed once.
+11. **UTF-8.** Every PATH, the `--` EXE token and every argument-tail token must
+    be valid UTF-8 (`std.unicode.utf8ValidateSlice`). The codec's `utf8_text`
+    applies the same check to TargetPath and Arguments but is private, so the
+    parser calls the std validator directly. Otherwise `InvalidUtf8` (exit 2),
+    raised in the grammar pass. NUL cannot occur in argv.
+12. Targets are parsed left to right. Each token is consumed once.
 
 `--new-console` with an `--app` target is accepted and has no effect, because
 App items are never CUI routed. `--wait` has no effect on classification.
@@ -174,9 +192,31 @@ with no ARG tokens is still `ExeWithArgs` with `argument_count` 0.
 | Console | 5 `InteropLaunchConsole` | |
 | DelegateExec | none (null) | executed locally through `waddle exec`; never sent |
 
+DelegateExec rule (`DelegateConflict`, exit 2): a request may contain one
+DelegateExec item only when it is the sole item. Two delegated executables, or a
+delegated one next to any sent item, are rejected. This error depends on file
+classification, so it is reported after the read callback has run for the
+items; grammar errors are always reported before any callback.
+
 Codec cross-field rule (`interop_codec.zig` `cross_valid`): App requires app_key
 and forbids target_path; every other wire kind requires target_path and forbids
 app_key. The parser's output satisfies this for every non-delegated item.
+
+### 4.2 Integration rule: the environment activation token
+
+The parser does not read the environment. The integration layer (29b/29f) calls
+`pick_activation_token` (`activation_store_contract.md` section 2.1) and passes the
+result as the launch token. Rules for that layer:
+
+- One environment token per `waddle open` invocation. It is stored as a host
+  pending token (`activation_store_contract.md` section 3.3) for the launch.
+- The token attaches to the **first launched item only**: `items[0]`, which is
+  the first item that is sent. Items that are DelegateExec are never sent, and
+  a valid request has either exactly one DelegateExec item alone or only sent
+  items (`DelegateConflict`), so `items[0]` is always the first sent item.
+  Every later item of the same request is launched without a token.
+- The guest's `LaunchResult.activation_token` echo is never stored, compared or
+  reused as an activation source. It is unauthenticated guest data.
 
 ## 5. Exit codes and mappings
 
@@ -249,8 +289,10 @@ uint8_t interop_open_launch_exit_code(uint32_t status);
 - `interop_open_parse`: returns `interop_open_error_t` (0 = None). `argv` may be
   NULL only when `argc` is 0. `options` and `request` must be non-NULL; a NULL
   one returns `InvalidArgument` (value 1) and leaves `request` untouched. Each
-  `argv[i]` must be readable up to its NUL or 4097 bytes. `request` must not
-  alias `argv` or `options`.
+  `argv[i]` must be readable up to its NUL or 4097 bytes. Overlap is not
+  checked: `request` must not overlap `argv`, because the returned item text
+  borrows argv bytes, and it must not overlap `options`, which the parser reads
+  before it writes the output.
 - `interop_open_quote`: returns 0 Ok, 1 InvalidArgument (NULL `out` or
   `length_out`, argc > 64, argument longer than 4096), 2 QuotedTooLarge, 3 NoSpace.
   `capacity` must be at least `length + 1` for the NUL. `out` and `argv` must not
@@ -268,15 +310,16 @@ languages): `item_t` 40 bytes, `request_t` 2592 bytes, `options_t` 24 bytes.
 Usage (exit 2): `UnknownOption`, `DuplicateOption`, `MissingOptionValue`,
 `InvalidDevice`, `InvalidAppKey`, `OptionAfterTarget`, `MissingTarget`,
 `MixedTargets`, `EmptyPath`, `EmptyExecutable`, `ExecutableNotExe`,
-`TooManyArgs`, `ArgumentTooLong`, `QuotedArgumentsTooLong`.
+`TooManyArgs`, `ArgumentTooLong`, `QuotedArgumentsTooLong`, `DelegateConflict`, `InvalidUtf8`.
 
 Parse-time local (exit 126): `ImageUnreadable`.
 
-Caller-reported outcomes (mapped here so every consumer shares one table):
+Caller-reported outcomes (mapped here so every consumer shares one table; `NotFound`
+is also raised by the parser for read status 1, section 2.2):
 `OutsideShare` (126), `NotFound` (127), `LocalFailure` (125),
 `GuestUnreachable` (125), `GuestLaunchFailed` (1).
 
-`InvalidArgument` (C ABI only, NULL or aliasing pointers) is value 1 and maps to
+`InvalidArgument` (C ABI only, a NULL output, options or argv pointer) is value 1 and maps to
 125 in `interop_open_exit_code`, because it indicates a caller defect, not a
 user usage error.
 
@@ -302,10 +345,14 @@ user usage error.
   return, length above capacity, NULL reader.
 - Quoting: the vectors of section 6 against literal expected strings in Zig and
   against `waddle_quote` in C, plus NUL placement and `NoSpace`.
-- Randomized sequences: 20000 seeded token streams. Every outcome must satisfy
-  the output contract: errors zero the request; successes have 1..64 items whose
-  text is one of the input tokens and whose kind is never Unused. A full reference
-  recognizer is not implemented; the grammar is covered by the table tests.
+- Randomized sequences: 30000 seeded argv streams of 1..6 tokens over 25 tokens
+  (targets, options, values, dash spellings, empty, invalid UTF-8, a
+  two-target mix). A reference model in the test walks each stream with its
+  own state machine and predicts the status, the item kinds in argv order, and
+  the number of read-callback invocations. The reference is two-pass by
+  construction: grammar errors predict zero callbacks, and DelegateConflict is
+  predicted after classification. The test requires every error class in the
+  pool to occur and more than 1000 successes.
 - Exit tables: every error value, every launch status value.
 - Gates: `python3 tests/av/coverage.py open_request` >= 90% line and taken
   branch; `interop-open-request-test` runs Zig tests plus the C ABI test; the
