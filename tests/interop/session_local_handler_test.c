@@ -1832,6 +1832,129 @@ static void test_frame_scan_rules(void)
     Check(frame_length == 0);
 }
 
+/* Fill a path of exactly length bytes: a leading slash, then filler, with the terminating NUL. */
+static void fill_path(char *buffer, size_t length)
+{
+    memset(buffer, 'r', length);
+    buffer[0] = '/';
+    buffer[length] = '\0';
+}
+
+/* Queue one reply of the requested kind to client slot 0 and return the builder's result. */
+static int build_reply_kind(session_local_handler_t *handler, int kind, uint64_t serial)
+{
+    static const uint8_t message[] = "guest";
+    switch (kind) {
+    case 0: return reply_launch_result(handler, 0, serial, 7, InteropOk, 1234, message, sizeof(message) - 1u);
+    case 1: return reply_error(handler, 0, serial, 7, InteropErrorUnexpected, "sweep");
+    default: return reply_stop_ok(handler, 0, serial, 7);
+    }
+}
+
+/*
+ * Every transmit room from zero up to one frame past the measured size: a frame that fits is
+ * appended, and a frame that does not is refused with its client closed. This drives each
+ * codec put in the reply builders to its failure edge.
+ */
+static void sweep_reply_room(session_local_handler_t *handler, int kind)
+{
+    uint64_t serial = attach_client(handler, 0);
+    Check(build_reply_kind(handler, kind, serial) == 1);
+    size_t frame_bytes = handler->clients[0].tx_length;
+    Check(frame_bytes > (size_t)InteropHeaderBytes);
+    client_close(handler, 0);
+
+    for (size_t room = 0; room <= frame_bytes + 1u; ++room) {
+        serial = attach_client(handler, 0);
+        handler->clients[0].tx_length = (size_t)SessionLocalTxBytes - room;
+        int sent = build_reply_kind(handler, kind, serial);
+        if (room >= frame_bytes) {
+            Check(sent == 1 && handler->clients[0].fd >= 0);
+        } else {
+            Check(sent == 0 && handler->clients[0].fd == -1);
+        }
+        client_close(handler, 0);
+    }
+}
+
+static void test_branch_margin_edges(void)
+{
+    /* Init: each path stage that can overflow sun_path or the runtime cap refuses the handler. */
+    static char path[SessionLocalRuntimeDirMax + 2];
+    static session_local_handler_t scratch;
+    session_local_config_t config = {.runtime_dir = path, .device_name = "alpha", .lock_held_proof = 0, .reserved_zero = 0};
+    fill_path(path, SessionLocalRuntimeDirMax + 1u);
+    Check(session_local_handler_init(&scratch, &config) == SessionLocalInvalidArgument);
+    fill_path(path, 120);
+    Check(session_local_handler_init(&scratch, &config) == SessionLocalInvalidArgument);
+    fill_path(path, 101);
+    Check(session_local_handler_init(&scratch, &config) == SessionLocalInvalidArgument);
+    fill_path(path, 100);
+    config.device_name = "a";
+    Check(session_local_handler_init(&scratch, &config) == SessionLocalInvalidArgument);
+    fill_path(path, 90);
+    config.device_name = "wxyz";
+    Check(session_local_handler_init(&scratch, &config) == SessionLocalInvalidArgument);
+    fill_path(path, 80);
+    config.device_name = "a";
+    Check(session_local_handler_init(&scratch, &config) == 0);
+
+    fake_reset();
+    session_local_handler_t *handler = new_handler();
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+
+    /* A ready attempt on a closed handler is refused without binding. */
+    handler->closed = 1;
+    Check(table.on_ready(table.context, 0, FakeSender) != 0 && handler->bound == 0);
+    handler->closed = 0;
+
+    /* Degenerate descriptor reporting: no count pointer, and a bound handler without an epoll
+     * descriptor, and an empty descriptor request. */
+    struct pollfd fds[SessionHandlerMaxDescriptors];
+    size_t count = 0;
+    Check(table.poll_fds(table.context, fds, 1, NULL) != 0);
+    handler->bound = 1;
+    Check(table.poll_fds(table.context, fds, 1, &count) == 0);
+    Check(table.on_fds(table.context, fds, 0, 1, FakeSender) == 0);
+    handler->bound = 0;
+
+    /* The earliest pending launch deadline wins over a later one. */
+    handler->bound = 1;
+    handler->pending[0].in_use = 1;
+    handler->pending[0].deadline_ms = 900;
+    handler->pending[1].in_use = 1;
+    handler->pending[1].deadline_ms = 950;
+    Check(table.next_deadline_ms(table.context, 1) == 900);
+    handler->pending[0].in_use = 0;
+    handler->pending[1].in_use = 0;
+    handler->bound = 0;
+
+    /* Launches owned by another slot, or by the same slot in an older occupancy, are not counted. */
+    uint64_t serial = attach_client(handler, 0);
+    handler->pending[0].in_use = 1;
+    handler->pending[0].client_index = 1;
+    handler->pending[0].client_serial = serial;
+    handler->pending[1].in_use = 1;
+    handler->pending[1].client_index = 0;
+    handler->pending[1].client_serial = serial + 5;
+    Check(pending_outstanding(handler, 0, serial) == 0);
+    handler->pending[0].in_use = 0;
+    handler->pending[1].in_use = 0;
+
+    /* A stopping handler leaves received bytes unprocessed. */
+    handler->stopping = 1;
+    handler->clients[0].rx_length = 16;
+    (void)process_frames(handler, 0, 1, FakeSender);
+    Check(handler->clients[0].fd >= 0 && handler->clients[0].rx_length == 16);
+    handler->stopping = 0;
+    client_close(handler, 0);
+
+    /* Reply builders at every transmit room around one frame. */
+    for (int kind = 0; kind < 3; ++kind) sweep_reply_room(handler, kind);
+    free_handler(handler);
+}
+
 int main(void)
 {
     test_init_rejects_bad_input();
@@ -1868,6 +1991,7 @@ int main(void)
     test_accept_and_peer_fault_paths();
     test_client_io_fault_paths();
     test_reply_and_state_edges();
+    test_branch_margin_edges();
     Check(count_open_descriptors() == descriptors_before);
     printf("session_local_handler_test: passed\n");
     return 0;

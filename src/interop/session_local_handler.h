@@ -86,7 +86,20 @@ typedef enum session_local_send_outcome_t {
 typedef struct session_local_config_t {
     const char *runtime_dir; /**< In: absolute XDG_RUNTIME_DIR, NUL-terminated. */
     const char *device_name; /**< In: 1..SessionLocalDeviceNameMax bytes of [A-Za-z0-9_-]. */
-    uint32_t lock_held_proof; /**< In: nonzero only when this process holds session.lock. */
+    /**
+     * In: nonzero only while this process holds the device's session.lock (and command.lock).
+     * Exact session_main obligations:
+     *  - set 1 only after interop_linux_session_acquire returned success for this device; set 0
+     *    when acquire failed, was not attempted, or the owner has been released;
+     *  - set it before session_local_handler_init (init copies it once; later edits to the config
+     *    have no effect), and before the handler's on_ready, which makes the stale-socket decision
+     *    and so unlinks an old session.sock only when the copied proof is nonzero;
+     *  - keep the owner alive until the handler's on_closing has run; releasing the owner first
+     *    lets a second session acquire the lock while this handler still serves clients, so two
+     *    sessions would serve one device.
+     * The handler never acquires, releases, or inspects session.lock.
+     */
+    uint32_t lock_held_proof;
     uint32_t reserved_zero; /**< In: must be zero. */
 } session_local_config_t;
 

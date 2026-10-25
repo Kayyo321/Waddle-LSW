@@ -350,7 +350,12 @@ Run from the worktree root with `-j4` at most.
 ## 18. Open decisions for the lead
 
 1. Composition (outside this lane): the runtime must admit the session, set `lock_held_proof`
-   nonzero after admission, build `interop_host_feature_ops_t` from `session_handler_t` (the
+   to 1 only after `interop_linux_session_acquire` succeeded for the device (0 when it failed or
+   was not attempted), set it before `session_local_handler_init` (the value is copied once), keep
+   the owner alive until the handler's `on_closing` has run, and never release the owner before
+   that. The handler never acquires, releases, or inspects `session.lock`. The exact text is in the
+   `session_local_config_t` comment in `src/interop/session_local_handler.h`. The runtime must also
+   build `interop_host_feature_ops_t` from `session_handler_t` (the
    harness contains a reference adapter), and handle `SessionHandlerRequestStop` as a graceful
    stop. `session_control_host.c` has no stop path yet: callbacks can only return zero or nonzero
    failure. The harness uses `pthread_kill(pthread_self(), SIGTERM)` on the pump thread, which the
