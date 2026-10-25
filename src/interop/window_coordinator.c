@@ -1174,6 +1174,49 @@ window_coordinator_status_t window_coordinator_mark_lost(window_coordinator_t *c
     return WindowCoordinatorOk;
 }
 
+/**
+ * @brief Completes one graph RetireIntent without a wire message.
+ *
+ * Used by reconnect for generations that never had a coordinator entry (for example a window observed
+ * while Lost whose Announce was never admitted). Capture was stopped when the transport was lost, and the
+ * host proof of the new epoch drains every pin, so the proof is exact.
+ *
+ * @param[in,out] coordinator Owner-thread coordinator in the Lost state.
+ * @param[in] event Staged or queued graph event; non-RetireIntent events are ignored.
+ */
+static void complete_retirement_event(window_coordinator_t *coordinator, const interop_window_event_t *event) {
+    interop_window_retire_proof_t proof;
+    if (event->kind != InteropWindowEventRetireIntent) return;
+    proof.capture_stopped = 1u;
+    proof.pins_drained = 1u;
+    (void)interop_window_graph_complete_retire(coordinator->graph, coordinator->epoch, event->window,
+                                               event->generation, &proof);
+}
+
+/**
+ * @brief Completes every graph quarantine of the old epoch, including generations without an entry.
+ *
+ * Staged events are read first because reconnect discards them. Then every remaining Active generation
+ * is moved to Retiring and the graph's queued RetireIntents are drained. Without this, the observer
+ * refuses to destroy while the old graph still lists a window.
+ *
+ * @param[in,out] coordinator Owner-thread coordinator in the Lost state.
+ * @return 0 when every quarantine was completed; 1 when the graph could not queue the retirements.
+ */
+static int complete_graph_retirements(window_coordinator_t *coordinator) {
+    interop_window_event_t event;
+    uint32_t index;
+    for (index = 0; index < coordinator->staging_count; ++index) {
+        complete_retirement_event(coordinator,
+            &coordinator->staging[(coordinator->staging_head + index) % WaddleCoordinatorStagingCapacity]);
+    }
+    if (graph_ok(interop_window_graph_invalidate_all(coordinator->graph, coordinator->epoch, NULL)) == 0u) return 1;
+    while (interop_window_graph_next_event(coordinator->graph, coordinator->epoch, &event) == InteropWindowGraphStatusOk) {
+        complete_retirement_event(coordinator, &event);
+    }
+    return 0;
+}
+
 window_coordinator_status_t window_coordinator_reconnect(window_coordinator_t *coordinator, uint64_t new_epoch,
                                                          uint32_t host_buffers_destroyed) {
     window_coordinator_status_t status = enter(coordinator);
@@ -1197,8 +1240,6 @@ window_coordinator_status_t window_coordinator_reconnect(window_coordinator_t *c
         leave(coordinator);
         return WindowCoordinatorBackendFailed;
     }
-    coordinator->staging_count = 0u;
-    coordinator->staging_head = 0u;
     for (index = 0; index < InteropMaxWindows; ++index) {
         coord_entry_t *entry = &coordinator->entries[index];
         interop_window_retire_proof_t proof;
@@ -1216,6 +1257,13 @@ window_coordinator_status_t window_coordinator_reconnect(window_coordinator_t *c
         (void)window_observer_stop(coordinator->observer);
         coordinator->observer_started = 0u;
     }
+    if (complete_graph_retirements(coordinator) != 0) {
+        coordinator->state = WindowCoordinatorStateFaulted;
+        leave(coordinator);
+        return WindowCoordinatorBackendFailed;
+    }
+    coordinator->staging_count = 0u;
+    coordinator->staging_head = 0u;
     if (window_observer_destroy(&coordinator->observer) != WindowObserverStatusOk) {
         coordinator->state = WindowCoordinatorStateFaulted;
         leave(coordinator);
