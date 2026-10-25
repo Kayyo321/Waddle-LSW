@@ -329,10 +329,14 @@ user usage error.
   return, length above capacity, NULL reader.
 - Quoting: the vectors of section 6 against literal expected strings in Zig and
   against `waddle_quote` in C, plus NUL placement and `NoSpace`.
-- Randomized sequences: 20000 seeded token streams. Every outcome must satisfy
-  the output contract: errors zero the request; successes have 1..64 items whose
-  text is one of the input tokens and whose kind is never Unused. A full reference
-  recognizer is not implemented; the grammar is covered by the table tests.
+- Randomized sequences: 30000 seeded argv streams of 1..6 tokens over 25 tokens
+  (targets, options, values, dash spellings, empty, invalid UTF-8, a
+  two-target mix). A reference model in the test walks each stream with its
+  own state machine and predicts the status, the item kinds in argv order, and
+  the number of read-callback invocations. The reference is two-pass by
+  construction: grammar errors predict zero callbacks, and DelegateConflict is
+  predicted after classification. The test requires every error class in the
+  pool to occur and more than 1000 successes.
 - Exit tables: every error value, every launch status value.
 - Gates: `python3 tests/av/coverage.py open_request` >= 90% line and taken
   branch; `interop-open-request-test` runs Zig tests plus the C ABI test; the
