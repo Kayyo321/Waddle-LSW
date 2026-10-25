@@ -49,7 +49,8 @@ typedef enum host_wayland_status_t {
     HostWaylandPressTableFull = 6, /**< All 64 press entries are live; the caller must fail the session (3.6.2). Nothing changed. */
     HostWaylandNotInitialized = 7, /**< The context was not initialized or was reset. */
     HostWaylandDuplicateSerial = 8, /**< A live press already holds this protocol serial T. Nothing changed. */
-    HostWaylandSeatTableFull = 9 /**< All `HostWaylandMaxSeats` seats are registered; the press was not recorded. */
+    HostWaylandSeatTableFull = 9, /**< All `HostWaylandMaxSeats` seats are registered; the press was not recorded. */
+    HostWaylandPressNotFound = 10 /**< No live press holds the serial (never recorded, released, expired, or retired). */
 } host_wayland_status_t;
 
 /** @brief Seats the press table can name at once. A press on a seat beyond this is refused. */
@@ -172,6 +173,7 @@ typedef struct host_wayland_press_t {
     uint64_t lease_epoch; /**< Input lease of the press. */
     uint32_t kind; /**< A `host_wayland_press_kind_t` value. */
     uint32_t button; /**< Evdev code; nonzero for a pointer press. */
+    uint64_t sequence; /**< Record order on the context; the highest live sequence of a window is its latest press. */
     uint8_t live; /**< Nonzero for a used entry. */
 } host_wayland_press_t;
 
@@ -185,6 +187,7 @@ typedef struct host_wayland_t {
     host_wayland_press_t presses[64]; /**< Bounded press table. */
     uint64_t grab_counter; /**< Sequence source for `grab_sequence`. */
     uint64_t last_clock_ms; /**< Last clock value seen; a smaller one clears the press table. */
+    uint64_t press_sequence; /**< Sequence source for `sequence` of recorded presses. */
     struct wl_seat *seats[HostWaylandMaxSeats]; /**< Registered seats; a grab needs its press seat here. */
 } host_wayland_t;
 
@@ -317,6 +320,101 @@ host_wayland_status_t host_wayland_windows_set_scale(host_wayland_t *ctx, uint32
  *         HostWaylandNotInitialized. Thread safety: owner thread, synchronous.
  */
 host_wayland_status_t host_wayland_windows_note_mapped(host_wayland_t *ctx, uint64_t window, uint64_t generation);
+
+/** @brief What a live press records, for the session handler's validation of guest requests (4.5). */
+typedef struct host_wayland_press_info_t {
+    struct wl_seat *seat; /**< Seat the press came from; may be unregistered since, check before use. */
+    uint32_t wayland_serial; /**< Wayland seat serial S to pass to a compositor request. */
+    uint64_t window; /**< Window the press landed on. */
+    uint64_t generation; /**< Its generation. */
+    uint64_t lease_epoch; /**< Input lease of the press. */
+    uint32_t kind; /**< A `host_wayland_press_kind_t` value. */
+    uint32_t button; /**< Evdev code; nonzero for a pointer press. */
+    uint8_t latest_for_window; /**< Nonzero when no later live press holds the same window and generation. */
+} host_wayland_press_info_t;
+
+/**
+ * @brief Look up the live press for protocol serial T at `now_ms`, with its window and latest-press status.
+ *
+ * @param ctx In/out. Initialized context; expired entries are removed first.
+ * @param protocol_serial In. Host protocol serial T named by a guest request.
+ * @param now_ms In. Monotonic clock in milliseconds.
+ * @param out In/out. Written only on HostWaylandOk.
+ * @return HostWaylandOk; HostWaylandPressNotFound when no live entry holds T; HostWaylandInvalidArgument for NULL
+ *         context or output, or a zero serial; HostWaylandNotInitialized. Thread safety: owner thread.
+ */
+host_wayland_status_t host_wayland_windows_lookup_press(host_wayland_t *ctx, uint32_t protocol_serial, uint64_t now_ms, host_wayland_press_info_t *out);
+
+/**
+ * @brief Start an interactive move of a realized toplevel (xdg_toplevel.move, 4.5).
+ *
+ * @param ctx In/out. Initialized context.
+ * @param window In. Protocol window handle; zero gives InvalidArgument.
+ * @param generation In. Its generation; zero gives InvalidArgument.
+ * @param seat In. Borrowed seat; must be registered (see record_press), otherwise Refused.
+ * @param wayland_serial In. Wayland seat serial S of the press that justifies the move.
+ * @return HostWaylandOk; Refused when the window is not realized as a toplevel or the seat is not registered;
+ *         InvalidArgument; NotInitialized. Thread safety: owner thread.
+ */
+host_wayland_status_t host_wayland_windows_begin_move(host_wayland_t *ctx, uint64_t window, uint64_t generation, struct wl_seat *seat, uint32_t wayland_serial);
+
+/**
+ * @brief Start an interactive resize from one edge (xdg_toplevel.resize, 4.5).
+ *
+ * @param ctx In/out. Initialized context.
+ * @param window In. Protocol window handle.
+ * @param generation In. Its generation.
+ * @param seat In. Borrowed seat; must be registered, otherwise Refused.
+ * @param wayland_serial In. Wayland seat serial S of the press.
+ * @param edge In. An `interop_resize_edge_t` value: 1, 2, 4, 5, 6, 8, 9 or 10 (the xdg-shell edge values); other
+ *             values are InvalidArgument.
+ * @return HostWaylandOk; Refused; InvalidArgument; NotInitialized.
+ */
+host_wayland_status_t host_wayland_windows_begin_resize(host_wayland_t *ctx, uint64_t window, uint64_t generation, struct wl_seat *seat, uint32_t wayland_serial, uint32_t edge);
+
+/**
+ * @brief Set or clear the compositor's maximized state of a realized toplevel (xdg_toplevel.set_maximized or
+ * unset_maximized). Persistent host state: the reducer decides when this is requested.
+ *
+ * @param ctx In/out. Initialized context.
+ * @param window In. Protocol window handle.
+ * @param generation In. Its generation.
+ * @param maximized In. True requests maximize, false requests unmaximize.
+ * @return HostWaylandOk; Refused when the window is not realized as a toplevel; InvalidArgument; NotInitialized.
+ */
+host_wayland_status_t host_wayland_windows_set_maximized(host_wayland_t *ctx, uint64_t window, uint64_t generation, bool maximized);
+
+/**
+ * @brief Set or clear fullscreen on a realized toplevel (xdg_toplevel.set_fullscreen with NULL output, or
+ * unset_fullscreen).
+ *
+ * @param ctx In/out. Initialized context.
+ * @param window In. Protocol window handle.
+ * @param generation In. Its generation.
+ * @param fullscreen In. True enters fullscreen, false leaves it.
+ * @return HostWaylandOk; Refused; InvalidArgument; NotInitialized.
+ */
+host_wayland_status_t host_wayland_windows_set_fullscreen(host_wayland_t *ctx, uint64_t window, uint64_t generation, bool fullscreen);
+
+/**
+ * @brief Minimize a realized toplevel (xdg_toplevel.set_minimized; one-shot, xdg-shell has no minimized state).
+ *
+ * @param ctx In/out. Initialized context.
+ * @param window In. Protocol window handle.
+ * @param generation In. Its generation.
+ * @return HostWaylandOk; Refused; InvalidArgument; NotInitialized.
+ */
+host_wayland_status_t host_wayland_windows_set_minimized(host_wayland_t *ctx, uint64_t window, uint64_t generation);
+
+/**
+ * @brief Whether a window pair is realized in the table right now.
+ *
+ * @param ctx In. Initialized context; NULL or uninitialized gives false.
+ * @param window In. Protocol window handle.
+ * @param generation In. Its generation.
+ * @return True when realized exactly.
+ */
+bool host_wayland_windows_contains(const host_wayland_t *ctx, uint64_t window, uint64_t generation);
 
 /**
  * @brief Number of realized windows.

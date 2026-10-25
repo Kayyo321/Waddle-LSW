@@ -1967,6 +1967,63 @@ static int check_mirror_and_mapped_edges(void) {
     return 0;
 }
 
+/**
+ * @brief The request surface the session handler drives (4.5): press lookup with latest-press status, interactive
+ * move and resize with registered seats and valid edges, and the persistent state requests on a realized toplevel.
+ */
+static int check_request_surface(void) {
+    static char seat_slots[2];
+    struct wl_seat *seat = (struct wl_seat *)(void *)&seat_slots[0];
+    struct wl_seat *other = (struct wl_seat *)(void *)&seat_slots[1];
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    host_wayland_press_info_t info;
+    Check(host_wayland_windows_lookup_press(&session_ctx, 0, 1000, &info) == HostWaylandInvalidArgument);
+    Check(host_wayland_windows_lookup_press(&session_ctx, 5, 1000, NULL) == HostWaylandInvalidArgument);
+    Check(host_wayland_windows_lookup_press(&session_ctx, 5, 1000, &info) == HostWaylandPressNotFound);
+    Check(record_press_at(&session_ctx, 5, 50, seat, 1, 1, 1000) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 6, 60, seat, 1, 1, 1000) == HostWaylandOk);
+    Check(host_wayland_windows_lookup_press(&session_ctx, 5, 1000, &info) == HostWaylandOk);
+    Check(info.seat == seat && info.wayland_serial == 50 && info.window == 1 && info.generation == 1 && info.latest_for_window == 0);
+    Check(host_wayland_windows_lookup_press(&session_ctx, 6, 1000, &info) == HostWaylandOk && info.latest_for_window == 1);
+    Check(host_wayland_windows_lookup_press(&session_ctx, 5, 1400, &info) == HostWaylandPressNotFound);
+
+    unsigned before = fake_request_count;
+    Check(host_wayland_windows_begin_move(&session_ctx, 1, 1, seat, 60) == HostWaylandOk);
+    int move = fake_find("xdg_toplevel", XDG_TOPLEVEL_MOVE, before);
+    Check(move >= 0 && fake_requests[move].proxy == fake_nth("xdg_toplevel", 0) && fake_requests[move].a1 == 60);
+    Check(host_wayland_windows_begin_move(&session_ctx, 1, 1, other, 60) == HostWaylandRefused);
+    Check(host_wayland_windows_begin_move(&session_ctx, 9, 1, seat, 60) == HostWaylandRefused);
+    Check(host_wayland_windows_begin_move(&session_ctx, 0, 1, seat, 60) == HostWaylandInvalidArgument);
+    Check(host_wayland_windows_begin_move(&session_ctx, 1, 1, NULL, 60) == HostWaylandInvalidArgument);
+
+    before = fake_request_count;
+    Check(host_wayland_windows_begin_resize(&session_ctx, 1, 1, seat, 61, 8) == HostWaylandOk);
+    int resize = fake_find("xdg_toplevel", XDG_TOPLEVEL_RESIZE, before);
+    Check(resize >= 0 && fake_requests[resize].a1 == 61 && fake_requests[resize].a2 == 8);
+    Check(host_wayland_windows_begin_resize(&session_ctx, 1, 1, seat, 61, 3) == HostWaylandInvalidArgument);
+    Check(host_wayland_windows_begin_resize(&session_ctx, 1, 1, other, 61, 8) == HostWaylandRefused);
+
+    before = fake_request_count;
+    Check(host_wayland_windows_set_maximized(&session_ctx, 1, 1, true) == HostWaylandOk);
+    Check(host_wayland_windows_set_maximized(&session_ctx, 1, 1, false) == HostWaylandOk);
+    Check(host_wayland_windows_set_fullscreen(&session_ctx, 1, 1, true) == HostWaylandOk);
+    Check(host_wayland_windows_set_fullscreen(&session_ctx, 1, 1, false) == HostWaylandOk);
+    Check(host_wayland_windows_set_minimized(&session_ctx, 1, 1) == HostWaylandOk);
+    Check(fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_MAXIMIZED) >= 1 && fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_UNSET_MAXIMIZED) >= 1);
+    Check(fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_FULLSCREEN) >= 1 && fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_UNSET_FULLSCREEN) >= 1);
+    Check(fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_MINIMIZED) >= 1);
+    Check(host_wayland_windows_set_maximized(&session_ctx, 9, 1, true) == HostWaylandRefused);
+    Check(host_wayland_windows_set_fullscreen(&session_ctx, 9, 1, true) == HostWaylandRefused);
+    Check(host_wayland_windows_set_minimized(&session_ctx, 9, 1) == HostWaylandRefused);
+    Check(host_wayland_windows_set_maximized(&session_ctx, 0, 1, true) == HostWaylandInvalidArgument);
+    Check(fake_request_count > before);
+    Check(host_wayland_windows_contains(&session_ctx, 1, 1) && !host_wayland_windows_contains(&session_ctx, 1, 2));
+    Check(!host_wayland_windows_contains(NULL, 1, 1));
+    return 0;
+}
+
 /** @brief Every request the module sent was accepted by the strict double. Runs last. */
 static int check_fake_protocol_clean(void) {
     Check(fake_dead_requests == 0);
@@ -2012,6 +2069,7 @@ int main(void) {
     if (check_grab_guards() != 0) return 1;
     if (check_reposition_edges() != 0) return 1;
     if (check_mirror_and_mapped_edges() != 0) return 1;
+    if (check_request_surface() != 0) return 1;
     if (check_configure_is_latched() != 0) return 1;
     if (check_retire_invalid_reports() != 0) return 1;
     if (check_retire_order() != 0) return 1;
