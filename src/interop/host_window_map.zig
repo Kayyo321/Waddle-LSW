@@ -415,22 +415,22 @@ fn compact_realized(map: *host_window_map_t, remove: []const bool) void {
 // ---- C ABI ------------------------------------------------------------------------------------
 
 /// Half-open address range used to reject aliased C arguments before any write.
-const Region = struct {
+const region_t = struct {
     start: usize,
     len: usize,
 };
 
-fn region_of_value(value: anytype) Region {
+fn region_of_value(value: anytype) region_t {
     return .{ .start = @intFromPtr(value), .len = @sizeOf(std.meta.Child(@TypeOf(value))) };
 }
 
-fn region_of_slice(slice: anytype) Region {
+fn region_of_slice(slice: anytype) region_t {
     return .{ .start = @intFromPtr(slice.ptr), .len = slice.len * @sizeOf(std.meta.Child(@TypeOf(slice))) };
 }
 
 /// Whether no two regions overlap. Saturating ends never wrap, so a region near the top of the
 /// address space is still compared correctly.
-fn regions_disjoint(regions: []const Region) bool {
+fn regions_disjoint(regions: []const region_t) bool {
     for (regions, 0..) |left, index| {
         for (regions[index + 1 ..]) |right| {
             if (left.start < right.start +| right.len and right.start < left.start +| left.len) return false;
@@ -1148,7 +1148,7 @@ test "randomized sequences agree with the reference model over small and large u
 
 /// The C ABI exports are called through `never_inline` shims so that the optimized wrapper bodies
 /// keep their own branches. A directly inlined call with constant NULL arguments would fold them away.
-const abi = struct {
+const abi_shim_t = struct {
     fn reset(map: ?*host_window_map_t) void {
         @call(.never_inline, host_window_map_reset, .{map});
     }
@@ -1179,19 +1179,19 @@ const abi = struct {
 };
 
 test "C ABI counts and lookup accept NULL and report the table" {
-    try testing.expectEqual(@as(u32, 0), abi.realized(null));
-    try testing.expectEqual(@as(u32, 0), abi.deferred(null));
-    try testing.expect(!abi.is_current(null, ref(1, 1)));
-    try testing.expect(!abi.lookup(null, ref(1, 1), null));
+    try testing.expectEqual(@as(u32, 0), abi_shim_t.realized(null));
+    try testing.expectEqual(@as(u32, 0), abi_shim_t.deferred(null));
+    try testing.expect(!abi_shim_t.is_current(null, ref(1, 1)));
+    try testing.expect(!abi_shim_t.lookup(null, ref(1, 1), null));
 
     var map = new_map();
     var out = new_out();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    abi.reset(null);
-    try testing.expectEqual(@as(u32, 1), abi.realized(&map));
-    abi.reset(&map);
-    try testing.expectEqual(@as(u32, 0), abi.realized(&map));
-    try testing.expect(!abi.is_current(&map, ref(1, 1)));
+    abi_shim_t.reset(null);
+    try testing.expectEqual(@as(u32, 1), abi_shim_t.realized(&map));
+    abi_shim_t.reset(&map);
+    try testing.expectEqual(@as(u32, 0), abi_shim_t.realized(&map));
+    try testing.expect(!abi_shim_t.is_current(&map, ref(1, 1)));
 }
 
 test "C ABI announce and retire write outputs and counts on success" {
@@ -1200,40 +1200,40 @@ test "C ABI announce and retire write outputs and counts on success" {
     var retired = new_out();
     var discarded = new_out();
     var count: u32 = 99;
-    try testing.expectEqual(announce_status_t.Realize, abi.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, &count));
+    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, &count));
     try testing.expectEqual(@as(u32, 1), count);
     try expect_ref(ref(1, 1), out[0]);
-    try testing.expectEqual(announce_status_t.Defer, abi.announce(&map, ref(2, 1), ref(9, 1), RoleDialog, &out, MaxOutput, &count));
+    try testing.expectEqual(announce_status_t.Defer, abi_shim_t.announce(&map, ref(2, 1), ref(9, 1), RoleDialog, &out, MaxOutput, &count));
     try testing.expectEqual(@as(u32, 0), count);
-    try testing.expectEqual(announce_status_t.Realize, abi.announce(&map, ref(9, 1), none(), RoleToplevel, &out, MaxOutput, &count));
+    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(9, 1), none(), RoleToplevel, &out, MaxOutput, &count));
     try testing.expectEqual(@as(u32, 2), count);
     try expect_ref(ref(2, 1), out[1]);
 
     var retired_count: u32 = 99;
     var discarded_count: u32 = 99;
-    try testing.expectEqual(retire_status_t.Retired, abi.retire(&map, ref(9, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.Retired, abi_shim_t.retire(&map, ref(9, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
     try testing.expectEqual(@as(u32, 2), retired_count);
     try testing.expectEqual(@as(u32, 0), discarded_count);
     try expect_ref(ref(2, 1), retired[0]);
     try expect_ref(ref(9, 1), retired[1]);
-    try testing.expectEqual(@as(u32, 1), abi.realized(&map));
+    try testing.expectEqual(@as(u32, 1), abi_shim_t.realized(&map));
 }
 
 test "C ABI rejects NULL, short and aliased arguments without writing" {
     var map = new_map();
     var out = new_out();
     var count: u32 = 77;
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(null, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, &count));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, null, MaxOutput, &count));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, null));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput - 1, &count));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(null, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, &count));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, null, MaxOutput, &count));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, null));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput - 1, &count));
     try testing.expectEqual(@as(u32, 77), count);
 
     // An output array that aliases the table, or a count that points into it, is refused untouched.
     const alias: [*]window_ref_t = @ptrCast(&map);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, alias, MaxOutput, &count));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, alias, MaxOutput, &count));
     const inside: *u32 = &map.realized_count;
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, inside));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, inside));
     try testing.expectEqual(@as(u32, 0), map.realized_count);
     try testing.expectEqual(@as(u32, 0), map.deferred_count);
 
@@ -1241,19 +1241,19 @@ test "C ABI rejects NULL, short and aliased arguments without writing" {
     var discarded = new_out();
     var retired_count: u32 = 5;
     var discarded_count: u32 = 5;
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(null, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), null, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, null, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, null, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, null));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput - 1, &retired_count, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput - 1, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(null, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), null, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, null, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, null, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, null));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput - 1, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput - 1, &discarded_count));
     try testing.expectEqual(@as(u32, 5), retired_count);
     try testing.expectEqual(@as(u32, 5), discarded_count);
     // Retired and discarded output lists may not share storage with each other either.
     const shared: [*]window_ref_t = &retired;
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, shared, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.Stale, abi.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, shared, MaxOutput, &discarded_count));
+    try testing.expectEqual(retire_status_t.Stale, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
     try testing.expectEqual(@as(u32, 0), retired_count);
 }
 
@@ -1263,12 +1263,12 @@ test "C ABI lookup returns a copy and a presence test needs no output" {
     _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu, &out);
     var entry: window_entry_t = undefined;
-    try testing.expect(abi.lookup(&map, ref(2, 1), &entry));
+    try testing.expect(abi_shim_t.lookup(&map, ref(2, 1), &entry));
     try expect_ref(ref(1, 1), entry.root);
-    try testing.expect(abi.lookup(&map, ref(1, 1), null));
-    try testing.expect(!abi.lookup(&map, ref(1, 2), &entry));
-    try testing.expect(abi.is_current(&map, ref(2, 1)));
-    try testing.expect(!abi.is_current(&map, ref(3, 1)));
-    try testing.expectEqual(@as(u32, 2), abi.realized(&map));
-    try testing.expectEqual(@as(u32, 0), abi.deferred(&map));
+    try testing.expect(abi_shim_t.lookup(&map, ref(1, 1), null));
+    try testing.expect(!abi_shim_t.lookup(&map, ref(1, 2), &entry));
+    try testing.expect(abi_shim_t.is_current(&map, ref(2, 1)));
+    try testing.expect(!abi_shim_t.is_current(&map, ref(3, 1)));
+    try testing.expectEqual(@as(u32, 2), abi_shim_t.realized(&map));
+    try testing.expectEqual(@as(u32, 0), abi_shim_t.deferred(&map));
 }

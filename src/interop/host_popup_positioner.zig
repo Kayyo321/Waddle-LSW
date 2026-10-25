@@ -336,7 +336,7 @@ test "restore of a request at the same scale returns the floor-rounded origin" {
 
 /// The C ABI exports are called through `never_inline` shims so that the optimized wrapper bodies keep
 /// their own branches; a call with constant arguments would otherwise fold the NULL checks away.
-const abi = struct {
+const abi_shim_t = struct {
     fn integer_scale(numerator: u32, denominator: u32, out_scale: ?*u32) status_t {
         return @call(.never_inline, host_popup_positioner_integer_scale, .{ numerator, denominator, out_scale });
     }
@@ -352,32 +352,32 @@ const abi = struct {
 
 test "C ABI maps every error to its status and writes output only on success" {
     var scale: u32 = 99;
-    try testing.expectEqual(status_t.InvalidArgument, abi.integer_scale(1, 1, null));
-    try testing.expectEqual(status_t.InvalidScale, abi.integer_scale(1, 0, &scale));
-    try testing.expectEqual(status_t.Ok, abi.integer_scale(150, 120, &scale));
+    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.integer_scale(1, 1, null));
+    try testing.expectEqual(status_t.InvalidScale, abi_shim_t.integer_scale(1, 0, &scale));
+    try testing.expectEqual(status_t.Ok, abi_shim_t.integer_scale(150, 120, &scale));
     try testing.expectEqual(@as(u32, 2), scale);
 
     var guest = make_rect(0, 0, 1, 1);
     var logical = make_rect(0, 0, 1, 1);
     var result = make_rect(7, 7, 7, 7);
-    try testing.expectEqual(status_t.InvalidArgument, abi.request(null, 1, &result));
-    try testing.expectEqual(status_t.InvalidArgument, abi.request(&guest, 1, null));
-    try testing.expectEqual(status_t.InvalidScale, abi.request(&guest, 9, &result));
+    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.request(null, 1, &result));
+    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.request(&guest, 1, null));
+    try testing.expectEqual(status_t.InvalidScale, abi_shim_t.request(&guest, 9, &result));
     try testing.expectEqual(make_rect(7, 7, 7, 7), result);
     guest = make_rect(40000, 0, 1, 1);
-    try testing.expectEqual(status_t.OutOfRange, abi.request(&guest, 1, &result));
+    try testing.expectEqual(status_t.OutOfRange, abi_shim_t.request(&guest, 1, &result));
     try testing.expectEqual(make_rect(7, 7, 7, 7), result);
     guest = make_rect(-8, 16, 9, 17);
-    try testing.expectEqual(status_t.Ok, abi.request(&guest, 8, &result));
+    try testing.expectEqual(status_t.Ok, abi_shim_t.request(&guest, 8, &result));
     try testing.expectEqual(make_rect(-1, 2, 2, 3), result);
 
-    try testing.expectEqual(status_t.InvalidArgument, abi.restore(null, 1, &result));
-    try testing.expectEqual(status_t.InvalidArgument, abi.restore(&logical, 1, null));
-    try testing.expectEqual(status_t.InvalidScale, abi.restore(&logical, 0, &result));
+    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.restore(null, 1, &result));
+    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.restore(&logical, 1, null));
+    try testing.expectEqual(status_t.InvalidScale, abi_shim_t.restore(&logical, 0, &result));
     logical = make_rect(268435456, 0, 1, 1);
-    try testing.expectEqual(status_t.Overflow, abi.restore(&logical, 8, &result));
+    try testing.expectEqual(status_t.Overflow, abi_shim_t.restore(&logical, 8, &result));
     try testing.expectEqual(make_rect(-1, 2, 2, 3), result);
     logical = make_rect(-3, 4, 5, 6);
-    try testing.expectEqual(status_t.Ok, abi.restore(&logical, 2, &result));
+    try testing.expectEqual(status_t.Ok, abi_shim_t.restore(&logical, 2, &result));
     try testing.expectEqual(make_rect(-6, 8, 10, 12), result);
 }
