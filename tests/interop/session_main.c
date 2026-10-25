@@ -3,7 +3,10 @@
  * @brief CLI boundary tests for the control-only session entry.
  */
 #include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <ftw.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -82,6 +85,49 @@ static void run_pre_admission_failure(const char *device_name, int listener,
     assert(client >= 0);
     close(client);
     close(listener);
+}
+
+/* Remove one tree entry; used with nftw depth-first over a test-owned directory. */
+static int remove_tree_entry(const char *path, const struct stat *status, int type, struct FTW *info)
+{
+    (void)status;
+    (void)type;
+    (void)info;
+    return remove(path) == 0 ? 0 : -1;
+}
+
+/* Remove a directory tree that the supervised attempts created under the test root. */
+static void remove_tree(const char *path)
+{
+    assert(nftw(path, remove_tree_entry, 16, FTW_DEPTH | FTW_PHYS) == 0);
+}
+
+/* Remove an empty directory the attempts may have created; a missing one is fine. */
+static void remove_empty_if_present(const char *path)
+{
+    if (rmdir(path) != 0) assert(errno == ENOENT);
+}
+
+/* Accept and immediately close daemon connections: each supervised attempt fails at admission. */
+static void *close_accepted_clients(void *context)
+{
+    int listener = *(int *)context;
+    for (int index = 0; index < 2; ++index) {
+        int client = accept(listener, NULL, NULL);
+        assert(client >= 0);
+        close(client);
+    }
+    return NULL;
+}
+
+/* Accept and close one daemon connection; a missing mapping is terminal after one admission-free attempt. */
+static void *close_one_accepted_client(void *context)
+{
+    int listener = *(int *)context;
+    int client = accept(listener, NULL, NULL);
+    assert(client >= 0);
+    close(client);
+    return NULL;
 }
 
 int main(void)
@@ -191,6 +237,56 @@ int main(void)
     char random_socket[256];
     int random_listener = make_daemon_listener("random", random_socket);
     run_pre_admission_failure("random", random_listener, 1);
+    /* Supervised: a daemon that closes each admission is a retryable refusal; one retry, then exit 1. */
+    char supervised_profile[224];
+    assert(snprintf(supervised_profile, sizeof(supervised_profile), "%s/supervised.ini",
+        config_dir) > 0);
+    write_profile(supervised_profile, random_mapping_path);
+    char supervised_socket[256];
+    int supervised_listener = make_daemon_listener("supervised", supervised_socket);
+    pthread_t closer;
+    assert(pthread_create(&closer, NULL, close_accepted_clients, &supervised_listener) == 0);
+    char *supervised_args[] = {(char *)"waddle-session", (char *)"--supervised",
+        (char *)"--device", (char *)"supervised", (char *)"--max-retries", (char *)"1"};
+    assert(waddle_session_main(6, supervised_args) == 1);
+    assert(pthread_join(closer, NULL) == 0);
+    close(supervised_listener);
+    assert(unlink(supervised_socket) == 0);
+    char supervised_runtime[256];
+    char supervised_state[256];
+    char state_waddle[256];
+    char state_devices[256];
+    assert(snprintf(supervised_runtime, sizeof(supervised_runtime), "%s/waddle/supervised",
+        runtime_home) > 0);
+    assert(snprintf(supervised_state, sizeof(supervised_state), "%s/waddle/devices/supervised",
+        state_home) > 0);
+    assert(snprintf(state_devices, sizeof(state_devices), "%s/waddle/devices", state_home) > 0);
+    assert(snprintf(state_waddle, sizeof(state_waddle), "%s/waddle", state_home) > 0);
+    remove_tree(supervised_runtime);
+    remove_tree(supervised_state);
+    remove_empty_if_present(state_devices);
+    remove_empty_if_present(state_waddle);
+    assert(unlink(supervised_profile) == 0);
+    /* A missing mapping after a connected daemon is terminal: one attempt, no retry. */
+    char nomap_profile[224];
+    assert(snprintf(nomap_profile, sizeof(nomap_profile), "%s/supervised-nomap.ini",
+        config_dir) > 0);
+    write_profile(nomap_profile, missing_mapping_path);
+    char nomap_socket[256];
+    int nomap_listener = make_daemon_listener("supervised-nomap", nomap_socket);
+    pthread_t nomap_closer;
+    assert(pthread_create(&nomap_closer, NULL, close_one_accepted_client, &nomap_listener) == 0);
+    char *nomap_args[] = {(char *)"waddle-session", (char *)"--supervised",
+        (char *)"--device", (char *)"supervised-nomap", (char *)"--max-retries", (char *)"5"};
+    assert(waddle_session_main(6, nomap_args) == 1);
+    assert(pthread_join(nomap_closer, NULL) == 0);
+    close(nomap_listener);
+    assert(unlink(nomap_socket) == 0);
+    char nomap_runtime[256];
+    assert(snprintf(nomap_runtime, sizeof(nomap_runtime), "%s/waddle/supervised-nomap",
+        runtime_home) > 0);
+    remove_tree(nomap_runtime);
+    assert(unlink(nomap_profile) == 0);
     assert(unsetenv("XDG_CONFIG_HOME") == 0);
     assert(unsetenv("XDG_STATE_HOME") == 0);
     assert(unsetenv("XDG_RUNTIME_DIR") == 0);

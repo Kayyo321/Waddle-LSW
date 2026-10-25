@@ -336,7 +336,7 @@ typedef struct session_cli_attempts_t {
  * @param[in] app Application config of the run; its control fields are used and its admission
  *            is replaced for this attempt.
  * @param[out] owners Zero on entry; holds this attempt's owners.
- * @param[out] detail Optional detail; NULL allowed. Records the session-layer result when admission
+ * @param[out] detail Non-NULL; the supervisor always passes one. Records the session-layer result when admission
  *             could not start: DaemonError for a failed daemon connection, OsError for a mapping or
  *             token failure, ClockError for an unusable monotonic clock.
  * @return The control outcome; AdmissionFailed when admission could not start.
@@ -359,25 +359,25 @@ static interop_host_control_result_t session_cli_attempt(void *context,
     static const uint8_t agent_version[] = WaddleSessionAgentVersion;
 
     if (started_ms == UINT64_MAX || started_ms > UINT64_MAX - SessionAdmissionTimeoutMs) {
-        if (detail != NULL) detail->admission_result = HostSessionClockError;
+        detail->admission_result = HostSessionClockError;
         return HostControlAdmissionFailed;
     }
     deadline_ms = started_ms + SessionAdmissionTimeoutMs;
     daemon_fd = session_connect_daemon(attempts->device->socket_path, attempts->stop_fd, deadline_ms);
     if (daemon_fd < 0) {
-        if (detail != NULL) detail->admission_result = HostSessionDaemonError;
+        detail->admission_result = HostSessionDaemonError;
         return HostControlAdmissionFailed;
     }
     mapping_fd = open(attempts->mapping_path, O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (mapping_fd < 0) {
         close(daemon_fd);
-        if (detail != NULL) detail->admission_result = HostSessionOsError;
+        detail->admission_result = HostSessionOsError;
         return HostControlAdmissionFailed;
     }
     if (session_read_random_token(&token, attempts->stop_fd, deadline_ms) != 0) {
         close(mapping_fd);
         close(daemon_fd);
-        if (detail != NULL) detail->admission_result = HostSessionOsError;
+        detail->admission_result = HostSessionOsError;
         return HostControlAdmissionFailed;
     }
     interop_host_session_config_t admission = {
