@@ -3919,33 +3919,48 @@ not realized is a stale no-op. Any message naming a pair that is not currently
 realized, or a generation other than the realized one for that window, is
 stale and changes nothing. Duplicate Announce for a realized pair is refused,
 and Announce for a live window under another generation is refused as a
-conflict. The 65th realized window is refused with `Error{ResourceExhausted}`
+conflict, and the conflict test precedes the parent test. The 65th realized window is refused with `Error{QuotaExceeded}`
 and no state change.
 
 **Roles.** `Toplevel` and `Dialog` map to `xdg_toplevel`; `Dialog` calls
 `set_parent` with the parent's toplevel when the parent is a realized
 toplevel/dialog and leaves the parent unset otherwise. `UacConsent` maps to
 `xdg_toplevel` with app_id `waddle.<device>.uac`. `Menu`, `Tooltip` and
-`ImePreedit` map to `xdg_popup` and require a realized parent; a popup whose
-parent is a popup is parented to the root toplevel's `xdg_surface` and its
-offset is expressed relative to that root. `app_id` is `waddle.<device>.<app_key>`,
-set exactly once before the first commit and never updated.
+`ImePreedit` map to `xdg_popup` and require a realized parent. The xdg parent of
+a popup is its directly requested realized parent, which may itself be a popup
+(xdg-shell permits nested popups and requires a grabbing popup's parent to be
+the topmost grabbing popup); popups are never re-parented to the root, and every
+popup rectangle is relative to its direct parent's window geometry. `app_id` is
+`waddle.<device>.<app_key>`, set exactly once before the first commit and never
+updated. A `WindowUpdate` that changes `parent`/`parent_generation` of a
+realized window is applied to the map (exact realized new parent required) and,
+for a Dialog, to `set_parent`; popups cannot be re-parented (the update is
+refused and the popup keeps its parent).
 
 **Positioner (pure function).** For a popup with guest rect `(x, y, w, h)`
-relative to the parent window's top-left in guest physical pixels, and the
-parent's host scale `s` (integer 1..8, fractional scale rounded up to the next
-integer for this computation), the logical request is
-`lx = floor(x / s)`, `ly = floor(y / s)`, `lw = max(1, ceil(w / s))`,
-`lh = max(1, ceil(h / s))`, using floor toward negative infinity for signed
-`x`/`y`. The positioner is built with `set_size(lw, lh)`,
-`set_anchor_rect(lx, ly, 1, 1)`, `set_anchor(top_left = 5)`,
-`set_gravity(bottom_right = 8)`, `set_offset(0, 0)` and
+relative to the direct parent window's top-left in guest physical pixels, the
+parent's logical size `(pw, ph)` (positive, at most 32768) and the parent's host
+scale `s` (integer 1..8, fractional scale rounded up to the next integer for
+this computation), the logical request is `lx = floor(x / s)`,
+`ly = floor(y / s)`, `lw = max(1, ceil(w / s))`, `lh = max(1, ceil(h / s))`,
+using floor toward negative infinity for signed `x`/`y`. xdg-shell requires the
+anchor rectangle to lie inside the parent's window geometry, so the anchor point
+is `ax = clamp(lx, 0, pw - 1)`, `ay = clamp(ly, 0, ph - 1)` and the remainder is
+the offset `(lx - ax, ly - ay)`. The positioner is built with
+`set_size(lw, lh)`, `set_anchor_rect(ax, ay, 1, 1)`, `set_anchor(top_left = 5)`,
+`set_gravity(bottom_right = 8)`, `set_offset(lx - ax, ly - ay)` and
 `set_constraint_adjustment(slide_x | slide_y | flip_x | flip_y = 15)`, with
-`set_reactive` when the protocol version provides it. Dimensions or offsets
-whose absolute value exceeds 32768 logical units refuse the popup. The
-compositor-adjusted rectangle from `xdg_popup.configure` is reported to the
-guest as `PopupRepositioned` with `x`/`y` multiplied back by `s`; `popup_done`
-is reported as `PopupDismissed`.
+`set_reactive` when the protocol version provides it. Dimensions, parent sizes
+or offsets whose absolute value exceeds 32768 logical units refuse the popup.
+The compositor-adjusted position `(cx, cy)` from `xdg_popup.configure` is
+reported to the guest in the direct parent's coordinates as
+`PopupRepositioned{x = x + (cx - lx) * s, y = y + (cy - ly) * s}` with the
+width and height the guest requested (the constraint mask has no resize bits),
+so an unmoved popup reports exactly its requested rectangle and no rounding
+drift accumulates; a reported dimension above 16384 is impossible because it is
+the guest's own. `popup_done` is reported as `PopupDismissed`; the window stays
+realized, flagged dismissed, until the guest retires it, and a dismissed popup
+accepts no further configure.
 
 **Grab.** A `Menu` with an `Announce.serial` that matches a live press-table
 entry for the same seat calls `xdg_popup.grab(seat, serial)` before the first
@@ -3959,6 +3974,13 @@ and `UacConsent`. Popups never receive one.
 **Teardown order.** Retire destroys, in this order: decoration, `xdg_popup` or
 `xdg_toplevel`, `xdg_surface`, `wl_surface`, with children before parents. A
 compositor callback arriving after retirement for a destroyed object is a no-op.
+
+**Refusals and retry.** The host answers a refused Announce with
+`Error{refused_type = WindowAnnounce, error_code = QuotaExceeded | StaleWindow}`
+and records nothing. The guest owns retry: it re-announces a refused window at
+its next 250 ms refresh while the window is still exported, so a window refused
+for capacity appears once a slot frees, and children of a refused parent are
+announced only after their parent is realized.
 
 **Session launch socket.** `waddle open` retries the `session.sock` connection
 for up to 120 s whether `session.lock` is free (no session yet; spawn one) or
