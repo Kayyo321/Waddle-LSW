@@ -50,7 +50,14 @@ typedef enum interop_linux_socket_result_t {
     InteropLinuxSocketClosed = 9, /**< Operation requires a live transport. */
     InteropLinuxSocketPeerFailure = 10, /**< Unexpected peer ABI failure; owner terminalizes. */
     InteropLinuxSocketCloseDiagnostic = 11, /**< Destroy completed; close failed, slot is NULL. */
-    InteropLinuxSocketMappingFailed = 12 /**< Guest mapping failure; wait remains retryable. */
+    InteropLinuxSocketMappingFailed = 12, /**< Guest mapping failure; wait remains retryable. */
+    InteropLinuxSocketInvalidFrame = 13, /**< Feature frame malformed or identifier class violated; nothing queued. */
+    InteropLinuxSocketUnsupportedFrame = 14, /**< Type not legal for this entry point or producer; nothing queued. */
+    InteropLinuxSocketFeatureNotNegotiated = 15, /**< Facility absent from the negotiated set; nothing queued. */
+    InteropLinuxSocketQueueFull = 16, /**< Data-class admission full; retry after TX drains. */
+    InteropLinuxSocketRequestIdsFull = 17, /**< 4032 feature identifiers live; nothing reserved or queued. */
+    InteropLinuxSocketUnknownRequestId = 18, /**< Release target is not a live feature identifier; unchanged. */
+    InteropLinuxSocketRequestRetired = 19 /**< Transport loss retired every identifier; benign release result. */
 } interop_linux_socket_result_t;
 
 /** @brief Owner lifecycle state; Closed is a stable terminal snapshot. */
@@ -181,6 +188,43 @@ int interop_linux_socket_get_closed_snapshot(interop_linux_socket_t *owner, uint
  * @note Positive send counts are ACKed immediately and exactly before another send.
  */
 int interop_linux_socket_drive(interop_linux_socket_t *owner, uint64_t token, uint64_t poll_cookie, uint64_t now_ms, uint32_t revents, size_t rx_byte_budget, size_t tx_byte_budget, uint32_t syscall_budget, uint8_t *frame_out, size_t frame_capacity, interop_linux_socket_work_t *out_work);
+
+/** @brief Admit one complete outbound feature frame that carries no request identifier.
+ * @param[in,out] owner Authentic live owner on the creating thread; changed only on success.
+ * @param[in] token Exact nonzero connection token. @param[in] now_ms Nondecreasing monotonic time.
+ * @param[in] bytes Borrowed complete frame, NULL only when length is zero (then InvalidFrame); not aliased
+ *        with the owner or out_event. @param[in] length Exact frame size.
+ * @param[out] out_event Non-NULL aligned output disjoint from owner and bytes; unchanged on API error.
+ *        None after queueing; Draining when the Ready deadline expired (frame not queued, owner drains).
+ * @return Success, or the operation result. Peer admission errors map one-to-one to the InvalidFrame,
+ *         UnsupportedFrame, FeatureNotNegotiated, QueueFull, WrongPhase and related results. Every error
+ *         leaves the owner, peer and queue unchanged.
+ * @note Successful admission invalidates the outstanding poll snapshot so the next poll requests POLLOUT.
+ * @thread_safety Owner-thread only, serialized with every other owner call.
+ */
+int interop_linux_socket_enqueue_feature(interop_linux_socket_t *owner, uint64_t token, uint64_t now_ms, const uint8_t *bytes, size_t length, interop_peer_event_t *out_event);
+
+/** @brief Atomically reserve a feature request identifier and admit one Request frame.
+ * @param[in,out] owner Authentic live owner on the creating thread; changed only on success.
+ * @param[in] token Exact nonzero connection token. @param[in] now_ms Nondecreasing monotonic time.
+ * @param[in] bytes Borrowed complete request frame with zero header identifier; NULL only with length zero.
+ * @param[in] length Exact frame size. @param[out] out_request_id Non-NULL aligned output disjoint from owner,
+ *        bytes and out_event; written only on success (zero when the deadline drained the connection).
+ * @param[out] out_event Non-NULL aligned output disjoint from owner, bytes and out_request_id; written only on success.
+ * @return Success or a mapped peer result. RequestIdsFull and QueueFull leave the identifier cursor unchanged.
+ * @thread_safety Owner-thread only, serialized with every other owner call.
+ */
+int interop_linux_socket_enqueue_request(interop_linux_socket_t *owner, uint64_t token, uint64_t now_ms, const uint8_t *bytes, size_t length, uint32_t *out_request_id, interop_peer_event_t *out_event);
+
+/** @brief Release one feature-owned request identifier after its response or abandonment.
+ * @param[in,out] owner Authentic owner on the creating thread; identifier namespace changes only on success.
+ * @param[in] token Exact nonzero connection token. @param[in] request_id Identifier from enqueue_request.
+ * @return Success; UnknownRequestId for any non-feature or released identifier; RequestRetired after transport
+ *         loss (benign); InvalidArgument for zero; WrongToken for a stale token.
+ * @note Allowed after transport closure; the peer decides whether identifiers remain to release.
+ * @thread_safety Owner-thread only.
+ */
+int interop_linux_socket_release_request(interop_linux_socket_t *owner, uint64_t token, uint32_t request_id);
 
 /** @brief Complete the external mapping operation requested by ValidateMapping.
  * @param[in,out] owner Authentic owner in MappingWait; owner-thread only.
