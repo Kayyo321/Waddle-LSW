@@ -24,6 +24,10 @@ pub const HandlerMimeTypes = [_][]const u8{
     "application/x-ms-installer",
 };
 
+/// File name of the MIME defaults list. The `mime_default` record stores this relative
+/// name; the file itself lives directly below the user configuration home.
+pub const MimeFileLeaf: []const u8 = "mimeapps.list";
+
 /// Maximum launcher path bytes accepted for the handler `Exec` and `TryExec` lines.
 pub const MaxLauncherBytes: usize = 4096;
 
@@ -131,6 +135,23 @@ pub fn handler_record(path: []const u8, digest: []const u8, device: ?[]const u8)
 }
 
 /// Wire spelling of a record kind; the inverse of the manifest codec's kind parser.
+/// Build the `mime_default` record for one MIME type. `digest` is the 64-character
+/// SHA-256 hex of the value written (the handler leaf). `prior` is the value before the
+/// edit, or null when the key was absent. The record has no device and no app key.
+pub fn mime_record(id: []const u8, mime: []const u8, digest: []const u8, prior: ?[]const u8) manifest.record_t {
+    return .{
+        .id = id,
+        .kind = .MimeDefault,
+        .path = MimeFileLeaf,
+        .sha256 = digest,
+        .device = null,
+        .app_key = null,
+        .created_by = WaddleVersion,
+        .prior = if (prior) |text| .{ .Text = text } else .None,
+        .mime = mime,
+    };
+}
+
 pub fn kind_wire(kind: manifest.record_kind_t) []const u8 {
     return switch (kind) {
         .DesktopEntry => "desktop_entry",

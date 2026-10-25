@@ -6,6 +6,7 @@
 const std = @import("std");
 const manifest_store = @import("manifest_store");
 const producers = @import("integration_producers");
+const integration_mime = @import("integration_mime.zig");
 const manifest = manifest_store.manifest;
 
 /// Exit status for a clean outcome, including drift reported by `status`.
@@ -38,6 +39,8 @@ pub const env_t = struct {
     data_home: []const u8,
     /// Resolved XDG state home; the manifest lives in `waddle/integration`.
     state_home: []const u8,
+    /// Resolved XDG configuration home; `mimeapps.list` lives directly below it.
+    config_home: []const u8,
     /// Absolute path of the running Waddle binary used by the handler `Exec`.
     launcher: []const u8,
     /// Seconds since the epoch used for the manifest `updated` field.
@@ -133,6 +136,13 @@ pub fn parse(args: []const []const u8) !options_t {
     return options;
 }
 
+/// Resolve `XDG_CONFIG_HOME` with the same rules as the other XDG variables, defaulting
+/// to `$HOME/.config`. Returns an owned slice. Errors: InvalidEnvironment when neither
+/// an absolute variable nor an absolute HOME exists.
+pub fn resolve_config(allocator: std.mem.Allocator, home: ?[]const u8, xdg_config: ?[]const u8) ![]u8 {
+    return resolve_one(allocator, home, xdg_config, ".config");
+}
+
 /// Resolve the XDG data and state homes as the XDG Base Directory specification
 /// requires: a variable that is set and absolute wins; otherwise the default under
 /// the absolute `HOME`. Returns owned slices. Errors: InvalidEnvironment when neither
@@ -208,13 +218,53 @@ fn failure_for(err: anyerror) failure_t {
     };
 }
 
+/// Per-invocation scratch memory. Each allocation is requested from the caller's
+/// allocator at the moment it is made, so an out-of-memory failure can occur at any
+/// allocation and is reported instead of hiding inside arena chunks. Every block is
+/// released together by `deinit`; individual frees are no-ops, as with an arena.
+const scratch_t = struct {
+    child: std.mem.Allocator,
+    blocks: std.ArrayList(block_t),
+
+    const block_t = struct { memory: []u8, log2_alignment: u8 };
+
+    const vtable = std.mem.Allocator.VTable{ .alloc = alloc, .resize = resize, .free = free };
+
+    fn init(child: std.mem.Allocator) scratch_t {
+        return .{ .child = child, .blocks = std.ArrayList(block_t).init(child) };
+    }
+
+    fn deinit(self: *scratch_t) void {
+        for (self.blocks.items) |block| self.child.rawFree(block.memory, block.log2_alignment, @returnAddress());
+        self.blocks.deinit();
+    }
+
+    fn allocator(self: *scratch_t) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    fn alloc(context: *anyopaque, len: usize, log2_alignment: u8, return_address: usize) ?[*]u8 {
+        const self: *scratch_t = @ptrCast(@alignCast(context));
+        self.blocks.ensureUnusedCapacity(1) catch return null;
+        const memory = self.child.rawAlloc(len, log2_alignment, return_address) orelse return null;
+        self.blocks.appendAssumeCapacity(.{ .memory = memory[0..len], .log2_alignment = log2_alignment });
+        return memory;
+    }
+
+    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
+        return false;
+    }
+
+    fn free(_: *anyopaque, _: []u8, _: u8, _: usize) void {}
+};
+
 /// Execute one invocation and render its result. The returned buffers belong to
 /// `allocator`; every intermediate allocation is released before return.
 /// Errors: only OutOfMemory escapes; every other failure becomes a rendered result.
 pub fn run(allocator: std.mem.Allocator, options: options_t, env: env_t) !output_t {
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var scratch = scratch_t.init(allocator);
+    defer scratch.deinit();
+    const arena = scratch.allocator();
     var rows = std.ArrayList(row_t).init(allocator);
     defer rows.deinit();
     var status: u8 = ExitOk;
@@ -241,10 +291,21 @@ fn executeScope(arena: std.mem.Allocator, options: options_t, env: env_t, rows: 
     var session = try Session.open(arena, env);
     defer session.close();
     switch (options.operation) {
-        .Install => try install(arena, &session, options, env, rows, status),
-        .Remove => try remove(arena, &session, options, env, rows, status),
+        .Install => {
+            try install(arena, &session, options, env, rows, status);
+            if (status.* == ExitOk and env.exe_handler_enabled and options.device == null) try install_mime(arena, &session, env, rows, status);
+        },
+        .Remove => {
+            var mime_status: u8 = ExitOk;
+            if (options.device == null) try remove_mime(arena, &session, env, rows, &mime_status);
+            try remove(arena, &session, options, env, rows, status);
+            if (mime_status != ExitOk) status.* = ExitFailed;
+        },
         .Repair => try repair(arena, &session, options, env, rows, status),
-        .Status => try status_rows(arena, &session, options, rows),
+        .Status => {
+            try status_rows(arena, &session, options, rows);
+            if (options.device == null) try status_mime(arena, &session, env, rows);
+        },
         .Migrate => try migrate(arena, &session, env, rows, status),
         .Guest, .Shortcut => return error.NotImplemented,
     }
@@ -486,6 +547,114 @@ fn replace_modified(arena: std.mem.Allocator, session: *Session, document: parse
     try rows.append(row);
 }
 
+/// MIME default record identifier: `mime:` followed by the subtype, which is unique
+/// among the frozen handler types. Caller owns the arena-backed result.
+fn mime_record_id(arena: std.mem.Allocator, mime: []const u8) ![]u8 {
+    const slash = std.mem.indexOfScalar(u8, mime, '/') orelse return error.InvalidArgument;
+    return std.fmt.allocPrint(arena, "mime:{s}", .{mime[slash + 1 ..]});
+}
+
+fn mime_path(arena: std.mem.Allocator, env: env_t) ![]u8 {
+    return std.fs.path.join(arena, &.{ env.config_home, integration_mime.Leaf });
+}
+
+/// The previous value a record restores: text, or null when the key was absent.
+fn prior_text(prior: manifest.prior_value_t) ?[]const u8 {
+    return switch (prior) {
+        .Text => |text| text,
+        .None, .U32Value => null,
+    };
+}
+
+/// True when the current file value and the recorded prior are the same, including
+/// both being absent.
+fn same_value(current_value: ?[]const u8, recorded: ?[]const u8) bool {
+    const left = current_value orelse return recorded == null;
+    const right = recorded orelse return false;
+    return std.mem.eql(u8, left, right);
+}
+
+fn mime_row(id: []const u8, path: []const u8, state: []const u8, action: []const u8, blocked: bool) row_t {
+    return .{ .id = id, .kind = producers.kind_wire(.MimeDefault), .path = path, .device = null, .state = state, .action = action, .blocked = blocked };
+}
+
+/// Register and set one MIME default for each handler type. The record is journaled
+/// before the file is edited, so a crash in between leaves a record whose restore
+/// guard is a no-op. A record that already exists is repaired only when the file still
+/// holds the value it was registered with; any other value is kept and reported.
+fn install_mime(arena: std.mem.Allocator, session: *Session, env: env_t, rows: *std.ArrayList(row_t), status: *u8) !void {
+    const path = try mime_path(arena, env);
+    const digest = sha256_hex(producers.HandlerLeaf);
+    for (producers.HandlerMimeTypes) |mime| {
+        const id = try mime_record_id(arena, mime);
+        const document = try current(arena, session);
+        const value = try integration_mime.current_value(arena, path, mime);
+        const ours = if (value) |text| std.mem.eql(u8, text, producers.HandlerLeaf) else false;
+        if (find_record(document.records, id)) |existing| {
+            if (ours) {
+                try rows.append(mime_row(id, path, "ok", "unchanged", false));
+            } else if (same_value(value, prior_text(existing.prior))) {
+                _ = try integration_mime.set_default(arena, path, mime, producers.HandlerLeaf);
+                try rows.append(mime_row(id, path, "ok", "repaired", false));
+            } else {
+                try rows.append(mime_row(id, path, "modified", "kept_modified", true));
+                status.* = ExitFailed;
+            }
+            continue;
+        }
+        var stamp: [20]u8 = undefined;
+        const record = producers.mime_record(id, mime, &digest, if (ours) null else value);
+        const candidate = try producers.candidate_document(arena, .{ .waddle_version = producers.WaddleVersion, .updated = next_updated(&stamp, env.now, document.updated) }, document.records, id, record);
+        try session.store.register_record(.{ .record_id = id, .candidate_manifest = candidate });
+        if (!ours) _ = try integration_mime.set_default(arena, path, mime, producers.HandlerLeaf);
+        try rows.append(mime_row(id, path, "ok", "registered", false));
+    }
+}
+
+/// Restore each MIME default this manifest registered, then forget its record. The file
+/// is restored first: a crash between the two steps leaves a record that the next
+/// removal finishes, and no value is ever forgotten while it is still set to the handler.
+fn remove_mime(arena: std.mem.Allocator, session: *Session, env: env_t, rows: *std.ArrayList(row_t), status: *u8) !void {
+    const path = try mime_path(arena, env);
+    const initial = try current(arena, session);
+    var ids = std.ArrayList([]const u8).init(arena);
+    for (initial.records) |record| {
+        if (record.kind == .MimeDefault) try ids.append(record.id);
+    }
+    for (ids.items) |id| {
+        const document = try current(arena, session);
+        const record = find_record(document.records, id) orelse continue;
+        const mime = record.mime orelse continue;
+        const outcome = try integration_mime.restore_default(arena, path, mime, producers.HandlerLeaf, prior_text(record.prior));
+        const blocked = outcome == .NotOurs;
+        if (blocked) status.* = ExitFailed;
+        const action: []const u8 = switch (outcome) {
+            .Restored => "restored",
+            .NotOurs => "kept_modified",
+            .Absent => "not_applied",
+            .FileAbsent => "file_absent",
+        };
+        var stamp: [20]u8 = undefined;
+        const candidate = try producers.candidate_document(arena, .{ .waddle_version = producers.WaddleVersion, .updated = next_updated(&stamp, env.now, document.updated) }, document.records, id, null);
+        _ = try session.store.remove(.{ .record_id = id, .candidate_manifest = candidate });
+        try rows.append(mime_row(id, path, if (blocked) "modified" else "missing", action, blocked));
+    }
+}
+
+/// Report each MIME default record from the file: ok while the key holds the handler,
+/// missing while the key or the file is absent, modified for any other value.
+fn status_mime(arena: std.mem.Allocator, session: *Session, env: env_t, rows: *std.ArrayList(row_t)) !void {
+    const path = try mime_path(arena, env);
+    const document = try current(arena, session);
+    for (document.records) |record| {
+        if (record.kind != .MimeDefault) continue;
+        const mime = record.mime orelse continue;
+        const value = try integration_mime.current_value(arena, path, mime);
+        const state: []const u8 = if (value) |text| (if (std.mem.eql(u8, text, producers.HandlerLeaf)) "ok" else "modified") else "missing";
+        try rows.append(mime_row(record.id, path, state, "reported", false));
+    }
+}
+
 /// Report every record with its current state. Drift is reported and exits 0.
 fn status_rows(arena: std.mem.Allocator, session: *Session, options: options_t, rows: *std.ArrayList(row_t)) !void {
     const document = try current(arena, session);
@@ -493,6 +662,7 @@ fn status_rows(arena: std.mem.Allocator, session: *Session, options: options_t, 
     defer list.deinit();
     for (list.items) |item| {
         const record = find_record(document.records, item.record_id) orelse continue;
+        if (record.kind == .MimeDefault) continue;
         if (options.device) |device| if (record.device == null or !std.mem.eql(u8, record.device.?, device)) continue;
         const path = record.path;
         try rows.append(.{ .id = record.id, .kind = producers.kind_wire(record.kind), .path = path, .device = record.device, .state = state_text(item.state), .action = "reported" });
@@ -556,8 +726,8 @@ fn render(allocator: std.mem.Allocator, options: options_t, rows: *std.ArrayList
 // Test-only fixtures.
 const testing = std.testing;
 
-fn test_env(data_home: []const u8, state_home: []const u8) env_t {
-    return .{ .data_home = data_home, .state_home = state_home, .launcher = "/opt/waddle/bin/waddle", .now = 1_793_000_000, .euid = 1000, .exe_handler_enabled = true };
+fn test_env(data_home: []const u8, state_home: []const u8, config_home: []const u8) env_t {
+    return .{ .data_home = data_home, .state_home = state_home, .config_home = config_home, .launcher = "/opt/waddle/bin/waddle", .now = 1_793_000_000, .euid = 1000, .exe_handler_enabled = true };
 }
 
 test "parser accepts every subcommand and rejects misuse with usage errors" {
@@ -606,22 +776,22 @@ test "updated timestamps use the frozen ISO 8601 UTC form" {
 
 test "help and guest and shortcut report without touching state" {
     const allocator = testing.allocator;
-    var help = try run(allocator, .{ .operation = .Install, .help = true }, test_env("/unused", "/unused"));
+    var help = try run(allocator, .{ .operation = .Install, .help = true }, test_env("/unused", "/unused", "/unused"));
     defer help.deinit(allocator);
     try testing.expectEqual(ExitOk, help.status);
     try testing.expect(std.mem.indexOf(u8, help.stdout, "Usage: waddle integration") != null);
-    var guest = try run(allocator, .{ .operation = .Remove, .guest = true }, test_env("/unused", "/unused"));
+    var guest = try run(allocator, .{ .operation = .Remove, .guest = true }, test_env("/unused", "/unused", "/unused"));
     defer guest.deinit(allocator);
     try testing.expectEqual(ExitFailed, guest.status);
     try testing.expect(std.mem.indexOf(u8, guest.stderr, "not_implemented") != null);
-    var shortcut = try run(allocator, .{ .operation = .Shortcut }, test_env("/unused", "/unused"));
+    var shortcut = try run(allocator, .{ .operation = .Shortcut }, test_env("/unused", "/unused", "/unused"));
     defer shortcut.deinit(allocator);
     try testing.expectEqual(ExitFailed, shortcut.status);
 }
 
 test "system scope refuses a non-root caller and does not reach the store" {
     const allocator = testing.allocator;
-    var env = test_env("/unused", "/unused");
+    var env = test_env("/unused", "/unused", "/unused");
     env.euid = 1000;
     var result = try run(allocator, .{ .operation = .Status, .system = true }, env);
     defer result.deinit(allocator);
@@ -635,6 +805,7 @@ const fixture_t = struct {
     base: []u8,
     data: []u8,
     state: []u8,
+    config: []u8,
 
     fn create(allocator: std.mem.Allocator) !fixture_t {
         var tmp = std.testing.tmpDir(.{});
@@ -644,10 +815,13 @@ const fixture_t = struct {
         const data = try std.fs.path.join(allocator, &.{ base, "data" });
         errdefer allocator.free(data);
         const state = try std.fs.path.join(allocator, &.{ base, "state" });
-        return .{ .tmp = tmp, .base = base, .data = data, .state = state };
+        errdefer allocator.free(state);
+        const config = try std.fs.path.join(allocator, &.{ base, "config" });
+        return .{ .tmp = tmp, .base = base, .data = data, .state = state, .config = config };
     }
 
     fn deinit(self: *fixture_t, allocator: std.mem.Allocator) void {
+        allocator.free(self.config);
         allocator.free(self.state);
         allocator.free(self.data);
         allocator.free(self.base);
@@ -655,7 +829,7 @@ const fixture_t = struct {
     }
 
     fn env(self: *const fixture_t) env_t {
-        return test_env(self.data, self.state);
+        return test_env(self.data, self.state, self.config);
     }
 
     fn handler_file(self: *const fixture_t, allocator: std.mem.Allocator) ![]u8 {
@@ -860,9 +1034,11 @@ test "json output uses the stable schema version 1 envelope and typed result row
     try testing.expect(root.get("ok").?.bool);
     try testing.expect(root.get("error").? == .null);
     const rows = root.get("results").?.array.items;
-    try testing.expectEqual(@as(usize, 1), rows.len);
+    try testing.expectEqual(@as(usize, 1 + producers.HandlerMimeTypes.len), rows.len);
     try testing.expectEqualStrings("handler:waddle-open", rows[0].object.get("id").?.string);
     try testing.expectEqualStrings("installed", rows[0].object.get("action").?.string);
+    try testing.expectEqualStrings("mime_default", rows[1].object.get("kind").?.string);
+    try testing.expectEqualStrings("registered", rows[1].object.get("action").?.string);
 }
 
 test "device scope selects records by device and leaves other devices untouched" {
@@ -1127,7 +1303,8 @@ const Prepared = enum { Installed, MissingArtifact, ModifiedArtifact, OlderVersi
 fn sweep(args: []const []const u8, prepared: Prepared, allow_failure_status: bool) !void {
     var observed: usize = 0;
     var offset: usize = 0;
-    while (offset < 800) : (offset += 1) {
+    var completed = false;
+    while (offset < 20000) : (offset += 1) {
         var fx = try fixture_t.create(testing.allocator);
         defer fx.deinit(testing.allocator);
         if (prepared != .None) {
@@ -1158,6 +1335,7 @@ fn sweep(args: []const []const u8, prepared: Prepared, allow_failure_status: boo
             var result = try outcome;
             result.deinit(failing.allocator());
             try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+            completed = true;
             break;
         }
         observed += 1;
@@ -1167,6 +1345,7 @@ fn sweep(args: []const []const u8, prepared: Prepared, allow_failure_status: boo
         try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
     }
     _ = allow_failure_status;
+    try testing.expect(completed);
     try testing.expect(observed > 0);
 }
 
@@ -1198,26 +1377,26 @@ test "unusable XDG locations fail with exit 1 and create nothing beyond them" {
     try fx.tmp.dir.writeFile(.{ .sub_path = "data-as-file", .data = "x" });
     const data_file = try std.fs.path.join(allocator, &.{ fx.base, "data-as-file" });
     defer allocator.free(data_file);
-    var as_data = try invoke(allocator, &.{"install"}, test_env(data_file, fx.state));
+    var as_data = try invoke(allocator, &.{"install"}, test_env(data_file, fx.state, fx.config));
     defer as_data.deinit(allocator);
     try testing.expectEqual(ExitFailed, as_data.status);
     try fx.tmp.dir.writeFile(.{ .sub_path = "state-as-file", .data = "x" });
     const state_file = try std.fs.path.join(allocator, &.{ fx.base, "state-as-file" });
     defer allocator.free(state_file);
-    var as_state = try invoke(allocator, &.{"status"}, test_env(fx.data, state_file));
+    var as_state = try invoke(allocator, &.{"status"}, test_env(fx.data, state_file, fx.config));
     defer as_state.deinit(allocator);
     try testing.expectEqual(ExitFailed, as_state.status);
     try fx.tmp.dir.makePath("state-waddle-file");
     try fx.tmp.dir.writeFile(.{ .sub_path = "state-waddle-file/waddle", .data = "x" });
     const waddle_file_state = try std.fs.path.join(allocator, &.{ fx.base, "state-waddle-file" });
     defer allocator.free(waddle_file_state);
-    var as_waddle = try invoke(allocator, &.{"status"}, test_env(fx.data, waddle_file_state));
+    var as_waddle = try invoke(allocator, &.{"status"}, test_env(fx.data, waddle_file_state, fx.config));
     defer as_waddle.deinit(allocator);
     try testing.expectEqual(ExitFailed, as_waddle.status);
     try fx.tmp.dir.symLink("/nonexistent-target", "dangling-data", .{});
     const dangling = try std.fs.path.join(allocator, &.{ fx.base, "dangling-data" });
     defer allocator.free(dangling);
-    var dangling_run = try invoke(allocator, &.{"status"}, test_env(dangling, fx.state));
+    var dangling_run = try invoke(allocator, &.{"status"}, test_env(dangling, fx.state, fx.config));
     defer dangling_run.deinit(allocator);
     try testing.expectEqual(ExitFailed, dangling_run.status);
     try fx.tmp.dir.makePath("state-link-target");
@@ -1225,7 +1404,7 @@ test "unusable XDG locations fail with exit 1 and create nothing beyond them" {
     try fx.tmp.dir.symLink("../state-link-target", "state-link/waddle/integration", .{});
     const linked_state = try std.fs.path.join(allocator, &.{ fx.base, "state-link" });
     defer allocator.free(linked_state);
-    var linked = try invoke(allocator, &.{"status"}, test_env(fx.data, linked_state));
+    var linked = try invoke(allocator, &.{"status"}, test_env(fx.data, linked_state, fx.config));
     defer linked.deinit(allocator);
     try testing.expectEqual(ExitFailed, linked.status);
     var target = try fx.tmp.dir.openDir("state-link-target", .{ .iterate = true });
@@ -1382,6 +1561,183 @@ test "a relative or empty HOME without absolute XDG variables is an invalid envi
     try testing.expectError(error.InvalidEnvironment, resolve_paths(testing.allocator, "relative/home", null, null));
     try testing.expectError(error.InvalidEnvironment, resolve_paths(testing.allocator, "", null, null));
     try testing.expectError(error.InvalidEnvironment, resolve_paths(testing.allocator, null, null, null));
+}
+
+fn write_mime_file(fx: *fixture_t, bytes: []const u8) !void {
+    try fx.tmp.dir.makePath("config");
+    try fx.tmp.dir.writeFile(.{ .sub_path = "config/mimeapps.list", .data = bytes });
+}
+
+fn read_mime_file(allocator: std.mem.Allocator, fx: *fixture_t) ![]u8 {
+    return fx.tmp.dir.readFileAlloc(allocator, "config/mimeapps.list", 1 << 20);
+}
+
+test "install registers every handler MIME default and a repeat changes nothing" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var first = try invoke(allocator, &.{"install"}, fx.env());
+    defer first.deinit(allocator);
+    try testing.expectEqual(ExitOk, first.status);
+    const stored = try read_mime_file(allocator, &fx);
+    defer allocator.free(stored);
+    try testing.expect(std.mem.startsWith(u8, stored, "[Default Applications]\n"));
+    for (producers.HandlerMimeTypes) |mime| {
+        const line = try std.fmt.allocPrint(allocator, "{s}=waddle-open.desktop\n", .{mime});
+        defer allocator.free(line);
+        try testing.expect(std.mem.indexOf(u8, stored, line) != null);
+    }
+    var second = try invoke(allocator, &.{"install"}, fx.env());
+    defer second.deinit(allocator);
+    try testing.expectEqual(ExitOk, second.status);
+    try testing.expectEqual(@as(usize, 1 + producers.HandlerMimeTypes.len), std.mem.count(u8, second.stdout, "unchanged"));
+}
+
+test "remove restores a prior default, deletes keys that had none, and forgets every record" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    try write_mime_file(&fx, "[Default Applications]\napplication/x-msi=old.desktop\n[Added Associations]\ntext/plain=editor.desktop;\n");
+    var installed = try invoke(allocator, &.{"install"}, fx.env());
+    installed.deinit(allocator);
+    var removed = try invoke(allocator, &.{"remove"}, fx.env());
+    defer removed.deinit(allocator);
+    try testing.expectEqual(ExitOk, removed.status);
+    const stored = try read_mime_file(allocator, &fx);
+    defer allocator.free(stored);
+    try testing.expectEqualStrings("[Default Applications]\napplication/x-msi=old.desktop\n[Added Associations]\ntext/plain=editor.desktop;\n", stored);
+    var again = try invoke(allocator, &.{"install"}, fx.env());
+    defer again.deinit(allocator);
+    try testing.expectEqual(@as(usize, producers.HandlerMimeTypes.len), std.mem.count(u8, again.stdout, "registered"));
+}
+
+test "install records an existing value as the prior and remove restores it" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    try write_mime_file(&fx, "[Default Applications]\napplication/x-msi=user.desktop\n");
+    var installed = try invoke(allocator, &.{"install"}, fx.env());
+    defer installed.deinit(allocator);
+    try testing.expectEqual(ExitOk, installed.status);
+    var removed = try invoke(allocator, &.{"remove"}, fx.env());
+    defer removed.deinit(allocator);
+    try testing.expectEqual(ExitOk, removed.status);
+    const stored = try read_mime_file(allocator, &fx);
+    defer allocator.free(stored);
+    try testing.expectEqualStrings("[Default Applications]\napplication/x-msi=user.desktop\n", stored);
+}
+
+test "a user-changed default is kept, reported as blocked, and its record is still forgotten" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var installed = try invoke(allocator, &.{"install"}, fx.env());
+    installed.deinit(allocator);
+    try write_mime_file(&fx, "[Default Applications]\napplication/x-msi=user.desktop\n");
+    var removed = try invoke(allocator, &.{"remove"}, fx.env());
+    defer removed.deinit(allocator);
+    try testing.expectEqual(ExitFailed, removed.status);
+    try testing.expect(std.mem.indexOf(u8, removed.stdout, "mime:x-msi: modified kept_modified") != null);
+    const stored = try read_mime_file(allocator, &fx);
+    defer allocator.free(stored);
+    try testing.expectEqualStrings("[Default Applications]\napplication/x-msi=user.desktop\n", stored);
+    var status = try invoke(allocator, &.{"status"}, fx.env());
+    defer status.deinit(allocator);
+    try testing.expect(std.mem.indexOf(u8, status.stdout, "mime:x-msi") == null);
+}
+
+test "install repairs a key removed by hand and keeps a value that differs from the recorded prior" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var installed = try invoke(allocator, &.{"install"}, fx.env());
+    installed.deinit(allocator);
+    try write_mime_file(&fx, "[Default Applications]\n");
+    var repaired = try invoke(allocator, &.{"install"}, fx.env());
+    defer repaired.deinit(allocator);
+    try testing.expectEqual(ExitOk, repaired.status);
+    try testing.expectEqual(@as(usize, producers.HandlerMimeTypes.len), std.mem.count(u8, repaired.stdout, "repaired"));
+    try write_mime_file(&fx, "[Default Applications]\napplication/x-msi=user.desktop\n");
+    var kept = try invoke(allocator, &.{"install"}, fx.env());
+    defer kept.deinit(allocator);
+    try testing.expectEqual(ExitFailed, kept.status);
+    try testing.expect(std.mem.indexOf(u8, kept.stdout, "mime:x-msi: modified kept_modified") != null);
+    const stored = try read_mime_file(allocator, &fx);
+    defer allocator.free(stored);
+    try testing.expect(std.mem.indexOf(u8, stored, "application/x-msi=user.desktop\n") != null);
+}
+
+test "MIME type identifiers require a subtype" {
+    try testing.expectError(error.InvalidArgument, mime_record_id(testing.allocator, "nosubtype"));
+    const id = try mime_record_id(testing.allocator, "application/x-msi");
+    defer testing.allocator.free(id);
+    try testing.expectEqualStrings("mime:x-msi", id);
+}
+
+test "a key removed by hand before removal is a no-op restore that still forgets the record" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var installed = try invoke(allocator, &.{"install"}, fx.env());
+    installed.deinit(allocator);
+    try write_mime_file(&fx, "[Default Applications]\n");
+    var removed = try invoke(allocator, &.{"remove"}, fx.env());
+    defer removed.deinit(allocator);
+    try testing.expectEqual(ExitOk, removed.status);
+    try testing.expectEqual(@as(usize, producers.HandlerMimeTypes.len), std.mem.count(u8, removed.stdout, "not_applied"));
+}
+
+test "a symbolic link to mimeapps.list keeps the link and receives the edits" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    try fx.tmp.dir.makePath("dotfiles");
+    try fx.tmp.dir.writeFile(.{ .sub_path = "dotfiles/mimeapps.list", .data = "[Default Applications]\n" });
+    try fx.tmp.dir.makePath("config");
+    const dotfiles = try std.fs.path.join(allocator, &.{ fx.base, "dotfiles", "mimeapps.list" });
+    defer allocator.free(dotfiles);
+    try fx.tmp.dir.symLink(dotfiles, "config/mimeapps.list", .{});
+    var installed = try invoke(allocator, &.{"install"}, fx.env());
+    defer installed.deinit(allocator);
+    try testing.expectEqual(ExitOk, installed.status);
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    try testing.expectEqualStrings(dotfiles, try fx.tmp.dir.readLink("config/mimeapps.list", &buffer));
+    const stored = try fx.tmp.dir.readFileAlloc(allocator, "dotfiles/mimeapps.list", 1 << 20);
+    defer allocator.free(stored);
+    try testing.expect(std.mem.indexOf(u8, stored, "application/x-msi=waddle-open.desktop\n") != null);
+}
+
+test "device-scoped install leaves MIME defaults untouched" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var installed = try invoke(allocator, &.{ "install", "--device", "alpha" }, fx.env());
+    defer installed.deinit(allocator);
+    try testing.expect(std.meta.isError(fx.tmp.dir.access("config/mimeapps.list", .{})));
+}
+
+test "status reports each MIME default from the file as ok, modified, or missing" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var installed = try invoke(allocator, &.{"install"}, fx.env());
+    installed.deinit(allocator);
+    var ok = try invoke(allocator, &.{"status"}, fx.env());
+    defer ok.deinit(allocator);
+    try testing.expect(std.mem.indexOf(u8, ok.stdout, "mime:x-msi: ok reported") != null);
+    try write_mime_file(&fx, "[Default Applications]\napplication/x-msi=user.desktop\n");
+    var modified = try invoke(allocator, &.{"status"}, fx.env());
+    defer modified.deinit(allocator);
+    try testing.expect(std.mem.indexOf(u8, modified.stdout, "mime:x-msi: modified reported") != null);
+    try write_mime_file(&fx, "[Default Applications]\n");
+    var missing = try invoke(allocator, &.{"status"}, fx.env());
+    defer missing.deinit(allocator);
+    try testing.expect(std.mem.indexOf(u8, missing.stdout, "mime:x-msi: missing reported") != null);
+}
+
+test "allocation failures in MIME install and removal leave no leaked allocations" {
+    try sweep(&.{"install"}, .None, false);
+    try sweep(&.{"remove"}, .Installed, false);
 }
 
 test "a fixture with no records migrates and reports as nothing to do under every allocation index" {

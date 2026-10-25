@@ -54,11 +54,17 @@ export fn waddle_integration_command(argc: c_int, argv: [*]const [*:0]const u8) 
     };
     defer allocator.free(paths.data_home);
     defer allocator.free(paths.state_home);
+    const config_home = integration.resolve_config(allocator, std.posix.getenv("HOME"), std.posix.getenv("XDG_CONFIG_HOME")) catch {
+        std.io.getStdErr().writer().writeAll("waddle integration: invalid_environment: HOME and XDG directories must be absolute\n") catch return 125;
+        return 1;
+    };
+    defer allocator.free(config_home);
     const launcher = std.fs.selfExePathAlloc(allocator) catch return 125;
     defer allocator.free(launcher);
     const env = integration.env_t{
         .data_home = paths.data_home,
         .state_home = paths.state_home,
+        .config_home = config_home,
         .launcher = launcher,
         .now = std.time.timestamp(),
         .euid = std.os.linux.geteuid(),
