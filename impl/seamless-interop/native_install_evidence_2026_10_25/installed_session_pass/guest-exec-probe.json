@@ -1,0 +1,66 @@
+{
+  "guest_cid": 52945,
+  "port": 5242,
+  "run_root": "/home/dev/Waddle-LSW/build/fresh_native_guests/fresh-254f52a34990480c804c67b70ed7a0ee",
+  "uid": 1001,
+  "attempts": 195,
+  "errors": {
+    "19": 1,
+    "None": 163,
+    "104": 30
+  },
+  "reachable": true,
+  "execution": {
+    "exit_code": 0,
+    "stdout": "\r\nMicrosoft Windows [Version 10.0.26100.32230]\r\nwaddle-fresh\\waddle_native\r\n",
+    "stderr": ""
+  },
+  "native_interop_acceptance": false,
+  "native_fixtures": [
+    {
+      "binary": "build/native_observer_acceptance_20261025/window_graph_c_test.exe",
+      "sha256": "309c92c9992998229c5c823868f8d946b68178ed0bf3915e975bf914814d4d44",
+      "installed_session_execution": true,
+      "native_vsock_or_ivshmem_acceptance": false,
+      "exit_code": 0,
+      "stdout": "window_graph: ok runtime_sizes\r\nwindow_graph: ok create_destroy\r\nwindow_graph: ok create_alias_preserves_inputs\r\nwindow_graph: ok invalid_arguments\r\nwindow_graph: ok lifecycle\r\nwindow_graph: ok update_coalescing\r\nwindow_graph: ok child_before_parent\r\nwindow_graph: ok capacity\r\nwindow_graph: ok deferral_overflow\r\nwindow_graph: ok classification\r\nwindow_graph: ok observe_errors\r\nwindow_graph: ok queue_full\r\nwindow_graph: ok drain_sink\r\nwindow_graph: ok retirement\r\nwindow_graph: ok complete_retire_matrix\r\nwindow_graph: ok note_destroyed\r\nwindow_graph: ok tick_wrap\r\nwindow_graph: ok identity_and_reclassify\r\nwindow_graph: ok refresh\r\nwindow_graph: ok invalidate_all\r\nwindow_graph: ok capacity_diagnostic\r\nwindow_graph: ok stats_and_find\r\nwindow_graph: ok tracked_snapshot\r\nwindow_graph: ok wrong_thread\r\nwindow_graph: ok reentrancy\r\nwindow_graph: ok epoch_isolation\r\nwindow_graph: ok generation_monotonic\r\nwindow_graph: ok random_trace\r\nwindow_graph: 28 tests passed\r\n",
+      "stderr": ""
+    },
+    {
+      "binary": "build/native_observer_acceptance_20261025/window_observer_native_test.exe",
+      "sha256": "2ab6ef69f1ad9dcf707e164f56a67e62fd13b802001dab95f0540aea4769b80b",
+      "installed_session_execution": true,
+      "native_vsock_or_ivshmem_acceptance": false,
+      "exit_code": 0,
+      "stdout": "native observer: real facts, target-correlated hints, reserved-candidate protected Destroy, and explicit teardown passed; hints=23\r\n",
+      "stderr": ""
+    },
+    {
+      "binary": "build/native_observer_acceptance_20261025/window_observer_installed_test.exe",
+      "sha256": "c6292fafbd93ddee4f6ada50407279e298d71edbe8ed73580adbced4ba5ae7b6",
+      "installed_session_execution": true,
+      "native_vsock_or_ivshmem_acceptance": false,
+      "exit_code": 0,
+      "stdout": "installed observer: real foreign graph admission, parent order, title, quarantine and generation passed\r\n",
+      "stderr": ""
+    },
+    {
+      "binary": "build/interop_windows_socket_native_test.exe",
+      "sha256": "e012250c78b970000e0b76f25d01dd011f8031eccf28491cebb8694be39252ec",
+      "installed_session_execution": true,
+      "native_vsock_or_ivshmem_acceptance": false,
+      "exit_code": 0,
+      "stdout": "windows_socket_owner_windows: native AF_INET owner test passed\r\n",
+      "stderr": ""
+    }
+  ],
+  "supervisor": {
+    "failure": null,
+    "stop_requested": true,
+    "deadline_reached": false,
+    "qemu_reaped": true,
+    "swtpm_reaped": true,
+    "forced_qemu_termination": false
+  },
+  "probe_joined": true
+}
