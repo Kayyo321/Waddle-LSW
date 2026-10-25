@@ -105,3 +105,71 @@ interop-window-state-adapter-coverage:
 build/interop_window_state_adapter_native_test.exe: $(WsaAdapterNative) $(WsaAdapterSrc) $(WsaAdapterHdr) src/interop/window_state.h
 	mkdir -p build
 	$(WsaMingwCC) $(WsaAdapterCFlags) $(WsaAdapterWinDefs) $(WsaAdapterNative) $(WsaAdapterSrc) -luser32 -o $@
+
+# Window coordinator (TODO #10 C1-C3, TODO #13 guest half, impl/seamless-interop/claude_45_percent).
+#   make interop-window-coordinator-test         suite plain (random long sequences included)
+#   make interop-window-coordinator-sanitizers   suite under ASan, LSan and UBSan with detect_leaks=1
+#   make interop-window-coordinator-coverage     gcov line and branch gate (90 percent)
+#   make build/window_coordinator/window_coordinator_windows.o   mingw cross-build of the coordinator
+#
+# The suite links the real graph, slot-runtime, codec and reducer Zig ABI objects built here, the real
+# observer and adapter, a capture fake and a fake wire. Seam failures are injected through the
+# -Wl,--wrap symbols listed in tests/interop/window_coordinator_wraps.txt (see window_coordinator_faults.h).
+
+WcBuild := build/window_coordinator
+WcSrc := src/interop/window_coordinator.c
+WcHdr := src/interop/window_coordinator.h
+WcSuite := tests/interop/window_coordinator_suite.c
+WcFaults := tests/interop/window_coordinator_faults.h
+WcWrapList := tests/interop/window_coordinator_wraps.txt
+WcCoverage := tests/interop/window_coordinator_coverage.py
+WcObserverSrc := src/interop/window_observer_windows.c
+WcAdapterSrc := src/interop/window_state_adapter_windows.c
+WcLinkWraps := $(foreach s,$(shell grep -v '^\#' $(WcWrapList)),-Wl,--wrap=$(s))
+WcCFlags := -std=c11 -Wall -Wextra -Wpedantic -Werror -Wno-unused-function -UNDEBUG -O0 -g -pthread -Iinclude -Isrc/interop -Itests/interop
+WcSanFlags := -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer
+WcSanEnv := ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+WcMingwCC ?= x86_64-w64-mingw32-gcc
+WcWinDefs := -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE
+WcZigObjs := $(WcBuild)/graph.o $(WcBuild)/slot.o $(WcBuild)/wstate.o $(WcBuild)/codec.o
+
+InteropLaneTests += interop-window-coordinator-test
+InteropLaneSanitizers += interop-window-coordinator-sanitizers
+InteropLaneCoverage += interop-window-coordinator-coverage
+
+$(WcBuild):
+	mkdir -p $@
+
+# ReleaseSafe, position-independent objects of the Zig ABIs, built with the same flags as the coverage gate.
+$(WcBuild)/codec.o: src/interop/interop_codec.zig include/waddle/interop_protocol.h | $(WcBuild)
+	$(ZIG) build-obj src/interop/interop_codec.zig -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+$(WcBuild)/graph.o: src/interop/window_graph_abi.zig src/interop/window_graph.zig include/waddle/interop_window_graph.h | $(WcBuild)
+	$(ZIG) build-obj src/interop/window_graph_abi.zig -Iinclude -Isrc/interop -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+$(WcBuild)/slot.o: src/interop/interop_slot_runtime_abi.zig src/interop/interop_slot_runtime.zig src/interop/interop_slot_runtime.h | $(WcBuild)
+	$(ZIG) build-obj src/interop/interop_slot_runtime_abi.zig -Iinclude -Isrc/interop -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+$(WcBuild)/wstate.o: src/interop/window_state_abi.zig src/interop/window_state.zig src/interop/window_state.h | $(WcBuild)
+	$(ZIG) build-obj src/interop/window_state_abi.zig -Iinclude -Isrc/interop -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+$(WcBuild)/suite: $(WcSuite) $(WcFaults) $(WcWrapList) $(WcSrc) $(WcHdr) $(WcObserverSrc) $(WcAdapterSrc) $(WcZigObjs) | $(WcBuild)
+	$(CC) $(WcCFlags) $(WcSuite) $(WcSrc) $(WcObserverSrc) $(WcAdapterSrc) $(WcZigObjs) $(WcLinkWraps) -o $@
+
+$(WcBuild)/suite_san: $(WcSuite) $(WcFaults) $(WcWrapList) $(WcSrc) $(WcHdr) $(WcObserverSrc) $(WcAdapterSrc) $(WcZigObjs) | $(WcBuild)
+	$(CC) $(WcCFlags) $(WcSanFlags) $(WcSuite) $(WcSrc) $(WcObserverSrc) $(WcAdapterSrc) $(WcZigObjs) $(WcLinkWraps) -o $@
+
+.PHONY: interop-window-coordinator-test interop-window-coordinator-sanitizers interop-window-coordinator-coverage interop-window-coordinator-windows
+
+interop-window-coordinator-test: $(WcBuild)/suite
+	$(WcBuild)/suite
+
+interop-window-coordinator-sanitizers: $(WcBuild)/suite_san
+	$(WcSanEnv) $(WcBuild)/suite_san
+
+# gcov line and branch gate on window_coordinator.c, driven by the suite (see the script header).
+interop-window-coordinator-coverage:
+	python3 $(WcCoverage)
+
+# mingw cross-build of the portable coordinator object; compiled and linted here, not executed.
+$(WcBuild)/window_coordinator_windows.o: $(WcSrc) $(WcHdr) | $(WcBuild)
+	$(WcMingwCC) -std=c11 -Wall -Wextra -Wpedantic -Werror $(WcWinDefs) -Iinclude -Isrc/interop -c $(WcSrc) -o $@
+
+interop-window-coordinator-windows: $(WcBuild)/window_coordinator_windows.o
