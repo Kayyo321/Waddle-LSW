@@ -243,6 +243,22 @@ static int check_user_data(host_window_map_t *map) {
     return 0;
 }
 
+static int check_dismissal(host_window_map_t *map) {
+    host_window_entry_t entry;
+
+    clear_table(map);
+    Check(announce(map, ref(1, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
+    Check(announce(map, ref(2, 1), ref(1, 1), HostWindowMapRoleMenu) == HostWindowMapRealize);
+    Check(host_window_map_mark_dismissed(NULL, ref(2, 1)) == HostWindowMapDismissRefuseInvalid);
+    Check(host_window_map_mark_dismissed(map, ref(1, 1)) == HostWindowMapDismissRefuseInvalid);
+    Check(host_window_map_mark_dismissed(map, ref(2, 2)) == HostWindowMapDismissStale);
+    Check(host_window_map_mark_dismissed(map, ref(2, 1)) == HostWindowMapDismissed);
+    Check(host_window_map_lookup(map, ref(2, 1), &entry) && entry.dismissed == 1);
+    Check(host_window_map_realized_count(map) == 2);
+    clear_table(map);
+    return 0;
+}
+
 static int check_aliasing(host_window_map_t *map) {
     host_window_ref_t *alias = (host_window_ref_t *)(void *)map;
     uint32_t *inside = &map->realized_count;
@@ -270,6 +286,7 @@ int main(void) {
     if (check_teardown(&map) != 0) return 1;
     if (check_stable_slots(&map) != 0) return 1;
     if (check_user_data(&map) != 0) return 1;
+    if (check_dismissal(&map) != 0) return 1;
     if (check_capacity_edges(&map) != 0) return 1;
     if (check_aliasing(&map) != 0) return 1;
     clear_table(&map);

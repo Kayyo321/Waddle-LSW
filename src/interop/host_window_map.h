@@ -63,6 +63,7 @@ typedef struct host_window_slot_t {
     uint64_t user_data; /**< Adapter value for this window; zero when realized. Set with `host_window_map_set_user_data`. */
     uint8_t role; /**< Raw `interop_window_role_t` value, 1..6. */
     uint8_t occupied; /**< Nonzero while the slot holds a realized window. */
+    uint8_t dismissed; /**< Nonzero once the popup was marked dismissed; a dismissed popup stays realized until retired. */
 } host_window_slot_t;
 
 /** @brief Copy of an occupied slot, returned by `host_window_map_lookup`. */
@@ -73,6 +74,7 @@ typedef struct host_window_entry_t {
     uint64_t user_data; /**< Adapter value stored for this window. */
     uint32_t slot; /**< Stable slot index of this window. */
     uint8_t role; /**< Raw `interop_window_role_t` value, 1..6. */
+    uint8_t dismissed; /**< Nonzero once the popup was marked dismissed. */
 } host_window_entry_t;
 
 /**
@@ -97,6 +99,13 @@ typedef enum host_window_map_announce_status_t {
     HostWindowMapRefuseExhausted = 5, /**< The table already holds 64 realized windows. No change. */
     HostWindowMapRefuseInvalid = 6 /**< Zero identity, bad role or parent shape, or NULL map. No change. */
 } host_window_map_announce_status_t;
+
+/** @brief Result of `host_window_map_mark_dismissed`. */
+typedef enum host_window_map_dismiss_status_t {
+    HostWindowMapDismissed = 1, /**< The popup is marked dismissed; it stays realized. Marking again changes nothing further. */
+    HostWindowMapDismissStale = 2, /**< No realized entry with that exact pair. No change. */
+    HostWindowMapDismissRefuseInvalid = 3 /**< Zero identity, corrupt table, or a window that is not a popup. No change. */
+} host_window_map_dismiss_status_t;
 
 /** @brief Result of `host_window_map_set_user_data` and `host_window_map_get_user_data`. */
 typedef enum host_window_map_user_data_status_t {
@@ -199,6 +208,18 @@ host_window_map_announce_result_t host_window_map_announce(host_window_map_t *ma
  * @return Retire status. Thread safety: owner thread only.
  */
 host_window_map_retire_status_t host_window_map_retire(host_window_map_t *map, host_window_ref_t window, host_window_ref_t *out, uint32_t out_capacity, uint32_t *out_count);
+
+/**
+ * @brief Mark a realized popup dismissed by the compositor (`popup_done`).
+ *
+ * The popup stays realized, with its slot and user data, until the guest retires it. Only Menu, Tooltip and
+ * ImePreedit may be dismissed.
+ *
+ * @param map In/out. Table; NULL gives `HostWindowMapDismissRefuseInvalid`.
+ * @param window In. Exact identity of the popup; both fields nonzero.
+ * @return Status. Thread safety: owner thread only.
+ */
+host_window_map_dismiss_status_t host_window_map_mark_dismissed(host_window_map_t *map, host_window_ref_t window);
 
 /**
  * @brief Set the adapter value of the window in a slot, if that slot holds exactly `window`.

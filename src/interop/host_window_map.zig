@@ -65,6 +65,9 @@ pub const slot_t = extern struct {
     role: u8,
     /// Nonzero while the slot holds a realized window.
     occupied: u8,
+    /// Nonzero once the compositor reported the popup dismissed (`popup_done`). A dismissed popup stays
+    /// realized until the guest retires it.
+    dismissed: u8,
 };
 
 /// Copy of an occupied slot returned by `lookup`.
@@ -81,6 +84,8 @@ pub const window_entry_t = extern struct {
     slot: u32,
     /// Raw `interop_window_role_t` value, 1..6.
     role: u8,
+    /// Nonzero once the popup was marked dismissed.
+    dismissed: u8,
 };
 
 /// Complete table state. The caller owns the storage; the table holds no pointers.
@@ -144,6 +149,16 @@ pub const reset_result_t = extern struct {
     status: reset_status_t,
     /// Realized windows written to the teardown list; zero unless Reset.
     count: u32,
+};
+
+/// Result code of `mark_dismissed`.
+pub const dismiss_status_t = enum(c_int) {
+    /// The popup is marked dismissed. Marking it again is also Marked and changes nothing further.
+    Marked = 1,
+    /// No realized entry with that exact pair. Nothing changed.
+    Stale = 2,
+    /// Zero identity, a corrupt table, or a window that is not a popup. Nothing changed.
+    RefuseInvalid = 3,
 };
 
 /// Result code of `set_user_data` and `get_user_data`.
@@ -310,7 +325,7 @@ pub fn lookup(map: *const host_window_map_t, window: window_ref_t) ?window_entry
     if (!is_consistent(map)) return null;
     const index = find_exact(map, window) orelse return null;
     const slot = map.slots[index];
-    return .{ .window = slot.window, .parent = slot.parent, .realize_seq = slot.realize_seq, .user_data = slot.user_data, .slot = @intCast(index), .role = slot.role };
+    return .{ .window = slot.window, .parent = slot.parent, .realize_seq = slot.realize_seq, .user_data = slot.user_data, .slot = @intCast(index), .role = slot.role, .dismissed = slot.dismissed };
 }
 
 /// Whether the exact identity is currently realized.
@@ -328,6 +343,21 @@ pub fn is_current(map: *const host_window_map_t, window: window_ref_t) bool {
 /// @return The realized count when the table is consistent, otherwise 0.
 pub fn realized_count(map: *const host_window_map_t) u32 {
     return if (is_consistent(map)) map.realized_count else 0;
+}
+
+/// Mark a realized popup as dismissed by the compositor (`popup_done`). The popup stays realized, with
+/// its slot and user data, until the guest retires it.
+///
+/// @param map Table; must not be null.
+/// @param window Exact identity of the popup; both fields nonzero.
+/// @return `Marked`, `Stale` for an identity that is not realized, or `RefuseInvalid` for a zero identity, a
+///         corrupt table, or a window that is not a popup.
+pub fn mark_dismissed(map: *host_window_map_t, window: window_ref_t) dismiss_status_t {
+    if (!valid_ref(window) or !is_consistent(map)) return .RefuseInvalid;
+    const index = find_exact(map, window) orelse return .Stale;
+    if (!is_popup_role(map.slots[index].role)) return .RefuseInvalid;
+    map.slots[index].dismissed = 1;
+    return .Marked;
 }
 
 /// Set the adapter value of the window in `slot`, if that slot holds exactly `window`.
@@ -400,7 +430,7 @@ pub fn announce(map: *host_window_map_t, window: window_ref_t, parent: window_re
 
     // A consistent table with fewer than MaxRealized occupied slots always has a free one.
     const index = find_free(map) orelse unreachable;
-    map.slots[index] = .{ .window = window, .parent = parent, .realize_seq = map.next_seq, .user_data = 0, .role = role, .occupied = 1 };
+    map.slots[index] = .{ .window = window, .parent = parent, .realize_seq = map.next_seq, .user_data = 0, .role = role, .occupied = 1, .dismissed = 0 };
     map.next_seq += 1;
     map.realized_count += 1;
     return .{ .status = .Realize, .slot = @intCast(index) };
@@ -578,6 +608,16 @@ export fn host_window_map_realized_count(map: ?*const host_window_map_t) callcon
     return if (map) |target| realized_count(target) else 0;
 }
 
+/// C ABI: mark a realized popup dismissed. See `mark_dismissed`.
+///
+/// @param map In/out. Table; NULL gives RefuseInvalid.
+/// @param window In. Identity by value; both fields nonzero.
+/// @return Status. Thread safety: owner thread only.
+export fn host_window_map_mark_dismissed(map: ?*host_window_map_t, window: window_ref_t) callconv(.C) dismiss_status_t {
+    const target = map orelse return .RefuseInvalid;
+    return mark_dismissed(target, window);
+}
+
 /// C ABI: set the adapter value of the window in `slot`. See `set_user_data`.
 ///
 /// @param map In/out. Table; NULL gives RefuseInvalid.
@@ -692,6 +732,10 @@ const abi_shim_t = struct {
 
     fn set_user_data(map: ?*host_window_map_t, slot: u32, window: window_ref_t, value: u64) user_data_status_t {
         return @call(.never_inline, host_window_map_set_user_data, .{ map, slot, window, value });
+    }
+
+    fn mark_dismissed(map: ?*host_window_map_t, window: window_ref_t) dismiss_status_t {
+        return @call(.never_inline, host_window_map_mark_dismissed, .{ map, window });
     }
 
     fn get_user_data(map: ?*const host_window_map_t, slot: u32, window: window_ref_t, value: ?*u64) user_data_status_t {
@@ -1045,6 +1089,7 @@ const reference_model_t = struct {
         role: u8,
         seq: u64,
         user_data: u64,
+        dismissed: bool,
     };
 
     fn model_init() reference_model_t {
@@ -1088,7 +1133,7 @@ const reference_model_t = struct {
         if (self.model_count() == MaxRealized or self.next_seq == std.math.maxInt(u64)) return .{ .status = .RefuseExhausted, .slot = NoSlot };
         var free: usize = 0;
         while (self.entries[free] != null) free += 1;
-        self.entries[free] = .{ .window = window, .parent = parent, .role = role, .seq = self.next_seq, .user_data = 0 };
+        self.entries[free] = .{ .window = window, .parent = parent, .role = role, .seq = self.next_seq, .user_data = 0, .dismissed = false };
         self.next_seq += 1;
         return .{ .status = .Realize, .slot = @intCast(free) };
     }
@@ -1131,6 +1176,16 @@ const reference_model_t = struct {
     }
 
     /// Teardown: roots by descending sequence number, each subtree children first.
+    fn model_mark_dismissed(self: *reference_model_t, window: window_ref_t) dismiss_status_t {
+        if (window.window == 0 or window.generation == 0) return .RefuseInvalid;
+        const index = self.model_find_window(window.window) orelse return .Stale;
+        if (!same_ref(self.entries[index].?.window, window)) return .Stale;
+        const role = self.entries[index].?.role;
+        if (role != 3 and role != 4 and role != 6) return .RefuseInvalid;
+        self.entries[index].?.dismissed = true;
+        return .Marked;
+    }
+
     fn model_user_data(self: *reference_model_t, slot: u32, window: window_ref_t, set: ?u64) user_data_status_t {
         if (window.window == 0 or window.generation == 0 or slot >= MaxRealized) return .RefuseInvalid;
         const entry = &(self.entries[slot] orelse return .Stale);
@@ -1169,6 +1224,7 @@ fn expect_same_state(map: *const host_window_map_t, model: *const reference_mode
             try testing.expectEqual(value.role, map.slots[index].role);
             try testing.expectEqual(value.seq, map.slots[index].realize_seq);
             try testing.expectEqual(value.user_data, map.slots[index].user_data);
+            try testing.expectEqual(@intFromBool(value.dismissed), map.slots[index].dismissed);
         } else {
             try testing.expectEqual(@as(u8, 0), map.slots[index].occupied);
         }
@@ -1214,17 +1270,21 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
                 for (out_list.items, 0..) |pair, index| try expect_ref(pair, out[index]);
             }
         } else {
-            // User data by slot: slots past the table and mismatched windows are refused or stale.
+            // Per-slot user data and dismissal: slots past the table and mismatched windows are refused or stale.
             const slot: u32 = random.uintLessThan(u32, MaxRealized + 2);
             const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
-            if (random.boolean()) {
-                const value = random.int(u64);
-                try testing.expectEqual(model.model_user_data(slot, window, value), set_user_data(&map, slot, window, value));
-            } else {
-                var got: u64 = 0xDEAD;
-                const status = get_user_data(&map, slot, window, &got);
-                try testing.expectEqual(model.model_user_data(slot, window, null), status);
-                if (status == .Ok) try testing.expectEqual(model.entries[slot].?.user_data, got) else try testing.expectEqual(@as(u64, 0xDEAD), got);
+            switch (random.uintLessThan(u8, 3)) {
+                0 => {
+                    const value = random.int(u64);
+                    try testing.expectEqual(model.model_user_data(slot, window, value), set_user_data(&map, slot, window, value));
+                },
+                1 => {
+                    var got: u64 = 0xDEAD;
+                    const status = get_user_data(&map, slot, window, &got);
+                    try testing.expectEqual(model.model_user_data(slot, window, null), status);
+                    if (status == .Ok) try testing.expectEqual(model.entries[slot].?.user_data, got) else try testing.expectEqual(@as(u64, 0xDEAD), got);
+                },
+                else => try testing.expectEqual(model.model_mark_dismissed(window), mark_dismissed(&map, window)),
             }
         }
         try expect_same_state(&map, &model);
@@ -1266,6 +1326,39 @@ test "user data is stored per slot, validated by slot and window, and reset when
     try testing.expectEqual(@as(u64, 0), lookup(&map, ref(3, 1)).?.user_data);
 }
 
+test "a dismissed popup stays realized with its slot until the guest retires it" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    const menu = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
+    try testing.expectEqual(dismiss_status_t.Marked, mark_dismissed(&map, ref(2, 1)));
+    try testing.expectEqual(dismiss_status_t.Marked, mark_dismissed(&map, ref(2, 1)));
+    const entry = lookup(&map, ref(2, 1)).?;
+    try testing.expectEqual(@as(u8, 1), entry.dismissed);
+    try testing.expectEqual(menu.slot, entry.slot);
+    try testing.expect(is_current(&map, ref(2, 1)));
+    // A dismissed toplevel is refused: only popups are dismissed.
+    try testing.expectEqual(dismiss_status_t.RefuseInvalid, mark_dismissed(&map, ref(1, 1)));
+    try testing.expectEqual(@as(u8, 0), lookup(&map, ref(1, 1)).?.dismissed);
+    // Retire removes it as usual; the reused slot is not dismissed.
+    try testing.expectEqual(retire_status_t.Retired, retire(&map, ref(2, 1), &out).status);
+    const tooltip = announce(&map, ref(3, 1), ref(1, 1), RoleTooltip);
+    try testing.expectEqual(menu.slot, tooltip.slot);
+    try testing.expectEqual(@as(u8, 0), lookup(&map, ref(3, 1)).?.dismissed);
+}
+
+test "dismissing refuses zero identities, unknown or other-generation pairs and a corrupt table" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
+    try testing.expectEqual(dismiss_status_t.RefuseInvalid, mark_dismissed(&map, ref(0, 1)));
+    try testing.expectEqual(dismiss_status_t.Stale, mark_dismissed(&map, ref(9, 1)));
+    try testing.expectEqual(dismiss_status_t.Stale, mark_dismissed(&map, ref(2, 2)));
+    map.realized_count = 5;
+    try testing.expectEqual(dismiss_status_t.RefuseInvalid, mark_dismissed(&map, ref(2, 1)));
+    try testing.expectEqual(@as(u8, 0), map.slots[1].dismissed);
+}
+
 test "user data accessors refuse bad arguments and a corrupt table" {
     var map = new_map();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
@@ -1295,6 +1388,14 @@ test "C ABI user data accessors refuse NULL, overlapping and bad arguments witho
     try testing.expectEqual(user_data_status_t.Ok, abi_shim_t.set_user_data(&map, 0, ref(1, 1), 42));
     try testing.expectEqual(user_data_status_t.Ok, abi_shim_t.get_user_data(&map, 0, ref(1, 1), &value));
     try testing.expectEqual(@as(u64, 42), value);
+}
+
+test "C ABI dismissal accepts NULL and reports the status" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
+    try testing.expectEqual(dismiss_status_t.RefuseInvalid, abi_shim_t.mark_dismissed(null, ref(2, 1)));
+    try testing.expectEqual(dismiss_status_t.Marked, abi_shim_t.mark_dismissed(&map, ref(2, 1)));
 }
 
 test "C ABI counts and lookup accept NULL and report the table" {
