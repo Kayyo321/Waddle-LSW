@@ -131,7 +131,6 @@ typedef struct host_wayland_record_t {
     uint8_t role; /**< Raw `interop_window_role_t`. */
     uint8_t mapped; /**< Nonzero after the first xdg_surface.configure was acknowledged. */
     uint8_t dismissed; /**< Nonzero once a popup reported popup_done. */
-    uint8_t decoration_invalid; /**< Nonzero after an invalid decoration mode terminated delivery. */
     uint8_t grabbed; /**< Nonzero while this popup holds an xdg_popup grab on `grab_seat` (3.6.2). */
     struct wl_seat *grab_seat; /**< Seat of the grab; meaningful while `grabbed` is nonzero. */
     uint64_t grab_sequence; /**< Grab order on the context; the highest live sequence of a seat is its topmost grab. */

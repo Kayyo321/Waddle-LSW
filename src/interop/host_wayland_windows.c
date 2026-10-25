@@ -30,6 +30,7 @@ static bool context_ready(const host_wayland_t *ctx) {
 
 /* Declared here because the popup event handlers use it before its definition below. */
 static void grab_pop_from(host_wayland_t *ctx, const host_wayland_record_t *rec);
+static host_wayland_status_t retire_window(host_wayland_t *ctx, uint64_t window, uint64_t generation);
 
 host_wayland_status_t host_wayland_windows_init(host_wayland_t *ctx, const host_wayland_config_t *config) {
     if (ctx == NULL || config == NULL) return HostWaylandInvalidArgument;
@@ -267,33 +268,45 @@ static void destroy_decoration(host_wayland_record_t *rec) {
 }
 
 /**
+ * @brief End delivery of one window after a decoration fault (2.6, av_wayland.c): the window and its subtree leave
+ * the table and every object is destroyed, so no realized-but-refused window stays for the guest to trip over. The
+ * error is reported with the Announce message type. The caller must not touch the record afterwards.
+ */
+static void fail_window_delivery(host_wayland_t *ctx, uint64_t window, uint64_t generation, uint32_t error_code) {
+    (void)retire_window(ctx, window, generation);
+    emit_error(ctx, InteropMsgWindowAnnounce, error_code, window, generation);
+}
+
+/**
  * @brief xdg_surface.configure: acknowledge the serial, then apply the staged decoration mode (2.6).
  *
- * The first configuration of a decorated surface must carry a mode, otherwise the window stays unmapped until
- * a later configuration does. Server-side mode is acknowledged first and then the decoration is destroyed; the
- * surface keeps its guest frame. Configurations after that reuse the last mode.
+ * As in av_wayland.c, a decorated surface whose first configuration carries no mode is not acknowledged; delivery ends
+ * (fail_window_delivery). Otherwise the staged mode is applied and the serial acknowledged. Server-side mode is then
+ * acknowledged and the decoration destroyed, so the surface keeps its guest frame. The window is mapped after the
+ * acknowledgement.
  */
 static void on_surface_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial) {
     host_wayland_record_t *rec = resolve(data, xdg_surface);
     if (rec == NULL || rec->dismissed) return;
+    host_wayland_t *ctx = ((const host_wayland_binding_t *)data)->owner;
+    if (rec->decoration != NULL && rec->decoration_pending == 0 && rec->decoration_applied == 0) {
+        fail_window_delivery(ctx, rec->window, rec->generation, InteropErrorProtocolViolation);
+        return;
+    }
     if (rec->decoration != NULL && rec->decoration_pending != 0) {
         rec->decoration_applied = rec->decoration_pending;
         rec->decoration_pending = 0;
     }
-    if (rec->decoration != NULL && rec->decoration_applied == 0) {
-        /* No mode yet: acknowledge so the compositor progresses, but keep buffers ineligible. */
-        xdg_surface_ack_configure(xdg_surface, serial);
-        return;
-    }
     xdg_surface_ack_configure(xdg_surface, serial);
     if (rec->decoration != NULL && rec->decoration_applied == DECORATION_SERVER) destroy_decoration(rec);
-    if (!rec->decoration_invalid) rec->mapped = 1;
+    rec->mapped = 1;
 }
 
 /**
  * @brief zxdg_toplevel_decoration_v1.configure: stage the mode for the next surface configuration.
  *
- * Any mode other than client or server terminates delivery for the window: it is never mapped.
+ * Any mode other than client or server ends delivery for the window (fail_window_delivery). The window never maps,
+ * and the table no longer holds it, so the guest may announce it again.
  */
 static void on_decoration_configure(void *data, struct zxdg_toplevel_decoration_v1 *decoration, uint32_t mode) {
     host_wayland_record_t *rec = resolve(data, decoration);
@@ -303,9 +316,7 @@ static void on_decoration_configure(void *data, struct zxdg_toplevel_decoration_
         return;
     }
     host_wayland_t *ctx = ((const host_wayland_binding_t *)data)->owner;
-    rec->decoration_invalid = 1;
-    rec->mapped = 0;
-    emit_error(ctx, 0x0100u, InteropErrorProtocolViolation, rec->window, rec->generation);
+    fail_window_delivery(ctx, rec->window, rec->generation, InteropErrorProtocolViolation);
 }
 
 /** @brief Map a wl_array of xdg_toplevel states onto InteropState bits. Minimized is never reported. */

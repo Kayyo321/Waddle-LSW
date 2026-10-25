@@ -608,16 +608,11 @@ static int check_decoration_staging(void) {
     Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
     unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
     unsigned xdg_surface = fake_nth("xdg_surface", 0);
-
-    /* The first configuration without a staged mode is acknowledged but keeps the window unmapped. */
-    deliver_surface_configure(xdg_surface, 4);
-    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 1);
-    Check(!host_wayland_windows_is_mapped(&session_ctx, 1, 1));
     /* A staged mode is applied by the next surface configuration, not by the decoration event itself. */
     deliver_decoration_configure(decoration, DECORATION_CLIENT);
     Check(!host_wayland_windows_is_mapped(&session_ctx, 1, 1));
     deliver_surface_configure(xdg_surface, 5);
-    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 2);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 1);
     Check(host_wayland_windows_is_mapped(&session_ctx, 1, 1));
     /* Client-side mode is kept: the decoration is not destroyed and later configurations reuse it. */
     deliver_surface_configure(xdg_surface, 6);
@@ -655,13 +650,45 @@ static int check_invalid_mode(void) {
     Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
     unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
     unsigned xdg_surface = fake_nth("xdg_surface", 0);
-    /* A mode other than client or server terminates delivery: reported, and the window never maps. */
+    /* A mode other than client or server ends delivery (av_wayland.c): the window is retired, reported, and its
+     * objects are destroyed. Nothing realized is left behind for the guest to trip over. */
     deliver_decoration_configure(decoration, 7);
-    Check(captured.errors == 1 && captured.last_error_code == InteropErrorProtocolViolation);
+    Check(captured.errors == 1 && captured.last_error_code == InteropErrorProtocolViolation && captured.last_refused_type == 0x0100);
+    Check(host_wayland_windows_window_count(&session_ctx) == 0);
+    Check(!host_wayland_windows_is_mapped(&session_ctx, 1, 1));
+    Check(fake_find_destroy("xdg_toplevel", 0) >= 0 && fake_find_destroy("zxdg_toplevel_decoration_v1", 0) >= 0);
+    Check(fake_creates - fixture_creates == fake_destroys);
     deliver_decoration_configure(decoration, DECORATION_CLIENT);
     deliver_surface_configure(xdg_surface, 8);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 0);
+    /* The guest announces the same window again: the table no longer holds it, so the announce is realized. */
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    Check(host_wayland_windows_window_count(&session_ctx) == 1);
+    return 0;
+}
+
+/**
+ * @brief A decorated surface whose first configuration carries no mode (2.6, av_wayland.c surface_configure) is not
+ * acknowledged. Delivery ends: the window is retired, reported, and its objects are destroyed. A re-announce with
+ * the mode delivered first then maps normally.
+ */
+static int check_first_configure_without_mode(void) {
+    Check(begin_decorated_session() == 0);
+    announce_spec_t spec = toplevel_spec(1, 1, "a-app");
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    unsigned xdg_surface = fake_nth("xdg_surface", 0);
+    deliver_surface_configure(xdg_surface, 4);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 0);
+    Check(captured.errors == 1 && captured.last_error_code == InteropErrorProtocolViolation && captured.last_refused_type == 0x0100);
+    Check(host_wayland_windows_window_count(&session_ctx) == 0);
+    Check(fake_creates - fixture_creates == fake_destroys);
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    unsigned decoration = fake_nth("zxdg_toplevel_decoration_v1", 1);
+    xdg_surface = fake_nth("xdg_surface", 1);
+    deliver_decoration_configure(decoration, DECORATION_CLIENT);
+    deliver_surface_configure(xdg_surface, 5);
     Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == 1);
-    Check(!host_wayland_windows_is_mapped(&session_ctx, 1, 1));
+    Check(host_wayland_windows_is_mapped(&session_ctx, 1, 1));
     return 0;
 }
 
@@ -1548,6 +1575,7 @@ int main(void) {
     if (check_decoration_staging() != 0) return 1;
     if (check_server_side_fallback() != 0) return 1;
     if (check_invalid_mode() != 0) return 1;
+    if (check_first_configure_without_mode() != 0) return 1;
     if (check_decoration_failures() != 0) return 1;
     if (check_popup_realization() != 0) return 1;
     if (check_popup_positioner_versions() != 0) return 1;
