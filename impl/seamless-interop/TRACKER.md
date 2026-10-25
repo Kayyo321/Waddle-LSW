@@ -1274,9 +1274,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     ASan/LSan/UBSan and exact359/362lines,341/374taken-arcs pass. CI now runs
     the production-object guard/real-socket fixture and coverage gate.
 
-- **Commit `HEAD`**: `fix(interop): select Windows Setup after installation boot prompt`
+- **Commit `1efa382`**: `fix(interop): select Windows Setup after installation boot prompt`
   - **Task Impact**: +0% to TODO #34; failed attempt accurately retained.
   - **Summary**: Space entered media but paused its boot menu; no installation
     or guest command ran. The exact owned VM/TPM/probe were cleaned up and all
     receipts retained. Use bounded Enter input and assert its exact QMP qcode;
     all17 supervisor tests pass. No preserved VM or legacy credential use.
+
+- **Commit `HEAD`**: `fix(interop): bound specialize bootstrap to Windows Setup schema`
+  - **Task Impact**: +0% to TODO #34; failed native attempt retained.
+  - **Summary**: Actual isolated installation reached specialize, exposing a
+    341-character Path rejected by the259-character schema bound. Compact CD-only
+    bootstrap is239 characters with runtime/test bounds;16 preparation tests pass.
+    Exact VM/TPM/probe cleanup receipts retained. All three workflows at1efa382
+    are green; no native acceptance or readiness credit.

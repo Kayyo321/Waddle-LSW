@@ -14,20 +14,21 @@
     {
       "agent": "luna_host_runtime",
       "owns": [
-        "src/interop/session_host.c",
-        "src/interop/session_host.h",
-        "tests/interop/session_host*",
-        "impl/seamless-interop/session_host_contract.md"
+        "src/interop/session_control_host.c",
+        "src/interop/session_control_host.h",
+        "src/interop/session_main.c",
+        "tests/interop/session_control_host*",
+        "tests/interop/session_main*",
+        "impl/seamless-interop/session_control_host_contract.md"
       ]
     },
     {
       "agent": "luna_fresh_guest",
       "owns": [
-        "tests/interop/fresh_native_guest.py",
-        "tests/interop/fresh_native_guest_test.py",
-        "tests/interop/fresh_native_install.py",
-        "tests/interop/fresh_native_install_test.py",
-        "impl/seamless-interop/fresh_native_install_contract.md"
+        "src/interop/windows_socket_owner.c",
+        "src/interop/windows_socket_owner.h",
+        "tests/interop/windows_socket_owner*",
+        "impl/seamless-interop/windows_socket_owner_contract.md"
       ]
     }
   ],

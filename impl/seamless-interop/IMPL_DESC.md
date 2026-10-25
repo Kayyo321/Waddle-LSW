@@ -3636,3 +3636,15 @@ Public/private pure-guard and real socket fixtures, fail-fast leak-enabled
 sanitizers and exact99.17%lines/91.18%taken-arcs pass. The source is CI-gated;
 actual entry/mapping/Hello integration is the next milestone, earning no
 premature runtime credit from this component.
+
+### 8.31 Native preparation specialize bootstrap correction (2026-10-25)
+
+RunSynchronousCommand/Path has a maximum259-character command value. The
+private preparation routine emits a239-character PowerShell command and rejects
+any future value exceeding259 before serializing answer XML. It enumerates
+CD-ROM logical disks only, locates the first waddle-guest-setup.ps1, executes it
+and propagates its process result; absence returns31. Full driver/bootstrap
+logic remains on the private answer medium. Existing account/secret ownership
+and isolation rules apply. The failed real installation and bounded cleanup are
+recorded in native_install_evidence_2026_10_25/specialize_path_attempt. No native
+feature acceptance follows from a successful preparation or setup boot.

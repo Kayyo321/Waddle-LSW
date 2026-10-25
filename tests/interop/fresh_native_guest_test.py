@@ -149,6 +149,13 @@ class fresh_native_guest_tests_t(unittest.TestCase):
         self.assertIn(secret.encode(), answer)
         tree = ElementTree.fromstring(answer)
         namespace = {"u": fresh.UnattendNs}
+        setup_path = tree.findtext(".//u:RunSynchronousCommand/u:Path", namespaces=namespace)
+        self.assertIsNotNone(setup_path)
+        assert setup_path is not None
+        self.assertLessEqual(len(setup_path), 259)
+        self.assertIn("-Filter 'DriveType=5'", setup_path)
+        self.assertIn("if(Test-Path $p){& $p;exit $LASTEXITCODE}", setup_path)
+        self.assertTrue(setup_path.endswith(';exit 31"'))
         account = tree.find(".//u:LocalAccount", namespace)
         self.assertIsNotNone(account)
         assert account is not None

@@ -308,15 +308,18 @@ def _answer_xml(user_password: str, administrator_password: str, image_name: str
                                      {f"{{{WcmNs}}}action": "add"})
     _add_text(command, "Order", "1")
     _add_text(command, "Description", "Install VirtIO VSOCK and stage guest-exec")
+    # RunSynchronousCommand/Path permits at most 259 characters. Keep CD
+    # discovery here; the full bootstrap stays on the private answer medium.
     command_line = (
-        "$d = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5' | "
-        "Where-Object { Test-Path ($_.DeviceID + '\\waddle-guest-setup.ps1') } | "
-        "Select-Object -First 1 -ExpandProperty DeviceID; "
-        "if (-not $d) { exit 31 }; "
-        "& ($d + '\\waddle-guest-setup.ps1'); exit $LASTEXITCODE"
+        "foreach($d in Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5'){"
+        "$p=$d.DeviceID+'\\waddle-guest-setup.ps1';"
+        "if(Test-Path $p){& $p;exit $LASTEXITCODE}};exit 31"
     )
-    _add_text(command, "Path", "powershell.exe -NoProfile -NonInteractive "
-                               "-ExecutionPolicy Bypass -Command \"" + command_line + "\"")
+    setup_path = ("powershell.exe -NoProfile -NonInteractive "
+                  "-ExecutionPolicy Bypass -Command \"" + command_line + "\"")
+    if len(setup_path) > 259:
+        raise fresh_guest_error_t("specialize bootstrap exceeds the Windows Setup Path limit")
+    _add_text(command, "Path", setup_path)
     _add_text(command, "WillReboot", "Never")
     shell_specialize = _component(specialize, "Microsoft-Windows-Shell-Setup")
     _add_text(shell_specialize, "ComputerName", "WADDLE-FRESH")
