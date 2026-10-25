@@ -1,0 +1,102 @@
+name: Native interop component verification
+on:
+  push:
+    branches: [feat/seamless-interop]
+    paths:
+      - src/interop/icon_windows.*
+      - src/interop/png_writer.*
+      - tests/interop/icon_windows.c
+      - tests/interop/native_component_coverage.py
+      - scripts/interop.mk
+      - .github/workflows/interop-native-components.yml
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    container: debian:trixie-slim
+    steps:
+      - name: Install native cross compiler
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates make gcc-mingw-w64-x86-64 python3
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build real Windows SDK fixture and profile notes
+        run: |
+          make build/native_components/icon_windows_profile.exe
+          python3 - <<'PY'
+          import hashlib,json,pathlib,subprocess
+          files=['src/interop/icon_windows.c','src/interop/icon_windows.h','src/interop/png_writer.c','src/interop/png_writer.h','tests/interop/icon_windows.c','build/native_components/icon_fixture.gcno','build/native_components/icon_windows_profile.exe']
+          record={'commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'sha256':{p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in files},'compiler':subprocess.check_output(['x86_64-w64-mingw32-gcc','--version'],text=True).splitlines()[0]}
+          pathlib.Path('build/native_components/inputs.json').write_text(json.dumps(record,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-component-binaries
+          path: |
+            build/native_components/*.exe
+            build/native_components/*.gcno
+            build/native_components/inputs.json
+          if-no-files-found: error
+  windows:
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-component-binaries
+          path: build/native_components
+      - name: Run real Shell and GDI ownership fixtures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $profile_dir = Join-Path $pwd 'coverage-data'
+          New-Item -ItemType Directory -Path $profile_dir | Out-Null
+          $env:GCOV_PREFIX = $profile_dir
+          $env:GCOV_PREFIX_STRIP = '99'
+          & .\build\native_components\icon_windows_profile.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-component-profile
+          path: coverage-data/**/*.gcda
+          if-no-files-found: error
+  coverage:
+    needs: [build, windows]
+    runs-on: ubuntu-22.04
+    container: debian:trixie-slim
+    steps:
+      - name: Install matching profile reader
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates gcc-mingw-w64-x86-64 python3
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-component-binaries
+          path: build/native_components
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-component-profile
+          path: build/native_components
+      - name: Require native production source line and taken-arc coverage
+        run: python3 tests/interop/native_component_coverage.py icon_windows build/native_components
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-component-coverage
+          path: |
+            build/native_components/*-summary.json
+            build/native_components/*-gcov.log
+            build/native_components/*.gcov.json.gz
+          if-no-files-found: error

@@ -1405,10 +1405,18 @@ its uncompiled draft earns no credit until current acceptance passes.
     File-read errors, launch, MIME artifacts and binfmt remain open. Also
     compress host sanitizer logs for inclusion in retained evidence.
 
-- **Commit `HEAD`**: `feat(interop): encode bounded RGBA icons as minimal PNG`
+- **Commit `4005530`**: `feat(interop): encode bounded RGBA icons as minimal PNG`
   - **Task Impact**: +10% to TODO #27 (+0.40% overall; total22.40%).
   - **Summary**: Allocation-free caller-buffer PNG with checked stride/full
     output ranges and aliases, stored deflate, CRC32/Adler32 and all7frozen
     sizes. Root independently decodes every pixel and passes159/159lines,
     74/74taken arcs and real ASan/LSan/UBSan. CI gates the portable encoder;
     native extraction/catalog/artifact integration remain open.
+
+- **Commit `HEAD`**: `feat(interop): qualify native Shell icon ownership on Windows CI`
+  - **Task Impact**: +0% to TODO #27/#34; native source gate remains open.
+  - **Summary**: Add bounded real Shell/GDI extraction with corrected channel
+    conversion, fallback mask handling and retained exact cleanup owners.
+    Native fixtures cross-link with strict SDK and real gcov instrumentation.
+    Dedicated Windows execution and genuine profile-to-Linux90%line/arc gates
+    provide feedback without substituting portable stubs for native proof.

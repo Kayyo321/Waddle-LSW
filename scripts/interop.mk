@@ -394,3 +394,15 @@ build/interop_pe_header_abi_test.exe: tests/interop/pe_header.c src/interop/pe_h
 .PHONY: interop-png-writer-test
 interop-png-writer-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/png_writer_coverage.py
+
+# Native SDK/profile test is separate from portable PNG acceptance.
+WindowsComponentCC ?= x86_64-w64-mingw32-gcc
+WindowsComponentFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -D_WIN32_WINNT=0x0601 -Isrc/interop -O0 -g
+build/native_components: | build
+	mkdir -p $@
+build/native_components/icon_fixture.o: tests/interop/icon_windows.c src/interop/icon_windows.c src/interop/icon_windows.h src/interop/png_writer.h | build/native_components
+	$(WindowsComponentCC) $(WindowsComponentFlags) --coverage -fprofile-update=atomic -fprofile-abs-path -c $< -o $@
+build/native_components/png_writer.o: src/interop/png_writer.c src/interop/png_writer.h | build/native_components
+	$(WindowsComponentCC) $(WindowsComponentFlags) -c $< -o $@
+build/native_components/icon_windows_profile.exe: build/native_components/icon_fixture.o build/native_components/png_writer.o
+	$(WindowsComponentCC) -static --coverage $^ -lshell32 -lole32 -luuid -lgdi32 -lcomctl32 -o $@

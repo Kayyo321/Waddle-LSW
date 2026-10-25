@@ -3775,3 +3775,20 @@ in png_writer_evidence_2026_10_25. PNG encoding accepts10%of #27. Other allocati
 are source snapshot/diff20%, native enumeration20%, watch/enrichment15%, native
 icon extraction15%, wire/integration10%, integrated/native qualification10%.
 Shell/GDI extraction and actual catalog/artifact runtime remain separate.
+
+### 8.41 Native icon extraction qualification lane (2026-10-25)
+
+[icon_pipeline_contract.md](icon_pipeline_contract.md) specifies read-only Shell
+image-factory extraction, frozen system-image fallback, bounded source bitmap
+scaling, premultiplied BGRA to straight RGBA conversion, monochrome AND-mask
+handling and exact GDI cleanup retention/retry. Inversion-mask pixels are
+explicitly unsupported because a background-dependent inversion cannot be
+represented as one RGBA pixel. Public outputs remain unpublished on failure;
+opaque COM/context accessibility and ownership are caller preconditions.
+
+A dedicated native-components workflow cross-compiles with the real SDK, runs
+the owned bitmap/icon and real Shell/image-list fixtures on Windows, captures
+genuine MinGW gcda, then requires90%of the entire Windows production source's
+lines and taken arcs using matching compiler gcno. No Linux stub or cross-link
+is native execution proof. This lane remains unaccepted until native execution
+and the full source gate pass; PNG encoding is independently accepted already.
