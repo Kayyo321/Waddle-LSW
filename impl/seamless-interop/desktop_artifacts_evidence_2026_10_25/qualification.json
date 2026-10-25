@@ -1,0 +1,36 @@
+{
+  "status": "qualified bounded generation and rooted-consumer milestone only",
+  "attempt": "build/coverage/interop/desktop_artifacts/run-20261025T194549424555Z-312541",
+  "source_sha256": "cf4ec11c45c77bdf5b328a57919f5902945d7542abba74f88f30e475afa1538f",
+  "input_sha256": {
+    "src/interop/desktop_artifacts.zig": "cf4ec11c45c77bdf5b328a57919f5902945d7542abba74f88f30e475afa1538f",
+    "src/interop/manifest_store.zig": "7d42b9bd3ef84f481596d28e868ec89fa792b9d1633e88dd19bce8848de7e2c1",
+    "src/interop/manifest.zig": "cdb6ce1ab125cc853f11c0a1768c86903dce1448c9868b0bb195d7a00eb30614",
+    "tests/interop/desktop_artifacts_consumer.c": "05b1081bfd264baa9bf5261e2542a68ce4b2251778284a05bd1462d9593afcbb",
+    "tests/av/coverage.py": "e414092daa5337b0e04c38a88c6d1c783abea89750b14c1b30326bc29d5cd5e4",
+    "tests/av/coverage_recorder.py": "6a4c579e282bcac9e623b2956149f8ee1aef12c9aac6840d1f7c16c678804aee"
+  },
+  "commands": [
+    "zig test -lc -O ReleaseSafe src/interop/desktop_artifacts.zig",
+    "python3 tests/av/coverage.py desktop_artifacts"
+  ],
+  "tests": 90,
+  "owned_module_tests": 26,
+  "line": {
+    "covered": 340,
+    "total": 345
+  },
+  "taken_arcs": {
+    "covered": 307,
+    "total": 341
+  },
+  "compiler_panic_stack_guards_excluded": 115,
+  "ownership": "Zig testing allocator and allocation-failure sweeps; real GLib C consumer compiled with ASan/LSan/UBSan, detect_leaks=1; no claim of Zig ASan execution",
+  "root_critical_review": "Corrected menu Directory reference to actual generated waddle-device.directory basename; composition regression binds exact emitted artifact name. Shared two-pass count/fill grammar, exact allocation and unchanged output on all errors reviewed.",
+  "scope": "Desktop/menu/directory and supplied-PNG identity generation; actual rooted per-artifact PREPARED rollback/COMMITTED recovery twice, prior record preservation; desktop-file-validate and real GDesktopAppInfo argv parsing. Does not launch helper or install into a live desktop shell.",
+  "task_impact": {
+    "28": 60,
+    "overall": 2.4
+  },
+  "remaining": "Association/runtime20%, desktop mirror10%, native installed-desktop/shell qualification10%"
+}

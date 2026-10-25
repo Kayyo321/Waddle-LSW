@@ -55,7 +55,7 @@ acceptance remain pending.
 | #25 | Bluetooth/evdev gamepads via virtual XInput | Pending | 2% | 0% | User selected ViGEmBus inclusion 2026-10-23; source/installer pins, implementation and native acceptance pending; IMPL_DESC §3.18 |
 | #26 | Printing via IPP guestfwd to host CUPS | Pending | 2% | 0% | Waits on #8 |
 | #27 | Guest app catalog, icon extraction (PNG), change notifications | In Progress | 4% | 65% | PNG10%, snapshot/diff20%, fixed native icon15% and native enumeration20% accepted. Exact6318a3d all native CI green; provider100%lines/90.15%arcs. Watches/enrichment, wire/runtime and integrated qualification remain open |
-| #28 | Host desktop-entry/icon/menu materialization, app_id matching, toplevel icon, desktop-shortcut mirroring | Pending | 4% | 0% | Waits on #27 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
+| #28 | Host desktop-entry/icon/menu materialization, app_id matching, toplevel icon, desktop-shortcut mirroring | In Progress | 4% | 60% | Desktop20%, menu/directory10%, supplied-icon data10% and real rooted publication/recovery consumer20% accepted. Root90 tests,98.55%lines/90.03%arcs, real GLib C sanitizer consumer. Runtime/association20%, desktop mirror10%, native installed-shell10% open |
 | #29 | `waddle open` launch path, activation tokens, cold-boot feedback, File Explorer seed | Pending | 3% | 0% | Waits on #7, #27 |
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
 | #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | In Progress | 2% | 40% | PE classifier20% and preserving MIME editor20% accepted with root whole-module gates. Artifacts/configuration/routes and native integration remain open; waits on #29/#33 for complete flow |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 65% | Schema15%, complete journal milestone30% and rooted ownership/backup/restore API20% accepted. Root64+3 tests; whole module99.79%lines/90.02%taken arcs. Commands/all producers20% and comprehensive crash/native/full-removal15% remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `28.55%`
+**Total Feature Completion**: `30.95%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -82,6 +82,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #15 | Typed full translation10%; native injection15%; host repeat20%(pure timing10%,live composition10%); lock sync15%; layout sync20%; shortcut inhibit10%; integrated/native qualification10% | Typed translation10% and portable repeat timing10% accepted; root repeat five tests/2000lifecycles/3000runtime events,95.24%lines/100%arcs. Live repeat10%, typed injection and other milestones remain open |
 | #27 | Source snapshot/diff20%; native enumeration20%; watch/enrichment15%; PNG encoder10%; native icon extraction15%; wire/integration10%; integrated/native qualification10% | PNG encoder10%, snapshot/diff20%, fixed native icon15% and native enumeration20% accepted. Exact6318a3d Windows source100%lines/90.15%arcs and real system smoke pass; workflow all green. Icon fixed-source98.10%lines/90.47%arcs with exact ownership/sanitizers. Watches/enrichment15%, wire/runtime10%, integrated qualification10% remain open |
 | #31 | Bounded classifier20%; preserving MIME editor20%; journaled handler artifacts20%; configuration/route integration20%; integrated/native qualification20% | Classifier20% and preserving MIME editor20% accepted; editor six tests,2000 prefixes, all publication-shape OOM tests,100%lines/93.28%arcs. Artifact/config/route/native integration remain open |
+| #28 | Desktop entries20%; menu/directory10%; supplied-icon identity/data10%; rooted publication/recovery consumer20%; runtime/association20%; desktop mirror10%; native installed-shell qualification10% | First60% accepted by root90tests, whole-source340/345lines and307/341taken arcs. Real GLib argv C consumer under ASan/LSan/UBSan and actual durable store phase recovery; runtime, mirror and installed-shell gates open |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Schema15%, journal30% and rooted API20% accepted. Root64 module/imported +3 public tests; whole source1409/1412lines and1587/1763taken arcs. Retained backups, explicit restore, legacy recovery and failure sweeps qualified; commands/producers20% and comprehensive crash/native/full-removal15% open |
 
 Execution resumed at the user's request from checkpoint4079560. Current
@@ -1692,7 +1693,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     sanitizer claim for Windows-only provider. Portable core ownership gates
     remain independently qualified. Watches, runtime and integrated native stay open.
 
-- **Commit `HEAD`**: `feat(interop): add recoverable replacement and retained backup APIs`
+- **Commit `aac0e6e`**: `feat(interop): add recoverable replacement and retained backup APIs`
   - **Task Impact**: +25% to TODO #33 (+0.75% overall; total28.55%).
   - **Summary**: Extend the held-lock rooted store with verified inode exchange,
     exact expected identities, private durable backup metadata and bounded
@@ -1703,3 +1704,15 @@ its uncompiled draft earns no credit until current acceptance passes.
     Preserve source-bound recorder, complete branch report and test logs in
     manifest_replace_evidence_2026_10_25. Zig allocator/OOM gate has zero leaks.
     Commands, all producers and comprehensive crash/native/full-removal stay open.
+
+- **Commit `HEAD`**: `feat(interop): generate bounded desktop artifacts with rooted recovery qualification`
+  - **Task Impact**: +60% to TODO #28 (+2.40% overall; total30.95%).
+  - **Summary**: Generate deterministic desktop/menu/directory and supplied-PNG
+    artifacts with sorted cumulative manifests, exact bounds and sole ownership.
+    Root fixed menu-directory filename mismatch and required actual cross-output
+    regression, real GLib argv parsing, and PREPARED/COMMITTED store recovery
+    twice per artifact. Independent90tests pass with zero allocator leaks and
+    leak-enabled C consumer sanitizers; whole source98.55%lines/90.03%taken arcs.
+    Add mandatory test packages and default test/sanitizer/coverage wiring.
+    Preserve immutable exact-source logs/recorder/report. Association/runtime,
+    desktop mirroring and native installed-shell qualification remain open.

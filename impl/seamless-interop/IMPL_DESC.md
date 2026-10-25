@@ -3878,3 +3878,25 @@ qualification15% remain open. Real rooted-filesystem checkpoint and selected
 syscall failures plus allocation-failure tests are recorded in
 manifest_replace_evidence_2026_10_25. Zig0.13 uses its leak-detecting test
 allocator; native C adapters have independent ASan/LSan requirements.
+
+
+### 8.43 Bounded desktop materialization and rooted consumer (2026-10-25)
+
+[desktop_artifacts_contract.md](desktop_artifacts_contract.md) specifies the
+allocation-owning deterministic producer, two-layer Exec escaping, menu filters,
+provided-PNG identities, bounded cumulative schema1 candidates and exact output
+ownership. The menu Directory reference uses the actual generated
+waddle-device.directory basename. One shared JSON emitter counts with overflow
+saturation, rejects oversized output, then fills one exact owned allocation
+from immutable borrowed inputs. Each candidate adds exactly one artifact.
+Publication and recovery remain owned by the shared locked manifest store;
+there is no whole-install atomicity or installed-shell behavior claim.
+
+TODO #28 accepts desktop entries20%, menu/directory10%, managed icon data10%
+and actual rooted publication/recovery consumer20%. Root90tests pass, including
+real PREPARED/COMMITTED durable states, recovery twice and preserving prior
+records, desktop-file-validate, and a real GLib argv consumer under leak-enabled
+C sanitizers. The whole source has98.55%lines/90.03%taken arcs. Evidence is
+desktop_artifacts_evidence_2026_10_25. Runtime/association20%, desktop mirror10%
+and native installed-desktop/shell qualification10% remain open. The producer
+rejects uncatalogued launches, leaving that runtime path explicitly unimplemented.
