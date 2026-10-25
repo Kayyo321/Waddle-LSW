@@ -289,13 +289,24 @@ def error_and_eof(lab):
         server.close()
     if HARNESS is not None:
         return
-    for reply in ("partial", "eof"):
-        server = make_server(lab, {"reply": reply})
+    server = make_server(lab, {"reply": "partial"})
+    try:
+        result = lab.run("open", "--wait", str(target))
+        check(result.returncode == 125, ("partial", result.returncode, result.stderr))
+    finally:
+        server.close()
+    # A session that drops a connection before any reply is not ready: the launch is retried on new
+    # connections until the deadline, so the command is still running after a few seconds.
+    server = make_server(lab, {"reply": "eof"})
+    try:
         try:
-            result = lab.run("open", "--wait", str(target))
-            check(result.returncode == 125, (reply, result.returncode, result.stderr))
-        finally:
-            server.close()
+            result = lab.run("open", "--wait", str(target), timeout=3)
+            check(False, ("eof before a reply must be retried, not reported", result.returncode, result.stderr))
+        except subprocess.TimeoutExpired:
+            pass
+        check(len(server.launches()) >= 2, ("retried on new connections", server.launches()))
+    finally:
+        server.close()
     server = make_server(lab, {"reply": "eof"})
     try:
         result = lab.run("open", str(target))

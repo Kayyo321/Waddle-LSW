@@ -134,6 +134,8 @@ const Conn = struct {
     child_failure: ?ChildState = null,
     /// Set once the single extra retry after a failed child exit has been taken.
     child_retry_spent: bool = false,
+    /// True from connect until the first frame is written on this connection.
+    fresh: bool = false,
 };
 
 /// Outcome of waiting for the reply to one frame.
@@ -144,6 +146,8 @@ const Reply = union(enum) {
     exit: u8,
     /// Connection ended at a frame boundary; the next item must reconnect.
     closed: void,
+    /// The session is not ready for this launch (LaunchResult Busy, or an unsolicited Error with request id 0).
+    busy: void,
 };
 
 /// Callback adapter state for open_request.parse.
@@ -293,40 +297,118 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
     const token = pick_token(hooks);
     const wait = request.wait != 0;
     var conn = Conn{};
-    if (connect_session(hooks, &device, &conn)) |code| return code;
+    var pacing = Pacing{ .deadline = hooks.now_ms(hooks.ctx) + DeadlineMs };
     var result: u8 = 0;
-    for (sent.items, 0..) |item, position| {
+    var position: usize = 0;
+    while (position < sent.items.len) {
+        const item = sent.items[position];
         if (conn.fd < 0) {
             if (connect_session(hooks, &device, &conn)) |code| {
                 if (result == 0) result = code;
                 break;
             }
+            conn.fresh = true;
         }
+        // A connection that has not carried a frame yet may be one the session accepted and dropped
+        // while it was not ready. Losing it before any reply is retried, not reported as a failure.
+        const first_on_connection = conn.fresh;
         const frame_token: ?[]const u8 = if (position == 0) token else null;
         const request_id: u32 = @intCast(position + 1);
-        const frame = build_frame(a, item, frame_token, request_id) catch return 125;
-        hooks.write_all(hooks.ctx, conn.fd, frame) catch {
+        const frame = build_frame(a, item, frame_token, request_id) catch {
+            hooks.close(hooks.ctx, conn.fd);
+            conn.fd = -1;
+            return 125;
+        };
+        if (hooks.write_all(hooks.ctx, conn.fd, frame)) |_| {} else |_| {
+            if (first_on_connection) {
+                if (pace_retry(hooks, &conn, &pacing)) |code| {
+                    result = code;
+                    break;
+                }
+                continue;
+            }
             hooks.message(hooks.ctx, "waddle open: could not send the launch request");
             if (result == 0) result = 125;
             break;
-        };
+        }
+        conn.fresh = false;
         const reply = await_reply(hooks, a, &conn, request_id, wait) catch {
             if (result == 0) result = 125;
             break;
         };
         switch (reply) {
-            .accepted => {},
+            .accepted => position += 1,
+            .exit => |code| {
+                if (result == 0) result = code;
+                position += 1;
+            },
+            .busy => {
+                if (pace_retry(hooks, &conn, &pacing)) |code| {
+                    result = code;
+                    break;
+                }
+            },
             .closed => {
+                if (first_on_connection and wait) {
+                    if (pace_retry(hooks, &conn, &pacing)) |code| {
+                        result = code;
+                        break;
+                    }
+                    continue;
+                }
+                // A connection that closed after carrying frames keeps the earlier behaviour: with
+                // --wait the close is a failure, otherwise the next item reconnects.
+                if (wait) {
+                    if (result == 0) result = 125;
+                    break;
+                }
                 hooks.close(hooks.ctx, conn.fd);
                 conn.fd = -1;
-            },
-            .exit => |code| if (result == 0) {
-                result = code;
+                position += 1;
             },
         }
     }
     if (conn.fd >= 0) hooks.close(hooks.ctx, conn.fd);
     return result;
+}
+
+/// Retry pacing for a session that is not ready yet: the cold-start backoff (25 ms doubling to 250 ms)
+/// under the same 120 s deadline.
+const Pacing = struct { deadline: u64, backoff: u64 = BackoffMinMs };
+
+/// Drop the connection and wait one backoff before the same item is tried again.
+/// @return null to retry, or 125 after printing that the session never took the launch.
+fn pace_retry(hooks: *const Hooks, conn: *Conn, pacing: *Pacing) ?u8 {
+    if (hooks.now_ms(hooks.ctx) >= pacing.deadline) {
+        hooks.message(hooks.ctx, "waddle open: the session accepted connections but did not take the launch");
+        return 125;
+    }
+    if (conn.fd >= 0) hooks.close(hooks.ctx, conn.fd);
+    conn.fd = -1;
+    hooks.sleep_ms(hooks.ctx, pacing.backoff);
+    pacing.backoff = @min(pacing.backoff * 2, BackoffMaxMs);
+    return null;
+}
+
+/// Copy guest text for display. Control bytes (C0, DEL, and the C1 range as UTF-8 0xC2 0x80..0x9F)
+/// become '?', so no escape sequence the guest chose can reach the terminal or a notification.
+fn printable(a: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8 {
+    var out = try a.alloc(u8, text.len);
+    var length: usize = 0;
+    var index: usize = 0;
+    while (index < text.len) {
+        const byte = text[index];
+        if (byte == 0xC2 and index + 1 < text.len and text[index + 1] >= 0x80 and text[index + 1] <= 0x9F) {
+            out[length] = '?';
+            length += 1;
+            index += 2;
+            continue;
+        }
+        out[length] = if (byte < 0x20 or byte == 0x7F) '?' else byte;
+        length += 1;
+        index += 1;
+    }
+    return out[0..length];
 }
 
 fn quote(a: std.mem.Allocator, tail: []const []const u8) ?[]const u8 {
@@ -502,7 +584,7 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
         var header_bytes: [c.InteropHeaderBytes]u8 = undefined;
         switch (read_exact(hooks, conn.fd, &header_bytes, timeout)) {
             .ok => {},
-            .eof_boundary => return if (wait) error.Failed else Reply{ .closed = {} },
+            .eof_boundary => return Reply{ .closed = {} },
             .timeout => return Reply{ .accepted = {} },
             .eof_partial, .failed => return error.Failed,
         }
@@ -515,13 +597,15 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
             .timeout => return Reply{ .accepted = {} },
             .eof_boundary, .eof_partial, .failed => return error.Failed,
         }
+        // An Error with request id 0 is the session refusing the connection itself (it is busy).
+        if (header.type == c.InteropMsgError and header.request_id == 0) return Reply{ .busy = {} };
         if (header.request_id != request_id) continue;
         if (header.type == c.InteropMsgError) {
             var message: ?[]const u8 = null;
             var value: ?[*]const u8 = null;
             var value_length: u16 = 0;
             if (c.interop_field_get(payload.ptr, payload.len, c.InteropTagMessage, 0, &value, &value_length) == 0) {
-                message = value.?[0..value_length];
+                message = printable(a, value.?[0..value_length]) catch "message unavailable";
             }
             hooks.message(hooks.ctx, std.fmt.allocPrint(a, "waddle open: launch refused: {s}", .{message orelse "no message"}) catch "waddle open: launch refused");
             return Reply{ .exit = 1 };
@@ -532,9 +616,11 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
         // interop_payload_validate has already required a 4-byte status field.
         std.debug.assert(c.interop_field_uint(payload.ptr, payload.len, c.InteropTagStatus, 4, &status) == 0);
         if (status == 0) return Reply{ .accepted = {} };
+        if (status == c.InteropBusy) return Reply{ .busy = {} };
         var value: ?[*]const u8 = null;
         var value_length: u16 = 0;
-        const message: []const u8 = if (c.interop_field_get(payload.ptr, payload.len, c.InteropTagMessage, 0, &value, &value_length) == 0) value.?[0..value_length] else "launch failed";
+        const raw: []const u8 = if (c.interop_field_get(payload.ptr, payload.len, c.InteropTagMessage, 0, &value, &value_length) == 0) value.?[0..value_length] else "launch failed";
+        const message = printable(a, raw) catch "launch failed";
         hooks.message(hooks.ctx, std.fmt.allocPrint(a, "waddle open: {s}", .{message}) catch "waddle open: launch failed");
         return Reply{ .exit = open_request.exit_code_for_launch_status(@intCast(status)) };
     }
@@ -839,6 +925,10 @@ const Fake = struct {
     fail_write: bool = false,
     fail_realpath: bool = false,
     written: [8192]u8 = undefined,
+    /// Writes attempted; bytes beyond the written buffer are counted but not kept.
+    writes: usize = 0,
+    /// Connections (counted from 1) that end at once without a reply, as a session that accepts and drops.
+    dead_connections: usize = 0,
     written_len: usize = 0,
     spawns: usize = 0,
     spawn_fails: bool = false,
@@ -981,15 +1071,18 @@ fn fake_close(ctx: *anyopaque, fd: c_int) void {
 fn fake_write(ctx: *anyopaque, fd: c_int, bytes: []const u8) IoError!void {
     _ = fd;
     const f = Fake.of(ctx);
+    f.writes += 1;
     if (f.fail_write) return error.Failed;
-    @memcpy(f.written[f.written_len..][0..bytes.len], bytes);
-    f.written_len += bytes.len;
+    const count = @min(bytes.len, f.written.len - f.written_len);
+    @memcpy(f.written[f.written_len..][0..count], bytes[0..count]);
+    f.written_len += count;
 }
 
 fn fake_poll(ctx: *anyopaque, fd: c_int, buffer: []u8, timeout_ms: i32) IoError!usize {
     _ = fd;
     _ = timeout_ms;
     const f = Fake.of(ctx);
+    if (f.connect_calls <= f.dead_connections) return 0;
     if (f.cursor == f.incoming.len) {
         if (f.end_timeout) return error.Timeout;
         return 0;
@@ -1347,8 +1440,73 @@ test "Error reply exits 1 with its message; EOF mid-reply and EOF before a resul
     const full = launch_result(&reply, 1, 0, null);
     var torn = Fake{ .incoming = full[0 .. full.len - 3], .connect_script = &.{@as(c_int, 7)} };
     try testing.expectEqual(@as(u8, 125), run_fake(&torn, &.{ "--wait", "/share/a.txt" }));
+    // A session that accepts and drops every connection is not ready: the launch is retried under
+    // the deadline, and the failure says so at the end.
     var empty = Fake{ .connect_script = &.{@as(c_int, 7)} };
     try testing.expectEqual(@as(u8, 125), run_fake(&empty, &.{ "--wait", "/share/a.txt" }));
+    try testing.expect(empty.connect_calls > 100);
+    try testing.expectEqualSlices(u8, "waddle open: the session accepted connections but did not take the launch", empty.message_at(empty.message_count - 1));
+}
+
+test "a connection that ends before any reply is retried on a new connection when --wait awaits it" {
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ok});
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{ @as(c_int, 7), @as(c_int, 8) }, .dead_connections = 1 };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+    try testing.expectEqual(@as(usize, 2), fake.connect_calls);
+    try testing.expectEqual(@as(usize, 0), fake.message_count);
+}
+
+test "a Busy LaunchResult is retried on a new connection, not reported as a guest failure" {
+    var busy_reply: [256]u8 = undefined;
+    var ok_reply: [256]u8 = undefined;
+    const busy = launch_result(&busy_reply, 1, c.InteropBusy, null);
+    const ok = launch_result(&ok_reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ busy, ok });
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{ @as(c_int, 7), @as(c_int, 8) } };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 2), fake.connect_calls);
+    try testing.expectEqual(@as(usize, 0), fake.message_count);
+}
+
+test "an unsolicited Error with request id 0 means busy and is retried" {
+    var busy_reply: [256]u8 = undefined;
+    var ok_reply: [256]u8 = undefined;
+    const busy = error_frame(&busy_reply, 0, 5, "busy");
+    const ok = launch_result(&ok_reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ busy, ok });
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{ @as(c_int, 7), @as(c_int, 8) } };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 2), fake.connect_calls);
+}
+
+test "guest text reaches the terminal with control bytes and escape sequences replaced" {
+    var reply: [256]u8 = undefined;
+    const hostile = "\x1b[2Jcleared\x7f\xc2\x9b31m done";
+    const frame = launch_result(&reply, 1, 3, hostile);
+    var fake = Fake{ .incoming = frame, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(open_request.ExitGuestFailure, run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+    const text = fake.message_at(0);
+    for (text) |byte| try testing.expect(byte >= 0x20 and byte != 0x7f);
+    try testing.expect(std.mem.indexOf(u8, text, "cleared") != null);
+}
+
+test "a frame that cannot be built closes its connection before the run ends" {
+    // Sweep the allocation that fails: every connection the run opened must be closed by the end.
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    var fail_index: usize = 0;
+    while (fail_index < 64) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        var fake = Fake{ .incoming = ok, .connect_script = &.{@as(c_int, 7)} };
+        var hooks = fake.hooks();
+        _ = run(failing.allocator(), &.{"/share/a.txt"}, &hooks);
+        try testing.expectEqual(fake.connect_calls, fake.closed);
+    }
 }
 
 test "without --wait: a timeout or end of stream at a frame boundary is a handover (0)" {
@@ -1357,7 +1515,7 @@ test "without --wait: a timeout or end of stream at a frame boundary is a handov
     var closed = Fake{ .connect_script = &.{@as(c_int, 7)} };
     try testing.expectEqual(@as(u8, 0), run_fake(&closed, &.{"/share/a.txt"}));
     var reply: [256]u8 = undefined;
-    const refused = launch_result(&reply, 1, 5, null);
+    const refused = launch_result(&reply, 1, 2, null);
     const incoming = try stream(testing.allocator, &.{refused});
     defer testing.allocator.free(incoming);
     var failed = Fake{ .incoming = incoming, .connect_script = &.{@as(c_int, 7)} };
@@ -1712,9 +1870,11 @@ test "a GUI executable with a tail sends the quoted arguments with its guest pat
 }
 
 test "a failed write exits 125 with a message; a failed reconnect exits 125 without a spawn" {
+    // A write that fails on a fresh connection means the session dropped it: retried under the deadline.
     var fake = Fake{ .connect_script = &.{@as(c_int, 7)}, .fail_write = true };
     try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
-    try testing.expectEqualSlices(u8, "waddle open: could not send the launch request", fake.message_at(0));
+    try testing.expect(fake.connect_calls > 100);
+    try testing.expectEqualSlices(u8, "waddle open: the session accepted connections but did not take the launch", fake.message_at(fake.message_count - 1));
 
     var reply: [256]u8 = undefined;
     const late = launch_result(&reply, 2, 0, null);

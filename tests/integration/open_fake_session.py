@@ -154,7 +154,10 @@ class FakeSession:
     def bind(self):
         parent = os.path.dirname(self.socket_path)
         os.makedirs(parent, mode=0o700, exist_ok=True)
+        # makedirs applies the mode to the leaf only; the intermediate waddle directory would take
+        # the umask, and the client refuses ancestors that others can write.
         os.chmod(parent, 0o700)
+        os.chmod(os.path.dirname(parent), 0o700)
         if os.path.exists(self.socket_path):
             os.unlink(self.socket_path)
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
