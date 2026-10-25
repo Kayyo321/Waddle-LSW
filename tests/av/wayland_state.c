@@ -152,6 +152,7 @@ static int receive_request(const av_message_t *message, void *context) {
     return fail_delivery || (fail_delivery_at && deliveries == fail_delivery_at) ? -1 : 0;
 }
 static void lifecycle_callbacks(void);
+static void live_repeat(void);
 static void decoration_callbacks(void);
 static void lease_callbacks(void);
 static void lease_failures(void);
@@ -242,6 +243,292 @@ static void input_callbacks(void) {
     keyboard_enter(&client, NULL, 0, first->surface, &keys);
     assert(!client.keyboard_window && deliveries == before); /* teardown dispatch cannot re-arm input */
 }
+/* Live host repeat. The fake clock is whole milliseconds; reducer deadlines are ns. */
+static void live_ready(av_wayland_t *client, video_window_t **window) {
+    *client = (av_wayland_t){.request = receive_request, .request_context = &deliveries};
+    assert(waddle_keyboard_repeat_init(&client->repeat) == WaddleKeyboardRepeatOk);
+    *window = &client->windows[0];
+    **window = (video_window_t){.client = client, .geometry = {.window_id = 1}, .incarnation = 10,
+        .surface = (struct wl_surface *)(uintptr_t)1, .input_width = 320, .input_height = 200};
+    int descriptors[2]; assert(pipe(descriptors) == 0);
+    keyboard_keymap(client, NULL, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, descriptors[0], 10);
+    close(descriptors[1]);
+}
+static void live_enter(av_wayland_t *client, video_window_t *window) {
+    struct wl_array none = {0};
+    keyboard_enter(client, NULL, 0, window->surface, &none);
+    assert(client->keyboard_window == window);
+}
+static void live_key(av_wayland_t *client, uint32_t key, int pressed) {
+    keyboard_key(client, NULL, 0, 0, key, pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
+}
+static int live_next(av_wayland_t *client, uint64_t *deadline) {
+    uint8_t present = 0;
+    assert(waddle_keyboard_repeat_next_deadline(&client->repeat, &present, deadline) == WaddleKeyboardRepeatOk);
+    return present;
+}
+static void live_repeat_timing(void) {
+    av_wayland_t client; video_window_t *window;
+    live_ready(&client, &window);
+    now_ms = 1000;
+    keyboard_repeat(&client, NULL, 25, 100);
+    live_enter(&client, window);
+    deliveries = 0;
+    live_key(&client, 30, 1);
+    assert(deliveries == 1 && delivered.type == MsgInputKey && delivered.flags == 1 && delivered.width == 30);
+    assert(av_wayland_timeout(&client, 1000) == 100); /* delay 100 ms, rounded up to whole ms */
+    now_ms = 1099;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 1);
+    assert(av_wayland_timeout(&client, 1000) == 1);
+    now_ms = 1100;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 2);
+    assert(delivered.type == MsgInputKey && delivered.flags == 1 && delivered.width == 30);
+    assert(av_wayland_timeout(&client, 1000) == 40); /* period ceil(1e9/25) ns = 40 ms */
+    now_ms = 1139;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 2);
+    now_ms = 1140;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 3 && delivered.width == 30);
+    /* A key up stops the repeat exactly; nothing further is due. */
+    live_key(&client, 30, 0);
+    assert(deliveries == 4 && delivered.flags == 0);
+    now_ms = 2000;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 4);
+    /* Rounding: rate 3 has a 333333334 ns period; the poll waits 334 ms, never less. */
+    keyboard_repeat(&client, NULL, 3, 100);
+    now_ms = 2000;
+    live_key(&client, 31, 1);
+    assert(av_wayland_timeout(&client, 1000) == 100);
+    now_ms = 2100;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 6 && delivered.width == 31);
+    assert(av_wayland_timeout(&client, 1000) == 334);
+    now_ms = 2433;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 6);
+    now_ms = 2434;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 7);
+    live_key(&client, 31, 0);
+    puts("AV Wayland live repeat: exact delay, period, ceil rounding and key-up stop passed");
+}
+static void live_repeat_info(void) {
+    av_wayland_t client; video_window_t *window;
+    live_ready(&client, &window);
+    now_ms = 3000;
+    keyboard_repeat(&client, NULL, 25, 100);
+    keyboard_repeat(&client, NULL, -1, 50);      /* negative rate rejected, timing kept */
+    keyboard_repeat(&client, NULL, 25, -1);      /* negative delay rejected */
+    keyboard_repeat(&client, NULL, 1001, 100);   /* rate above 1000 Hz rejected */
+    keyboard_repeat(&client, NULL, 25, 60001);   /* delay above 60000 ms rejected */
+    live_enter(&client, window);
+    deliveries = 0;
+    live_key(&client, 30, 1);
+    uint64_t deadline = 0;
+    assert(live_next(&client, &deadline) && deadline == 3100000000ull);
+    keyboard_repeat(&client, NULL, 0, 100);      /* rate zero disables repeat */
+    assert(!live_next(&client, &deadline));
+    now_ms = 3200;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 1);
+    keyboard_repeat(&client, NULL, 25, 100);
+    live_key(&client, 30, 0);
+    live_key(&client, 31, 1);
+    assert(live_next(&client, &deadline) && deadline == 3200000000ull + 100000000ull);
+    now_ms = 3300;
+    assert(av_wayland_timeout(&client, 0) == 0);
+    assert(live_next(&client, &deadline) && deadline == 3300000000ull + 40000000ull);
+    live_key(&client, 31, 0);
+    puts("AV Wayland repeat_info: negative and out-of-range values rejected, rate zero disables, timing kept passed");
+}
+static void live_repeat_cancel(void) {
+    av_wayland_t client; video_window_t *window;
+    uint64_t deadline = 0;
+    /* Leave cancels the repeat: no later repeat even when the key was never released. */
+    live_ready(&client, &window);
+    now_ms = 4000;
+    keyboard_repeat(&client, NULL, 25, 100);
+    live_enter(&client, window);
+    deliveries = 0;
+    live_key(&client, 30, 1);
+    assert(live_next(&client, &deadline));
+    keyboard_leave(&client, NULL, 0, window->surface);
+    assert(!live_next(&client, &deadline));
+    unsigned after_leave = deliveries;
+    now_ms = 4500;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == after_leave);
+    /* Keymap format change clears focus and cancels the repeat. */
+    live_ready(&client, &window);
+    keyboard_repeat(&client, NULL, 25, 100);
+    live_enter(&client, window);
+    live_key(&client, 30, 1);
+    keyboard_keymap(&client, NULL, 0, -1, 0); /* not XKB_V1: focus cleared */
+    assert(!live_next(&client, &deadline) && !client.keyboard_window);
+    /* Lease revocation disables routes, which cancels the repeat. */
+    live_ready(&client, &window);
+    client.identity.mode = AvIdentityLease;
+    client.lease.phase = AvLeaseForwarding;
+    client.keyboard_window = window;
+    assert(waddle_keyboard_repeat_focus(&client.repeat, 1, 10) == WaddleKeyboardRepeatOk);
+    assert(waddle_keyboard_repeat_configure(&client.repeat, 1, 25, 100) == WaddleKeyboardRepeatOk);
+    assert(waddle_keyboard_repeat_key(&client.repeat, 30, 1, 1, 1000000000ull) == WaddleKeyboardRepeatOk);
+    assert(live_next(&client, &deadline));
+    disable_routes(&client);
+    assert(!live_next(&client, &deadline) && !client.keyboard_window);
+    /* A delivery failure on a repeat cancels the repeat and fails the input path. */
+    live_ready(&client, &window);
+    keyboard_repeat(&client, NULL, 25, 100);
+    live_enter(&client, window);
+    live_key(&client, 30, 1);
+    now_ms = 4700;
+    fail_delivery_at = deliveries + 1;
+    assert(av_wayland_timeout(&client, 0) == -1 && client.delivery_failed);
+    fail_delivery_at = 0;
+    assert(!live_next(&client, &deadline));
+    puts("AV Wayland repeat cancel: leave, focus clear and failed delivery stop repeats passed");
+}
+static void live_repeat_suppressed_and_rollback(void) {
+    av_wayland_t client; video_window_t *window;
+    uint64_t deadline = 0;
+    /* A key held at focus enter is suppressed, so it never arms a repeat. */
+    live_ready(&client, &window);
+    now_ms = 5000;
+    keyboard_repeat(&client, NULL, 25, 100);
+    uint32_t held = 30;
+    struct wl_array keys = {.size = sizeof(held), .data = &held};
+    keyboard_enter(&client, NULL, 0, window->surface, &keys);
+    deliveries = 0;
+    live_key(&client, 30, 1);
+    assert(deliveries == 0 && !live_next(&client, &deadline));
+    now_ms = 5500;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 0);
+    /* A clock that moves backward disarms the repeat: none is delivered later. */
+    live_ready(&client, &window);
+    now_ms = 6000;
+    keyboard_repeat(&client, NULL, 25, 100);
+    live_enter(&client, window);
+    deliveries = 0;
+    live_key(&client, 30, 1);
+    now_ms = 5900;
+    assert(av_wayland_timeout(&client, 1000) == 1000 && deliveries == 1); /* only the forwarded down */
+    assert(!live_next(&client, &deadline));
+    now_ms = 6500;
+    assert(av_wayland_timeout(&client, 0) == 0 && deliveries == 1);
+    puts("AV Wayland repeat: suppressed-at-enter keys and clock rollback never repeat passed");
+}
+static uint32_t live_random_state = 0x5eed1234u;
+static uint32_t live_random(void) {
+    live_random_state ^= live_random_state << 13;
+    live_random_state ^= live_random_state >> 17;
+    live_random_state ^= live_random_state << 5;
+    return live_random_state;
+}
+static int live_repeatable(uint32_t key) {
+    static const uint32_t NotRepeatable[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 125, 126};
+    for (size_t index = 0; index < sizeof(NotRepeatable) / sizeof(NotRepeatable[0]); ++index)
+        if (NotRepeatable[index] == key) return 0;
+    return 1;
+}
+static void live_randomized(void) {
+    static const uint32_t Keys[] = {30, 31, 42, 58, 97, 32};
+    av_wayland_t client; video_window_t *window;
+    live_ready(&client, &window);
+    now_ms = 10000;
+    unsigned fired = 0;
+    /* Reference model of the host repeat rules, independent of the reducer code. */
+    int focused = 0, enabled = 0, held[128] = {0};
+    uint32_t candidate = 0, rate = 0;
+    uint64_t delay_ns = 0, deadline_ns = 0, period_ns = 0, model_now_ns = now_ms * 1000000ull;
+    for (unsigned step = 0; step < 2000; ++step) {
+        if (deliveries > 900) deliveries = 0;
+        unsigned before = deliveries;
+        uint32_t expected_flags[4], expected_key[4];
+        unsigned expected = 0;
+        int advanced = 0;
+        uint32_t op = live_random() % 100;
+        /* Mix: downs 25%, ups 15%, focus enter 2%, leave 2%, repeat_info 1%, time advance 55%. */
+        if (op < 25) {
+            /* Downs favour repeatable keys so that candidates arm often. */
+            uint32_t key = live_random() % 10 < 8 ? Keys[live_random() % 3] : Keys[3 + live_random() % 3];
+            if (focused) {
+                /* A fresh down clears any candidate; the candidate is armed only for an enabled, repeatable key. */
+                live_key(&client, key, 1);
+                expected_flags[expected] = 1; expected_key[expected++] = key;
+                if (!held[key]) {
+                    held[key] = 1;
+                    candidate = 0;
+                    if (enabled && rate > 0 && live_repeatable(key)) {
+                        candidate = key;
+                        deadline_ns = model_now_ns + delay_ns;
+                    }
+                }
+            } else live_key(&client, key, 1);
+        } else if (op < 40) {
+            uint32_t key = Keys[live_random() % 6];
+            if (focused) {
+                live_key(&client, key, 0);
+                expected_flags[expected] = 0; expected_key[expected++] = key;
+                if (held[key]) held[key] = 0;
+                if (candidate == key) candidate = 0;
+            } else live_key(&client, key, 0);
+        } else if (op < 42) {
+            if (focused) { candidate = 0; for (unsigned k = 0; k < 128; ++k) held[k] = 0; }
+            live_enter(&client, window);
+            focused = 1;
+        } else if (op < 44) {
+            if (focused) { candidate = 0; for (unsigned k = 0; k < 128; ++k) held[k] = 0; }
+            keyboard_leave(&client, NULL, 0, window->surface);
+            focused = 0;
+        } else if (op < 45) {
+            static const int32_t Rates[] = {0, 1, 3, 25, 1000, 1001, -1};
+            static const int32_t Delays[] = {0, 17, 100, 60000, 60001, -1};
+            int32_t new_rate = Rates[live_random() % 7], new_delay = Delays[live_random() % 6];
+            keyboard_repeat(&client, NULL, new_rate, new_delay);
+            if (new_rate >= 0 && new_delay >= 0 && new_rate <= 1000 && new_delay <= 60000) {
+                enabled = new_rate > 0;
+                rate = (uint32_t)new_rate;
+                delay_ns = (uint64_t)new_delay * 1000000u;
+                period_ns = rate ? (1000000000ull + rate - 1) / rate : 0;
+                candidate = 0;
+            }
+        } else {
+            uint64_t advance = live_random() % 30;
+            now_ms += advance;
+            model_now_ns = now_ms * 1000000ull;
+            assert(av_wayland_timeout(&client, 0) == 0);
+            if (candidate && model_now_ns >= deadline_ns) {
+                expected_flags[expected] = 1; expected_key[expected++] = candidate;
+                deadline_ns = model_now_ns + period_ns;
+                ++fired;
+            }
+            advanced = 1;
+        }
+        /* Every key event of this step matches the model, in order. */
+        unsigned keys = 0;
+        for (unsigned i = before; i < deliveries; ++i) {
+            if (delivered_log[i].type != MsgInputKey) continue;
+            assert(keys < expected);
+            assert(delivered_log[i].flags == expected_flags[keys] && delivered_log[i].width == expected_key[keys]);
+            ++keys;
+        }
+        assert(keys == expected);
+        /* After each poll, the timeout matches the model: the next deadline rounded up to whole ms, capped. */
+        if (advanced) {
+            int timeout = av_wayland_timeout(&client, 1000);
+            int want = 1000;
+            if (candidate) {
+                uint64_t remaining = deadline_ns > model_now_ns ? deadline_ns - model_now_ns : 0;
+                uint64_t ms = (remaining + 999999) / 1000000;
+                if (ms < 1000) want = (int)ms;
+            }
+            assert(timeout == want);
+        }
+    }
+    assert(fired >= 20); /* many separate arms fired; every step is still compared exactly */
+    puts("AV Wayland repeat randomized: 2000-step lifecycle matches the reference model passed");
+}
+static void live_repeat(void) {
+    live_repeat_timing();
+    live_repeat_info();
+    live_repeat_cancel();
+    live_repeat_suppressed_and_rollback();
+    live_randomized();
+}
 int main(void) {
     av_wayland_t client = {.request = receive_request, .request_context = &deliveries};
     client.windows[0] = (video_window_t){.client = &client, .geometry = {.window_id = 1}, .incarnation = 10};
@@ -284,6 +571,7 @@ int main(void) {
     toplevel_configure(&window, NULL, 0, 0, &states);
     assert(deliveries == 6 && client.delivery_failed);
     input_callbacks();
+    live_repeat();
     lifecycle_callbacks();
     decoration_callbacks();
     lease_callbacks();
