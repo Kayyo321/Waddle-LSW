@@ -1141,7 +1141,12 @@ static int map_peer_result(interop_linux_socket_t *owner, int peer_result)
 {
     int mapped;
 
-    /* Peer results are the enumerated InteropPeerResult values; the table covers every one. */
+    /* The table covers every enumerated InteropPeerResult value. Anything else is an internal
+     * fault from the peer ABI and must never index the table. */
+    if (peer_result < 0 || peer_result > (int)InteropPeerRequestRetired) {
+        close_peer_failure(owner, NULL);
+        return InteropLinuxSocketPeerFailure;
+    }
     mapped = PeerToSocketResult[peer_result];
     if (mapped < 0) {
         close_peer_failure(owner, NULL);

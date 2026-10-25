@@ -226,6 +226,25 @@ static bool host_control_fail_and_drain(
     return true;
 }
 
+/** @brief Apply one feature callback status.
+ * Zero continues. InteropHostFeatureStopRequested ends the run as HostControlCancelled after a
+ * graceful drain; no other handler is failed. Any other nonzero value is HostControlFeatureFailed.
+ * @return False when the drain itself failed and the pump must stop.
+ */
+static bool host_feature_settle(
+    int status,
+    interop_host_control_result_t *outcome,
+    interop_linux_socket_t *socket_owner,
+    uint64_t token,
+    uint64_t now_ms,
+    bool *draining)
+{
+    if (status == 0) return true;
+    return host_control_fail_and_drain(outcome,
+        status == InteropHostFeatureStopRequested ? HostControlCancelled : HostControlFeatureFailed,
+        socket_owner, token, now_ms, draining);
+}
+
 /** @brief Map one socket owner result to the sender result space. */
 static const interop_host_feature_result_t SocketToFeatureResult[InteropLinuxSocketRequestRetired + 1] = {
     [InteropLinuxSocketSuccess] = HostFeatureSuccess,
@@ -367,6 +386,39 @@ static int host_feature_call_fds(const interop_host_feature_ops_t *ops,
     return status;
 }
 
+static int host_feature_call_peer_error(const interop_host_feature_ops_t *ops,
+                                        uint32_t error_code, uint32_t request_id,
+                                        uint64_t now_ms, interop_host_feature_sender_t *sender)
+{
+    int status;
+    host_feature_open(sender, now_ms);
+    status = ops->on_peer_error(ops->context, error_code, request_id, sender);
+    host_feature_close(sender);
+    return status;
+}
+
+/** @brief Invoke poll_fds with the control runtime's re-entry guard raised. */
+static int host_feature_call_poll_fds(const interop_host_feature_ops_t *ops,
+                                      struct pollfd *fds, size_t capacity, size_t *count)
+{
+    int status;
+    host_control_in_callback = true;
+    status = ops->poll_fds(ops->context, fds, capacity, count);
+    host_control_in_callback = false;
+    return status;
+}
+
+/** @brief Invoke next_deadline_ms with the control runtime's re-entry guard raised. */
+static uint64_t host_feature_call_next_deadline(const interop_host_feature_ops_t *ops,
+                                                uint64_t now_ms)
+{
+    uint64_t deadline;
+    host_control_in_callback = true;
+    deadline = ops->next_deadline_ms(ops->context, now_ms);
+    host_control_in_callback = false;
+    return deadline;
+}
+
 /** @brief Announce closing exactly once; the sender refuses admissions from then on. */
 static void host_feature_close_once(const interop_host_feature_ops_t *ops,
                                     interop_host_feature_sender_t *sender,
@@ -382,6 +434,73 @@ static void host_feature_close_once(const interop_host_feature_ops_t *ops,
     host_feature_close(sender);
 }
 
+/** @brief Refuse a run after feature ops validation, announcing closing exactly once.
+ * @param[in] ops Validated feature table or NULL.
+ * @param[in,out] sender Sender of the run; valid only during the closing call.
+ * @param[in,out] notified Set once on_closing has been announced.
+ * @return HostControlInvalidArgument.
+ */
+static interop_host_control_result_t host_control_refuse_after_ops(
+    const interop_host_feature_ops_t *ops,
+    interop_host_feature_sender_t *sender,
+    bool *notified)
+{
+    host_feature_close_once(ops, sender, notified, host_control_monotonic_ms(),
+                            HostControlInvalidArgument);
+    return HostControlInvalidArgument;
+}
+
+
+/** @brief True when a feature descriptor aliases a descriptor the runtime owns.
+ * Negative entries are ignored by poll(2) and never alias.
+ * @param[in] fds Feature descriptors reported by poll_fds.
+ * @param[in] count Number of entries.
+ * @param[in] socket_fd Socket descriptor of this iteration, or -1.
+ * @param[in] stop_fd Caller stop descriptor.
+ * @param[in] daemon_fd Admitted daemon descriptor.
+ * @return True when any entry equals socket_fd, stop_fd, or daemon_fd.
+ */
+static bool host_feature_fds_reserved(const struct pollfd *fds, size_t count,
+                                      int socket_fd, int stop_fd, int daemon_fd)
+{
+    for (size_t index = 0; index < count; ++index) {
+        int fd = fds[index].fd;
+        if (fd < 0) continue;
+        if (fd == socket_fd || fd == stop_fd || fd == daemon_fd) return true;
+    }
+    return false;
+}
+
+/** @brief True when a feature descriptor reported an error, hangup, or invalid-descriptor event.
+ * @param[in] fds Descriptors of the current iteration, read only.
+ * @param[in] count Number of feature descriptors.
+ * @return True when any revents contains POLLERR, POLLHUP, or POLLNVAL.
+ */
+static bool host_feature_fds_faulted(const struct pollfd *fds, size_t count)
+{
+    for (size_t index = 0; index < count; ++index)
+        if ((fds[index].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) return true;
+    return false;
+}
+
+/** @brief Decide whether feature descriptors may still receive readiness in this iteration.
+ * Readiness is withheld once drain has begun: the local drain flag, a closed transport, a peer
+ * Draining event, or a fatal remote Error (request identifier zero).
+ * @param[in] ready True once Ready has been committed.
+ * @param[in] draining Local drain flag.
+ * @param[in] work Socket drive result of this iteration; read only.
+ * @return True when on_fds may be called.
+ */
+static bool host_fds_dispatch_allowed(bool ready, bool draining,
+                                      const interop_linux_socket_work_t *work)
+{
+    if (!ready || draining) return false;
+    if (work->state == InteropLinuxSocketTransportClosed) return false;
+    if (work->event.kind == InteropPeerEventDraining) return false;
+    if (work->event.kind == InteropPeerEventError && work->event.request_id == 0) return false;
+    return true;
+}
+
 /** @brief Fold a send-induced drain into the run outcome; idempotent. */
 static void host_feature_observe_drain(interop_host_feature_sender_t *sender,
                                        interop_host_control_result_t *outcome,
@@ -395,6 +514,14 @@ static void host_feature_observe_drain(interop_host_feature_sender_t *sender,
 interop_host_control_result_t interop_host_control_run(
     const interop_host_control_config_t *config,
     interop_host_control_owners_t *out_owners)
+{
+    return interop_host_control_run_detailed(config, out_owners, NULL);
+}
+
+interop_host_control_result_t interop_host_control_run_detailed(
+    const interop_host_control_config_t *config,
+    interop_host_control_owners_t *out_owners,
+    interop_host_control_detail_t *detail)
 {
     interop_host_control_result_t outcome = HostControlSuccess;
     interop_mapping_linux_view_t view;
@@ -418,6 +545,7 @@ interop_host_control_result_t interop_host_control_run(
     memset(&view, 0, sizeof(view));
     memset(&snapshot, 0, sizeof(snapshot));
     memset(&sender, 0, sizeof(sender));
+    if (detail != NULL) memset(detail, 0, sizeof(*detail));
     if (host_control_in_callback) return HostControlInvalidArgument;
     if (config == NULL || out_owners == NULL ||
         (uintptr_t)config % _Alignof(interop_host_control_config_t) != 0 ||
@@ -459,21 +587,22 @@ interop_host_control_result_t interop_host_control_run(
          admission_start < version_start + config->admission->agent_version_bytes) ||
         (device_start < version_start + config->admission->agent_version_bytes &&
          version_start < device_start + sizeof(device_info_t)))
-        return HostControlInvalidArgument;
+        return host_control_refuse_after_ops(feature_ops, &sender, &closing_notified);
     int stop_status = fcntl(config->stop_fd, F_GETFL);
     int stop_descriptor_flags = fcntl(config->stop_fd, F_GETFD);
     if (stop_status < 0 || stop_descriptor_flags < 0 ||
         (stop_status & O_NONBLOCK) == 0 ||
         (stop_descriptor_flags & FD_CLOEXEC) == 0)
-        return HostControlInvalidArgument;
+        return host_control_refuse_after_ops(feature_ops, &sender, &closing_notified);
     token = config->admission->connection_token;
-    if (token == 0) return HostControlInvalidArgument;
+    if (token == 0) return host_control_refuse_after_ops(feature_ops, &sender, &closing_notified);
 
     interop_host_session_config_t admission = *config->admission;
     interop_host_session_result_t admitted = interop_host_session_admit(
         &admission, &out_owners->session_owner,
         &(uint32_t){0});
     if (admitted != HostSessionSuccess) {
+        if (detail != NULL) detail->admission_result = (uint32_t)admitted;
         outcome = HostControlAdmissionFailed;
         goto cleanup;
     }
@@ -547,8 +676,7 @@ interop_host_control_result_t interop_host_control_run(
         if (ready && !draining && feature_ops != NULL) {
             int tick_status = host_feature_call_tick(feature_ops, now_ms, &sender);
             host_feature_observe_drain(&sender, &outcome, &draining);
-            if (tick_status != 0 && !host_control_fail_and_drain(&outcome,
-                    HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+            if (!host_feature_settle(tick_status, &outcome, socket_owner, token, now_ms, &draining))
                 break;
         }
         if (interop_linux_socket_poll_events(socket_owner, token, now_ms,
@@ -578,12 +706,16 @@ interop_host_control_result_t interop_host_control_run(
         };
         if (ready && !draining && feature_ops != NULL && feature_ops->poll_fds != NULL) {
             size_t supplied = 0;
-            int fds_status = feature_ops->poll_fds(feature_ops->context,
+            int fds_status = host_feature_call_poll_fds(feature_ops,
                 &descriptors[descriptor_count], InteropHostFeatureFdCapacity, &supplied);
-            if (fds_status != 0 || supplied > InteropHostFeatureFdCapacity) {
+            if (fds_status != 0 || supplied > InteropHostFeatureFdCapacity ||
+                    host_feature_fds_reserved(&descriptors[descriptor_count], supplied,
+                        poll_request.fd, config->stop_fd, admission.daemon_fd)) {
+                /* Starting the drain here invalidates the poll cookie taken above. */
                 if (!host_control_fail_and_drain(&outcome, HostControlFeatureFailed,
                         socket_owner, token, now_ms, &draining))
                     break;
+                snapshot_invalidated = true;
             } else {
                 feature_base = descriptor_count;
                 feature_count = supplied;
@@ -598,7 +730,7 @@ interop_host_control_result_t interop_host_control_run(
         if (ready && !draining && next_heartbeat_ms < wait_deadline)
             wait_deadline = next_heartbeat_ms;
         if (ready && !draining && feature_ops != NULL && feature_ops->next_deadline_ms != NULL) {
-            uint64_t feature_deadline = feature_ops->next_deadline_ms(feature_ops->context, now_ms);
+            uint64_t feature_deadline = host_feature_call_next_deadline(feature_ops, now_ms);
             if (feature_deadline < wait_deadline) wait_deadline = feature_deadline;
         }
         if (now_ms >= wait_deadline) timeout_ms = 0;
@@ -726,8 +858,14 @@ interop_host_control_result_t interop_host_control_run(
             host_control_record_outcome(&outcome, HostControlPeerFailed);
             break;
         }
-        if (feature_count != 0 && ready && !draining && feature_ops != NULL &&
-                feature_ops->on_fds != NULL && work.state != InteropLinuxSocketTransportClosed) {
+        if (feature_count != 0 && ready && !draining &&
+                host_feature_fds_faulted(&descriptors[feature_base], feature_count)) {
+            if (!host_control_fail_and_drain(&outcome, HostControlFeatureFailed,
+                    socket_owner, token, now_ms, &draining))
+                break;
+        }
+        if (feature_count != 0 && feature_ops != NULL && feature_ops->on_fds != NULL &&
+                host_fds_dispatch_allowed(ready, draining, &work)) {
             bool any_ready = false;
             for (size_t index = 0; index < feature_count; ++index)
                 if (descriptors[feature_base + index].revents != 0) any_ready = true;
@@ -735,8 +873,7 @@ interop_host_control_result_t interop_host_control_run(
                 int fds_status = host_feature_call_fds(feature_ops,
                     &descriptors[feature_base], feature_count, now_ms, &sender);
                 host_feature_observe_drain(&sender, &outcome, &draining);
-                if (fds_status != 0 && !host_control_fail_and_drain(&outcome,
-                        HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                if (!host_feature_settle(fds_status, &outcome, socket_owner, token, now_ms, &draining))
                     break;
             }
         }
@@ -763,6 +900,10 @@ interop_host_control_result_t interop_host_control_run(
                 else break;
             } else if (outcome == HostControlSuccess) {
                 ready = true;
+                if (detail != NULL) {
+                    detail->reached_ready = 1;
+                    detail->ready_at_ms = now_ms;
+                }
                 last_heartbeat = snapshot.host_heartbeat;
                 next_heartbeat_ms = now_ms > UINT64_MAX - HostControlHeartbeatMs
                     ? UINT64_MAX : now_ms + HostControlHeartbeatMs;
@@ -770,8 +911,7 @@ interop_host_control_result_t interop_host_control_run(
                     int ready_status = host_feature_call_ready(feature_ops,
                         work.event.capabilities, now_ms, &sender);
                     host_feature_observe_drain(&sender, &outcome, &draining);
-                    if (ready_status != 0 && !host_control_fail_and_drain(&outcome,
-                            HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                    if (!host_feature_settle(ready_status, &outcome, socket_owner, token, now_ms, &draining))
                         break;
                 }
             }
@@ -787,10 +927,19 @@ interop_host_control_result_t interop_host_control_run(
                     work.event.message_type, work.event.request_id, frame,
                     work.event.copied_bytes, now_ms, &sender);
                 host_feature_observe_drain(&sender, &outcome, &draining);
-                if (frame_status != 0 && !host_control_fail_and_drain(&outcome,
-                        HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                if (!host_feature_settle(frame_status, &outcome, socket_owner, token, now_ms, &draining))
                     break;
             }
+        } else if (work.event.kind == InteropPeerEventError && work.event.request_id != 0 &&
+                   ready && !draining) {
+            /* A scoped remote Error is reported to the features and does not end the connection. */
+            int error_status = feature_ops != NULL && feature_ops->on_peer_error != NULL
+                ? host_feature_call_peer_error(feature_ops, work.event.error_code,
+                    work.event.request_id, now_ms, &sender)
+                : 0;
+            host_feature_observe_drain(&sender, &outcome, &draining);
+            if (!host_feature_settle(error_status, &outcome, socket_owner, token, now_ms, &draining))
+                break;
         } else if (work.event.kind == InteropPeerEventError ||
                    work.event.kind == InteropPeerEventDraining) {
             /* A refused unnegotiated feature frame is still an unexpected feature here. */
@@ -799,6 +948,9 @@ interop_host_control_result_t interop_host_control_run(
                 host_control_record_outcome(&outcome, HostControlUnexpectedFeature);
             else
                 host_control_record_outcome(&outcome, HostControlPeerFailed);
+            if (detail != NULL && (work.event.kind == InteropPeerEventError ||
+                    work.event.error_code != 0))
+                detail->guest_error = 1;
             /* A remote Error can leave the peer Ready, so the drain starts here. */
             if (!draining) {
                 if (host_control_begin_drain(socket_owner, token, now_ms) == HostControlSuccess)
@@ -815,6 +967,10 @@ interop_host_control_result_t interop_host_control_run(
 
 cleanup:
     host_feature_close_once(feature_ops, &sender, &closing_notified, now_ms, outcome);
+    if (detail != NULL) {
+        uint64_t ended = host_control_monotonic_ms();
+        detail->ended_at_ms = ended == UINT64_MAX ? 0 : ended;
+    }
     if (view_published) {
         /* The pump is synchronous and no other thread ever receives this view. */
         view_published = false;

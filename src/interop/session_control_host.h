@@ -62,6 +62,12 @@ typedef enum interop_host_feature_result_t {
     HostFeatureTransportFailed = 13 /**< Internal failure; the run ends with PeerFailed. */
 } interop_host_feature_result_t;
 
+/** @brief Feature callback return value requesting a graceful local stop.
+ * The runtime begins drain and the run ends with HostControlCancelled. Other handlers are not
+ * failed; every ops callback still receives on_closing exactly once. Other nonzero values fail the run.
+ */
+enum { InteropHostFeatureStopRequested = 1 };
+
 /** @brief Feature module callbacks and capability offer; every callback except the pair
  *         poll_fds/on_fds and next_deadline_ms is optional, and NULL is never called.
  * @note The runtime invokes callbacks only on the creating pthread, from inside its pump,
@@ -93,6 +99,19 @@ typedef struct interop_host_feature_ops_t {
     /** @brief Called exactly once when drain begins or the run ends, before owner cleanup.
      *  @param[in] reason interop_host_control_result_t value recorded at this moment.
      *  @param[in] sender Valid only during this call; every admission returns HostFeatureDraining. */
+    /**
+     * @brief Remote Error frame carrying a nonzero request identifier, received while Ready and not
+     *        draining. Such an Error is not fatal: the run continues unless this callback fails it.
+     * @param[in] context Passed unchanged from ops.context.
+     * @param[in] error_code Frozen protocol error code copied from the Error frame.
+     * @param[in] request_id Nonzero request identifier copied from the Error frame.
+     * @param[in] sender Valid only during this call.
+     * @return Zero to continue, InteropHostFeatureStopRequested for a graceful stop, any other
+     *         nonzero value to fail the run with HostControlFeatureFailed.
+     * @note Remote Errors with request identifier zero, and Errors before Ready, remain fatal.
+     */
+    int (*on_peer_error)(void *context, uint32_t error_code, uint32_t request_id,
+                         interop_host_feature_sender_t *sender);
     void (*on_closing)(void *context, uint32_t reason, interop_host_feature_sender_t *sender);
 } interop_host_feature_ops_t;
 
@@ -106,6 +125,30 @@ typedef struct interop_host_control_config_t {
     uint32_t reserved_zero; /**< Must be zero. */
     const interop_host_feature_ops_t *feature_ops; /**< Optional feature module; NULL keeps capability-zero behaviour. */
 } interop_host_control_config_t;
+
+/** @brief Diagnostic detail of one control run, filled by interop_host_control_run_detailed.
+ * @note Every field is zero on entry; detail is written only by the owning pump thread.
+ */
+typedef struct interop_host_control_detail_t {
+    uint32_t admission_result; /**< interop_host_session_result_t when the outcome is AdmissionFailed; else 0. */
+    uint32_t reached_ready; /**< 1 when Ready was committed during this run. */
+    uint32_t guest_error; /**< 1 when the guest sent a protocol Error or an unadmitted feature frame. */
+    uint32_t reserved_zero; /**< Must be zero. */
+    uint64_t ready_at_ms; /**< Monotonic milliseconds when Ready was committed; zero when not reached. */
+    uint64_t ended_at_ms; /**< Monotonic milliseconds when the pump stopped; zero when unavailable. */
+} interop_host_control_detail_t;
+
+/** @brief Run one host control-only lifecycle and report diagnostic detail.
+ * @param[in] config As for interop_host_control_run.
+ * @param[out] out_owners As for interop_host_control_run.
+ * @param[out] detail Optional aligned output disjoint from config and owners; zeroed then filled; NULL allowed.
+ * @return The same outcome interop_host_control_run returns for the same inputs.
+ * @thread_safety Not thread-safe; the creating pthread is the only user.
+ */
+interop_host_control_result_t interop_host_control_run_detailed(
+    const interop_host_control_config_t *config,
+    interop_host_control_owners_t *out_owners,
+    interop_host_control_detail_t *detail);
 
 /** @brief Run one host control-only admission and event-pump lifecycle.
  * @param[in] config Aligned readable config and nested admission inputs until return.

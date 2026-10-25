@@ -119,6 +119,12 @@ extern int __wrap_interop_peer_copy_tx(const interop_peer_t *peer, uint64_t toke
                                        uint8_t *bytes, size_t capacity, size_t *length);
 extern int __real_interop_peer_tick(interop_peer_t *peer, uint64_t token,
                                     uint64_t now_ms, interop_peer_event_t *event);
+extern int __real_interop_peer_enqueue_feature(interop_peer_t *peer, uint64_t token,
+                                              uint64_t now_ms, const uint8_t *bytes,
+                                              size_t length, interop_peer_event_t *event);
+extern int __wrap_interop_peer_enqueue_feature(interop_peer_t *peer, uint64_t token,
+                                              uint64_t now_ms, const uint8_t *bytes,
+                                              size_t length, interop_peer_event_t *event);
 extern int __wrap_interop_peer_tick(interop_peer_t *peer, uint64_t token,
                                     uint64_t now_ms, interop_peer_event_t *event);
 extern int __real_interop_peer_transport_lost(interop_peer_t *peer, uint64_t token,
@@ -288,6 +294,17 @@ int __wrap_interop_peer_copy_tx(const interop_peer_t *peer, uint64_t token,
         override_copy_tx_length = 0;
     }
     return result;
+}
+
+/* Nonzero forces the next peer enqueue to return this raw value instead of the real result. */
+static int fake_enqueue_feature_result;
+
+int __wrap_interop_peer_enqueue_feature(interop_peer_t *peer, uint64_t token,
+                                        uint64_t now_ms, const uint8_t *bytes,
+                                        size_t length, interop_peer_event_t *event)
+{
+    if (fake_enqueue_feature_result != 0) return fake_enqueue_feature_result;
+    return __real_interop_peer_enqueue_feature(peer, token, now_ms, bytes, length, event);
 }
 
 int __wrap_interop_peer_tick(interop_peer_t *peer, uint64_t token,
@@ -2081,7 +2098,7 @@ static void test_socketpair_handshake_fragmented(void)
         interop_writer_init(&writer, inbound_frames, sizeof(inbound_frames));
         Check(interop_put_uint(&writer, InteropTagWindow, 0x11223344) == InteropErrorNone);
         Check(interop_put_uint(&writer, InteropTagGeneration, 7) == InteropErrorNone);
-        Check(interop_writer_finish(&writer, InteropMsgWindowRetire, 41,
+        Check(interop_writer_finish(&writer, InteropMsgWindowRetire, 0,
                                    InteropFromGuest, &feature_length) == InteropErrorNone);
         inbound_length = feature_length;
     }
@@ -2104,7 +2121,7 @@ static void test_socketpair_handshake_fragmented(void)
           InteropLinuxSocketSuccess);
     Check(work.event.kind == InteropPeerEventFeatureFrame);
     Check(work.event.message_type == InteropMsgWindowRetire);
-    Check(work.event.request_id == 41 && work.event.copied_bytes != 0);
+    Check(work.event.request_id == 0 && work.event.copied_bytes != 0);
 
     memset(&work, 0, sizeof(work));
     ++now_ms;
@@ -3084,6 +3101,34 @@ static size_t make_launch_result_frame(uint8_t *frame, size_t capacity, uint32_t
     return frame_length;
 }
 
+/* A raw peer result outside the enumerated range must fail the transport, never index past the table. */
+static void test_peer_result_outside_enumeration(void)
+{
+    static uint8_t frame[InteropLinuxSocketFrameCapacity];
+    const uint64_t Caps = InteropCapWindows | InteropCapInput | InteropCapLaunch;
+    interop_peer_event_t event;
+    interop_linux_socket_t *host = NULL;
+    interop_linux_socket_t *guest = NULL;
+    uint64_t now;
+    int pair[2];
+    size_t length;
+    static const int OutOfRange[] = { 99, 19, -5 };
+
+    for (size_t index = 0; index < sizeof(OutOfRange) / sizeof(OutOfRange[0]); ++index) {
+        make_ready_pair(Caps, pair, &host, &guest, &now);
+        length = make_two_uint_frame(frame, sizeof(frame), InteropMsgWindowClose, 0, InteropFromHost,
+                                     InteropTagWindow, 0x55, InteropTagGeneration, 2);
+        fake_enqueue_feature_result = OutOfRange[index];
+        Check(interop_linux_socket_enqueue_feature(host, HostToken, now + 1, frame, length, &event) ==
+              InteropLinuxSocketPeerFailure);
+        fake_enqueue_feature_result = 0;
+        interop_linux_socket_destroy(&host);
+        interop_linux_socket_destroy(&guest);
+        close(pair[0]);
+        close(pair[1]);
+    }
+}
+
 static void test_feature_pass_through_admission(void)
 {
     static uint8_t frame[InteropLinuxSocketFrameCapacity];
@@ -3192,16 +3237,16 @@ static void test_feature_pass_through_admission(void)
     Check(work.event.message_type == InteropMsgLaunchRequest && work.event.request_id == 1);
     Check(interop_linux_socket_release_request(host, GuestToken, 1) == InteropLinuxSocketWrongToken);
     Check(interop_linux_socket_release_request(host, HostToken, 0) == InteropLinuxSocketInvalidArgument);
-    Check(interop_linux_socket_release_request(host, HostToken, 1) == InteropLinuxSocketSuccess);
-    Check(interop_linux_socket_release_request(host, HostToken, 1) == InteropLinuxSocketUnknownRequestId);
-    Check(interop_linux_socket_release_request(NULL, HostToken, 1) == InteropLinuxSocketInvalidArgument);
 
-    /* The guest echoes the identifier; the host receives the same value. */
-    length = make_launch_result_frame(frame, sizeof(frame), 9);
+    /* The guest echoes the live identifier; the host receives it before releasing the reservation. */
+    length = make_launch_result_frame(frame, sizeof(frame), 1);
     Check(interop_linux_socket_enqueue_feature(guest, GuestToken, now + 1, frame, length, &event) == InteropLinuxSocketSuccess);
     now = now + 1;
     deliver_feature(guest, GuestToken, host, HostToken, &now, received_frame, &work);
-    Check(work.event.message_type == InteropMsgLaunchResult && work.event.request_id == 9);
+    Check(work.event.message_type == InteropMsgLaunchResult && work.event.request_id == 1);
+    Check(interop_linux_socket_release_request(host, HostToken, 1) == InteropLinuxSocketSuccess);
+    Check(interop_linux_socket_release_request(host, HostToken, 1) == InteropLinuxSocketUnknownRequestId);
+    Check(interop_linux_socket_release_request(NULL, HostToken, 1) == InteropLinuxSocketInvalidArgument);
 
     interop_linux_socket_destroy(&host);
     interop_linux_socket_destroy(&guest);
@@ -3314,6 +3359,7 @@ int main(void)
     test_full_send_buffer_keeps_pollout_guidance();
     test_mapping_wait_fills_carry_without_read_spin();
     test_feature_pass_through_admission();
+    test_peer_result_outside_enumeration();
     test_feature_pass_through_queue_and_drain();
     interop_linux_socket_test_guards();
     test_linux_socket_owner_private();

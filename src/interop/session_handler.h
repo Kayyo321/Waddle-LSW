@@ -85,6 +85,19 @@ typedef struct session_handler_t {
     uint64_t (*next_deadline_ms)(void *context, uint64_t now_ms);
     /** @brief Final notification (exactly once); release every resource tied to the connection. */
     void (*on_closing)(void *context, uint32_t reason, interop_host_feature_sender_t *sender);
+    /**
+     * @brief Optional: a scoped remote Error (nonzero request identifier) received while Ready.
+     *        The runtime calls every handler that defines this, in registration order, and stops at
+     *        the first nonzero result. Remote Errors with request identifier zero are fatal and are
+     *        never delivered here.
+     * @param[in] context Handler context.
+     * @param[in] error_code Protocol error code copied from the Error frame.
+     * @param[in] request_id Nonzero request identifier copied from the Error frame.
+     * @param[in] sender Valid only during this call.
+     * @return Zero, SessionHandlerRequestStop, or another nonzero value (see the failure model).
+     */
+    int (*on_error)(void *context, uint32_t error_code, uint32_t request_id,
+        interop_host_feature_sender_t *sender);
 } session_handler_t;
 
 #ifdef __cplusplus

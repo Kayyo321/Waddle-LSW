@@ -35,6 +35,9 @@ ObjectPaths = [
     Root / "build/interop_layout_abi.o",
 ]
 Sources = [
+    Root / "src/interop/session_app.c",
+    Root / "src/interop/session_supervisor.c",
+    Root / "src/interop/session_handlers_builtin.c",
     Root / "src/interop/session_host.c",
     Root / "src/interop/linux_session_owner.c",
     Root / "src/interop/linux_socket_owner.c",

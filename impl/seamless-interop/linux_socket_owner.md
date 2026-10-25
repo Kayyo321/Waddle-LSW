@@ -167,3 +167,18 @@ exclusions. Linux's identical EAGAIN/EWOULDBLOCK values are checked once by a
 shared helper; the alternate comparison is compiled only when the constants
 differ. The 128 repeated fragmented socketpair sessions test local lifecycle
 cleanup; they do not establish VSOCK admission, reconnect continuity or VM proof.
+
+## Feature pass-through admission and request identifiers
+
+The socket owner forwards admission to the protocol peer through three entry points. Each takes the owner, the owner's token, a monotonic time, and caller buffers, and each checks owner, token, time, and buffer ranges before the peer is called.
+
+- `interop_linux_socket_enqueue_feature(owner, token, now_ms, bytes, length, out_event)` admits one complete feature frame whose identifier is zero or already matches the class rules. It returns no identifier.
+- `interop_linux_socket_enqueue_request(owner, token, now_ms, bytes, length, out_request_id, out_event)` admits one request frame with identifier zero. The peer reserves an identifier, stamps it into the queued copy, and returns it through `out_request_id` only on success. The caller's buffer is not modified.
+- `interop_linux_socket_release_request(owner, token, request_id)` releases one identifier previously returned by enqueue_request. Liveness and Hello identifiers are not releasable through this entry.
+
+Peer results cross the boundary through the table `PeerToSocketResult`, indexed by the raw peer result. A value outside `InteropPeerSuccess..InteropPeerRequestRetired` is an internal peer fault: the owner closes the transport and returns `InteropLinuxSocketPeerFailure`. Table entries marked -1 are the same fault. Local refusals leave owner state unchanged.
+
+The socket result values for this path are: `InteropLinuxSocketInvalidFrame` (13) for a malformed frame or an identifier that violates its class, `InteropLinuxSocketUnsupportedFrame` (14) for a type not legal for this entry or producer, `InteropLinuxSocketFeatureNotNegotiated` (15) for a facility absent from the negotiated set, `InteropLinuxSocketQueueFull` (16) when the Data class has no slot, `InteropLinuxSocketRequestIdsFull` (17) when 4032 feature identifiers are live, `InteropLinuxSocketUnknownRequestId` (18) for a release target that is not live, and `InteropLinuxSocketRequestRetired` (19) for a release after transport loss. Every one of them except the release results leaves nothing queued and no identifier reserved.
+
+Inbound feature frames are not checked here. The peer checks each received identifier against its class (see `session_control_host_contract.md`, Feature table). The socket owner passes the peer's `Draining` event through unchanged, so a received class violation reaches the caller as a Draining event with ProtocolViolation.
+

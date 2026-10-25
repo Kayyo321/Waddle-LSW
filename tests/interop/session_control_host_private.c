@@ -63,6 +63,16 @@ static void expect_feature_config_invalid(const interop_host_control_config_t *c
     assert(owners.session_owner == NULL && owners.mapping_owner == NULL);
 }
 
+static uint32_t private_closing_calls;
+
+static void private_on_closing(void *context, uint32_t reason, interop_host_feature_sender_t *sender)
+{
+    (void)context;
+    (void)reason;
+    (void)sender;
+    ++private_closing_calls;
+}
+
 static int private_poll_fds_unused(void *context, struct pollfd *fds, size_t capacity, size_t *count)
 {
     (void)context;
@@ -125,9 +135,14 @@ static void session_control_host_private_feature_tests(void)
         config.feature_ops = (const interop_host_feature_ops_t *)(void *)(storage + 1);
         expect_feature_config_invalid(&config);
     }
-    /* Valid ops with a zero bound reach the device check, which rejects the NULL device. */
+    /* Valid ops with a zero bound reach the device check, which rejects the NULL device.
+     * Feature ops were validated, so the refusal still announces closing exactly once. */
     config.feature_ops = &ops;
+    ops.on_closing = private_on_closing;
+    private_closing_calls = 0;
     expect_feature_config_invalid(&config);
+    assert(private_closing_calls == 1);
+    ops.on_closing = NULL;
 
     /* A nested run or retry from a callback is refused before any state is read. */
     host_control_in_callback = true;
@@ -179,6 +194,25 @@ static void session_control_host_private_feature_tests(void)
     assert(notified && sender.closing);
     host_feature_close_once(&ops, &sender, &notified, 0, HostControlSuccess);
     assert(notified);
+
+    /* Descriptor readiness is withheld once drain has begun, including a same-iteration peer drain. */
+    {
+        interop_linux_socket_work_t work;
+        memset(&work, 0, sizeof(work));
+        assert(host_fds_dispatch_allowed(true, false, &work));
+        assert(!host_fds_dispatch_allowed(false, false, &work));
+        assert(!host_fds_dispatch_allowed(true, true, &work));
+        work.event.kind = InteropPeerEventDraining;
+        assert(!host_fds_dispatch_allowed(true, false, &work));
+        work.event.kind = InteropPeerEventError;
+        work.event.request_id = 0;
+        assert(!host_fds_dispatch_allowed(true, false, &work));
+        work.event.request_id = 3;
+        assert(host_fds_dispatch_allowed(true, false, &work));
+        work.event.kind = InteropPeerEventNone;
+        work.state = InteropLinuxSocketTransportClosed;
+        assert(!host_fds_dispatch_allowed(true, false, &work));
+    }
 
     /* Drain failures record the outcome; an already draining pump keeps running. */
     outcome = HostControlSuccess;

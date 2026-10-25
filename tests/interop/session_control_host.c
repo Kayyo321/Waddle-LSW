@@ -98,6 +98,7 @@ static uint32_t fail_stop_read_eintr_count;
 static bool fail_stop_read_short;
 static bool fail_stop_read_wrong_signal;
 static int runtime_stop_fd = -1;
+static int runtime_daemon_fd = -1;
 static bool arm_bad_mapping_layout_event;
 static bool arm_nonzero_ready_capabilities;
 static bool arm_closed_transport_status;
@@ -117,6 +118,18 @@ static bool arm_daemon_peek_eio_once;
 static bool runtime_thread_known;
 static pthread_t runtime_thread;
 static const interop_host_feature_ops_t *active_feature_ops;
+/* The runtime entry used by run_control_fixture; session_app tests substitute their own runner. */
+static interop_host_control_result_t fixture_run_default(
+    const interop_host_control_config_t *config,
+    interop_host_control_owners_t *owners,
+    interop_host_control_detail_t *detail)
+{
+    return interop_host_control_run_detailed(config, owners, detail);
+}
+static interop_host_control_result_t (*fixture_control_runner)(
+    const interop_host_control_config_t *, interop_host_control_owners_t *,
+    interop_host_control_detail_t *) = fixture_run_default;
+static interop_host_control_detail_t *fixture_detail_out;
 static uint64_t peer_hello_capabilities = InteropCapWindows | InteropCapInput;
 static uint64_t peer_expected_ack_capabilities;
 static bool peer_script_enabled;
@@ -761,13 +774,15 @@ static size_t make_feature(uint8_t *frame, size_t capacity)
     return frame_length;
 }
 
+static uint32_t peer_error_request_id = 2;
+
 static size_t make_error(uint8_t *frame, size_t capacity)
 {
     interop_writer_t writer;
     size_t frame_length = 0;
     interop_writer_init(&writer, frame, capacity);
     assert(interop_put_uint(&writer, InteropTagErrorCode, 1) == InteropErrorNone);
-    assert(interop_writer_finish(&writer, InteropMsgError, 2, InteropFromGuest,
+    assert(interop_writer_finish(&writer, InteropMsgError, peer_error_request_id, InteropFromGuest,
         &frame_length) == InteropErrorNone);
     return frame_length;
 }
@@ -1227,11 +1242,11 @@ static void *guest_peer(void *unused)
             if (peer_script_close_after) break;
             if (peer_send_feature) {
                 frame_length = make_feature(frame, sizeof(frame));
-                write_all(fd, frame, frame_length);
+                if (!write_all_peer_may_close(fd, frame, frame_length)) break;
             }
             if (peer_send_error) {
                 frame_length = make_error(frame, sizeof(frame));
-                write_all(fd, frame, frame_length);
+                if (!write_all_peer_may_close(fd, frame, frame_length)) break;
             }
         } else if (type == InteropMsgPing) {
             if (peer_script_suppress_pong) continue;
@@ -1241,13 +1256,13 @@ static void *guest_peer(void *unused)
             } else {
                 frame_length = make_pong(frame, sizeof(frame), read_u32_le(frame + 12));
             }
-            write_all(fd, frame, frame_length);
+            if (!write_all_peer_may_close(fd, frame, frame_length)) break;
         } else if (peer_script_enabled && type == InteropMsgLaunchRequest) {
             ++peer_received_launch_requests;
             peer_last_launch_request_id = read_u32_le(frame + 12);
             if (peer_script_echo_launch) {
                 frame_length = make_launch_result(frame, sizeof(frame), peer_last_launch_request_id);
-                write_all(fd, frame, frame_length);
+                if (!write_all_peer_may_close(fd, frame, frame_length)) break;
             }
         } else if (peer_script_enabled && type == InteropMsgWindowClose) {
             ++peer_received_window_close;
@@ -1430,15 +1445,17 @@ static interop_host_control_result_t run_control_fixture(
     };
     interop_host_control_owners_t owners = {0};
     runtime_stop_fd = stop_fd;
+    runtime_daemon_fd = daemon_pair[0];
     test_fail_mmap_once = fail_mmap_once;
     fail_mapping_view_once = fail_mapping_view;
     fail_munmap_once = fail_cleanup_once;
     fail_session_destroy_once = false;
     fail_session_release_once = false;
     session_control_host_private_fail_clock_call(fail_clock_call);
-    interop_host_control_result_t result = interop_host_control_run(&config,
-        &owners);
+    interop_host_control_result_t result = fixture_control_runner(&config,
+        &owners, fixture_detail_out);
     runtime_stop_fd = -1;
+    runtime_daemon_fd = -1;
     arm_poll_after_admission = false;
     if (fail_cleanup_once) {
         assert(result == HostControlCleanupRequired);
@@ -1540,11 +1557,21 @@ typedef struct feature_probe_t {
     bool use_deadline;
     bool negative_probe;
     bool reentry;
+    bool reentry_poll;
+    bool reentry_deadline;
+    interop_host_control_result_t poll_reentry_cleanup;
+    interop_host_control_result_t deadline_reentry_cleanup;
     bool release_twice;
     bool send_window_close;
     bool send_on_closing;
     bool tick_writes_pipe;
     uint32_t fds_mode;
+    uint32_t poll_fail_after;
+    uint32_t poll_calls;
+    uint32_t peer_error_calls;
+    uint32_t peer_error_code;
+    uint32_t peer_error_request;
+    int peer_error_status;
     int ready_status;
     int tick_status;
     int frame_status;
@@ -1564,6 +1591,8 @@ typedef struct feature_probe_t {
     uint32_t launch_sent;
     uint32_t launch_queue_full;
     uint32_t launch_refused;
+    uint32_t launch_burst;
+    uint32_t request_ids_full;
     uint32_t window_close_sent;
     uint32_t request_id;
     uint32_t fd_calls;
@@ -1627,7 +1656,7 @@ static int probe_on_frame(void *context, uint32_t message_type, uint32_t request
     if (message_type == InteropMsgWindowAnnounce) {
         ++probe->announce_frames;
         if (probe->announce_fail_at != 0 && probe->announce_frames == probe->announce_fail_at)
-            return 1;
+            return 2;
     } else if (message_type == InteropMsgLaunchResult) {
         ++probe->launch_results;
         if (request_id == probe->request_id) ++probe->launch_matched;
@@ -1661,25 +1690,61 @@ static int probe_on_tick(void *context, uint64_t now_ms, interop_host_feature_se
         if (interop_host_feature_send(sender, frame, length) == HostFeatureSuccess)
             ++probe->window_close_sent;
     }
-    if (probe->launch_target != 0 && probe->launch_sent < probe->launch_target) {
+    /* Each tick sends up to launch_burst requests and stops at the first refusal. */
+    for (uint32_t burst = 0; burst < (probe->launch_burst == 0 ? 1 : probe->launch_burst) &&
+            probe->launch_target != 0 && probe->launch_sent < probe->launch_target; ++burst) {
         length = build_launch_request(frame, sizeof(frame), 0);
         result = interop_host_feature_send_request(sender, frame, length, &request_id);
         if (result == HostFeatureSuccess) {
             ++probe->launch_sent;
             probe->request_id = request_id;
-        } else if (result == HostFeatureQueueFull) {
-            ++probe->launch_queue_full;
-        } else {
-            ++probe->launch_refused;
+            continue;
         }
+        if (result == HostFeatureQueueFull) ++probe->launch_queue_full;
+        else if (result == HostFeatureRequestIdsFull) ++probe->request_ids_full;
+        else ++probe->launch_refused;
+        break;
     }
     return probe->tick_status;
+}
+
+static int probe_on_peer_error(void *context, uint32_t error_code, uint32_t request_id,
+                               interop_host_feature_sender_t *sender)
+{
+    feature_probe_t *probe = context;
+    (void)sender;
+    ++probe->peer_error_calls;
+    probe->peer_error_code = error_code;
+    probe->peer_error_request = request_id;
+    return probe->peer_error_status;
 }
 
 static int probe_poll_fds(void *context, struct pollfd *fds, size_t capacity, size_t *count)
 {
     feature_probe_t *probe = context;
+    if (probe->reentry_poll) {
+        interop_host_control_owners_t owners;
+        memset(&owners, 0, sizeof(owners));
+        probe->poll_reentry_cleanup = interop_host_control_retry_cleanup(&owners);
+        *count = 0;
+        return 0;
+    }
+    if (probe->poll_fail_after != 0 && ++probe->poll_calls > probe->poll_fail_after) return 1;
     if (probe->fds_mode == 1) return 1;
+    if (probe->fds_mode == 3 || probe->fds_mode == 6) {
+        fds[0].fd = probe->fds_mode == 3 ? runtime_stop_fd : runtime_daemon_fd;
+        fds[0].events = POLLIN;
+        fds[0].revents = 0;
+        *count = 1;
+        return 0;
+    }
+    if (probe->fds_mode == 5) {
+        fds[0].fd = -1;
+        fds[0].events = POLLIN;
+        fds[0].revents = 0;
+        *count = 1;
+        return 0;
+    }
     if (probe->fds_mode == 2) {
         *count = capacity + 1;
         return 0;
@@ -1717,6 +1782,11 @@ static uint64_t probe_next_deadline(void *context, uint64_t now_ms)
 {
     feature_probe_t *probe = context;
     ++probe->deadline_calls;
+    if (probe->reentry_deadline) {
+        interop_host_control_owners_t owners;
+        memset(&owners, 0, sizeof(owners));
+        probe->deadline_reentry_cleanup = interop_host_control_retry_cleanup(&owners);
+    }
     return now_ms + 15;
 }
 
@@ -1734,6 +1804,8 @@ static void probe_on_closing(void *context, uint32_t reason, interop_host_featur
         probe->closing_release = interop_host_feature_release_request(sender, 9999);
     }
 }
+
+static interop_host_control_detail_t feature_case_detail;
 
 /* Run one control session with the probe's callbacks; minimal variants omit callbacks. */
 static interop_host_control_result_t run_feature_case(feature_probe_t *probe,
@@ -1754,16 +1826,22 @@ static interop_host_control_result_t run_feature_case(feature_probe_t *probe,
     ops.on_ready = probe->skip_ready ? NULL : probe_on_ready;
     ops.on_frame = probe->skip_frame ? NULL : probe_on_frame;
     ops.on_tick = probe->skip_tick ? NULL : probe_on_tick;
-    ops.poll_fds = probe->use_pipe || probe->fds_mode != 0 ? probe_poll_fds : NULL;
-    ops.on_fds = probe->use_pipe || probe->fds_mode != 0 ? probe_on_fds : NULL;
+    ops.poll_fds = probe->use_pipe || probe->fds_mode != 0 || probe->poll_fail_after != 0 ||
+        probe->reentry_poll ? probe_poll_fds : NULL;
+    ops.on_fds = probe->use_pipe || probe->fds_mode != 0 || probe->reentry_poll
+        ? probe_on_fds : NULL;
     ops.next_deadline_ms = probe->use_deadline ? probe_next_deadline : NULL;
     ops.on_closing = probe_on_closing;
+    ops.on_peer_error = probe_on_peer_error;
     peer_hello_capabilities = hello_capabilities;
     peer_expected_ack_capabilities = ack_capabilities;
     peer_script_enabled = true;
     active_feature_ops = &ops;
+    memset(&feature_case_detail, 0, sizeof(feature_case_detail));
+    fixture_detail_out = &feature_case_detail;
     result = run_control_fixture(false, false, false, cancel_after_ms, false, false, false, 0,
         false, 0, false, false, run_ms, heartbeat);
+    fixture_detail_out = NULL;
     active_feature_ops = NULL;
     peer_script_enabled = false;
     peer_script_announces = 0;
@@ -1790,7 +1868,7 @@ static void close_probe_pipe(feature_probe_t *probe)
     assert(close(probe->pipe_write) == 0);
 }
 
-static void session_control_host_feature_tests(void)
+__attribute__((unused)) static void session_control_host_feature_tests(void)
 {
     static const uint64_t WindowsInput = InteropCapWindows | InteropCapInput;
     static const uint64_t WindowsInputLaunch = InteropCapWindows | InteropCapInput | InteropCapLaunch;
@@ -1828,6 +1906,9 @@ static void session_control_host_feature_tests(void)
     assert(probe.negative[10] == HostFeatureInvalidArgument);
     assert(probe.negative[11] == HostFeatureUnknownRequestId);
     assert(probe.closing_calls == 1 && probe.closing_reason == HostControlSuccess);
+    assert(feature_case_detail.reached_ready == 1 && feature_case_detail.ready_at_ms != 0);
+    assert(feature_case_detail.ended_at_ms >= feature_case_detail.ready_at_ms);
+    assert(feature_case_detail.guest_error == 0 && feature_case_detail.admission_result == 0);
     assert(probe.closing_send == HostFeatureDraining);
     assert(probe.closing_release == HostFeatureUnknownRequestId);
     assert(peer_received_window_close == 1);
@@ -1847,7 +1928,7 @@ static void session_control_host_feature_tests(void)
 
     /* 3. on_ready failure is the same failure path before any traffic. */
     memset(&probe, 0, sizeof(probe));
-    probe.ready_status = 1;
+    probe.ready_status = 2;
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.ready_calls == 1 && probe.closing_calls == 1);
@@ -1855,7 +1936,7 @@ static void session_control_host_feature_tests(void)
 
     /* 4. on_tick failure drains; tick cadence stays bounded before the failure. */
     memset(&probe, 0, sizeof(probe));
-    probe.tick_status = 1;
+    probe.tick_status = 2;
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.tick_calls == 1 && probe.closing_calls == 1);
@@ -1877,7 +1958,7 @@ static void session_control_host_feature_tests(void)
     memset(&probe, 0, sizeof(probe));
     probe.use_pipe = true;
     probe.tick_writes_pipe = true;
-    probe.fds_status = 1;
+    probe.fds_status = 2;
     reset_probe_pipe(&probe);
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
@@ -1890,11 +1971,94 @@ static void session_control_host_feature_tests(void)
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.closing_calls == 1);
+    /* 7b. A poll_fds failure after successful cycles still sends Goodbye and closes once. */
+    memset(&probe, 0, sizeof(probe));
+    probe.use_pipe = true;
+    probe.poll_fail_after = 2;
+    reset_probe_pipe(&probe);
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
+    assert(probe.closing_calls == 1);
+    assert(peer_saw_goodbye == 1);
+    close_probe_pipe(&probe);
     memset(&probe, 0, sizeof(probe));
     probe.fds_mode = 2;
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.closing_calls == 1);
+
+    /* 7c. A remote Error with a nonzero request id is not fatal while Ready. */
+    memset(&probe, 0, sizeof(probe));
+    arm_peer_send_error = true;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 300, 0, NULL);
+    assert(result == HostControlSuccess);
+    assert(probe.peer_error_calls == 1 && probe.peer_error_code == 1);
+    assert(probe.peer_error_request == 2 && probe.closing_calls == 1);
+
+    /* 7d. A remote Error with request id zero is fatal and never reaches on_peer_error. */
+    memset(&probe, 0, sizeof(probe));
+    arm_peer_send_error = true;
+    peer_error_request_id = 0;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    peer_error_request_id = 2;
+    assert(result == HostControlPeerFailed);
+    assert(probe.peer_error_calls == 0 && probe.closing_calls == 1);
+
+    /* 7e. on_peer_error results follow the feature settle rules: stop is graceful, other fails. */
+    memset(&probe, 0, sizeof(probe));
+    arm_peer_send_error = true;
+    probe.peer_error_status = InteropHostFeatureStopRequested;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlCancelled);
+    assert(probe.peer_error_calls == 1 && probe.closing_calls == 1);
+    memset(&probe, 0, sizeof(probe));
+    arm_peer_send_error = true;
+    probe.peer_error_status = 2;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
+    assert(probe.peer_error_calls == 1 && probe.closing_calls == 1);
+
+    /* 7f. Callbacks outside sender scopes still refuse control-runtime re-entry. */
+    memset(&probe, 0, sizeof(probe));
+    probe.reentry_poll = true;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 300, 0, NULL);
+    assert(result == HostControlSuccess);
+    assert(probe.poll_reentry_cleanup == HostControlInvalidArgument);
+    memset(&probe, 0, sizeof(probe));
+    probe.reentry_deadline = true;
+    probe.use_deadline = true;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 300, 0, NULL);
+    assert(result == HostControlSuccess && probe.deadline_calls >= 1);
+    assert(probe.deadline_reentry_cleanup == HostControlInvalidArgument);
+
+    /* 7g. A feature descriptor that reports POLLHUP fails the run; its readiness is not delivered. */
+    memset(&probe, 0, sizeof(probe));
+    probe.use_pipe = true;
+    reset_probe_pipe(&probe);
+    assert(close(probe.pipe_write) == 0);
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
+    assert(probe.closing_calls == 1 && probe.fd_calls == 0);
+    assert(close(probe.pipe_read) == 0);
+
+    /* 7h. A feature descriptor equal to the runtime stop descriptor is refused before polling. */
+    memset(&probe, 0, sizeof(probe));
+    probe.fds_mode = 3;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
+    assert(probe.closing_calls == 1);
+
+    /* 7i. A negative descriptor is ignored by poll(2) and does not fail the run. */
+    memset(&probe, 0, sizeof(probe));
+    probe.fds_mode = 5;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 300, 0, NULL);
+    assert(result == HostControlSuccess && probe.closing_calls == 1);
+
+    /* 7j. A feature descriptor equal to the admitted daemon descriptor is refused. */
+    memset(&probe, 0, sizeof(probe));
+    probe.fds_mode = 6;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed && probe.closing_calls == 1);
 
     /* 8. No run bound: the run lasts until cancellation, and closing sends are refused. */
     memset(&probe, 0, sizeof(probe));
@@ -1912,6 +2076,7 @@ static void session_control_host_feature_tests(void)
         2000, 0, NULL);
     assert(result == HostControlUnexpectedFeature);
     assert(probe.frame_calls == 0 && probe.closing_reason == HostControlUnexpectedFeature);
+    assert(feature_case_detail.guest_error == 1 && feature_case_detail.reached_ready == 1);
 
     /* 10. Minimal ops (no on_ready, on_frame, on_tick): an admitted frame is unexpected. */
     memset(&probe, 0, sizeof(probe));
@@ -1963,9 +2128,74 @@ static void session_control_host_feature_tests(void)
     assert(heartbeat >= 3);
     assert(probe.closing_calls == 1);
 
-    /* 15. Run bounds that the feature runtime must reject before admission. */
+    /* 14b. Sender results reach features end to end: a burst past the Data queue reports QueueFull. */
     memset(&probe, 0, sizeof(probe));
-    (void)probe;
+    probe.launch_target = 600;
+    probe.launch_burst = 600;
+    peer_script_echo_launch = false;
+    result = run_feature_case(&probe, WindowsInputLaunch, WindowsInputLaunch,
+        WindowsInputLaunch, 1500, 0, NULL);
+    assert(result == HostControlSuccess);
+    assert(probe.launch_queue_full >= 1 && probe.launch_sent >= 1);
+    assert(probe.closing_calls == 1);
+
+    /* 14c. Sender results reach features end to end: the 4033rd live identifier reports RequestIdsFull. */
+    memset(&probe, 0, sizeof(probe));
+    probe.launch_target = 4040;
+    probe.launch_burst = 512;
+    peer_script_echo_launch = false;
+    result = run_feature_case(&probe, WindowsInputLaunch, WindowsInputLaunch,
+        WindowsInputLaunch, 6000, 0, NULL);
+    assert(result == HostControlSuccess);
+    assert(probe.launch_sent == 4032 && probe.request_ids_full >= 1);
+    assert(probe.closing_calls == 1);
+    peer_script_echo_launch = false;
+
+    /* 15. A graceful stop request from a feature callback ends the run as Cancelled, not failed. */
+    memset(&probe, 0, sizeof(probe));
+    probe.tick_status = InteropHostFeatureStopRequested;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlCancelled);
+    assert(probe.tick_calls == 1 && probe.closing_calls == 1);
+    assert(probe.closing_reason == HostControlCancelled);
+
+    /* 15b. An admission refusal reports the session-layer result through the detail output. */
+    {
+        interop_host_control_detail_t refused;
+        interop_host_control_result_t refusal;
+        memset(&refused, 0, sizeof(refused));
+        fixture_detail_out = &refused;
+        arm_admission_failure_after_success = true;
+        refusal = run_control_fixture(false, false, false, 0, false, false, false, 0,
+            false, 0, false, false, TestRunMs, NULL);
+        fixture_detail_out = NULL;
+        assert(refusal == HostControlAdmissionFailed);
+        assert(refused.admission_result == HostSessionBusy && refused.reached_ready == 0);
+
+        /* 15c. A failed monotonic read in cleanup records ended_at_ms as zero. */
+        memset(&refused, 0, sizeof(refused));
+        fixture_detail_out = &refused;
+        arm_admission_failure_after_success = true;
+        refusal = run_control_fixture(false, false, false, 0, false, false, false, 1,
+            false, 0, false, false, TestRunMs, NULL);
+        fixture_detail_out = NULL;
+        assert(refusal == HostControlAdmissionFailed);
+        assert(refused.admission_result == HostSessionBusy && refused.ended_at_ms == 0);
+    }
+
+    /* 16. A stop request from on_ready is the same graceful path before any traffic. */
+    memset(&probe, 0, sizeof(probe));
+    probe.ready_status = InteropHostFeatureStopRequested;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlCancelled);
+    assert(probe.ready_calls == 1 && probe.closing_calls == 1);
+    assert(probe.closing_reason == HostControlCancelled);
+
+    /* 17. Any other nonzero status from a callback still fails the run. */
+    memset(&probe, 0, sizeof(probe));
+    probe.tick_status = 2;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
 }
 
 #endif
@@ -2085,9 +2315,15 @@ int main(void)
     arm_closed_transport_status = true;
     assert(run_control_fixture(false, false, false, 0, false, false, false, 0,
         false, 0, false, false, 500, NULL) == HostControlPeerFailed);
+    /* A scoped remote Error (request id 2) is not fatal while Ready; request id 0 is. */
     arm_peer_send_error = true;
     assert(run_control_fixture(false, false, false, 0, false, false, false, 0,
+        false, 0, false, false, 500, NULL) == HostControlSuccess);
+    arm_peer_send_error = true;
+    peer_error_request_id = 0;
+    assert(run_control_fixture(false, false, false, 0, false, false, false, 0,
         false, 0, false, false, 500, NULL) == HostControlPeerFailed);
+    peer_error_request_id = 2;
     assert(run_control_fixture(false, false, false, 150, false, false, false, 0, false, 0, false, false,
         1000, NULL) ==
            HostControlCancelled);

@@ -2248,6 +2248,86 @@ test "release_request refuses liveness identifiers and transport loss retires fe
     try std_t.testing.expectError(error.WrongPhase, pair.host.enqueue_request(HostToken, ping_time, frame[0..request]));
 }
 
+test "each request type maps to its answering response and other types map to none" {
+    try std_t.testing.expectEqual(@as(?u16, c_t.InteropMsgLaunchResult), peer_t.response_for_request(c_t.InteropMsgLaunchRequest));
+    try std_t.testing.expectEqual(@as(?u16, c_t.InteropMsgPrinterResult), peer_t.response_for_request(c_t.InteropMsgPrinterSync));
+    try std_t.testing.expectEqual(@as(?u16, c_t.InteropMsgDisplayApplied), peer_t.response_for_request(c_t.InteropMsgDisplayConfig));
+    try std_t.testing.expectEqual(@as(?u16, c_t.InteropMsgDndResult), peer_t.response_for_request(c_t.InteropMsgDndDrop));
+    try std_t.testing.expectEqual(@as(?u16, null), peer_t.response_for_request(c_t.InteropMsgWindowClose));
+    try std_t.testing.expectEqual(@as(?u16, null), peer_t.response_for_request(c_t.InteropMsgLaunchResult));
+}
+
+/// Expect a received feature frame to drain the peer with ProtocolViolation, naming the frame.
+fn expect_protocol_violation(event: peer_t.event_result_t, message_type: u16, request_id: u32) !void {
+    try std_t.testing.expectEqual(peer_t.event_kind_t.Draining, event.event.kind);
+    try std_t.testing.expectEqual(@as(@TypeOf(event.event.error_code), c_t.InteropErrorProtocolViolation), event.event.error_code);
+    try std_t.testing.expectEqual(message_type, event.event.message_type);
+    try std_t.testing.expectEqual(request_id, event.event.request_id);
+}
+
+test "inbound responses must echo a live reservation and unsolicited frames carry zero" {
+    // Local admission refuses these identifiers, so the remote's bytes are fed directly.
+    var output: [MaxTestFrame]u8 = undefined;
+    var frame: [MaxTestFrame]u8 = undefined;
+
+    // A response whose identifier was never reserved by the requesting side is a violation.
+    {
+        var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+        defer deinit_pair(&pair);
+        _ = try complete_handshake_event(&pair, 401);
+        const length = try make_launch_result(&frame, 7);
+        _ = try pair.host.feed(HostToken, frame[0..length]);
+        const event = try pair.host.next_event(HostToken, 403, &output);
+        try expect_protocol_violation(event, c_t.InteropMsgLaunchResult, 7);
+        try std_t.testing.expectEqual(peer_t.phase_t.Draining, pair.host.phase());
+    }
+
+    // Zero is never a valid response identifier, even while a matching request is live.
+    {
+        var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+        defer deinit_pair(&pair);
+        _ = try complete_handshake_event(&pair, 401);
+        const request_length = try make_launch_request(&frame, 0);
+        _ = try pair.host.enqueue_request(HostToken, 402, frame[0..request_length]);
+        const length = try make_launch_result(&frame, 0);
+        _ = try pair.host.feed(HostToken, frame[0..length]);
+        const event = try pair.host.next_event(HostToken, 403, &output);
+        try expect_protocol_violation(event, c_t.InteropMsgLaunchResult, 0);
+    }
+
+    // An unsolicited feature frame carrying a nonzero identifier is a violation on receipt.
+    {
+        var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+        defer deinit_pair(&pair);
+        _ = try complete_handshake_event(&pair, 401);
+        const length = try make_window_close(&frame, 5, 1, 1);
+        _ = try pair.guest.feed(GuestToken, frame[0..length]);
+        const event = try pair.guest.next_event(GuestToken, 402, &output);
+        try expect_protocol_violation(event, c_t.InteropMsgWindowClose, 5);
+    }
+
+    // A remote-issued request carries the requester's nonzero identifier; zero is a violation.
+    {
+        var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+        defer deinit_pair(&pair);
+        _ = try complete_handshake_event(&pair, 401);
+        const zero_length = try make_launch_request(&frame, 0);
+        _ = try pair.guest.feed(GuestToken, frame[0..zero_length]);
+        const refused = try pair.guest.next_event(GuestToken, 402, &output);
+        try expect_protocol_violation(refused, c_t.InteropMsgLaunchRequest, 0);
+    }
+    {
+        var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+        defer deinit_pair(&pair);
+        _ = try complete_handshake_event(&pair, 401);
+        const length = try make_launch_request(&frame, 9);
+        _ = try pair.guest.feed(GuestToken, frame[0..length]);
+        const accepted = try pair.guest.next_event(GuestToken, 402, &output);
+        try std_t.testing.expectEqual(peer_t.event_kind_t.FeatureFrame, accepted.event.kind);
+        try std_t.testing.expectEqual(@as(u32, 9), accepted.event.request_id);
+    }
+}
+
 test "feature identifiers wrap past UINT32_MAX and stop at the 4032 feature cap with liveness still free" {
     var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
     defer deinit_pair(&pair);
