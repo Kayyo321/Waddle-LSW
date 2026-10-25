@@ -104,7 +104,7 @@ pub const store_t = extern struct {
         self.count = 0;
     }
 
-    /// Record the clock. A value below the previous one is a rollback: every
+    /// record_t the clock. A value below the previous one is a rollback: every
     /// pair is dropped so that no earlier token can be returned.
     fn observe(self: *store_t, now: u64) void {
         if (self.clock_started != 0 and now < self.last_now) {
@@ -536,8 +536,8 @@ test "seeded operation streams match a reference model step by step" {
     // Reference model: an unordered list. Liveness is judged by the elapsed
     // time since insertion, not by stored deadlines, and eviction by an
     // explicit order counter, so neither shares code with store_t.
-    const Record = struct { token: [8]u8 = undefined, token_length: usize = 0, process_id: u32 = 0, inserted: u64 = 0, order: u64 = 0, live: bool = false };
-    var records = [_]Record{.{}} ** 48;
+    const record_t = struct { token: [8]u8 = undefined, token_length: usize = 0, process_id: u32 = 0, inserted: u64 = 0, order: u64 = 0, live: bool = false };
+    var records = [_]record_t{.{}} ** 48;
     var model_started = false;
     var model_last: u64 = 0;
     var model_rollbacks: u32 = 0;
@@ -573,7 +573,7 @@ test "seeded operation streams match a reference model step by step" {
                 const token = try std.fmt.bufPrint(&name_buffer, "s{d}", .{index});
                 const pid: u32 = 1 + random.uintLessThan(u32, 5);
                 try put_at(&store, token, pid, now);
-                var found: ?*Record = null;
+                var found: ?*record_t = null;
                 var live_count: usize = 0;
                 for (&records) |*record| {
                     if (!record.live) continue;
@@ -587,7 +587,7 @@ test "seeded operation streams match a reference model step by step" {
                     record.order = model_order;
                 } else {
                     if (live_count == MaxEntries) {
-                        var victim: ?*Record = null;
+                        var victim: ?*record_t = null;
                         for (&records) |*record| {
                             if (record.live and (victim == null or record.order < victim.?.order)) victim = record;
                         }
@@ -608,7 +608,7 @@ test "seeded operation streams match a reference model step by step" {
             },
             6, 7 => {
                 const pid: u32 = 1 + random.uintLessThan(u32, 5);
-                var best: ?*Record = null;
+                var best: ?*record_t = null;
                 for (&records) |*record| {
                     if (record.live and record.process_id == pid and (best == null or record.order > best.?.order)) best = record;
                 }
