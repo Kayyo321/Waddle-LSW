@@ -11,7 +11,8 @@ interop-manifest-commands-test:
 
 interop-integration-unit-test:
 	$(ZIG) test -lc --dep manifest_store -Mintegration_producers=src/interop/integration_producers.zig -Mmanifest_store=src/interop/manifest_store.zig
-	$(ZIG) test -lc --dep manifest_store --dep integration_producers -Mroot=src/cli/integration_commands.zig -Mmanifest_store=src/interop/manifest_store.zig --dep manifest_store -Mintegration_producers=src/interop/integration_producers.zig
+	$(ZIG) test -lc --dep mimeapps -Mroot=src/cli/integration_mime.zig -Mmimeapps=src/interop/mimeapps.zig
+	$(ZIG) test -lc --dep manifest_store --dep integration_producers --dep mimeapps -Mroot=src/cli/integration_commands.zig -Mmanifest_store=src/interop/manifest_store.zig --dep manifest_store -Mintegration_producers=src/interop/integration_producers.zig -Mmimeapps=src/interop/mimeapps.zig
 
 interop-integration-e2e-test: build/waddle
 	python3 -I tests/interop/integration_commands_e2e.py

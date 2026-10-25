@@ -82,8 +82,8 @@ build/device_storage.o: src/daemon/device_storage.zig src/daemon/daemon_device.h
 build/device_commands.o: src/cli/device_commands.zig src/cli/device_commands.h src/daemon/daemon_device.h | build
 	$(ZIG) build-obj $< -Iinclude -Isrc/daemon -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
-build/integration_entry.o: src/cli/integration_entry.zig src/cli/integration_commands.zig src/cli/integration_commands.h src/interop/integration_producers.zig src/interop/manifest_store.zig src/interop/manifest.zig src/daemon/daemon_device.h src/daemon/daemon_config.h | build
-	$(ZIG) build-obj --dep integration_commands -Mroot=src/cli/integration_entry.zig --dep manifest_store --dep integration_producers -Mintegration_commands=src/cli/integration_commands.zig -Mmanifest_store=src/interop/manifest_store.zig --dep manifest_store -Mintegration_producers=src/interop/integration_producers.zig -Iinclude -Isrc/daemon -O ReleaseSafe -fPIC -lc -femit-bin=$@
+build/integration_entry.o: src/cli/integration_entry.zig src/cli/integration_commands.zig src/cli/integration_commands.h src/cli/integration_mime.zig src/interop/mimeapps.zig src/interop/integration_producers.zig src/interop/manifest_store.zig src/interop/manifest.zig src/daemon/daemon_device.h src/daemon/daemon_config.h | build
+	$(ZIG) build-obj --dep integration_commands -Mroot=src/cli/integration_entry.zig --dep manifest_store --dep integration_producers --dep mimeapps -Mintegration_commands=src/cli/integration_commands.zig -Mmanifest_store=src/interop/manifest_store.zig --dep manifest_store -Mintegration_producers=src/interop/integration_producers.zig -Mmimeapps=src/interop/mimeapps.zig -Iinclude -Isrc/daemon -O ReleaseSafe -fPIC -lc -femit-bin=$@
 
 build/av_commands.o: src/cli/av_commands.zig src/cli/av_commands.h | build
 	$(ZIG) build-obj $< -Isrc/cli -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
