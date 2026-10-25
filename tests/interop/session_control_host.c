@@ -1723,6 +1723,13 @@ static int probe_poll_fds(void *context, struct pollfd *fds, size_t capacity, si
     }
     if (probe->poll_fail_after != 0 && ++probe->poll_calls > probe->poll_fail_after) return 1;
     if (probe->fds_mode == 1) return 1;
+    if (probe->fds_mode == 3) {
+        fds[0].fd = runtime_stop_fd;
+        fds[0].events = POLLIN;
+        fds[0].revents = 0;
+        *count = 1;
+        return 0;
+    }
     if (probe->fds_mode == 2) {
         *count = capacity + 1;
         return 0;
@@ -2008,6 +2015,23 @@ __attribute__((unused)) static void session_control_host_feature_tests(void)
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 300, 0, NULL);
     assert(result == HostControlSuccess && probe.deadline_calls >= 1);
     assert(probe.deadline_reentry_cleanup == HostControlInvalidArgument);
+
+    /* 7g. A feature descriptor that reports POLLHUP fails the run; its readiness is not delivered. */
+    memset(&probe, 0, sizeof(probe));
+    probe.use_pipe = true;
+    reset_probe_pipe(&probe);
+    assert(close(probe.pipe_write) == 0);
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
+    assert(probe.closing_calls == 1 && probe.fd_calls == 0);
+    assert(close(probe.pipe_read) == 0);
+
+    /* 7h. A feature descriptor equal to the runtime stop descriptor is refused before polling. */
+    memset(&probe, 0, sizeof(probe));
+    probe.fds_mode = 3;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
+    assert(probe.closing_calls == 1);
 
     /* 8. No run bound: the run lasts until cancellation, and closing sends are refused. */
     memset(&probe, 0, sizeof(probe));

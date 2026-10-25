@@ -451,6 +451,38 @@ static interop_host_control_result_t host_control_refuse_after_ops(
 }
 
 
+/** @brief True when a feature descriptor aliases a descriptor the runtime owns.
+ * Negative entries are ignored by poll(2) and never alias.
+ * @param[in] fds Feature descriptors reported by poll_fds.
+ * @param[in] count Number of entries.
+ * @param[in] socket_fd Socket descriptor of this iteration, or -1.
+ * @param[in] stop_fd Caller stop descriptor.
+ * @param[in] daemon_fd Admitted daemon descriptor.
+ * @return True when any entry equals socket_fd, stop_fd, or daemon_fd.
+ */
+static bool host_feature_fds_reserved(const struct pollfd *fds, size_t count,
+                                      int socket_fd, int stop_fd, int daemon_fd)
+{
+    for (size_t index = 0; index < count; ++index) {
+        int fd = fds[index].fd;
+        if (fd < 0) continue;
+        if (fd == socket_fd || fd == stop_fd || fd == daemon_fd) return true;
+    }
+    return false;
+}
+
+/** @brief True when a feature descriptor reported an error, hangup, or invalid-descriptor event.
+ * @param[in] fds Descriptors of the current iteration, read only.
+ * @param[in] count Number of feature descriptors.
+ * @return True when any revents contains POLLERR, POLLHUP, or POLLNVAL.
+ */
+static bool host_feature_fds_faulted(const struct pollfd *fds, size_t count)
+{
+    for (size_t index = 0; index < count; ++index)
+        if ((fds[index].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) return true;
+    return false;
+}
+
 /** @brief Decide whether feature descriptors may still receive readiness in this iteration.
  * Readiness is withheld once drain has begun: the local drain flag, a closed transport, a peer
  * Draining event, or a fatal remote Error (request identifier zero).
@@ -676,7 +708,9 @@ interop_host_control_result_t interop_host_control_run_detailed(
             size_t supplied = 0;
             int fds_status = host_feature_call_poll_fds(feature_ops,
                 &descriptors[descriptor_count], InteropHostFeatureFdCapacity, &supplied);
-            if (fds_status != 0 || supplied > InteropHostFeatureFdCapacity) {
+            if (fds_status != 0 || supplied > InteropHostFeatureFdCapacity ||
+                    host_feature_fds_reserved(&descriptors[descriptor_count], supplied,
+                        poll_request.fd, config->stop_fd, admission.daemon_fd)) {
                 /* Starting the drain here invalidates the poll cookie taken above. */
                 if (!host_control_fail_and_drain(&outcome, HostControlFeatureFailed,
                         socket_owner, token, now_ms, &draining))
@@ -823,6 +857,12 @@ interop_host_control_result_t interop_host_control_run_detailed(
                 frame, sizeof(frame), &work) != InteropLinuxSocketSuccess) {
             host_control_record_outcome(&outcome, HostControlPeerFailed);
             break;
+        }
+        if (feature_count != 0 && ready && !draining &&
+                host_feature_fds_faulted(&descriptors[feature_base], feature_count)) {
+            if (!host_control_fail_and_drain(&outcome, HostControlFeatureFailed,
+                    socket_owner, token, now_ms, &draining))
+                break;
         }
         if (feature_count != 0 && feature_ops != NULL && feature_ops->on_fds != NULL &&
                 host_fds_dispatch_allowed(ready, draining, &work)) {
