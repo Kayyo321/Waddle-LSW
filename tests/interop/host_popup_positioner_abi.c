@@ -109,32 +109,31 @@ static int check_request(void) {
     return 0;
 }
 
-static int check_restore(void) {
-    host_popup_rect_t logical;
+static int check_reposition(void) {
+    host_popup_rect_t guest = rect(-8, 16, 9, 17);
+    host_popup_request_t requested;
     host_popup_rect_t out = rect(7, 7, 7, 7);
 
-    Check(host_popup_positioner_restore(NULL, 1, &out) == HostPopupInvalidArgument);
-    logical = rect(0, 0, 1, 1);
-    Check(host_popup_positioner_restore(&logical, 1, NULL) == HostPopupInvalidArgument);
-    Check(host_popup_positioner_restore(&logical, 0, &out) == HostPopupInvalidScale);
+    Check(host_popup_positioner_request(&guest, 8, 100, 100, &requested) == HostPopupOk);
+    Check(host_popup_positioner_reposition(NULL, 8, &requested, 0, 0, &out) == HostPopupInvalidArgument);
+    Check(host_popup_positioner_reposition(&guest, 8, NULL, 0, 0, &out) == HostPopupInvalidArgument);
+    Check(host_popup_positioner_reposition(&guest, 8, &requested, 0, 0, NULL) == HostPopupInvalidArgument);
+    Check(host_popup_positioner_reposition(&guest, 0, &requested, 0, 0, &out) == HostPopupInvalidScale);
+    Check(same(out, rect(7, 7, 7, 7)));
 
-    logical = rect(268435455, 0, 0, 0);
-    Check(host_popup_positioner_restore(&logical, 8, &out) == HostPopupOk);
-    Check(out.x == 2147483640);
+    /* Unmoved: the compositor keeps the requested origin, so the rectangle is reported exactly. */
+    Check(host_popup_positioner_reposition(&guest, 8, &requested, requested.anchor_x + requested.offset_x, requested.anchor_y + requested.offset_y, &out) == HostPopupOk);
+    Check(same(out, guest));
 
-    logical = rect(268435456, 0, 0, 0);
-    Check(host_popup_positioner_restore(&logical, 8, &out) == HostPopupOverflow);
-    Check(out.x == 2147483640);
+    /* Moved: the compositor places the popup at (0, 0); x' = -8 + (0 + 1) * 8 and y' = 16 + (0 - 2) * 8. */
+    Check(host_popup_positioner_reposition(&guest, 8, &requested, 0, 0, &out) == HostPopupOk);
+    Check(same(out, rect(0, 0, 9, 17)));
 
-    logical = rect(0, 0, 2147483648u, 0);
-    Check(host_popup_positioner_restore(&logical, 2, &out) == HostPopupOverflow);
-    logical = rect(0, 0, 2147483647u, 0);
-    Check(host_popup_positioner_restore(&logical, 2, &out) == HostPopupOk);
-    Check(out.width == 4294967294u);
-
-    logical = rect(-3, 4, 5, 6);
-    Check(host_popup_positioner_restore(&logical, 2, &out) == HostPopupOk);
-    Check(same(out, rect(-6, 8, 10, 12)));
+    /* Overflow is refused and the output is left alone. */
+    guest = rect(2147483647, 0, 1, 1);
+    out = rect(7, 7, 7, 7);
+    Check(host_popup_positioner_reposition(&guest, 8, &requested, 1, 0, &out) == HostPopupOverflow);
+    Check(same(out, rect(7, 7, 7, 7)));
     return 0;
 }
 
@@ -142,7 +141,7 @@ int main(void) {
     if (check_constants() != 0) return 1;
     if (check_integer_scale() != 0) return 1;
     if (check_request() != 0) return 1;
-    if (check_restore() != 0) return 1;
+    if (check_reposition() != 0) return 1;
     puts("host_popup_positioner_abi: all checks passed");
     return 0;
 }

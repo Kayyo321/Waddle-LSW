@@ -13,7 +13,7 @@
 
 /** @brief Frozen positioner constants (IMPL_DESC section 8.44). */
 enum host_popup_positioner_constants_t {
-    HostPopupMaxScale = 8, /**< Largest integer host scale accepted by request and restore. */
+    HostPopupMaxScale = 8, /**< Largest integer host scale accepted by request and reposition. */
     HostPopupMaxLogicalExtent = 32768, /**< Largest absolute logical offset or dimension a request may produce. */
     HostPopupAnchorTopLeft = 5, /**< xdg_positioner anchor top_left; the adapter sets it on every request. */
     HostPopupGravityBottomRight = 8, /**< xdg_positioner gravity bottom_right; the adapter sets it on every request. */
@@ -55,9 +55,9 @@ _Static_assert(sizeof(host_popup_request_t) == 44, "host_popup_request_t layout"
 /**
  * @brief Rectangle in the coordinate space named by the function that uses it.
  *
- * `request` input: guest physical pixels, `x`/`y` relative to the parent's top-left.
- * `request` output: logical anchor origin in `x`/`y` and logical positioner size in `width`/`height`.
- * `restore` input: compositor-adjusted logical rectangle. `restore` output: guest physical pixels.
+ * Used as the guest rectangle in `host_popup_positioner_request` and `host_popup_positioner_reposition`,
+ * and as the guest rectangle returned by `host_popup_positioner_reposition` (PopupRepositioned). Signed
+ * `x`/`y` are relative to the direct parent's top-left in guest physical pixels.
  */
 typedef struct host_popup_rect_t {
     int32_t x; /**< Signed horizontal origin. */
@@ -96,16 +96,21 @@ host_popup_status_t host_popup_positioner_integer_scale(uint32_t numerator, uint
 host_popup_status_t host_popup_positioner_request(const host_popup_rect_t *guest, uint32_t scale, uint32_t parent_width, uint32_t parent_height, host_popup_request_t *out);
 
 /**
- * @brief Guest rectangle for a compositor-adjusted logical rectangle.
+ * @brief Guest rectangle for a compositor-adjusted popup position (PopupRepositioned).
  *
- * Every field is multiplied by `scale`. Each result is range-checked for its own type.
+ * `x' = guest.x + (adjusted_x - origin_x) * scale`, and likewise for y, where the origin is
+ * `anchor + offset` from `requested`. The guest's own width and height are returned unchanged, so an
+ * unmoved popup reports exactly its requested rectangle.
  *
- * @param logical In. Compositor-adjusted logical rectangle. NULL gives `HostPopupInvalidArgument`.
+ * @param guest In. The rectangle that was requested, in guest physical pixels. NULL gives `HostPopupInvalidArgument`.
  * @param scale In. Integer host scale, 1..8. Other values give `HostPopupInvalidScale`.
+ * @param requested In. The request produced by `host_popup_positioner_request` for `guest` and `scale`. NULL gives `HostPopupInvalidArgument`.
+ * @param adjusted_x In. Compositor top-left x in the direct parent's logical coordinates.
+ * @param adjusted_y In. Compositor top-left y in the direct parent's logical coordinates.
  * @param out Out. Receives the guest rectangle on success only. NULL gives `HostPopupInvalidArgument`.
  * @return `HostPopupOk`, `HostPopupInvalidArgument`, `HostPopupInvalidScale` or `HostPopupOverflow`.
  *         Thread safety: any thread.
  */
-host_popup_status_t host_popup_positioner_restore(const host_popup_rect_t *logical, uint32_t scale, host_popup_rect_t *out);
+host_popup_status_t host_popup_positioner_reposition(const host_popup_rect_t *guest, uint32_t scale, const host_popup_request_t *requested, int32_t adjusted_x, int32_t adjusted_y, host_popup_rect_t *out);
 
 #endif

@@ -3,9 +3,9 @@
 //! `request` converts a guest popup rectangle in physical pixels into the logical positioner values
 //! for a direct parent of logical size `(pw, ph)` and integer host scale `s`. The anchor point is
 //! clamped into the parent's window geometry and the remainder becomes the positioner offset.
-//! `restore` converts a compositor-adjusted logical rectangle back into guest pixels with overflow
-//! checks. Both are pure functions over value types: no allocation, no operating-system call, no
-//! retained state.
+//! `reposition` maps the compositor-adjusted position back into guest pixels relative to the requested
+//! origin, keeping the guest's own size. Both are pure functions over value types: no allocation, no
+//! operating-system call, no retained state.
 //!
 //! The contract is `impl/seamless-interop/claude_45_percent/host_popup_positioner_contract.md`.
 const std = @import("std");
@@ -170,23 +170,29 @@ pub noinline fn request(guest: rect_t, scale: u32, parent_width: u32, parent_hei
     };
 }
 
-/// Guest pixel rectangle for a compositor-adjusted logical rectangle at integer host scale `scale`.
+/// Guest rectangle for a popup whose compositor-adjusted top-left is `(adjusted_x, adjusted_y)`.
 ///
-/// Each field is multiplied by `scale`. The results are range-checked for their own types, so no
-/// wrapped value is ever returned.
+/// The requested logical origin is `anchor + offset`. The compositor displacement from that origin is
+/// scaled back to guest pixels: `x' = x + (adjusted_x - origin_x) * scale`, and likewise for y. The
+/// guest's own width and height are returned unchanged, because the constraint mask has no resize
+/// bits. An unmoved popup therefore reports exactly its requested rectangle.
 ///
-/// @param logical Compositor-adjusted logical rectangle.
+/// @param guest The rectangle that was requested, in guest physical pixels.
 /// @param scale Integer host scale, 1..8.
-/// @return Guest physical rectangle.
+/// @param requested The request produced by `request` for `guest` and the same scale.
+/// @param adjusted_x Compositor top-left x in the direct parent's logical coordinates.
+/// @param adjusted_y Compositor top-left y in the direct parent's logical coordinates.
+/// @return Guest physical rectangle for PopupRepositioned.
 /// @error InvalidScale The scale is outside 1..8.
-/// @error Overflow A scaled `x` or `y` does not fit `i32`, or a scaled size does not fit `u32`.
-pub noinline fn restore(logical: rect_t, scale: u32) positioner_error_t!rect_t {
+/// @error Overflow `x'` or `y'` does not fit `i32`.
+pub noinline fn reposition(guest: rect_t, scale: u32, requested: popup_request_t, adjusted_x: i32, adjusted_y: i32) positioner_error_t!rect_t {
     try validate_scale(scale);
-    const x = std.math.cast(i32, @as(i64, logical.x) * @as(i64, scale)) orelse return error.Overflow;
-    const y = std.math.cast(i32, @as(i64, logical.y) * @as(i64, scale)) orelse return error.Overflow;
-    const width = std.math.cast(u32, @as(u64, logical.width) * @as(u64, scale)) orelse return error.Overflow;
-    const height = std.math.cast(u32, @as(u64, logical.height) * @as(u64, scale)) orelse return error.Overflow;
-    return .{ .x = x, .y = y, .width = width, .height = height };
+    const s: i64 = scale;
+    const origin_x = @as(i64, requested.anchor_x) + requested.offset_x;
+    const origin_y = @as(i64, requested.anchor_y) + requested.offset_y;
+    const x = std.math.cast(i32, @as(i64, guest.x) + (@as(i64, adjusted_x) - origin_x) * s) orelse return error.Overflow;
+    const y = std.math.cast(i32, @as(i64, guest.y) + (@as(i64, adjusted_y) - origin_y) * s) orelse return error.Overflow;
+    return .{ .x = x, .y = y, .width = guest.width, .height = guest.height };
 }
 
 // ---- C ABI ------------------------------------------------------------------------------------
@@ -230,16 +236,20 @@ export fn host_popup_positioner_request(guest: ?*const rect_t, scale: u32, paren
     return .Ok;
 }
 
-/// C ABI: guest rectangle for a compositor-adjusted logical rectangle. See `restore`.
+/// C ABI: guest rectangle for a compositor-adjusted popup position. See `reposition`.
 ///
-/// @param logical In. Logical rectangle. NULL gives HostPopupInvalidArgument.
+/// @param guest In. The requested guest rectangle. NULL gives HostPopupInvalidArgument.
 /// @param scale In. Integer host scale, 1..8.
+/// @param requested In. The request produced for `guest`. NULL gives HostPopupInvalidArgument.
+/// @param adjusted_x In. Compositor top-left x in the direct parent's logical coordinates.
+/// @param adjusted_y In. Compositor top-left y in the direct parent's logical coordinates.
 /// @param out Out. Receives the guest rectangle on success only. NULL gives HostPopupInvalidArgument.
 /// @return Status. Thread safety: pure; any thread.
-export fn host_popup_positioner_restore(logical: ?*const rect_t, scale: u32, out: ?*rect_t) callconv(.C) status_t {
-    const input = (logical orelse return .InvalidArgument).*;
+export fn host_popup_positioner_reposition(guest: ?*const rect_t, scale: u32, requested: ?*const popup_request_t, adjusted_x: i32, adjusted_y: i32, out: ?*rect_t) callconv(.C) status_t {
+    const input = (guest orelse return .InvalidArgument).*;
+    const request_value = (requested orelse return .InvalidArgument).*;
     const destination = out orelse return .InvalidArgument;
-    const result = restore(input, scale) catch |err| return status_of(err);
+    const result = reposition(input, scale, request_value, adjusted_x, adjusted_y) catch |err| return status_of(err);
     destination.* = result;
     return .Ok;
 }
@@ -306,8 +316,8 @@ const abi_shim_t = struct {
         return @call(.never_inline, host_popup_positioner_request, .{ guest, scale, parent_width, parent_height, out });
     }
 
-    fn restore(logical: ?*const rect_t, scale: u32, out: ?*rect_t) status_t {
-        return @call(.never_inline, host_popup_positioner_restore, .{ logical, scale, out });
+    fn reposition(guest: ?*const rect_t, scale: u32, requested: ?*const popup_request_t, adjusted_x: i32, adjusted_y: i32, out: ?*rect_t) status_t {
+        return @call(.never_inline, host_popup_positioner_reposition, .{ guest, scale, requested, adjusted_x, adjusted_y, out });
     }
 };
 
@@ -429,8 +439,9 @@ test "extreme guest values are refused as out of range without overflow" {
 test "invalid scales are refused by both directions" {
     try testing.expectError(error.InvalidScale, request(make_rect(0, 0, 1, 1), 0, 1, 1));
     try testing.expectError(error.InvalidScale, request(make_rect(0, 0, 1, 1), 9, 1, 1));
-    try testing.expectError(error.InvalidScale, restore(make_rect(0, 0, 1, 1), 0));
-    try testing.expectError(error.InvalidScale, restore(make_rect(0, 0, 1, 1), 9));
+    const requested = try request(make_rect(0, 0, 1, 1), 1, 1, 1);
+    try testing.expectError(error.InvalidScale, reposition(make_rect(0, 0, 1, 1), 0, requested, 0, 0));
+    try testing.expectError(error.InvalidScale, reposition(make_rect(0, 0, 1, 1), 9, requested, 0, 0));
 }
 
 test "request matches the independent reference for exhaustive origins and seeded sizes" {
@@ -477,29 +488,103 @@ test "request matches the independent reference for seeded two dimensional sampl
     }
 }
 
-test "restore multiplies every field at scales 1 to 8 and keeps zero at zero" {
-    var scale: u32 = 1;
-    while (scale <= MaxScale) : (scale += 1) {
-        const guest = try restore(make_rect(-5, 7, 3, 9), scale);
-        try testing.expectEqual(@as(i32, -5 * @as(i32, @intCast(scale))), guest.x);
-        try testing.expectEqual(@as(i32, 7 * @as(i32, @intCast(scale))), guest.y);
-        try testing.expectEqual(@as(u32, 3 * scale), guest.width);
-        try testing.expectEqual(@as(u32, 9 * scale), guest.height);
-    }
-    try testing.expectEqual(make_rect(0, 0, 0, 0), try restore(make_rect(0, 0, 0, 0), 8));
+/// Independent reference for `reposition`, computed in 128-bit arithmetic. Returns null on overflow.
+fn reference_reposition(guest: rect_t, scale: i64, origin_x: i64, origin_y: i64, adjusted_x: i64, adjusted_y: i64) ?rect_t {
+    const wide_x: i128 = @as(i128, guest.x) + (@as(i128, adjusted_x) - origin_x) * scale;
+    const wide_y: i128 = @as(i128, guest.y) + (@as(i128, adjusted_y) - origin_y) * scale;
+    if (wide_x < std.math.minInt(i32) or wide_x > std.math.maxInt(i32)) return null;
+    if (wide_y < std.math.minInt(i32) or wide_y > std.math.maxInt(i32)) return null;
+    return .{ .x = @intCast(wide_x), .y = @intCast(wide_y), .width = guest.width, .height = guest.height };
 }
 
-test "restore refuses x and y products outside i32 and sizes outside u32" {
-    try testing.expectEqual(@as(i32, 2147483640), (try restore(make_rect(268435455, 0, 0, 0), 8)).x);
-    try testing.expectError(error.Overflow, restore(make_rect(268435456, 0, 0, 0), 8));
-    try testing.expectError(error.Overflow, restore(make_rect(std.math.maxInt(i32), 0, 0, 0), 2));
-    try testing.expectError(error.Overflow, restore(make_rect(std.math.minInt(i32), 0, 0, 0), 2));
-    try testing.expectError(error.Overflow, restore(make_rect(0, std.math.maxInt(i32), 0, 0), 2));
-    try testing.expectError(error.Overflow, restore(make_rect(0, std.math.minInt(i32), 0, 0), 2));
-    try testing.expectEqual(@as(u32, 4294967294), (try restore(make_rect(0, 0, 2147483647, 0), 2)).width);
-    try testing.expectError(error.Overflow, restore(make_rect(0, 0, 2147483648, 0), 2));
-    try testing.expectError(error.Overflow, restore(make_rect(0, 0, 0, std.math.maxInt(u32)), 2));
-    try testing.expectError(error.Overflow, restore(make_rect(0, 0, 0, 536870912), 8));
+test "an unmoved popup reports exactly its requested rectangle at every scale and origin" {
+    var scale: u32 = 1;
+    while (scale <= MaxScale) : (scale += 1) {
+        var x: i32 = -300000;
+        while (x <= 300000) : (x += 1) {
+            const guest = make_rect(x, @divTrunc(x, 10), 3, 7);
+            // Origins beyond 32768 logical units are refused by request; they have no unmoved case.
+            const requested = request(guest, scale, 32768, 32768) catch continue;
+            const origin_x = @as(i64, requested.anchor_x) + requested.offset_x;
+            const origin_y = @as(i64, requested.anchor_y) + requested.offset_y;
+            const unmoved = try reposition(guest, scale, requested, @intCast(origin_x), @intCast(origin_y));
+            try testing.expectEqual(guest, unmoved);
+        }
+    }
+}
+
+test "a moved popup is displaced by the compositor delta scaled to guest pixels" {
+    // Parent 100 by 60 at scale 3. The guest asks for (-1000 .. ) past the far edge; the compositor
+    // slides the popup 7 logical units left of its requested origin.
+    const guest = make_rect(1000, 500, 40, 30);
+    const requested = try request(guest, 3, 100, 60);
+    const origin_x = @as(i32, requested.anchor_x) + requested.offset_x;
+    const origin_y = @as(i32, requested.anchor_y) + requested.offset_y;
+    const moved = try reposition(guest, 3, requested, origin_x - 7, origin_y + 2);
+    try testing.expectEqual(@as(i32, 1000 - 21), moved.x);
+    try testing.expectEqual(@as(i32, 500 + 6), moved.y);
+    try testing.expectEqual(@as(u32, 40), moved.width);
+    try testing.expectEqual(@as(u32, 30), moved.height);
+}
+
+test "a clamped request keeps the displacement relative to the requested origin, not the anchor" {
+    // Requested origin (1000, 500) is clamped to anchor (99, 59) with offset (901, 441) at scale 1.
+    // The compositor places the popup at parent position (50, 10): the displacement is from the origin.
+    const guest = make_rect(1000, 500, 4, 4);
+    const requested = try request(guest, 1, 100, 60);
+    const moved = try reposition(guest, 1, requested, 50, 10);
+    try testing.expectEqual(@as(i32, 50), moved.x);
+    try testing.expectEqual(@as(i32, 10), moved.y);
+}
+
+test "a nested popup is repositioned in its direct parent's coordinates" {
+    // Menu 300 by 200 at scale 2; the tooltip is requested at guest (40, 450) and clamped to y = 199.
+    const guest = make_rect(40, 450, 40, 40);
+    const requested = try request(guest, 2, 300, 200);
+    // The compositor moves it to menu-logical (-3, 225): x shifts by -23 * 2, y stays unmoved.
+    const moved = try reposition(guest, 2, requested, -3, 225);
+    try testing.expectEqual(@as(i32, 40 - 46), moved.x);
+    try testing.expectEqual(@as(i32, 450), moved.y);
+    try testing.expectEqual(@as(u32, 40), moved.width);
+}
+
+test "reposition overflows are refused and never wrap" {
+    const guest = make_rect(std.math.maxInt(i32) - 1, 0, 1, 1);
+    const requested = try request(make_rect(0, 0, 1, 1), 1, 100, 100);
+    try testing.expectError(error.Overflow, reposition(guest, 1, requested, 10, 0));
+    try testing.expectError(error.Overflow, reposition(make_rect(0, std.math.minInt(i32), 1, 1), 1, requested, 0, -100));
+    const big = make_rect(0, 0, 1, 1);
+    try testing.expectError(error.Overflow, reposition(big, 8, requested, std.math.maxInt(i32), 0));
+    // A displacement that fits exactly is accepted.
+    try testing.expectEqual(@as(i32, 2147483640), (try reposition(big, 8, requested, 268435455, 0)).x);
+}
+
+test "reposition matches the independent 128-bit reference for exhaustive origins and seeded displacements" {
+    var prng = std.rand.DefaultPrng.init(0xBEEF);
+    const random = prng.random();
+    const deltas = [_]i64{ 0, 1, -1, 3, -3, 40, -40, 1000, -1000, 40000, -40000, std.math.maxInt(i32), std.math.minInt(i32) };
+    var scale: u32 = 1;
+    while (scale <= MaxScale) : (scale += 1) {
+        var x: i32 = -300000;
+        while (x <= 300000) : (x += 1) {
+            const guest = make_rect(x, 300000 - x, 1 + random.uintLessThan(u32, 500), 1 + random.uintLessThan(u32, 500));
+            const requested = request(guest, scale, 1 + random.uintLessThan(u32, 32768), 1 + random.uintLessThan(u32, 32768)) catch continue;
+            const origin_x = @as(i64, requested.anchor_x) + requested.offset_x;
+            const origin_y = @as(i64, requested.anchor_y) + requested.offset_y;
+            const delta = deltas[random.uintLessThan(usize, deltas.len)];
+            const adjusted_x = origin_x + delta;
+            const adjusted_y = origin_y - delta;
+            if (adjusted_x < std.math.minInt(i32) or adjusted_x > std.math.maxInt(i32)) continue;
+            if (adjusted_y < std.math.minInt(i32) or adjusted_y > std.math.maxInt(i32)) continue;
+            const ax: i32 = @intCast(adjusted_x);
+            const ay: i32 = @intCast(adjusted_y);
+            if (reference_reposition(guest, scale, origin_x, origin_y, adjusted_x, adjusted_y)) |want| {
+                try testing.expectEqual(want, try reposition(guest, scale, requested, ax, ay));
+            } else {
+                try testing.expectError(error.Overflow, reposition(guest, scale, requested, ax, ay));
+            }
+        }
+    }
 }
 
 test "C ABI maps every error to its status and writes output only on success" {
@@ -526,15 +611,18 @@ test "C ABI maps every error to its status and writes output only on success" {
     try testing.expectEqual(@as(i32, -1), result.offset_x);
     try testing.expectEqual(@as(i32, 2), result.anchor_y);
 
-    var logical = make_rect(0, 0, 1, 1);
     var guest_out = make_rect(7, 7, 7, 7);
-    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.restore(null, 1, &guest_out));
-    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.restore(&logical, 1, null));
-    try testing.expectEqual(status_t.InvalidScale, abi_shim_t.restore(&logical, 0, &guest_out));
-    logical = make_rect(268435456, 0, 1, 1);
-    try testing.expectEqual(status_t.Overflow, abi_shim_t.restore(&logical, 8, &guest_out));
+    const requested = result;
+    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.reposition(null, 1, &requested, 0, 0, &guest_out));
+    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.reposition(&guest, 1, null, 0, 0, &guest_out));
+    try testing.expectEqual(status_t.InvalidArgument, abi_shim_t.reposition(&guest, 1, &requested, 0, 0, null));
+    try testing.expectEqual(status_t.InvalidScale, abi_shim_t.reposition(&guest, 0, &requested, 0, 0, &guest_out));
     try testing.expectEqual(make_rect(7, 7, 7, 7), guest_out);
-    logical = make_rect(-3, 4, 5, 6);
-    try testing.expectEqual(status_t.Ok, abi_shim_t.restore(&logical, 2, &guest_out));
-    try testing.expectEqual(make_rect(-6, 8, 10, 12), guest_out);
+    const big_request = popup_request_t{ .anchor_x = 0, .anchor_y = 0, .anchor_width = 1, .anchor_height = 1, .offset_x = 0, .offset_y = 0, .width = 1, .height = 1, .anchor = AnchorTopLeft, .gravity = GravityBottomRight, .constraint_adjustment = ConstraintSlideFlip };
+    const far = make_rect(std.math.maxInt(i32), 0, 1, 1);
+    try testing.expectEqual(status_t.Overflow, abi_shim_t.reposition(&far, 2, &big_request, 1, 0, &guest_out));
+    try testing.expectEqual(make_rect(7, 7, 7, 7), guest_out);
+    // Scale 8 request for (-8, 16); the compositor places it at (0, 0): x' = -8 + (0 + 1) * 8 = 0, y' = 16 + (0 - 2) * 8 = 0.
+    try testing.expectEqual(status_t.Ok, abi_shim_t.reposition(&guest, 8, &requested, 0, 0, &guest_out));
+    try testing.expectEqual(make_rect(0, 0, 9, 17), guest_out);
 }
