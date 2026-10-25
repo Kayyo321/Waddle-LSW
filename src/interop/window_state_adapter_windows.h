@@ -63,7 +63,10 @@ typedef enum window_state_adapter_status_t {
     WindowStateAdapterAlreadyFullscreen = 13,
     /** @brief LeaveFullscreen without a saved fullscreen state. Nothing is invented. */
     WindowStateAdapterNoSavedState = 14,
-    /** @brief destroy or release while a saved fullscreen state exists. */
+    /**
+     * @brief destroy while any admitted entry remains, or release while that entry holds a saved
+     *        fullscreen state. The refused call changes nothing; the owner releases the entries and retries.
+     */
     WindowStateAdapterBusy = 15
 } window_state_adapter_status_t;
 
@@ -179,9 +182,13 @@ window_state_adapter_status_t window_state_adapter_create(const window_state_nat
 /**
  * @brief Free an adapter and set the caller's slot to NULL.
  *
+ * Destroy is refused while any admitted entry remains, fullscreen or not. A refusal frees nothing and
+ * leaves the adapter valid, so the owner can release each entry and call destroy again. Destroy makes
+ * no native call.
+ *
  * @param[in,out] adapter_slot Non-NULL slot holding an adapter. A NULL *adapter_slot is a successful no-op.
- * @return Ok; Busy when any entry has a saved fullscreen state (nothing is freed); InvalidArgument when
- *         the slot is NULL; WrongThread or Reentrant under the threading rules.
+ * @return Ok; Busy when any entry is still admitted (nothing is freed, *adapter_slot is unchanged);
+ *         InvalidArgument when the slot is NULL; WrongThread or Reentrant under the threading rules.
  */
 window_state_adapter_status_t window_state_adapter_destroy(window_state_adapter_t **adapter_slot);
 
@@ -204,8 +211,9 @@ window_state_adapter_status_t window_state_adapter_admit(window_state_adapter_t 
  * @param[in,out] adapter Non-NULL owner-thread adapter.
  * @param[in] window_id Admitted identity.
  * @param[in] generation Admitted identity.
- * @return Ok, NotAdmitted, Busy (the entry has a saved fullscreen state), InvalidArgument, WrongThread,
- *         or Reentrant.
+ * @return Ok, NotAdmitted, Busy (the entry has a saved fullscreen state, so it stays admitted and
+ *         recorded), InvalidArgument, WrongThread, or Reentrant. A Busy release can be retried after the
+ *         owner leaves fullscreen; a retry after a failed leave repeats the same answer.
  */
 window_state_adapter_status_t window_state_adapter_release(window_state_adapter_t *adapter, uint64_t window_id,
                                                            uint32_t generation);

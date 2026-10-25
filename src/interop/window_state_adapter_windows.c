@@ -152,10 +152,10 @@ static void drop_entry(window_state_adapter_entry_t *entry) {
     memset(entry, 0, sizeof(*entry));
 }
 
-/** @brief True when any entry holds a saved fullscreen state. */
-static int any_fullscreen(const window_state_adapter_t *adapter) {
+/** @brief True when any entry is admitted, whether or not it holds a saved fullscreen state. */
+static int any_admitted(const window_state_adapter_t *adapter) {
     for (uint32_t index = 0; index < WaddleWindowStateAdapterMaxWindows; ++index) {
-        if (adapter->entries[index].in_use != 0 && adapter->entries[index].fullscreen != 0) return 1;
+        if (adapter->entries[index].in_use != 0) return 1;
     }
     return 0;
 }
@@ -422,7 +422,7 @@ window_state_adapter_status_t window_state_adapter_destroy(window_state_adapter_
     if (adapter == NULL) return WindowStateAdapterOk;
     if (adapter->api.current_thread_id(adapter->context) != adapter->owner_thread) return WindowStateAdapterWrongThread;
     if (adapter->busy != 0) return WindowStateAdapterReentrant;
-    if (any_fullscreen(adapter)) return WindowStateAdapterBusy;
+    if (any_admitted(adapter)) return WindowStateAdapterBusy;
     free(adapter);
     *adapter_slot = NULL;
     return WindowStateAdapterOk;

@@ -60,8 +60,8 @@ static int fixture_open(fixture_t *f) {
 }
 
 /**
- * @brief Tears a fixture down. A window left fullscreen is first returned through LeaveFullscreen with
- *        faults disabled, because destroy refuses to free an adapter that still holds saved state.
+ * @brief Tears a fixture down. Destroy refuses while any record is admitted, so a fixture that still holds
+ *        its main record first leaves fullscreen (with faults disabled, if it is fullscreen) and releases it.
  */
 static void fixture_close(fixture_t *f) {
     waddle_window_state_action_t leave = action_of(WaddleWindowStateActionGuestLeaveFullscreen);
@@ -70,6 +70,7 @@ static void fixture_close(fixture_t *f) {
     if (window_state_adapter_destroy(&f->a) == WindowStateAdapterBusy) {
         wsa_double_disarm(&f->d);
         (void)window_state_adapter_execute(f->a, f->window, IdMain, GenMain, &leave, 1, &completed);
+        (void)window_state_adapter_release(f->a, IdMain, GenMain);
         (void)window_state_adapter_destroy(&f->a);
     }
 }
@@ -189,6 +190,59 @@ static int test_destroy_is_busy_while_fullscreen(void) {
     return 0;
 }
 
+/** @brief Destroy refuses while any record is admitted, even one that is not fullscreen; nothing is freed. */
+static int test_destroy_refuses_while_any_record_is_live(void) {
+    fixture_t f;
+    uint32_t bits = 0;
+
+    Check(fixture_open(&f) == 0);
+    Check(window_state_adapter_destroy(&f.a) == WindowStateAdapterBusy);
+    Check(f.a != NULL);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterOk);
+    Check(window_state_adapter_destroy(&f.a) == WindowStateAdapterOk);
+    Check(f.a == NULL);
+    return 0;
+}
+
+/**
+ * @brief A release refused as Busy stays recorded, and the failed LeaveFullscreen that gates it is retryable.
+ *
+ * The adapter's release makes no native call. The native failure on this path is the LeaveFullscreen that
+ * the owner runs before a release that answers Busy. Each refusal keeps the record, and the retry succeeds.
+ */
+static int test_release_busy_is_sticky_and_retryable(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t enter = action_of(WaddleWindowStateActionGuestEnterFullscreen);
+    waddle_window_state_action_t leave = action_of(WaddleWindowStateActionGuestLeaveFullscreen);
+    uint32_t bits = 0;
+
+    Check(fixture_open(&f) == 0);
+    Check(run(&f, &enter, 1, &completed) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterBusy);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterBusy);
+
+    /* The leave fails once: the record stays, so the release is still Busy and the observation is unchanged. */
+    wsa_double_arm(&f.d, WsaDoubleSetWindowPos, 1, 0);
+    Check(run(&f, &leave, 1, &completed) == WindowStateAdapterNativeFailure);
+    Check(completed == 0);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterBusy);
+    Check(window_state_adapter_destroy(&f.a) == WindowStateAdapterBusy);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
+    Check((bits & WaddleWindowStateFullscreen) != 0);
+    wsa_double_disarm(&f.d);
+
+    /* The retry succeeds, then the release, and nothing is left behind. */
+    Check(run(&f, &leave, 1, &completed) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterNotAdmitted);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterNotAdmitted);
+    Check(window_state_adapter_destroy(&f.a) == WindowStateAdapterOk);
+    Check(f.a == NULL);
+    return 0;
+}
+
 /* ---- Admission ---------------------------------------------------------------------------------- */
 
 static int test_admission_rules(void) {
@@ -238,6 +292,11 @@ static int test_capacity_is_bounded_at_sixty_four(void) {
     Check(window_state_adapter_admit(f.a, 0x20000, 999, GenMain) == WindowStateAdapterCapacityExhausted);
     Check(window_state_adapter_release(f.a, 101, GenMain) == WindowStateAdapterOk);
     Check(window_state_adapter_admit(f.a, 0x20000, 999, GenMain) == WindowStateAdapterOk);
+    /* Destroy refuses while any record is live, so every extra record is released before the close. */
+    for (uint32_t index = 2; index < WaddleWindowStateAdapterMaxWindows; ++index) {
+        Check(window_state_adapter_release(f.a, 100u + index, GenMain) == WindowStateAdapterOk);
+    }
+    Check(window_state_adapter_release(f.a, 999, GenMain) == WindowStateAdapterOk);
     fixture_close(&f);
     return 0;
 }
@@ -922,6 +981,8 @@ static int test_reentry_is_refused(void) {
     Check(adapter != NULL);
     Check(window_state_adapter_observe(adapter, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
     Check((bits & WaddleWindowStateMinimized) != 0);
+    Check(window_state_adapter_destroy(&adapter) == WindowStateAdapterBusy);
+    Check(window_state_adapter_release(adapter, IdMain, GenMain) == WindowStateAdapterOk);
     Check(window_state_adapter_destroy(&adapter) == WindowStateAdapterOk);
     return 0;
 }
@@ -1212,6 +1273,8 @@ int main(void) {
     int failures = 0;
     failures += run_test("create, destroy and NULL members", test_create_and_destroy_contract);
     failures += run_test("destroy and release are busy while fullscreen", test_destroy_is_busy_while_fullscreen);
+    failures += run_test("destroy refuses while any record is live", test_destroy_refuses_while_any_record_is_live);
+    failures += run_test("release busy is sticky and retryable", test_release_busy_is_sticky_and_retryable);
     failures += run_test("admission rules", test_admission_rules);
     failures += run_test("capacity is bounded at sixty-four", test_capacity_is_bounded_at_sixty_four);
     failures += run_test("minimize, restore and maximize sequences", test_minimize_restore_maximize_sequences);

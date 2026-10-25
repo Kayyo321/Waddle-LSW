@@ -238,6 +238,7 @@ int main(void) {
         DestroyWindow(window);
     }
 
+    step("release the second window", window_state_adapter_release(adapter, 1, 1) == WindowStateAdapterOk);
     step("destroy adapter", window_state_adapter_destroy(&adapter) == WindowStateAdapterOk && adapter == NULL);
     if (failures != 0) {
         printf("window_state_adapter_native: %d step(s) failed\n", failures);

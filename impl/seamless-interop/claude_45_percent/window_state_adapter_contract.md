@@ -109,6 +109,12 @@ header; `HWND` values travel as `uintptr_t`.
 - `release(window_id, generation)` removes an admitted entry. It returns `Busy`
   when the entry has a saved fullscreen state, so the owner must leave fullscreen
   first. Release makes no native call.
+- A refused release is sticky. A `Busy` release keeps the entry, its HWND binding and
+  its saved state, so the same pair is still admitted: `admit` answers
+  `AlreadyAdmitted` and `observe` reports Fullscreen. The owner retries after
+  LeaveFullscreen succeeds. A failed LeaveFullscreen keeps the record (section 4,
+  item 5), so the retry is `Busy` again until that leave succeeds. A failed release
+  never removes an entry.
 
 Saved fullscreen state per entry: `saved_style` (the `GWL_STYLE` value), `saved_rect`
 (`GetWindowRect`), and `saved_placement` (`GetWindowPlacement`). The presence of
@@ -227,8 +233,11 @@ reducer as a GuestObservation plan.
   contains the 64-entry table inline) with `malloc`. Create returns `OutOfMemory`
   when allocation fails and writes nothing to the output.
 - `window_state_adapter_destroy` frees that object and sets the caller's slot to
-  NULL. It returns `Busy` and frees nothing when any entry has a saved fullscreen
-  state. It makes no native call.
+  NULL. It returns `Busy`, frees nothing, and leaves the slot unchanged when any entry
+  is still admitted, fullscreen or not. The adapter stays valid, so the owner releases
+  each entry (fullscreen entries first through LeaveFullscreen) and calls destroy again.
+  It makes no native call. A caller that frees its own memory after a Busy destroy
+  leaks the adapter; the owner must retry, not drop the adapter.
 - No other allocation exists. No function retains a caller pointer after it
   returns. The adapter does not allocate for actions, observations or
   placements; all of them are fixed-size locals or table entries.
