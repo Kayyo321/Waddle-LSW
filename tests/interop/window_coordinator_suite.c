@@ -196,6 +196,9 @@ typedef struct capture_t {
     uint32_t stopped;
     uint32_t frames_written;
     uint32_t next_failure;     /* 0 none; 1 entered failure; 2 unentered failure on the next write */
+    uint32_t resized;          /* resize notifications received */
+    uint32_t last_width;
+    uint32_t last_height;
     uint32_t start_failure;    /* nonzero: the next start is refused */
     uint32_t last_offset_ok;   /* data_offset + data_bytes was inside the declared mapping */
     uint64_t mapping_bytes;
@@ -252,7 +255,16 @@ static int capture_write(void *context, uint64_t window, uint32_t generation, ui
     return 0;
 }
 
-static const window_capture_ops_t CaptureOpsTable = {NULL, capture_start, capture_stop, capture_write};
+static void capture_resize(void *context, uint64_t window, uint32_t generation, uint32_t width, uint32_t height) {
+    capture_t *capture = (capture_t *)context;
+    (void)window;
+    (void)generation;
+    capture->resized += 1u;
+    capture->last_width = width;
+    capture->last_height = height;
+}
+
+static const window_capture_ops_t CaptureOpsTable = {NULL, capture_start, capture_stop, capture_write, capture_resize};
 
 /* ---- Fixture ------------------------------------------------------------------------------------ */
 
@@ -1672,6 +1684,32 @@ static int test_review_p5_heap_pressure_announces_without_frames(void) {
     return 0;
 }
 
+/** @brief P3: a resize after announce reaches the slot runtime and the capture source; later frames use the new size. */
+static int test_review_p3_resize_reaches_slots_and_capture(void) {
+    fixture_t *fp = &GlobalFixture;
+    uint32_t pass;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    add_window(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    api_double_find(fp->observer, 0x1000)->facts.width = 1600u;
+    api_double_find(fp->observer, 0x1000)->facts.height = 1200u;
+    api_double_hint(fp->observer, 0x800Bu, 0x1000);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(fp->capture.resized == 1u);
+    Check(fp->capture.last_width == 1600u && fp->capture.last_height == 1200u);
+    /* The host releases the old frames; the next publications go into the new geometry. */
+    for (pass = 0; pass < 4u; ++pass) {
+        release_window_frames(fp, 0x1000);
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(fp->capture.last_width == 1600u);
+    retire_one_window(fp, 0x1000);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2117,6 +2155,7 @@ int main(void) {
         {"review P1: stale reply under full outbound is dropped", test_review_p1_stale_reply_under_full_outbound_drops},
         {"review: retire waits for FIFO room", test_review_retire_waits_for_fifo_room},
         {"review P5: heap pressure announces without frames", test_review_p5_heap_pressure_announces_without_frames},
+        {"review P3: resize reaches slots and capture", test_review_p3_resize_reaches_slots_and_capture},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},

@@ -131,6 +131,11 @@ typedef struct window_capture_ops_t {
      */
     int (*write_frame)(void *context, uint64_t window, uint32_t generation, uint8_t slot, uint64_t sequence,
                        const waddle_slot_view_t *view);
+    /**
+     * @brief Optional. Told after the slot runtime accepted a new geometry for a capturing generation, so the
+     *        capture source can change its size. NULL means the source is not resized.
+     */
+    void (*resize)(void *context, uint64_t window, uint32_t generation, uint32_t width, uint32_t height);
 } window_capture_ops_t;
 
 /** @brief Configuration. Copied by value; the pointers inside are borrowed and must outlive the coordinator. */

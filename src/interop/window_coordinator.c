@@ -64,6 +64,7 @@ typedef struct coord_entry_t {
     uint32_t capture_started;
     /** @brief Last frame sequence consumed for this generation (0 before the first). */
     uint32_t retire_sent; /**< 1 once WindowRetire was queued for this generation (IMPL 5.3: only after the drain). */
+    uint32_t geometry_pending; /**< 1 while the slot runtime has not yet accepted the current size (growth in progress). */
     uint32_t slots_pending; /**< 1 while the window is announced without slots (heap exhausted); retried each pass (IMPL 3.3). */
     uint64_t last_sequence;
     /** @brief Per slot: the published sequence still pinned by the host, or 0. */
@@ -553,6 +554,22 @@ static int handle_announce(window_coordinator_t *coordinator, const interop_wind
 }
 
 /**
+ * @brief Asks the slot runtime for the entry's current size and tells the capture source when it accepted it.
+ *        A busy or heap-limited runtime leaves geometry_pending set; the next pass asks again (IMPL 4.5).
+ */
+static int request_entry_geometry(window_coordinator_t *coordinator, coord_entry_t *entry) {
+    waddle_slot_status_t status = waddle_slot_runtime_request_geometry(coordinator->slots, coordinator->epoch, entry->window,
+                                                                       entry->generation, entry->width, entry->height);
+    if (status != WaddleSlotOk) return 1;
+    entry->geometry_pending = 0u;
+    if (entry->capture_started != 0u && coordinator->config.capture->resize != NULL) {
+        coordinator->config.capture->resize(coordinator->config.capture->context, entry->window, (uint32_t)entry->generation,
+                                            entry->width, entry->height);
+    }
+    return 0;
+}
+
+/**
  * @brief Retries slot admission for announced windows that waited for heap space (IMPL 3.3). A success starts the
  *        capture; a further heap refusal leaves the window pending. Nothing here faults the coordinator.
  */
@@ -562,7 +579,12 @@ static void retry_pending_slots(window_coordinator_t *coordinator) {
         coord_entry_t *entry = &coordinator->entries[index];
         waddle_slot_view_t views[CoordSlotsPerWindow];
         waddle_slot_status_t slot_status;
-        if (entry->in_use == 0u || entry->slots_pending == 0u || entry->kind != CoordEntryAnnounced) continue;
+        if (entry->in_use == 0u || entry->kind != CoordEntryAnnounced) continue;
+        if (entry->slots_pending == 0u && entry->geometry_pending != 0u) {
+            (void)request_entry_geometry(coordinator, entry);
+            continue;
+        }
+        if (entry->slots_pending == 0u) continue;
         slot_status = waddle_slot_runtime_admit_window(coordinator->slots, coordinator->epoch, entry->window, entry->generation,
                                                        entry->width, entry->height, views);
         if (slot_status != WaddleSlotOk) continue;
@@ -588,6 +610,10 @@ static int handle_update(window_coordinator_t *coordinator, const interop_window
         return CoordEventHold;
     }
     title_changed = (event->changed_mask & InteropWindowChangeTitle) != 0u ? 1u : 0u;
+    if (event->width != entry->width || event->height != entry->height) {
+        /* Resize: the slot runtime stages a replacement (IMPL 4.5). The old run stays until the host released it. */
+        entry->geometry_pending = 1u;
+    }
     entry->x = event->x;
     entry->y = event->y;
     entry->width = event->width;
@@ -606,6 +632,9 @@ static int handle_update(window_coordinator_t *coordinator, const interop_window
     }
     coordinator->stats.updates = saturate_add(coordinator->stats.updates);
     resync_reducer(coordinator, entry);
+    if (entry->geometry_pending != 0u && entry->slots_pending == 0u) {
+        (void)request_entry_geometry(coordinator, entry);
+    }
     return CoordEventDone;
 }
 
