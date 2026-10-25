@@ -1,0 +1,23 @@
+{
+  "commit": "eb01019d6730af805651d363d9dd9643905a0181",
+  "workflow": 40224183558,
+  "windows_job": 121262210150,
+  "functional": "success; all native icon cases including real four-bitmap repeated4/3/1 failed closes and exact retained identity checks",
+  "line": {
+    "covered": 567,
+    "total": 578
+  },
+  "taken_arcs": {
+    "covered": 446,
+    "total": 493
+  },
+  "source_sha256": "efded78f7e0b7b6f03b261f0c3379af384d5518d674516df2179afba2dc8cb99",
+  "root_shared_owner_sanitizers": {
+    "command": "make interop-icon-ownership-test",
+    "exit_code": 0,
+    "asan": true,
+    "lsan_detect_leaks": 1,
+    "ubsan": true
+  },
+  "boundary": "Restores native extraction15% only. Native GDI tests/gcov and Linux shared-owner sanitizers are separate evidence. Catalog taken-arc gate still fails; runtime/integrated native qualification remains open. Prior24cc612 results are historical and superseded."
+}

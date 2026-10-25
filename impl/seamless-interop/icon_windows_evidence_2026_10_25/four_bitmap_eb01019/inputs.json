@@ -1,0 +1,24 @@
+{
+  "commit": "eb01019d6730af805651d363d9dd9643905a0181",
+  "sha256": {
+    "src/interop/icon_windows.c": "efded78f7e0b7b6f03b261f0c3379af384d5518d674516df2179afba2dc8cb99",
+    "src/interop/icon_windows.h": "2b16729de1cb139500f679809e5253b5c0de5052f2b2924cb5866c10f5f19b0c",
+    "src/interop/png_writer.c": "3b11a36f4df6fe80c7591e7f979d25618678b6fc88486743e9317c1834445c02",
+    "src/interop/png_writer.h": "f989ff9b2fc5eb36dbaedcf5c343eb321e63ff1a5810be89a0325982e7167f1d",
+    "tests/interop/icon_windows.c": "a96cb9b9fa8559f86d542aa517f9745b7ac1e1009e643e91b8f79a5cc0c2ac58",
+    "tests/interop/icon_windows_faults.inc": "535b28564b34722c1d6f781b05fad04e043e7f2e10f824ef9cb4804d91db1bc9",
+    "build/native_components/icon_fixture.gcno": "2323e47ce40d4d9f0852f5ac99c1f08005c2a9b604803667cbce960ec348e3b9",
+    "build/native_components/icon_windows_profile.exe": "ac72cff5996aea7d223eb84657a3d323c4503fb04ac6608cbb2a503582de114e",
+    "src/interop/app_catalog.c": "1086a1d0a3b6ead03977bc56b23c37576df0948a7d58a272fe689ffc48a22f8f",
+    "src/interop/app_catalog.h": "ea0a4b6480fd5d7962fad10152dd55e7d3535945f4e7245c01362ecd0e5d092d",
+    "src/interop/app_catalog_windows.c": "8747e10768aea54e5fd02f1e38287ba9ddc077357d9e1c08d957263a0e287cc7",
+    "src/interop/app_catalog_windows_private.h": "f1aeed31bf6d641dc7eba6ddbe09bddf8cfe90c9d4f6dede7508bfc3fc011cac",
+    "src/interop/app_catalog_validation.zig": "e5f73399cdb087dd4db29a7050eb099f5addcaf88c96940ee1b0a73cc5d1f819",
+    "src/interop/app_catalog_validation.h": "8eb7fb8182e559f2529b5bc02ca2e64806b453d4af25421243261fb852a6bcb1",
+    "tests/interop/app_catalog_windows.c": "735c13fa622c182947c7942b8ae7541532ae99c900c710cf98fbe01cb7a81d69",
+    "tests/interop/app_catalog_windows_faults.c": "8122442571963a4442b52db774d684b00cf069ac8833fa89b85268fbabec6ea0",
+    "build/native_components/catalog_adapter.gcno": "09623c9db3c4a70d657ab42294730aac266b32a2e9fc123449ac0ed524aa86c6",
+    "build/native_components/app_catalog_windows_profile.exe": "0aaa4624fecbac301fc9a4a11487d3c76438a7525fb0a04ea3517a2560700332"
+  },
+  "compiler": "x86_64-w64-mingw32-gcc (GCC) 14-win32"
+}

@@ -54,7 +54,7 @@ acceptance remain pending.
 | #24 | USB redirection (CLI, daemon QMP, polkit ACL grant) for webcams, wired gamepads, other USB | Pending | 3% | 0% | Waits on #8 |
 | #25 | Bluetooth/evdev gamepads via virtual XInput | Pending | 2% | 0% | User selected ViGEmBus inclusion 2026-10-23; source/installer pins, implementation and native acceptance pending; IMPL_DESC §3.18 |
 | #26 | Printing via IPP guestfwd to host CUPS | Pending | 2% | 0% | Waits on #8 |
-| #27 | Guest app catalog, icon extraction (PNG), change notifications | In Progress | 4% | 30% | PNG encoder10% and bounded snapshot/diff20% accepted. Native icon15% withdrawn pending requalification of root-found four-handle cleanup compaction bug. Enumeration/watches/runtime remain open |
+| #27 | Guest app catalog, icon extraction (PNG), change notifications | In Progress | 4% | 45% | PNG encoder10%, bounded snapshot/diff20% and fixed native icon extraction15% accepted. Exacteb01019 real Windows98.10%lines/90.47%arcs, four-handle retry and root shared-owner sanitizers pass. Enumeration/watches/runtime remain open |
 | #28 | Host desktop-entry/icon/menu materialization, app_id matching, toplevel icon, desktop-shortcut mirroring | Pending | 4% | 0% | Waits on #27 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
 | #29 | `waddle open` launch path, activation tokens, cold-boot feedback, File Explorer seed | Pending | 3% | 0% | Waits on #7, #27 |
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 40% | Schema15%, absent-add journal/recovery15% and rooted absent artifact API10% accepted. Replacement/backup/restore, commands/producers and full-removal qualification remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `26.40%`
+**Total Feature Completion**: `27.00%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -80,7 +80,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; portable observer15%; native adapter15%. O5 preservation qualified by89ff058 local coverage/sanitizers and exact Windows native smoke/failure guards at d77dcb3, CI40144415938; installed-session15% accepted by the hash-bound fresh Windows guest run; coordinator20% remains open |
 | #13 | Portable generation-safe ordered reducer50%; native adapters25%; wire/compositor15%; integrated native10% | Portable50% accepted: exact generation/revision, partial-failure reconciliation, close veto/retry and one-shot Wayland minimize semantics. Root170tests,100%lines/93.90%arcs; native integration remains open |
 | #15 | Typed full translation10%; native injection15%; host repeat20%(pure timing10%,live composition10%); lock sync15%; layout sync20%; shortcut inhibit10%; integrated/native qualification10% | Typed translation10% and portable repeat timing10% accepted; root repeat five tests/2000lifecycles/3000runtime events,95.24%lines/100%arcs. Live repeat10%, typed injection and other milestones remain open |
-| #27 | Source snapshot/diff20%; native enumeration20%; watch/enrichment15%; PNG encoder10%; native icon extraction15%; wire/integration10%; integrated/native qualification10% | PNG encoder10% and source snapshot/diff20% accepted. Native icon15% withdrawn after root found four-handle retry compaction loses identities; fix awaits exact native rerun. Prior24cc612 evidence remains historical, not current qualification. Catalog/watches/runtime and integrated qualification remain open |
+| #27 | Source snapshot/diff20%; native enumeration20%; watch/enrichment15%; PNG encoder10%; native icon extraction15%; wire/integration10%; integrated/native qualification10% | PNG encoder10%, source snapshot/diff20% and fixed native icon extraction15% accepted. Exacteb01019 real Windows98.10%lines/90.47%arcs, repeated4/3/1close failures retain exact GDI identities; root shared C allocator ASan/LSan/UBSan pass. Prior24cc612 evidence is superseded. Catalog/watches/runtime/integrated qualification remain open |
 | #31 | Bounded classifier20%; preserving MIME editor20%; journaled handler artifacts20%; configuration/route integration20%; integrated/native qualification20% | Classifier20% and preserving MIME editor20% accepted; editor six tests,2000 prefixes, all publication-shape OOM tests,100%lines/93.28%arcs. Artifact/config/route/native integration remain open |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec15%; absent-add journal15%/30% and rooted absent API10%/20%, root-reviewed43 tests,90.03% taken arcs/99.77% lines. Replacement journal15% and replacement/backup API10% remain open |
 
@@ -1646,7 +1646,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     review fixed partial event acquisition cleanup and truncation fixture intent.
     Strict profile SDK compile/link passes; native rerun pending.
 
-- **Commit `HEAD`**: `fix(interop): preserve all four retained bitmap identities across retries`
+- **Commit `eb01019`**: `fix(interop): preserve all four retained bitmap identities across retries`
   - **Task Impact**: -15% to TODO #27 (-0.60% overall; total26.40%) pending requalification.
   - **Summary**: Root review found cleanup accepts four bitmaps but recomputed
     its compacted count using a two-entry bound. Keep the exact compacted count
@@ -1654,3 +1654,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     bitmaps and repeated4/3/1failed closes, verifies live identities and eventual
     real disposal. Strict SDK build/link passes; withdraw prior icon15% until
     exact fixed source passes real Windows functionality and90%coverage again.
+
+- **Commit `HEAD`**: `test(interop): requalify four-bitmap cleanup and restore icon milestone`
+  - **Task Impact**: +15% to TODO #27 (+0.60% overall; total27.00%).
+  - **Summary**: Exacteb01019 Windows job121262210150 passes all icon fixtures
+    including four genuine bitmaps with repeated4/3/1failed closes, exact live
+    identities and eventual real disposal. Entire fixed source98.10%lines/
+    90.47%taken arcs; root shared-owner leak-enabled sanitizer gate also passes.
+    Preserve immutable matching inputs/gcno/gcda/report/native and sanitizer
+    logs. Restore only the withdrawn native extraction15%; separate catalog
+    workflow coverage and runtime/integrated qualification remain open.

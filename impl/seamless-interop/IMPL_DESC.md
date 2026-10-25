@@ -3831,3 +3831,15 @@ run with ASan/LSan(detect_leaks1)/UBSan on Linux; these results do not claim
 Windows GDI sanitizer execution. Native extraction earns the defined15%of#27;
 catalog enumeration, notifications, runtime composition and integrated native
 qualification remain separate unaccepted milestones.
+
+### Four-bitmap cleanup correction and requalification — 2026-10-25
+
+The24cc612 icon qualification is superseded by eb01019. Root review found
+four accepted bitmap handles were compacted into a count capped at two.
+The fixed owner retains the exact compacted count, clears all four trailing
+slots, and is qualified by real Windows repeated4/3/1failed-close cycles with
+exact live identities and eventual disposal. Job121262210150 passes all native
+fixtures; entire fixed source98.10%lines/90.47%taken arcs. Shared-owner Linux
+ASan/LSan/UBSan is independently rerun. Exact evidence is in
+icon_windows_evidence_2026_10_25/four_bitmap_eb01019; the temporarily withdrawn
+15%native extraction allocation is restored, with other #27 scopes still open.
