@@ -3987,3 +3987,46 @@ for up to 120 s whether `session.lock` is free (no session yet; spawn one) or
 held by a session that has not yet bound its socket (session starting); only
 the deadline ends the wait. This reconciles Sections 3.9.1 and 4.2: a held lock
 with a missing socket means "starting" for `open` and "unconfirmed" for `stop`.
+
+### 8.45 Outbound feature admission decisions (2026-10-25)
+
+These decisions close the open items in `resume_proposals/peer_message_policy.md`
+after the independent review of the outbound feature admission path. They do not
+change the frozen wire format.
+
+**Capability map.** `Window*`, `FrameReady/Release`, `WindowIconChanged` and
+`Popup*` need `Windows`. `Input*` base messages, `CaretRect`, `LeaseRevoked`,
+`LeaseReady`, `LeaseAck`, `InputLockState` and `InputRepeatInfo` need `Input`;
+`InputPointerRelative` needs `Input`+`RelativePointer`; `InputTouch`,
+`InputTouchFrame`, `InputTouchCancel` need `Input`+`Touch`; tablet messages need
+`Input`+`Tablet`; `InputGesturePinch` needs `Input`+`Gestures`; `InputTextCommit`
+and `InputTextPreedit` need `Input`+`TextInput`. `KeyboardLayout` needs only
+`KeyboardLayout` (its own facility). `CursorShape` needs `Cursor`;
+`CursorConstraint` needs `Cursor`, plus `RelativePointer` only when `pressed` is
+true. Clipboard messages need `Clipboard`; Dnd messages need `DragDrop`
+(independent of `Clipboard`); catalog messages and `IconRequest` need `Catalog`;
+`LaunchRequest/Result` need `Launch`; `UacPrompt` and `UacDecision` need
+`UacNative`; `ElevationNotice` and `DesktopSwitch` need only `Windows` because the
+`auto` and safety-net modes rely on them without native prompting; audio,
+printer and display messages need `Audio`, `Printers`, `Display`.
+
+**Transfers.** `Transfer*` frames are admitted by sender role: a host may send
+them only when `Clipboard` or `DragDrop` is negotiated; a guest only when any of
+`Clipboard`, `DragDrop`, `Catalog` or `Cursor` is negotiated. `UacNative` never
+admits transfers (`UacPrompt.transfer` is only a prompt identifier). The
+dispatcher still resolves the owning transfer record before accepting a received
+chunk.
+
+**Request identifiers.** Request types allocate a nonzero identifier from the
+same per-direction `request_ids` owner as Ping: `LaunchRequest`, `PrinterSync`,
+`DisplayConfig` and `DndDrop`. Their responses `LaunchResult`, `PrinterResult`,
+`DisplayApplied` and `DndResult` must carry a nonzero identifier echoing the
+request. Every other feature type is unsolicited and must carry request id 0;
+transfers use their own `transfer` identifiers. The peer exposes one atomic
+`enqueue_request` that reserves, stamps header bytes 12..16, enqueues and returns
+the identifier, rolling the reservation back on any failure, and a
+`release_request` that accepts only identifiers it reserved for features
+(liveness identifiers are not releasable by the dispatcher). Feature reservations
+are capped at 4032 live identifiers so 64 slots always remain for liveness, and a
+release after `transport_lost` retired everything returns a distinct benign
+result.
