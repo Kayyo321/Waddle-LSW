@@ -115,7 +115,11 @@ class Lab:
         script.chmod(0o755)
 
     def write_wrapper(self, body):
-        """Write the lab's waddle-session wrapper; it records its own $0 before running body."""
+        """Write the lab's waddle-session wrapper; it records its own $0 before running body.
+
+        The invocation log is reset here, so each case counts only its own spawns.
+        """
+        self.invocations.unlink(missing_ok=True)
         script = self.bin / "waddle-session"
         script.write_text(
             "#!/bin/sh\n"
