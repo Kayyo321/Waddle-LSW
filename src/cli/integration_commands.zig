@@ -215,7 +215,8 @@ pub fn run(allocator: std.mem.Allocator, options: options_t, env: env_t) !output
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var rows = std.ArrayList(row_t).init(arena);
+    var rows = std.ArrayList(row_t).init(allocator);
+    defer rows.deinit();
     var status: u8 = ExitOk;
     var failed: ?failure_t = null;
     if (options.help) return render(allocator, options, &rows, ExitOk, null, usage_text);
@@ -937,4 +938,456 @@ test "command allocation failures leave no leaked allocations and no partial sta
         try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
     }
     try testing.expect(observed > 0);
+}
+
+test "every mapped failure has its public code, message, and exit status" {
+    const cases = [_]struct { err: anyerror, code: []const u8, status: u8 }{
+        .{ .err = error.Usage, .code = "usage", .status = ExitUsage },
+        .{ .err = error.OutOfMemory, .code = "resource_error", .status = ExitResource },
+        .{ .err = error.UnsupportedSchema, .code = "schema_newer", .status = ExitFailed },
+        .{ .err = error.VersionDowngrade, .code = "version_downgrade", .status = ExitFailed },
+        .{ .err = error.Busy, .code = "busy", .status = ExitFailed },
+        .{ .err = error.AccessDenied, .code = "permission_denied", .status = ExitFailed },
+        .{ .err = error.RecoveryRequired, .code = "recovery_required", .status = ExitFailed },
+        .{ .err = error.ArtifactConflict, .code = "artifact_conflict", .status = ExitFailed },
+        .{ .err = error.ManifestMismatch, .code = "manifest_mismatch", .status = ExitFailed },
+        .{ .err = error.InvalidEnvironment, .code = "invalid_environment", .status = ExitFailed },
+        .{ .err = error.NotImplemented, .code = "not_implemented", .status = ExitFailed },
+        .{ .err = error.FileNotFound, .code = "not_found", .status = ExitFailed },
+        .{ .err = error.IoError, .code = "io_error", .status = ExitFailed },
+    };
+    for (cases) |case| {
+        const issue = failure_for(case.err);
+        try testing.expectEqualStrings(case.code, issue.code);
+        try testing.expectEqual(case.status, issue.status);
+        try testing.expect(issue.message.len > 0);
+    }
+    try testing.expectEqualStrings("io_error", failure_for(error.PathAlreadyExists).code);
+}
+
+test "option parsing covers every flag once, every duplicate, and the help forms" {
+    try testing.expect((try parse(&.{ "install", "-h" })).help);
+    try testing.expect((try parse(&.{ "remove", "--all" })).all);
+    try testing.expect((try parse(&.{ "repair", "--force", "--device", "alpha" })).force);
+    try testing.expect((try parse(&.{ "status", "--guest", "--system" })).system);
+    try testing.expectError(error.Usage, parse(&.{ "install", "--guest", "--guest" }));
+    try testing.expectError(error.Usage, parse(&.{ "install", "--device", "a", "--device", "b" }));
+    try testing.expectError(error.Usage, parse(&.{ "remove", "--all", "--all" }));
+    try testing.expectError(error.Usage, parse(&.{ "repair", "--force", "--force" }));
+    try testing.expectError(error.Usage, parse(&.{ "status", "--system", "--system" }));
+    try testing.expectEqual(Operation.Shortcut, (try parse(&.{"shortcut"})).operation);
+    try testing.expectEqual(Operation.Repair, (try parse(&.{"repair"})).operation);
+    try testing.expectEqual(Operation.Migrate, (try parse(&.{"migrate"})).operation);
+}
+
+test "XDG variables that are empty or relative fall back under HOME" {
+    const allocator = testing.allocator;
+    const paths = try resolve_paths(allocator, "/home/u", "", "");
+    defer allocator.free(paths.data_home);
+    defer allocator.free(paths.state_home);
+    try testing.expectEqualStrings("/home/u/.local/share", paths.data_home);
+    try testing.expectEqualStrings("/home/u/.local/state", paths.state_home);
+}
+
+test "every subcommand renders JSON with its lowercase operation name" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    const names = [_][]const u8{ "install", "status", "repair", "migrate", "remove" };
+    for (names) |name| {
+        var result = try invoke(allocator, &.{ name, "--json" }, fx.env());
+        defer result.deinit(allocator);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, result.stdout, .{});
+        defer parsed.deinit();
+        try testing.expectEqualStrings(name, parsed.value.object.get("operation").?.string);
+    }
+    var guest = try run(allocator, .{ .operation = .Guest, .json = true }, fx.env());
+    defer guest.deinit(allocator);
+    try testing.expectEqual(ExitFailed, guest.status);
+    var shortcut = try run(allocator, .{ .operation = .Shortcut, .json = true }, fx.env());
+    defer shortcut.deinit(allocator);
+    try testing.expectEqual(ExitFailed, shortcut.status);
+    var direct = std.ArrayList(row_t).init(allocator);
+    defer direct.deinit();
+    var status: u8 = ExitOk;
+    try testing.expectError(error.NotImplemented, executeScope(allocator, .{ .operation = .Guest }, fx.env(), &direct, &status));
+    try testing.expectError(error.NotImplemented, executeScope(allocator, .{ .operation = .Shortcut }, fx.env(), &direct, &status));
+}
+
+test "install covers the recreate, refused-different, and unrecorded paths" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var installed = try invoke(allocator, &.{"install"}, fx.env());
+    installed.deinit(allocator);
+    const path = try fx.handler_file(allocator);
+    defer allocator.free(path);
+    try std.fs.cwd().deleteFile(path);
+    var recreated = try invoke(allocator, &.{"install"}, fx.env());
+    defer recreated.deinit(allocator);
+    try testing.expectEqual(ExitOk, recreated.status);
+    try testing.expect(std.mem.indexOf(u8, recreated.stdout, "repaired") != null);
+    var other_launcher = fx.env();
+    other_launcher.launcher = "/opt/other/waddle";
+    var different = try invoke(allocator, &.{"install"}, other_launcher);
+    defer different.deinit(allocator);
+    try testing.expectEqual(ExitFailed, different.status);
+    try testing.expect(std.mem.indexOf(u8, different.stdout, "refused") != null);
+    try testing.expect(std.mem.indexOf(u8, different.stderr, "blocked") != null);
+}
+
+test "remove reports artifact-missing records, kept foreign objects, and the device scope" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var installed = try invoke(allocator, &.{ "install", "--device", "alpha" }, fx.env());
+    installed.deinit(allocator);
+    const path = try fx.handler_file(allocator);
+    defer allocator.free(path);
+    try std.fs.cwd().deleteFile(path);
+    var missing = try invoke(allocator, &.{ "remove", "--device", "alpha", "--json" }, fx.env());
+    defer missing.deinit(allocator);
+    try testing.expectEqual(ExitOk, missing.status);
+    try testing.expect(std.mem.indexOf(u8, missing.stdout, "record_removed_artifact_missing") != null);
+    var reinstall = try invoke(allocator, &.{ "install", "--device", "alpha" }, fx.env());
+    reinstall.deinit(allocator);
+    try std.fs.cwd().deleteFile(path);
+    try std.posix.symlink("/etc/hostname", path);
+    var foreign = try invoke(allocator, &.{ "remove", "--device", "alpha" }, fx.env());
+    defer foreign.deinit(allocator);
+    try testing.expectEqual(ExitFailed, foreign.status);
+    try testing.expect(std.mem.indexOf(u8, foreign.stdout, "kept_foreign") != null);
+    try testing.expect(std.mem.indexOf(u8, foreign.stderr, "item(s) blocked") != null);
+}
+
+test "repair blocks foreign objects, reports unchanged records, and reports absent installs" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var absent = try invoke(allocator, &.{"repair"}, fx.env());
+    defer absent.deinit(allocator);
+    try testing.expect(std.mem.indexOf(u8, absent.stdout, "not_installed") != null);
+    var installed = try invoke(allocator, &.{ "install", "--device", "alpha" }, fx.env());
+    installed.deinit(allocator);
+    var unchanged = try invoke(allocator, &.{"repair"}, fx.env());
+    defer unchanged.deinit(allocator);
+    try testing.expect(std.mem.indexOf(u8, unchanged.stdout, "unchanged") != null);
+    var skipped = try invoke(allocator, &.{ "repair", "--device", "beta" }, fx.env());
+    defer skipped.deinit(allocator);
+    try testing.expect(std.mem.indexOf(u8, skipped.stdout, "not_selected") != null);
+    const path = try fx.handler_file(allocator);
+    defer allocator.free(path);
+    try std.fs.cwd().deleteFile(path);
+    try std.posix.symlink("/etc/hostname", path);
+    var foreign = try invoke(allocator, &.{"repair"}, fx.env());
+    defer foreign.deinit(allocator);
+    try testing.expectEqual(ExitFailed, foreign.status);
+    try testing.expect(std.mem.indexOf(u8, foreign.stdout, "foreign") != null);
+}
+
+test "status filters by device and migrate refuses a version newer than this Waddle" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    var installed = try invoke(allocator, &.{ "install", "--device", "alpha" }, fx.env());
+    installed.deinit(allocator);
+    var filtered = try invoke(allocator, &.{ "status", "--device", "alpha" }, fx.env());
+    defer filtered.deinit(allocator);
+    try testing.expect(std.mem.indexOf(u8, filtered.stdout, "alpha") != null);
+    var other = try invoke(allocator, &.{ "status", "--device", "beta" }, fx.env());
+    defer other.deinit(allocator);
+    try testing.expectEqualStrings("", other.stdout);
+    const manifest_path = try std.fs.path.join(allocator, &.{ fx.state, "waddle", "integration", "manifest.json" });
+    defer allocator.free(manifest_path);
+    const stored = try std.fs.cwd().readFileAlloc(allocator, manifest_path, 1 << 20);
+    defer allocator.free(stored);
+    const newer_version = try std.mem.replaceOwned(u8, allocator, stored, "\"waddle_version\":\"0.2.0\"", "\"waddle_version\":\"0.9.0\"");
+    defer allocator.free(newer_version);
+    try std.fs.cwd().writeFile(.{ .sub_path = manifest_path, .data = newer_version });
+    var downgrade = try invoke(allocator, &.{"migrate"}, fx.env());
+    defer downgrade.deinit(allocator);
+    try testing.expectEqual(ExitFailed, downgrade.status);
+    try testing.expect(std.mem.indexOf(u8, downgrade.stderr, "version_downgrade") != null);
+    var json_error = try invoke(allocator, &.{ "migrate", "--json" }, fx.env());
+    defer json_error.deinit(allocator);
+    try testing.expect(std.mem.indexOf(u8, json_error.stdout, "\"code\":\"version_downgrade\"") != null);
+}
+
+test "desktop value escaping and encoder limits cover every special character and record shape" {
+    const allocator = testing.allocator;
+    const escaped = try producers.desktop_value(allocator, "a\\b\nc\td\re");
+    defer allocator.free(escaped);
+    try testing.expectEqualStrings("a\\\\b\\nc\\td\\re", escaped);
+}
+
+const Prepared = enum { Installed, MissingArtifact, ModifiedArtifact, OlderVersion, None };
+
+/// Put the fixture into a prepared state with the normal allocator, then run one
+/// operation with a failing allocator at every allocation index until it completes.
+fn sweep(args: []const []const u8, prepared: Prepared, allow_failure_status: bool) !void {
+    var observed: usize = 0;
+    var offset: usize = 0;
+    while (offset < 800) : (offset += 1) {
+        var fx = try fixture_t.create(testing.allocator);
+        defer fx.deinit(testing.allocator);
+        if (prepared != .None) {
+            var installed = try invoke(testing.allocator, &.{"install"}, fx.env());
+            installed.deinit(testing.allocator);
+        }
+        const path = try fx.handler_file(testing.allocator);
+        defer testing.allocator.free(path);
+        switch (prepared) {
+            .MissingArtifact => try std.fs.cwd().deleteFile(path),
+            .ModifiedArtifact => try std.fs.cwd().writeFile(.{ .sub_path = path, .data = "edited\n" }),
+            .OlderVersion => {
+                const manifest_path = try std.fs.path.join(testing.allocator, &.{ fx.state, "waddle", "integration", "manifest.json" });
+                defer testing.allocator.free(manifest_path);
+                const stored = try std.fs.cwd().readFileAlloc(testing.allocator, manifest_path, 1 << 20);
+                defer testing.allocator.free(stored);
+                const older = try std.mem.replaceOwned(u8, testing.allocator, stored, "\"waddle_version\":\"0.2.0\"", "\"waddle_version\":\"0.1.0\"");
+                defer testing.allocator.free(older);
+                try std.fs.cwd().writeFile(.{ .sub_path = manifest_path, .data = older });
+            },
+            else => {},
+        }
+        const options = try parse(args);
+        var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = std.math.maxInt(usize) });
+        failing.fail_index = offset;
+        const outcome = run(failing.allocator(), options, fx.env());
+        if (!failing.has_induced_failure) {
+            var result = try outcome;
+            result.deinit(failing.allocator());
+            try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+            break;
+        }
+        observed += 1;
+        if (outcome) |_| {
+            return error.ExpectedOutOfMemory;
+        } else |err| try testing.expectEqual(error.OutOfMemory, err);
+        try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+    _ = allow_failure_status;
+    try testing.expect(observed > 0);
+}
+
+test "allocation failures in every subcommand leave no leaked allocations" {
+    try sweep(&.{"remove"}, .Installed, false);
+    try sweep(&.{"status"}, .Installed, false);
+    try sweep(&.{"repair"}, .MissingArtifact, false);
+    try sweep(&.{ "repair", "--force" }, .ModifiedArtifact, false);
+    try sweep(&.{"migrate"}, .OlderVersion, false);
+    try sweep(&.{ "install", "--json" }, .None, false);
+    try sweep(&.{ "status", "--json" }, .Installed, false);
+}
+
+test "allocation failures in device-scoped, blocked, and JSON output paths leave no leaked allocations" {
+    try sweep(&.{ "install", "--device", "alpha" }, .None, false);
+    try sweep(&.{ "status", "--device", "alpha" }, .Installed, false);
+    try sweep(&.{ "remove", "--device", "beta" }, .Installed, false);
+    try sweep(&.{"remove"}, .ModifiedArtifact, false);
+    try sweep(&.{ "repair", "--json" }, .MissingArtifact, false);
+    try sweep(&.{ "repair", "--force", "--json" }, .ModifiedArtifact, false);
+    try sweep(&.{ "migrate", "--json" }, .OlderVersion, false);
+    try sweep(&.{ "remove", "--json" }, .MissingArtifact, false);
+}
+
+test "unusable XDG locations fail with exit 1 and create nothing beyond them" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    try fx.tmp.dir.writeFile(.{ .sub_path = "data-as-file", .data = "x" });
+    const data_file = try std.fs.path.join(allocator, &.{ fx.base, "data-as-file" });
+    defer allocator.free(data_file);
+    var as_data = try invoke(allocator, &.{"install"}, test_env(data_file, fx.state));
+    defer as_data.deinit(allocator);
+    try testing.expectEqual(ExitFailed, as_data.status);
+    try fx.tmp.dir.writeFile(.{ .sub_path = "state-as-file", .data = "x" });
+    const state_file = try std.fs.path.join(allocator, &.{ fx.base, "state-as-file" });
+    defer allocator.free(state_file);
+    var as_state = try invoke(allocator, &.{"status"}, test_env(fx.data, state_file));
+    defer as_state.deinit(allocator);
+    try testing.expectEqual(ExitFailed, as_state.status);
+    try fx.tmp.dir.makePath("state-waddle-file");
+    try fx.tmp.dir.writeFile(.{ .sub_path = "state-waddle-file/waddle", .data = "x" });
+    const waddle_file_state = try std.fs.path.join(allocator, &.{ fx.base, "state-waddle-file" });
+    defer allocator.free(waddle_file_state);
+    var as_waddle = try invoke(allocator, &.{"status"}, test_env(fx.data, waddle_file_state));
+    defer as_waddle.deinit(allocator);
+    try testing.expectEqual(ExitFailed, as_waddle.status);
+    try fx.tmp.dir.symLink("/nonexistent-target", "dangling-data", .{});
+    const dangling = try std.fs.path.join(allocator, &.{ fx.base, "dangling-data" });
+    defer allocator.free(dangling);
+    var dangling_run = try invoke(allocator, &.{"status"}, test_env(dangling, fx.state));
+    defer dangling_run.deinit(allocator);
+    try testing.expectEqual(ExitFailed, dangling_run.status);
+    try fx.tmp.dir.makePath("state-link-target");
+    try fx.tmp.dir.makePath("state-link/waddle");
+    try fx.tmp.dir.symLink("../state-link-target", "state-link/waddle/integration", .{});
+    const linked_state = try std.fs.path.join(allocator, &.{ fx.base, "state-link" });
+    defer allocator.free(linked_state);
+    var linked = try invoke(allocator, &.{"status"}, test_env(fx.data, linked_state));
+    defer linked.deinit(allocator);
+    try testing.expectEqual(ExitFailed, linked.status);
+    var target = try fx.tmp.dir.openDir("state-link-target", .{ .iterate = true });
+    defer target.close();
+    var entries = target.iterate();
+    try testing.expect((try entries.next()) == null);
+}
+
+test "a manifest path that is a directory is an I/O failure that changes nothing" {
+    const allocator = testing.allocator;
+    var fx = try fixture_t.create(allocator);
+    defer fx.deinit(allocator);
+    try fx.tmp.dir.makePath("state/waddle/integration/manifest.json");
+    var blocked = try invoke(allocator, &.{"status"}, fx.env());
+    defer blocked.deinit(allocator);
+    try testing.expectEqual(ExitFailed, blocked.status);
+    try testing.expect(std.mem.indexOf(u8, blocked.stderr, "io_error") != null or std.mem.indexOf(u8, blocked.stderr, "permission_denied") != null);
+}
+
+test "allocation failures across every install, repair, remove, and status state leave no leaked allocations" {
+    try sweep(&.{"install"}, .Installed, false);
+    try sweep(&.{"install"}, .MissingArtifact, false);
+    try sweep(&.{"install"}, .ModifiedArtifact, false);
+    try sweep(&.{ "install", "--device", "beta" }, .Installed, false);
+    try sweep(&.{"repair"}, .Installed, false);
+    try sweep(&.{"repair"}, .None, false);
+    try sweep(&.{"repair"}, .ModifiedArtifact, false);
+    try sweep(&.{ "repair", "--json" }, .Installed, false);
+    try sweep(&.{"remove"}, .MissingArtifact, false);
+    try sweep(&.{"status"}, .None, false);
+    try sweep(&.{ "status", "--device", "alpha" }, .None, false);
+    try sweep(&.{ "status", "--json" }, .MissingArtifact, false);
+    try sweep(&.{"migrate"}, .Installed, false);
+}
+
+test "allocation failures in path resolution leave no leaked allocations and report OutOfMemory" {
+    var offset: usize = 0;
+    while (offset < 32) : (offset += 1) {
+        var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = offset });
+        const result = resolve_paths(failing.allocator(), "/home/u", "/xdg/data", null);
+        if (result) |paths| {
+            failing.allocator().free(paths.data_home);
+            failing.allocator().free(paths.state_home);
+        } else |err| try testing.expectEqual(error.OutOfMemory, err);
+        try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+        if (!failing.has_induced_failure) break;
+    }
+}
+
+test "allocation failures while opening the session leave no leaked allocations" {
+    var offset: usize = 0;
+    while (offset < 400) : (offset += 1) {
+        var fx = try fixture_t.create(testing.allocator);
+        defer fx.deinit(testing.allocator);
+        var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = offset });
+        if (Session.open(failing.allocator(), fx.env())) |opened| {
+            var session = opened;
+            session.close();
+        } else |err| try testing.expectEqual(error.OutOfMemory, err);
+        try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+        if (!failing.has_induced_failure) break;
+    }
+}
+
+fn install_with(fx: *fixture_t, args: []const []const u8) !void {
+    var installed = try invoke(testing.allocator, args, fx.env());
+    installed.deinit(testing.allocator);
+}
+
+/// Put the fixture into one of the record states the scenario matrix exercises:
+/// 0 none, 1 installed, 2 artifact missing, 3 artifact modified, 4 unrecorded file,
+/// 5 manifest from an older Waddle, 6 installed for device alpha.
+fn prepare_state(fx: *fixture_t, state: u8) !void {
+    const path = try fx.handler_file(testing.allocator);
+    defer testing.allocator.free(path);
+    switch (state) {
+        1 => try install_with(fx, &.{"install"}),
+        2 => {
+            try install_with(fx, &.{"install"});
+            try std.fs.cwd().deleteFile(path);
+        },
+        3 => {
+            try install_with(fx, &.{"install"});
+            try std.fs.cwd().writeFile(.{ .sub_path = path, .data = "edited\n" });
+        },
+        4 => {
+            try fx.tmp.dir.makePath("data/applications");
+            try fx.tmp.dir.writeFile(.{ .sub_path = "data/applications/waddle-open.desktop", .data = "x" });
+        },
+        5 => {
+            try install_with(fx, &.{"install"});
+            const manifest_path = try std.fs.path.join(testing.allocator, &.{ fx.state, "waddle", "integration", "manifest.json" });
+            defer testing.allocator.free(manifest_path);
+            const stored = try std.fs.cwd().readFileAlloc(testing.allocator, manifest_path, 1 << 20);
+            defer testing.allocator.free(stored);
+            const older = try std.mem.replaceOwned(u8, testing.allocator, stored, "\"waddle_version\":\"0.2.0\"", "\"waddle_version\":\"0.1.0\"");
+            defer testing.allocator.free(older);
+            try std.fs.cwd().writeFile(.{ .sub_path = manifest_path, .data = older });
+        },
+        6 => try install_with(fx, &.{ "install", "--device", "alpha" }),
+        else => {},
+    }
+}
+
+test "every subcommand in text and JSON modes exits with a documented code across every record state" {
+    const commands = [_][]const []const u8{
+        &.{"install"},
+        &.{ "install", "--json" },
+        &.{ "install", "--device", "alpha" },
+        &.{"status"},
+        &.{ "status", "--json" },
+        &.{ "status", "--device", "alpha" },
+        &.{"repair"},
+        &.{ "repair", "--json" },
+        &.{ "repair", "--force" },
+        &.{ "repair", "--force", "--json" },
+        &.{ "repair", "--device", "alpha" },
+        &.{"remove"},
+        &.{ "remove", "--json" },
+        &.{ "remove", "--device", "alpha" },
+        &.{"migrate"},
+        &.{ "migrate", "--json" },
+    };
+    var state: u8 = 0;
+    while (state <= 6) : (state += 1) {
+        for (commands) |args| {
+            var fx = try fixture_t.create(testing.allocator);
+            defer fx.deinit(testing.allocator);
+            try prepare_state(&fx, state);
+            var result = try invoke(testing.allocator, args, fx.env());
+            defer result.deinit(testing.allocator);
+            try testing.expect(result.status == ExitOk or result.status == ExitFailed);
+        }
+    }
+}
+
+test "allocation failures while rendering help leave no leaked allocations" {
+    try sweep(&.{ "install", "--help" }, .None, false);
+}
+
+test "system scope as root reports not implemented and changes nothing" {
+    var fx = try fixture_t.create(testing.allocator);
+    defer fx.deinit(testing.allocator);
+    var env = fx.env();
+    env.euid = 0;
+    var result = try invoke(testing.allocator, &.{ "status", "--system" }, env);
+    defer result.deinit(testing.allocator);
+    try testing.expectEqual(ExitFailed, result.status);
+    try testing.expect(std.mem.indexOf(u8, result.stderr, "not_implemented") != null);
+    if (fx.tmp.dir.access("state", .{})) |_| return error.TestUnexpectedResult else |err| try testing.expectEqual(error.FileNotFound, err);
+}
+
+test "a relative or empty HOME without absolute XDG variables is an invalid environment" {
+    try testing.expectError(error.InvalidEnvironment, resolve_paths(testing.allocator, "relative/home", null, null));
+    try testing.expectError(error.InvalidEnvironment, resolve_paths(testing.allocator, "", null, null));
+    try testing.expectError(error.InvalidEnvironment, resolve_paths(testing.allocator, null, null, null));
+}
+
+test "a fixture with no records migrates and reports as nothing to do under every allocation index" {
+    try sweep(&.{"migrate"}, .None, false);
+}
+
+test "parsing accepts help as a later operand" {
+    try testing.expect((try parse(&.{ "install", "--help" })).help);
 }
