@@ -1600,7 +1600,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     source hash/logs. Default test, allocator and coverage gates include it.
     Native adapter25%, wire/compositor15%, integrated native10% remain open.
 
-- **Commit `HEAD`**: `test(interop): cover icon alias guards and genuine native cleanup errors`
+- **Commit `24cc612`**: `test(interop): cover icon alias guards and genuine native cleanup errors`
   - **Task Impact**: +0% to TODO #27/#34 pending native90% taken-arc gate.
   - **Summary**: Exact9341928 realWindows functional cases pass; whole-source
     icon95.34%lines/85.25%arcs still below gate. Add valid-storage alias and
@@ -1608,3 +1608,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     failures and fallback limits. Route fail-before-close seams through actual
     production error branches. Root strict standalone and profile build/link
     pass; no coverage exclusions or premature completion credit.
+
+- **Commit `HEAD`**: `fix(interop): reject malformed successful COM catalog outputs safely`
+  - **Task Impact**: +0% to TODO #27/#34 pending native90% gates.
+  - **Summary**: Root-reviewed nullable COM success boundaries before dereference;
+    release returned references on guarded failures. Extend private fixture with
+    bounded AppsFolder enumerator/property/entry guard cases and exact refcounts.
+    Correct mutable fixture globals to snake_case. Root standalone provider and
+    instrumented fixture strict SDK compile/link pass; actual Windows rerun
+    pending. Previous9341928 catalog92.41%lines/69.47%arcs remains unaccepted.

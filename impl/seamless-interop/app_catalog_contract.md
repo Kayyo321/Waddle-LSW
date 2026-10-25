@@ -206,3 +206,12 @@ native working set is separate from the16MiB catalog input/snapshot cap.
 An allocation failure aborts the incomplete enumeration with OutOfMemory.
 The native fixture traverses24real nested temporary directories and verifies
 unchanged dedup results plus complete reverse directory cleanup.
+
+### Defensive COM acquisition boundary — 2026-10-25
+
+Folder/enumerator, property-store, ShellLink and persistence acquisition must
+validate both HRESULT and the returned pointer before dereference. A failed
+acquisition releases any nonnull reference it returned. Optional per-item
+properties may be skipped; global source acquisition failures remain typed
+NativeFailure. Private fixtures exercise success/null and failed acquisition
+without replacing successful ordinary SDK enumeration.

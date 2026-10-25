@@ -282,7 +282,10 @@ static bool add_apps_folder_item(catalog_collector_t *collector, IShellItem *ite
     IPropertyStore *store = NULL;
     result = IShellItem2_GetPropertyStore(item2, GPS_DEFAULT, &IID_IPropertyStore, (void **)&store);
     IShellItem2_Release(item2);
-    if (FAILED(result)) return true;
+    if (FAILED(result) || store == NULL) {
+        if (store != NULL) IPropertyStore_Release(store);
+        return true;
+    }
     if (property_bool(store, &PKEY_AppUserModel_IsDestListSeparator)) {
         IPropertyStore_Release(store);
         return true;
@@ -332,11 +335,19 @@ static bool add_apps_folder_item(catalog_collector_t *collector, IShellItem *ite
 static bool enumerate_apps_folder(catalog_collector_t *collector) {
     IShellItem *folder = NULL;
     HRESULT result = SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, NULL, &IID_IShellItem, (void **)&folder);
-    if (FAILED(result)) { collector->status = AppCatalogStatusNativeFailure; return false; }
+    if (FAILED(result) || folder == NULL) {
+        if (folder != NULL) IShellItem_Release(folder);
+        collector->status = AppCatalogStatusNativeFailure;
+        return false;
+    }
     IEnumShellItems *enumerator = NULL;
     result = IShellItem_BindToHandler(folder, NULL, &BHID_EnumItems, &IID_IEnumShellItems, (void **)&enumerator);
     IShellItem_Release(folder);
-    if (FAILED(result)) { collector->status = AppCatalogStatusNativeFailure; return false; }
+    if (FAILED(result) || enumerator == NULL) {
+        if (enumerator != NULL) IEnumShellItems_Release(enumerator);
+        collector->status = AppCatalogStatusNativeFailure;
+        return false;
+    }
     bool ok = true;
     for (;;) {
         IShellItem *item = NULL;
@@ -362,10 +373,19 @@ static bool shortcut_item(catalog_collector_t *collector, app_catalog_source_t s
     if (!collector_checkpoint(collector)) return false;
     IShellLinkW *link = NULL;
     HRESULT result = CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, (void **)&link);
-    if (FAILED(result)) { collector->status = AppCatalogStatusNativeFailure; return false; }
+    if (FAILED(result) || link == NULL) {
+        if (link != NULL) IShellLinkW_Release(link);
+        collector->status = AppCatalogStatusNativeFailure;
+        return false;
+    }
     IPersistFile *persist = NULL;
     result = IShellLinkW_QueryInterface(link, &IID_IPersistFile, (void **)&persist);
-    if (FAILED(result)) { IShellLinkW_Release(link); collector->status = AppCatalogStatusNativeFailure; return false; }
+    if (FAILED(result) || persist == NULL) {
+        if (persist != NULL) IPersistFile_Release(persist);
+        IShellLinkW_Release(link);
+        collector->status = AppCatalogStatusNativeFailure;
+        return false;
+    }
     result = IPersistFile_Load(persist, shortcut_path, STGM_READ);
     IPersistFile_Release(persist);
     if (FAILED(result)) { IShellLinkW_Release(link); return true; }

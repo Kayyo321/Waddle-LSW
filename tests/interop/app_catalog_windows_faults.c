@@ -36,6 +36,8 @@ typedef enum catalog_fault_kind_t {
     CatalogFaultFindClose,
     CatalogFaultCloseHandle,
     CatalogFaultComInitialize,
+    CatalogFaultComCreateNull,
+    CatalogFaultComPersistNull,
 } catalog_fault_kind_t;
 
 typedef struct catalog_fault_state_t {
@@ -44,12 +46,52 @@ typedef struct catalog_fault_state_t {
     size_t calls;
 } catalog_fault_state_t;
 
-static catalog_fault_state_t CatalogFaultState;
+static catalog_fault_state_t catalog_fault_state;
+static IShellItem *catalog_fault_apps_folder;
+static IEnumShellItems *catalog_fault_apps_enumerator;
+static bool catalog_fault_apps_enabled;
+static bool catalog_fault_apps_folder_failure;
+static bool catalog_fault_apps_bind_failure;
+static bool catalog_fault_apps_folder_null_success;
+static bool catalog_fault_apps_bind_null_success;
+
+static HRESULT WINAPI catalog_fault_sh_get_known_folder_item(REFKNOWNFOLDERID folder_id,
+    KNOWN_FOLDER_FLAG flags, HANDLE token, REFIID iid, void **output) {
+    if (!catalog_fault_apps_enabled) return SHGetKnownFolderItem(folder_id, flags, token, iid, output);
+    (void)flags;
+    (void)token;
+    if (output == NULL) return E_POINTER;
+    *output = NULL;
+    if (catalog_fault_apps_folder_failure) return E_FAIL;
+    if (catalog_fault_apps_folder_null_success) return S_OK;
+    if (!IsEqualIID(folder_id, &FOLDERID_AppsFolder) || !IsEqualIID(iid, &IID_IShellItem) ||
+        catalog_fault_apps_folder == NULL) return E_FAIL;
+    IShellItem_AddRef(catalog_fault_apps_folder);
+    *output = catalog_fault_apps_folder;
+    return S_OK;
+}
 
 static bool catalog_fault_hit(catalog_fault_kind_t kind) {
-    if (CatalogFaultState.kind != kind) return false;
-    CatalogFaultState.calls++;
-    return CatalogFaultState.calls == CatalogFaultState.fail_at;
+    if (catalog_fault_state.kind != kind) return false;
+    catalog_fault_state.calls++;
+    return catalog_fault_state.calls == catalog_fault_state.fail_at;
+}
+
+static HRESULT WINAPI catalog_fault_co_create_instance(REFCLSID class_id, LPUNKNOWN outer,
+    DWORD context, REFIID iid, LPVOID *output) {
+    if (catalog_fault_hit(CatalogFaultComCreateNull)) {
+        if (output != NULL) *output = NULL;
+        return S_OK;
+    }
+    return CoCreateInstance(class_id, outer, context, iid, output);
+}
+
+static HRESULT STDMETHODCALLTYPE catalog_fault_shell_link_query(IShellLinkW *link, REFIID iid, void **output) {
+    if (catalog_fault_hit(CatalogFaultComPersistNull) && IsEqualIID(iid, &IID_IPersistFile)) {
+        if (output != NULL) *output = NULL;
+        return S_OK;
+    }
+    return link->lpVtbl->QueryInterface(link, iid, output);
 }
 
 static void *catalog_fault_malloc(size_t size) {
@@ -151,8 +193,16 @@ static HRESULT WINAPI catalog_fault_co_initialize(LPVOID reserved, DWORD flags) 
 #define FindClose catalog_fault_find_close
 #define CloseHandle catalog_fault_close_handle
 #define CoInitializeEx catalog_fault_co_initialize
+#define CoCreateInstance catalog_fault_co_create_instance
+#undef IShellLinkW_QueryInterface
+#define IShellLinkW_QueryInterface catalog_fault_shell_link_query
+#define SHGetKnownFolderItem catalog_fault_sh_get_known_folder_item
 #include "../../src/interop/app_catalog_windows.c"
+#undef SHGetKnownFolderItem
+#undef IShellLinkW_QueryInterface
+#undef CoCreateInstance
 #undef CoInitializeEx
+#define IShellLinkW_QueryInterface(This,riid,ppvObject) (This)->lpVtbl->QueryInterface(This,riid,ppvObject)
 #undef CloseHandle
 #undef FindClose
 #undef FindNextFileW
@@ -180,7 +230,92 @@ typedef struct catalog_fake_item_t {
     bool fail_parsing_name;
     bool fail_display_name;
     bool fail_property;
+    bool null_store_success;
 } catalog_fake_item_t;
+
+typedef struct catalog_fake_enumerator_t {
+    IEnumShellItems enumerator_iface;
+    ULONG references;
+    catalog_fake_item_t **items;
+    size_t item_count;
+    size_t next_index;
+    HRESULT terminal_result;
+    ULONG terminal_fetched;
+    catalog_fake_item_t *terminal_item;
+} catalog_fake_enumerator_t;
+
+static catalog_fake_enumerator_t *catalog_fake_from_enumerator(IEnumShellItems *self) {
+    return (catalog_fake_enumerator_t *)((uint8_t *)self - offsetof(catalog_fake_enumerator_t, enumerator_iface));
+}
+
+static ULONG STDMETHODCALLTYPE catalog_fake_enumerator_add_ref(IEnumShellItems *self);
+
+static HRESULT STDMETHODCALLTYPE catalog_fake_enumerator_query(IEnumShellItems *self, REFIID iid, void **output) {
+    if (output == NULL) return E_POINTER;
+    *output = NULL;
+    if (!IsEqualIID(iid, &IID_IEnumShellItems)) return E_NOINTERFACE;
+    catalog_fake_enumerator_add_ref(self);
+    *output = self;
+    return S_OK;
+}
+
+static ULONG STDMETHODCALLTYPE catalog_fake_enumerator_add_ref(IEnumShellItems *self) {
+    return ++catalog_fake_from_enumerator(self)->references;
+}
+
+static ULONG STDMETHODCALLTYPE catalog_fake_enumerator_release(IEnumShellItems *self) {
+    catalog_fake_enumerator_t *enumerator = catalog_fake_from_enumerator(self);
+    if (enumerator->references != 0) enumerator->references--;
+    return enumerator->references;
+}
+
+static HRESULT STDMETHODCALLTYPE catalog_fake_enumerator_next(IEnumShellItems *self, ULONG requested,
+    IShellItem **items, ULONG *fetched) {
+    catalog_fake_enumerator_t *enumerator = catalog_fake_from_enumerator(self);
+    if (requested != 1 || items == NULL || fetched == NULL) return E_INVALIDARG;
+    *items = NULL;
+    *fetched = 0;
+    if (enumerator->next_index < enumerator->item_count) {
+        catalog_fake_item_t *item = enumerator->items[enumerator->next_index++];
+        item->references++;
+        *items = &item->shell_item;
+        *fetched = 1;
+        return S_OK;
+    }
+    if (enumerator->terminal_item != NULL) {
+        enumerator->terminal_item->references++;
+        *items = &enumerator->terminal_item->shell_item;
+    }
+    *fetched = enumerator->terminal_fetched;
+    return enumerator->terminal_result;
+}
+
+static HRESULT STDMETHODCALLTYPE catalog_fake_enumerator_skip(IEnumShellItems *self, ULONG count) {
+    (void)self;
+    (void)count;
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE catalog_fake_enumerator_reset(IEnumShellItems *self) {
+    catalog_fake_from_enumerator(self)->next_index = 0;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE catalog_fake_enumerator_clone(IEnumShellItems *self, IEnumShellItems **output) {
+    (void)self;
+    if (output != NULL) *output = NULL;
+    return E_NOTIMPL;
+}
+
+static IEnumShellItemsVtbl CatalogFakeEnumeratorVtbl = {
+    .QueryInterface = catalog_fake_enumerator_query,
+    .AddRef = catalog_fake_enumerator_add_ref,
+    .Release = catalog_fake_enumerator_release,
+    .Next = catalog_fake_enumerator_next,
+    .Skip = catalog_fake_enumerator_skip,
+    .Reset = catalog_fake_enumerator_reset,
+    .Clone = catalog_fake_enumerator_clone,
+};
 
 static catalog_fake_item_t *catalog_fake_from_shell(IShellItem *self) {
     return (catalog_fake_item_t *)((uint8_t *)self - offsetof(catalog_fake_item_t, shell_item));
@@ -229,13 +364,30 @@ static HRESULT STDMETHODCALLTYPE catalog_fake_shell_get_name(IShellItem *self, S
     return S_OK;
 }
 
+static HRESULT STDMETHODCALLTYPE catalog_fake_shell_bind(IShellItem *self, IBindCtx *context,
+    REFGUID handler, REFIID iid, void **output) {
+    (void)self;
+    (void)context;
+    if (output == NULL) return E_POINTER;
+    *output = NULL;
+    if (catalog_fault_apps_bind_failure) return E_FAIL;
+    if (catalog_fault_apps_bind_null_success) return S_OK;
+    if (catalog_fault_apps_enumerator == NULL || !IsEqualGUID(handler, &BHID_EnumItems) ||
+        !IsEqualIID(iid, &IID_IEnumShellItems)) return E_FAIL;
+    catalog_fake_enumerator_add_ref(catalog_fault_apps_enumerator);
+    *output = catalog_fault_apps_enumerator;
+    return S_OK;
+}
+
 static HRESULT STDMETHODCALLTYPE catalog_fake_shell2_get_store(IShellItem2 *self,
     GETPROPERTYSTOREFLAGS flags, REFIID iid, void **output) {
     (void)flags;
     catalog_fake_item_t *item = catalog_fake_from_shell2(self);
     if (output == NULL) return E_POINTER;
     *output = NULL;
-    if (item->fail_store || !IsEqualIID(iid, &IID_IPropertyStore)) return E_FAIL;
+    if (!IsEqualIID(iid, &IID_IPropertyStore)) return E_FAIL;
+    if (item->null_store_success) return S_OK;
+    if (item->fail_store) return E_FAIL;
     item->references++;
     *output = &item->property_store;
     return S_OK;
@@ -311,6 +463,7 @@ static IShellItemVtbl CatalogFakeShellItemVtbl = {
     .QueryInterface = catalog_fake_shell_query,
     .AddRef = catalog_fake_shell_add_ref,
     .Release = catalog_fake_shell_release,
+    .BindToHandler = catalog_fake_shell_bind,
     .GetDisplayName = catalog_fake_shell_get_name,
 };
 
@@ -334,6 +487,104 @@ static void catalog_fake_item_init(catalog_fake_item_t *item) {
     item->shell_item2.lpVtbl = &CatalogFakeShellItem2Vtbl;
     item->property_store.lpVtbl = &CatalogFakePropertyStoreVtbl;
     item->references = 1;
+}
+
+static bool catalog_fault_run_apps_enum_case(catalog_fake_item_t *folder,
+    catalog_fake_enumerator_t *enumerator, catalog_fake_item_t **items, size_t item_count,
+    bool folder_failure, bool bind_failure, size_t max_nodes, HRESULT terminal_result,
+    ULONG terminal_fetched, catalog_fake_item_t *terminal_item, bool expected_ok,
+    app_catalog_status_t expected_status, size_t expected_candidates) {
+    enumerator->items = items;
+    enumerator->item_count = item_count;
+    enumerator->next_index = 0;
+    enumerator->terminal_result = terminal_result;
+    enumerator->terminal_fetched = terminal_fetched;
+    enumerator->terminal_item = terminal_item;
+    catalog_fault_apps_folder = &folder->shell_item;
+    catalog_fault_apps_enumerator = &enumerator->enumerator_iface;
+    catalog_fault_apps_enabled = true;
+    catalog_fault_apps_folder_failure = folder_failure;
+    catalog_fault_apps_bind_failure = bind_failure;
+
+    app_catalog_cleanup_owner_t cleanup_owner;
+    app_catalog_cleanup_owner_init(&cleanup_owner);
+    app_catalog_enumeration_options_t options = {0};
+    options.cleanup_owner = &cleanup_owner;
+    options.max_nodes = max_nodes;
+    options.deadline_monotonic_ns = GetTickCount64() * UINT64_C(1000000) + UINT64_C(30000000000);
+    catalog_collector_t collector = {0};
+    collector.options = &options;
+    collector.cleanup_owner = &cleanup_owner;
+    collector.storage = malloc(AppCatalogMaxBytes);
+    if (collector.storage == NULL) return false;
+    collector.storage_capacity = AppCatalogMaxBytes;
+    collector.status = AppCatalogStatusOk;
+
+    bool actual_ok = enumerate_apps_folder(&collector);
+    bool ok = actual_ok == expected_ok && collector.status == expected_status &&
+              collector.count == expected_candidates && cleanup_owner.count == 0 &&
+              folder->references == 1 && enumerator->references == 1;
+    for (size_t index = 0; index < item_count; index++) if (items[index]->references != 1) ok = false;
+    if (terminal_item != NULL && terminal_item->references != 1) ok = false;
+    free(collector.candidates);
+    free(collector.storage);
+    return ok;
+}
+
+static bool catalog_fault_test_apps_folder_enumerator(void) {
+    catalog_fake_item_t folder, first, second;
+    catalog_fake_item_init(&folder);
+    catalog_fake_item_init(&first);
+    catalog_fake_item_init(&second);
+    first.display_name = L"Fixture enumerated one";
+    first.parsing_name = L"shell:AppsFolder\\Fixture!One";
+    first.aumid = L"Fixture.Package!One";
+    second.display_name = L"Fixture enumerated two";
+    second.parsing_name = L"shell:AppsFolder\\Fixture!Two";
+    second.aumid = L"Fixture.Package!Two";
+    catalog_fake_enumerator_t enumerator = { .enumerator_iface.lpVtbl = &CatalogFakeEnumeratorVtbl, .references = 1 };
+    catalog_fake_item_t *one[] = { &first };
+    catalog_fake_item_t *two[] = { &first, &second };
+    bool ok = true;
+
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 0, true, false, 32,
+        S_FALSE, 0, NULL, false, AppCatalogStatusNativeFailure, 0) && ok;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 0, false, true, 32,
+        S_FALSE, 0, NULL, false, AppCatalogStatusNativeFailure, 0) && ok;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 0, false, false, 32,
+        S_FALSE, 0, NULL, true, AppCatalogStatusOk, 0) && ok;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 1, false, false, 32,
+        S_FALSE, 0, NULL, true, AppCatalogStatusOk, 1) && ok;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 0, false, false, 32,
+        E_FAIL, 0, &first, false, AppCatalogStatusNativeFailure, 0) && ok;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 0, false, false, 32,
+        S_OK, 0, NULL, false, AppCatalogStatusNativeFailure, 0) && ok;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 0, false, false, 32,
+        S_OK, 1, NULL, false, AppCatalogStatusNativeFailure, 0) && ok;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 0, false, false, 32,
+        S_FALSE, 1, NULL, false, AppCatalogStatusNativeFailure, 0) && ok;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, two, 2, false, false, 1,
+        S_FALSE, 0, NULL, false, AppCatalogStatusQuota, 1) && ok;
+
+    catalog_fault_apps_folder_failure = false;
+    catalog_fault_apps_bind_failure = false;
+    catalog_fault_apps_folder_null_success = true;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 0, false, false, 32,
+        S_FALSE, 0, NULL, false, AppCatalogStatusNativeFailure, 0) && ok;
+    catalog_fault_apps_folder_null_success = false;
+    catalog_fault_apps_bind_null_success = true;
+    ok = catalog_fault_run_apps_enum_case(&folder, &enumerator, one, 0, false, false, 32,
+        S_FALSE, 0, NULL, false, AppCatalogStatusNativeFailure, 0) && ok;
+    catalog_fault_apps_bind_null_success = false;
+    catalog_fault_apps_folder = NULL;
+    catalog_fault_apps_enumerator = NULL;
+    catalog_fault_apps_enabled = false;
+    catalog_fault_apps_folder_failure = false;
+    catalog_fault_apps_bind_failure = false;
+    catalog_fault_apps_folder_null_success = false;
+    catalog_fault_apps_bind_null_success = false;
+    return ok && folder.references == 1 && enumerator.references == 1 &&
+           first.references == 1 && second.references == 1;
 }
 
 static bool catalog_fault_test_apps_folder_items(const wchar_t *target,
@@ -371,6 +622,10 @@ static bool catalog_fault_test_apps_folder_items(const wchar_t *target,
     if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0) ok = false;
     item.fail_store = false;
 
+    item.null_store_success = true;
+    if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0) ok = false;
+    item.null_store_success = false;
+
     item.fail_property = true;
     if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0) ok = false;
     item.fail_property = false;
@@ -379,10 +634,40 @@ static bool catalog_fault_test_apps_folder_items(const wchar_t *target,
     if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0) ok = false;
     item.display_name = L"Fixture packaged app";
 
+    item.fail_display_name = true;
+    if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0) ok = false;
+    item.fail_display_name = false;
+
+    item.aumid = NULL;
+    item.target_path = NULL;
+    if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0) ok = false;
+    item.aumid = L"Fixture.Package!Application";
+    item.target_path = target;
+
+    wchar_t long_display[InteropMaxStringBytes + 2];
+    for (size_t index = 0; index < InteropMaxStringBytes + 1; index++) long_display[index] = L'D';
+    long_display[InteropMaxStringBytes + 1] = L'\0';
+    item.display_name = long_display;
+    if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 0) ok = false;
+    item.display_name = L"Fixture packaged app";
+
     item.fail_parsing_name = true;
     if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 1 ||
         collector.candidates[0].identity_kind != AppCatalogIdentityAumid || collector.candidates[0].target_path.length == 0) ok = false;
     item.fail_parsing_name = false;
+    free(collector.candidates);
+    collector.candidates = NULL;
+    collector.count = 0;
+    collector.candidate_capacity = 0;
+    collector.storage_used = 0;
+
+    wchar_t long_parsing[AppCatalogMaxPathUnits + 2];
+    for (size_t index = 0; index < AppCatalogMaxPathUnits + 1; index++) long_parsing[index] = L'P';
+    long_parsing[AppCatalogMaxPathUnits + 1] = L'\0';
+    item.parsing_name = long_parsing;
+    if (!add_apps_folder_item(&collector, &item.shell_item) || collector.count != 1 ||
+        collector.candidates[0].source_identifier.length != strlen("Fixture packaged app")) ok = false;
+    item.parsing_name = L"shell:AppsFolder\\Fixture!App";
     free(collector.candidates);
     collector.candidates = NULL;
     collector.count = 0;
@@ -444,10 +729,10 @@ static app_catalog_status_t catalog_fault_enumerate(
     app_catalog_snapshot_t *output,
     catalog_fault_kind_t kind,
     size_t fail_at) {
-    CatalogFaultState = (catalog_fault_state_t){ kind, fail_at, 0 };
+    catalog_fault_state = (catalog_fault_state_t){ kind, fail_at, 0 };
     options->deadline_monotonic_ns = GetTickCount64() * UINT64_C(1000000) + UINT64_C(120000000000);
     app_catalog_status_t status = app_catalog_windows_enumerate_fixture_roots(allocator, options, roots, output);
-    CatalogFaultState = (catalog_fault_state_t){ CatalogFaultNone, 0, 0 };
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultNone, 0, 0 };
     return status;
 }
 
@@ -467,6 +752,63 @@ static bool catalog_fault_empty_snapshot(const app_catalog_snapshot_t *snapshot)
            snapshot->allocation_size == 0 && snapshot->storage_size == 0 &&
            snapshot->duplicate_launch_conflicts == 0 && snapshot->allocator.allocate == NULL &&
            snapshot->allocator.deallocate == NULL;
+}
+
+static bool catalog_fault_test_entry_guards(app_catalog_allocator_t allocator,
+    app_catalog_enumeration_options_t *options, app_catalog_windows_source_roots_t *roots,
+    app_catalog_snapshot_t *output, app_catalog_cleanup_owner_t *cleanup_owner) {
+    app_catalog_snapshot_t before = *output;
+    app_catalog_allocator_t invalid_allocator = allocator;
+    invalid_allocator.allocate = NULL;
+    if (app_catalog_windows_enumerate_fixture_roots(invalid_allocator, options, roots, output) != AppCatalogStatusInvalidArgument ||
+        memcmp(output, &before, sizeof(before)) != 0) return false;
+    invalid_allocator = allocator;
+    invalid_allocator.deallocate = NULL;
+    if (app_catalog_windows_enumerate_fixture_roots(invalid_allocator, options, roots, output) != AppCatalogStatusInvalidArgument ||
+        memcmp(output, &before, sizeof(before)) != 0) return false;
+    if (app_catalog_windows_enumerate_fixture_roots(allocator, NULL, roots, output) != AppCatalogStatusInvalidArgument ||
+        memcmp(output, &before, sizeof(before)) != 0) return false;
+    if (app_catalog_windows_enumerate_fixture_roots(allocator, options, roots, NULL) != AppCatalogStatusInvalidArgument) return false;
+    if (app_catalog_windows_enumerate_fixture_roots(allocator, options, NULL, output) != AppCatalogStatusInvalidArgument ||
+        memcmp(output, &before, sizeof(before)) != 0) return false;
+    app_catalog_windows_source_roots_t invalid_roots = *roots;
+    invalid_roots.common_programs = NULL;
+    if (app_catalog_windows_enumerate_fixture_roots(allocator, options, &invalid_roots, output) != AppCatalogStatusInvalidArgument ||
+        memcmp(output, &before, sizeof(before)) != 0) return false;
+    invalid_roots = *roots;
+    invalid_roots.common_programs = L"";
+    if (app_catalog_windows_enumerate_fixture_roots(allocator, options, &invalid_roots, output) != AppCatalogStatusInvalidArgument ||
+        memcmp(output, &before, sizeof(before)) != 0) return false;
+    wchar_t oversized_path[AppCatalogMaxPathUnits + 2];
+    for (size_t index = 0; index < AppCatalogMaxPathUnits + 1; index++) oversized_path[index] = L'X';
+    oversized_path[AppCatalogMaxPathUnits + 1] = L'\0';
+    invalid_roots = *roots;
+    invalid_roots.common_programs = oversized_path;
+    if (app_catalog_windows_enumerate_fixture_roots(allocator, options, &invalid_roots, output) != AppCatalogStatusInvalidArgument ||
+        memcmp(output, &before, sizeof(before)) != 0) return false;
+
+    HANDLE held = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (held == NULL) return false;
+    cleanup_owner->native_handles[0] = held;
+    cleanup_owner->kinds[0] = AppCatalogCleanupHandleWin32;
+    cleanup_owner->count = 1;
+    app_catalog_enumeration_options_t busy_options = *options;
+    busy_options.cleanup_owner = cleanup_owner;
+    bool owner_ok = app_catalog_windows_enumerate_fixture_roots(allocator, &busy_options, roots, output) == AppCatalogStatusInvalidArgument &&
+                    cleanup_owner->native_handles[0] == held && cleanup_owner->kinds[0] == AppCatalogCleanupHandleWin32 &&
+                    cleanup_owner->count == 1 && memcmp(output, &before, sizeof(before)) == 0;
+    BOOL closed = CloseHandle(held);
+    cleanup_owner->native_handles[0] = NULL;
+    cleanup_owner->kinds[0] = AppCatalogCleanupHandleNone;
+    cleanup_owner->count = 0;
+    if (!owner_ok || !closed) return false;
+
+    output->duplicate_launch_conflicts = 7;
+    before = *output;
+    bool output_ok = app_catalog_windows_enumerate_fixture_roots(allocator, options, roots, output) == AppCatalogStatusInvalidArgument &&
+                     memcmp(output, &before, sizeof(before)) == 0;
+    output->duplicate_launch_conflicts = 0;
+    return output_ok && catalog_fault_empty_snapshot(output);
 }
 
 static bool catalog_fault_cancelled(void *context) {
@@ -533,7 +875,8 @@ int app_catalog_windows_fault_fixture_run(void) {
         cleanup_owner.count = 1;
         goto cleanup;
     }
-    if (!catalog_fault_test_apps_folder_items(target, &cleanup_owner)) goto cleanup;
+    if (!catalog_fault_test_apps_folder_items(target, &cleanup_owner) ||
+        !catalog_fault_test_apps_folder_enumerator()) goto cleanup;
     for (size_t index = 0; index < 33; index++) {
         wchar_t name[32];
         (void)swprintf(name, sizeof(name) / sizeof(name[0]), L"fault-%02zu.lnk", index);
@@ -547,6 +890,9 @@ int app_catalog_windows_fault_fixture_run(void) {
         .user_desktop = desktop,
         .public_desktop = public_desktop,
     };
+
+    stage = "entry-guard-tests";
+    if (!catalog_fault_test_entry_guards(allocator, &options, &roots, &output, &cleanup_owner)) goto cleanup;
 
     /* Entry guards and all provider-side allocation sites fail before output publication. */
     bool allocation_sweep_completed = false;
@@ -583,6 +929,8 @@ int app_catalog_windows_fault_fixture_run(void) {
         { CatalogFaultFindFirst, AppCatalogStatusNativeFailure },
         { CatalogFaultFindNext, AppCatalogStatusNativeFailure },
         { CatalogFaultComInitialize, AppCatalogStatusNativeFailure },
+        { CatalogFaultComCreateNull, AppCatalogStatusNativeFailure },
+        { CatalogFaultComPersistNull, AppCatalogStatusNativeFailure },
     };
     for (size_t index = 0; index < sizeof(failures) / sizeof(failures[0]); index++) {
         stage = "native-api-failure";
