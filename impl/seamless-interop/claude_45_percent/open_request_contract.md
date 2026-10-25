@@ -202,6 +202,22 @@ Codec cross-field rule (`interop_codec.zig` `cross_valid`): App requires app_key
 and forbids target_path; every other wire kind requires target_path and forbids
 app_key. The parser's output satisfies this for every non-delegated item.
 
+### 4.2 Integration rule: the environment activation token
+
+The parser does not read the environment. The integration layer (29b/29f) calls
+`pick_activation_token` (`activation_store_contract.md` section 2.1) and passes the
+result as the launch token. Rules for that layer:
+
+- One environment token per `waddle open` invocation. It is stored as a host
+  pending token (`activation_store_contract.md` section 3.3) for the launch.
+- The token attaches to the **first launched item only**: `items[0]`, which is
+  the first item that is sent. Items that are DelegateExec are never sent, and
+  a valid request has either exactly one DelegateExec item alone or only sent
+  items (`DelegateConflict`), so `items[0]` is always the first sent item.
+  Every later item of the same request is launched without a token.
+- The guest's `LaunchResult.activation_token` echo is never stored, compared or
+  reused as an activation source. It is unauthenticated guest data.
+
 ## 5. Exit codes and mappings
 
 | Constant | Value | Meaning |
