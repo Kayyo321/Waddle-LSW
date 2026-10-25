@@ -42,8 +42,8 @@ static BOOL native_map_get_interface_detail(HDEVINFO devices,
     static const WCHAR path[] = L"\\\\.\\WaddleInteropCompositionFixture";
     const DWORD required = (DWORD)(offsetof(SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath) + sizeof(path));
     (void)interface_data; (void)device_data;
-    if (devices == NULL || needed == NULL) { SetLastError(ERROR_INVALID_PARAMETER); return FALSE; }
-    *needed = required;
+    if (devices == NULL || (needed == NULL && detail == NULL)) { SetLastError(ERROR_INVALID_PARAMETER); return FALSE; }
+    if (needed != NULL) *needed = required;
     if (detail == NULL || detail_bytes == 0) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return FALSE; }
     if (detail_bytes < required) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return FALSE; }
     memcpy(detail->DevicePath, path, sizeof(path));

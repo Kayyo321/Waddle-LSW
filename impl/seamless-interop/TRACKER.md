@@ -1470,7 +1470,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     exact close-failure quarantine and native profile fixture as unaccepted
     scaffolding; SDK/link alone earns no native enumeration credit.
 
-- **Commit `HEAD`**: `feat(interop): preserve unrelated MIME defaults while editing one key`
+- **Commit `7d4a01e`**: `feat(interop): preserve unrelated MIME defaults while editing one key`
   - **Task Impact**: +20% to TODO #31 (+0.40% overall; total23.60%).
   - **Summary**: Pure bounded Zig read/rewrite with exact prior list, duplicate
     refusal, byte-preserved other groups/comments/newlines, removal, restoration
@@ -1478,3 +1478,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     every allocation failure across publication shapes,100%lines/93.28%arcs
     pass; default tests/sanitizer allocation suite/CI coverage include it.
     No desktop defaults are written and no launch/registration credit is claimed.
+
+- **Commit `HEAD`**: `test(interop): honor optional SetupAPI detail size output in native fixture`
+  - **Task Impact**: +0% to TODO #6/#34; native rerun required.
+  - **Summary**: bc450b9 still failed before Hello. Root found the concrete
+    earlier seam defect: successful second GetDeviceInterfaceDetail may pass
+    NULL RequiredSize, which the fixture wrongly rejected. Correct only that
+    fixture contract; retain the separate necessary alignment correction.
+    Strict SDK/link passes, and production native gates remain open.
