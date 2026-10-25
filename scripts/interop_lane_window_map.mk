@@ -13,9 +13,9 @@ build/host_window_map.o: src/interop/host_window_map.zig src/interop/host_window
 build/host_popup_positioner.o: src/interop/host_popup_positioner.zig src/interop/host_popup_positioner.h | build
 	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 build/host_window_map_abi_test: tests/interop/host_window_map_abi.c build/host_window_map.o src/interop/host_window_map.h | build
-	$(CC) $(InteropWindowMapCFlags) -Isrc/interop $< build/host_window_map.o $(InteropWindowMapLdFlags) -o $@
+	$(CC) $(InteropWindowMapCFlags) -Iinclude -Isrc/interop $< build/host_window_map.o $(InteropWindowMapLdFlags) -o $@
 build/host_popup_positioner_abi_test: tests/interop/host_popup_positioner_abi.c build/host_popup_positioner.o src/interop/host_popup_positioner.h | build
-	$(CC) $(InteropWindowMapCFlags) -Isrc/interop $< build/host_popup_positioner.o $(InteropWindowMapLdFlags) -o $@
+	$(CC) $(InteropWindowMapCFlags) -Iinclude -Isrc/interop $< build/host_popup_positioner.o $(InteropWindowMapLdFlags) -o $@
 
 .PHONY: interop-host-window-map-test interop-host-window-map-coverage
 

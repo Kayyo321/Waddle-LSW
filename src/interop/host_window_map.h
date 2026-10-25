@@ -18,6 +18,8 @@
  *
  * The full rules are in `impl/seamless-interop/claude_45_percent/host_window_map_contract.md`.
  */
+#include "waddle/interop_protocol.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -37,6 +39,14 @@ enum host_window_map_role_t {
     HostWindowMapRoleUacConsent = 5, /**< xdg_toplevel for consent.exe; parent must be none. */
     HostWindowMapRoleImePreedit = 6 /**< Non-grabbing xdg_popup; parent must be valid. */
 };
+
+/* Role values are the frozen interop_window_role_t values from include/waddle/interop_protocol.h. */
+_Static_assert((int)HostWindowMapRoleToplevel == (int)InteropRoleToplevel, "role Toplevel");
+_Static_assert((int)HostWindowMapRoleDialog == (int)InteropRoleDialog, "role Dialog");
+_Static_assert((int)HostWindowMapRoleMenu == (int)InteropRoleMenu, "role Menu");
+_Static_assert((int)HostWindowMapRoleTooltip == (int)InteropRoleTooltip, "role Tooltip");
+_Static_assert((int)HostWindowMapRoleUacConsent == (int)InteropRoleUacConsent, "role UacConsent");
+_Static_assert((int)HostWindowMapRoleImePreedit == (int)InteropRoleImePreedit, "role ImePreedit");
 
 /** @brief Exact window incarnation. Both fields zero is "none" when used as a parent. */
 typedef struct host_window_ref_t {
@@ -79,6 +89,29 @@ typedef enum host_window_map_retire_status_t {
 } host_window_map_retire_status_t;
 
 /**
+ * @brief Protocol error code (`interop_error_t`) for an announce status.
+ *
+ * Realize gives `InteropErrorNone`; a duplicate gives `InteropErrorProtocolViolation`; a stale parent or a
+ * conflicting generation gives `InteropErrorStaleWindow`; a full table gives `InteropErrorQuotaExceeded`;
+ * an invalid argument gives `InteropErrorMalformedFrame`.
+ *
+ * @param status In. Status returned by `host_window_map_announce`.
+ * @return The `interop_error_t` value. Thread safety: any thread.
+ */
+uint32_t host_window_map_announce_error_code(host_window_map_announce_status_t status);
+
+/**
+ * @brief Protocol error code (`interop_error_t`) for a retire status.
+ *
+ * Retired gives `InteropErrorNone`; a stale pair gives `InteropErrorStaleWindow`; an invalid argument gives
+ * `InteropErrorMalformedFrame`.
+ *
+ * @param status In. Status returned by `host_window_map_retire`.
+ * @return The `interop_error_t` value. Thread safety: any thread.
+ */
+uint32_t host_window_map_retire_error_code(host_window_map_retire_status_t status);
+
+/**
  * @brief Clear the table to the epoch-start state.
  *
  * @param map In/out. Table to clear. NULL is a no-op.
@@ -113,7 +146,9 @@ host_window_map_announce_status_t host_window_map_announce(host_window_map_t *ma
  *            Written only on `HostWindowMapRetired`.
  * @param out_capacity In. Entries in `out`; below `HostWindowMapMaxOutput` gives refusal.
  * @param out_count Out. Receives the removed count. NULL gives `HostWindowMapRetireRefuseInvalid`. Must not
- *                  overlap the table or `out`.
+ *                  overlap the table or `out`. Written with the removed count (0 for `HostWindowMapStale`)
+ *                  whenever the call reaches the table. It is NOT written when a NULL pointer, a short
+ *                  `out_capacity`, or an overlap refuses the call; the caller's value is then unchanged.
  * @return Retire status. Thread safety: owner thread only.
  */
 host_window_map_retire_status_t host_window_map_retire(host_window_map_t *map, host_window_ref_t window, host_window_ref_t *out, uint32_t out_capacity, uint32_t *out_count);

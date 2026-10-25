@@ -85,6 +85,18 @@ pub const retire_status_t = enum(c_int) {
     RefuseInvalid = 3,
 };
 
+/// Protocol `interop_error_t` values used as refusal codes. They equal `include/waddle/interop_protocol.h`,
+/// and the Zig tests and the C header check that equality.
+pub const ErrorNone: u32 = 0;
+/// `InteropErrorProtocolViolation`: a duplicate announce.
+pub const ErrorProtocolViolation: u32 = 1;
+/// `InteropErrorMalformedFrame`: a zero identity, invalid role, invalid parent shape or capacity.
+pub const ErrorMalformedFrame: u32 = 2;
+/// `InteropErrorStaleWindow`: a parent or window generation that is not realized.
+pub const ErrorStaleWindow: u32 = 5;
+/// `InteropErrorQuotaExceeded`: the 64-entry table is full.
+pub const ErrorQuotaExceeded: u32 = 6;
+
 /// Result of `retire`. `count` is the number of entries written to the output list.
 pub const retire_result_t = extern struct {
     /// Outcome of the retire.
@@ -92,6 +104,37 @@ pub const retire_result_t = extern struct {
     /// Removed windows written to the output list, target included; zero unless Retired.
     count: u32,
 };
+
+/// Protocol error code for an announce status, as sent in `Error{refused_type = WindowAnnounce}`.
+///
+/// Realize is `ErrorNone`. A full table is `ErrorQuotaExceeded`. A parent that is not realized, or a
+/// window known under another generation, is `ErrorStaleWindow`. A duplicate is `ErrorProtocolViolation`,
+/// and an invalid identity, role or parent shape is `ErrorMalformedFrame`.
+///
+/// @param status Status returned by `announce`.
+/// @return The `interop_error_t` value.
+pub fn announce_error_code(status: announce_status_t) u32 {
+    return switch (status) {
+        .Realize => ErrorNone,
+        .RefuseDuplicate => ErrorProtocolViolation,
+        .RefuseStaleParent, .RefuseWindowConflict => ErrorStaleWindow,
+        .RefuseExhausted => ErrorQuotaExceeded,
+        .RefuseInvalid => ErrorMalformedFrame,
+    };
+}
+
+/// Protocol error code for a retire status. Retired is `ErrorNone`, a stale pair is `ErrorStaleWindow`,
+/// and an invalid identity or output capacity is `ErrorMalformedFrame`.
+///
+/// @param status Status returned by `retire`.
+/// @return The `interop_error_t` value.
+pub fn retire_error_code(status: retire_status_t) u32 {
+    return switch (status) {
+        .Retired => ErrorNone,
+        .Stale => ErrorStaleWindow,
+        .RefuseInvalid => ErrorMalformedFrame,
+    };
+}
 
 /// Whether a window reference names a real identity (both fields nonzero).
 fn valid_ref(id: window_ref_t) bool {
@@ -352,6 +395,22 @@ export fn host_window_map_realized_count(map: ?*const host_window_map_t) callcon
     return if (map) |target| realized_count(target) else 0;
 }
 
+/// C ABI: protocol error code for an announce status. See `announce_error_code`.
+///
+/// @param status In. Status returned by `host_window_map_announce`.
+/// @return The `interop_error_t` value. Thread safety: pure; any thread.
+export fn host_window_map_announce_error_code(status: announce_status_t) callconv(.C) u32 {
+    return announce_error_code(status);
+}
+
+/// C ABI: protocol error code for a retire status. See `retire_error_code`.
+///
+/// @param status In. Status returned by `host_window_map_retire`.
+/// @return The `interop_error_t` value. Thread safety: pure; any thread.
+export fn host_window_map_retire_error_code(status: retire_status_t) callconv(.C) u32 {
+    return retire_error_code(status);
+}
+
 comptime {
     // Layout frozen by src/interop/host_window_map.h (and checked there by _Static_assert).
     if (@sizeOf(window_ref_t) != 16 or @sizeOf(window_entry_t) != 40) @compileError("host window map entry layout changed");
@@ -402,6 +461,14 @@ const abi_shim_t = struct {
 
     fn retire(map: ?*host_window_map_t, window: window_ref_t, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) retire_status_t {
         return @call(.never_inline, host_window_map_retire, .{ map, window, out, out_capacity, out_count });
+    }
+
+    fn announce_error_code(status: announce_status_t) u32 {
+        return @call(.never_inline, host_window_map_announce_error_code, .{status});
+    }
+
+    fn retire_error_code(status: retire_status_t) u32 {
+        return @call(.never_inline, host_window_map_retire_error_code, .{status});
     }
 
     fn lookup(map: ?*const host_window_map_t, window: window_ref_t, out: ?*window_entry_t) bool {
@@ -726,6 +793,46 @@ test "randomized sequences agree with the reference model over small and large u
     try run_random_sequence(3, 40, 4000);
     try run_random_sequence(4, 120, 6000);
     try run_random_sequence(0x9E3779B97F4A7C15, 200, 6000);
+}
+
+test "a live window under another generation is a conflict even when its parent is also stale" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    // The conflict test precedes the parent test: the stale parent never gets to decide.
+    try testing.expectEqual(announce_status_t.RefuseWindowConflict, announce(&map, ref(1, 2), ref(9, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseDuplicate, announce(&map, ref(1, 1), ref(9, 1), RoleDialog));
+    try testing.expectEqual(@as(u32, 1), realized_count(&map));
+}
+
+test "every announce and retire status maps to its protocol error code" {
+    try testing.expectEqual(ErrorNone, announce_error_code(.Realize));
+    try testing.expectEqual(ErrorProtocolViolation, announce_error_code(.RefuseDuplicate));
+    try testing.expectEqual(ErrorStaleWindow, announce_error_code(.RefuseStaleParent));
+    try testing.expectEqual(ErrorStaleWindow, announce_error_code(.RefuseWindowConflict));
+    try testing.expectEqual(ErrorQuotaExceeded, announce_error_code(.RefuseExhausted));
+    try testing.expectEqual(ErrorMalformedFrame, announce_error_code(.RefuseInvalid));
+    try testing.expectEqual(ErrorNone, retire_error_code(.Retired));
+    try testing.expectEqual(ErrorStaleWindow, retire_error_code(.Stale));
+    try testing.expectEqual(ErrorMalformedFrame, retire_error_code(.RefuseInvalid));
+    try testing.expectEqual(ErrorQuotaExceeded, abi_shim_t.announce_error_code(.RefuseExhausted));
+    try testing.expectEqual(ErrorStaleWindow, abi_shim_t.retire_error_code(.Stale));
+}
+
+test "role and error code values match the frozen protocol header" {
+    const protocol = @cImport({
+        @cInclude("waddle/interop_protocol.h");
+    });
+    try testing.expectEqual(@as(u8, protocol.InteropRoleToplevel), RoleToplevel);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleDialog), RoleDialog);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleMenu), RoleMenu);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleTooltip), RoleTooltip);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleUacConsent), RoleUacConsent);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleImePreedit), RoleImePreedit);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorNone), ErrorNone);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorProtocolViolation), ErrorProtocolViolation);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorMalformedFrame), ErrorMalformedFrame);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorStaleWindow), ErrorStaleWindow);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorQuotaExceeded), ErrorQuotaExceeded);
 }
 
 test "C ABI counts and lookup accept NULL and report the table" {

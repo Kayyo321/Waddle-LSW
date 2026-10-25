@@ -33,6 +33,19 @@ static int same(host_window_ref_t left, host_window_ref_t right) {
     return left.window == right.window && left.generation == right.generation;
 }
 
+static int check_error_codes(void) {
+    Check(host_window_map_announce_error_code(HostWindowMapRealize) == InteropErrorNone);
+    Check(host_window_map_announce_error_code(HostWindowMapRefuseDuplicate) == InteropErrorProtocolViolation);
+    Check(host_window_map_announce_error_code(HostWindowMapRefuseStaleParent) == InteropErrorStaleWindow);
+    Check(host_window_map_announce_error_code(HostWindowMapRefuseWindowConflict) == InteropErrorStaleWindow);
+    Check(host_window_map_announce_error_code(HostWindowMapRefuseExhausted) == InteropErrorQuotaExceeded);
+    Check(host_window_map_announce_error_code(HostWindowMapRefuseInvalid) == InteropErrorMalformedFrame);
+    Check(host_window_map_retire_error_code(HostWindowMapRetired) == InteropErrorNone);
+    Check(host_window_map_retire_error_code(HostWindowMapStale) == InteropErrorStaleWindow);
+    Check(host_window_map_retire_error_code(HostWindowMapRetireRefuseInvalid) == InteropErrorMalformedFrame);
+    return 0;
+}
+
 static int check_layout(void) {
     Check(sizeof(host_window_ref_t) == 16);
     Check(sizeof(host_window_entry_t) == 40);
@@ -147,6 +160,7 @@ static int check_aliasing(host_window_map_t *map) {
 int main(void) {
     static host_window_map_t map;
     if (check_layout() != 0) return 1;
+    if (check_error_codes() != 0) return 1;
     host_window_map_reset(&map);
     if (check_null_and_refusals(&map) != 0) return 1;
     if (check_realize_and_stale_parents(&map) != 0) return 1;
