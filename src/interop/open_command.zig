@@ -614,6 +614,16 @@ const RealHooks = struct {
         var name_z: [c.WaddleMaxDeviceNameLen]u8 = undefined;
         const name = std.fmt.bufPrintZ(&name_z, "{s}", .{device}) catch unreachable;
         var argv_storage = [_:null]?[*:0]const u8{ "waddle-session", "--device", name.ptr };
+        // Prefer the binary installed beside this executable; otherwise search PATH.
+        var sibling_buffer: [std.fs.max_path_bytes]u8 = undefined;
+        if (std.fs.selfExeDirPath(&sibling_buffer)) |directory| {
+            var sibling: [std.fs.max_path_bytes]u8 = undefined;
+            const path = std.fmt.bufPrintZ(&sibling, "{s}/waddle-session", .{directory}) catch return error.Failed;
+            if (std.fs.cwd().access(path, .{})) |_| {
+                argv_storage[0] = path.ptr;
+                return spawn_detached(path.ptr, &argv_storage);
+            } else |_| {}
+        } else |_| {}
         try spawn_detached("waddle-session", &argv_storage);
     }
 
