@@ -44,4 +44,18 @@ int daemon_wire_decode_ready_response(const uint8_t *bytes, size_t length,
  */
 int daemon_wire_decode_error_response(const uint8_t *bytes, size_t length,
                                       uint32_t *out_error);
+/** @brief Decode one exact legacy status response for session admission.
+ * @param[in] bytes Non-null borrowed readable payload of exactly 8560 bytes.
+ * @param[in] length Exact payload size; no trailing bytes are permitted.
+ * @param[out] out_response Non-null aligned writable value, disjoint from bytes.
+ * @return 0 success; -1 malformed length/state/CID/port/resource/mount data,
+ * leaving output unchanged. State0..6, CID3..UINT32_MAX-1, nonzero port,
+ * memory512..65536 MiB, vCPU1..128, count0..8, reserved zero are required.
+ * Active mount strings must be nonempty/NUL-terminated, readonly0/1, reserved0.
+ * @note Copies validated fields; inactive mounts zero. No path authority is
+ * inferred from copied strings. Allocation-free, no retained pointer or shared
+ * state; thread-safe for disjoint outputs. Caller validates header correlation.
+ */
+int daemon_wire_decode_status_response(const uint8_t *bytes, size_t length,
+                                      waddle_daemon_status_resp_t *out_response);
 #endif

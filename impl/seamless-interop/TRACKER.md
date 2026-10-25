@@ -1229,9 +1229,16 @@ its uncompiled draft earns no credit until current acceptance passes.
     and raw compressed Windows log in ci_evidence_2026_10_25. All three exact
     checkpoint workflows are green. No installed-session/coordinator credit.
 
-- **Commit `HEAD`**: `fix(interop): retain validated QEMU location outside provenance metadata`
+- **Commit `c6be103`**: `fix(interop): retain validated QEMU location outside provenance metadata`
   - **Task Impact**: +0% to TODO #34; preparation repair only.
   - **Summary**: Repair the real prepare KeyError saved at0965410 by keeping
     canonical binary location separate from immutable QEMU provenance. Tests
     now use the real validator result keys rather than inventing a path key;
     all16 preparation units pass. No guest boot or native acceptance claimed.
+
+- **Commit `HEAD`**: `feat(interop): decode bounded daemon status for session admission`
+  - **Task Impact**: +0% to TODO #7; runtime entry remains separate.
+  - **Summary**: Add exact little-endian status validation through Zig before
+    host admission can consume daemon state. Five Zig cases and independent
+    C ABI consumer pass, including leak-enabled ASan/LSan/UBSan. Exact58/58
+    production lines and36/36 metadata branches pass the existing coverage gate.

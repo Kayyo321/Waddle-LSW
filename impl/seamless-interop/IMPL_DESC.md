@@ -3556,3 +3556,22 @@ from native execution. Coordinator staging and the installed session remain
 separate required work. Failed observers reject tracked-snapshot synchronization
 and preedit changes before graph/time/configuration mutation; sticky faults also
 reject preedit changes. Only cleanup and diagnostics remain available there.
+
+### 8.27 Bounded daemon status admission decoding (2026-10-25)
+
+The additive `daemon_wire_decode_status_response` consumes exactly8560
+little-endian bytes into the legacy C status value. C ABI sizes/offsets are
+asserted independently by tests/daemon/test_status_wire.c. State is0..6,
+CID3..UINT32_MAX-1, guest-exec port nonzero, RAM512..65536MiB, vCPU1..128,
+mount_count0..8, reserved0. Every active1064-byte mount has nonempty terminated
+1024-byte host/32-byte drive arrays, boolean read_only and reserved0. Inactive
+mounts are zeroed. Returned paths are copied diagnostic values, with no path
+opening/authorization. No allocation or retained pointer occurs. Inputs and
+aligned outputs are caller-accessible and disjoint; errors preserve the full
+output. Header type/sequence and selected-device CID/port equality remain the
+runtime caller's responsibility. This is an additive local C API, no wire
+version change. Tests cover scalar edges, unterminated/empty strings, all8
+mounts, malformed lengths and output preservation, plus an independent C ABI
+consumer under ASan/LSan/UBSan. Current production metadata coverage58/58lines
+and36/36branches (existing compiler guard exclusions only). The parser alone
+earns no session-entry credit.

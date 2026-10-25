@@ -123,15 +123,19 @@ zig-test: build/path_rules.o build/device_storage.o
 build/test_daemon_protocol: tests/daemon/test_daemon_protocol.c src/daemon/daemon_protocol.c include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_protocol.c src/daemon/daemon_protocol.c $(LDFLAGS) -o $@
 
-build/daemon_wire.o: src/daemon/daemon_wire.zig | build
+build/daemon_wire.o: src/daemon/daemon_wire.zig src/daemon/daemon_wire.h include/waddle/daemon_protocol.h | build
 	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/test_status_wire: tests/daemon/test_status_wire.c build/daemon_wire.o src/daemon/daemon_wire.h include/waddle/daemon_protocol.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< build/daemon_wire.o $(LDFLAGS) -o $@
 
 build/test_guest_ready: tests/daemon/test_guest_ready.c src/daemon/daemon_guest_ready.c src/daemon/daemon_guest_ready.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_guest_ready.c src/daemon/daemon_guest_ready.c $(LDFLAGS) -Wl,--wrap=socket,--wrap=connect,--wrap=getsockopt,--wrap=close -o $@
 
 .PHONY: daemon-guest-ready-test
-daemon-guest-ready-test: build/test_guest_ready build/daemon_wire.o
+daemon-guest-ready-test: build/test_guest_ready build/test_status_wire build/daemon_wire.o
 	./build/test_guest_ready
+	./build/test_status_wire
 	$(ZIG) test src/daemon/daemon_wire.zig
 
 build/test_daemon_qemu: tests/daemon/test_daemon_qemu.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c build/daemon_config.o src/daemon/daemon_qemu.h src/daemon/daemon_qmp.h src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
