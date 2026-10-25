@@ -165,7 +165,6 @@ static int emit(session_windows_handler_t *handler, uint32_t type, const uint8_t
 
 /** @brief Send the pending frames in order until the queue is full again. Returns nonzero only on a failed send. */
 static int flush_pending(session_windows_handler_t *handler) {
-    if (handler->sender == NULL) return 0;
     while (handler->pending_count > 0) {
         int result = send_now(handler, handler->pending[0].bytes, handler->pending[0].length);
         if (result == HostFeatureSuccess) {
@@ -209,7 +208,6 @@ static void purge_retired(session_windows_handler_t *handler) {
 
 /** @brief Flush the Wayland output buffer. WouldBlock is not an error; the poll requests POLLOUT instead. */
 static int flush_core(session_windows_handler_t *handler) {
-    if (!handler->wayland_ready) return 0;
     return host_wayland_core_flush(&handler->core) == HostWaylandCoreDisplayError ? fail(handler) : 0;
 }
 
@@ -227,9 +225,11 @@ static void reducer_drop(session_windows_handler_t *handler, uint32_t index) {
     handler->reducers[index].used = 0;
 }
 
-/** @brief Create the reducer of a window pair. Returns the slot, or -1 when the pair exists or the state is refused. */
+/**
+ * @brief Create the reducer of a window pair. Returns the slot, or -1 when the state is refused or every slot is in use.
+ * The caller has checked that the pair has no reducer (on_announce).
+ */
 static int reducer_create(session_windows_handler_t *handler, uint64_t window, uint64_t generation, uint32_t state, uint8_t popup) {
-    if (reducer_find(handler, window, generation) >= 0) return -1;
     for (uint32_t index = 0; index < SessionWindowsMaxReducers; ++index) {
         if (handler->reducers[index].used) continue;
         waddle_window_state_handle_t *handle = NULL;
@@ -394,8 +394,8 @@ static void on_core_seat(void *user, struct wl_seat *seat, bool added) {
     if (handler->seat_listener != NULL) handler->seat_listener(handler->seat_user, seat, added);
 }
 
+/** @brief Whether the core still records `seat`. A press always carries a seat (record_press refuses NULL). */
 static int core_has_seat(const session_windows_handler_t *handler, const struct wl_seat *seat) {
-    if (seat == NULL) return 0;
     for (uint32_t index = 0; index < HostWaylandCoreMaxSeats; ++index) {
         if (host_wayland_core_seat_at(&handler->core, index) == seat) return 1;
     }
