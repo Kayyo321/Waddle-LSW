@@ -2781,17 +2781,17 @@ fn v3_is_recreate(journal: journal_v3_t) bool {
 }
 
 /// Identity of the artifact staged or published by a recreate journal.
-fn v3_new_artifact_info(journal: journal_v3_t) file_info_t {
+noinline fn v3_new_artifact_info(journal: journal_v3_t) file_info_t {
     return .{ .hash = hash_from_text(journal.new_artifact_hash.?), .mode = journal.new_artifact_mode, .device = journal.new_artifact_device.?, .inode = journal.new_artifact_inode.? };
 }
 
-fn v3_old_manifest_info(journal: journal_v3_t) file_info_t {
+noinline fn v3_old_manifest_info(journal: journal_v3_t) file_info_t {
     return .{ .hash = hash_from_text(journal.old_manifest_hash), .mode = 0o600, .device = journal.old_manifest_device, .inode = journal.old_manifest_inode };
 }
-fn v3_new_manifest_info(journal: journal_v3_t) file_info_t {
+noinline fn v3_new_manifest_info(journal: journal_v3_t) file_info_t {
     return .{ .hash = hash_from_text(journal.new_manifest_hash), .mode = 0o600, .device = journal.new_manifest_device, .inode = journal.new_manifest_inode };
 }
-fn v3_artifact_info(journal: journal_v3_t) file_info_t {
+noinline fn v3_artifact_info(journal: journal_v3_t) file_info_t {
     return .{ .hash = hash_from_text(journal.old_artifact_hash.?), .mode = journal.old_artifact_mode, .device = journal.old_artifact_device.?, .inode = journal.old_artifact_inode.? };
 }
 
@@ -9751,6 +9751,251 @@ test "migrate refuses version downgrades, reordered records, and unparsable vers
     const on_disk = read_stored_manifest(fixture.state);
     defer std.testing.allocator.free(on_disk);
     try std.testing.expectEqualStrings(newer, on_disk);
+}
+
+test "version order compares numeric components and rejects unordered text" {
+    try std.testing.expectEqual(std.math.Order.eq, try version_order("0.2", "0.2.0"));
+    try std.testing.expectEqual(std.math.Order.gt, try version_order("1.10.0", "1.9.0"));
+    try std.testing.expectEqual(std.math.Order.lt, try version_order("0.2.0", "0.2.1"));
+    try std.testing.expectError(error.InvalidManifest, version_order("0.2.x", "0.2.0"));
+    try std.testing.expectError(error.InvalidManifest, version_order("0.2.0", "0.2."));
+    try std.testing.expectError(error.InvalidManifest, version_order("1234567890", "0"));
+}
+
+test "recreate delta keeps the target identity exact and every other record equal" {
+    const digest_a = hash_hex("a");
+    const digest_b = hash_hex("b");
+    const digest_c = hash_hex("c");
+    const old = [_]manifest.record_t{
+        test_record("x:one", "/data/applications/one.desktop", &digest_a),
+        test_record("x:two", "/data/applications/two.desktop", &digest_b),
+    };
+    var digest_moved = test_record("x:one", "/data/applications/one.desktop", &digest_c);
+    digest_moved.created_by = "0.3.0";
+    const changed_digest = [_]manifest.record_t{ digest_moved, old[1] };
+    try validate_recreate_delta(&old, &changed_digest, "x:one");
+    const moved = [_]manifest.record_t{ test_record("x:one", "/data/applications/moved.desktop", &digest_a), old[1] };
+    try std.testing.expectError(error.ManifestMismatch, validate_recreate_delta(&old, &moved, "x:one"));
+    const other_changed = [_]manifest.record_t{ old[0], test_record("x:two", "/data/applications/two.desktop", &digest_c) };
+    try std.testing.expectError(error.ManifestMismatch, validate_recreate_delta(&old, &other_changed, "x:one"));
+    try std.testing.expectError(error.ManifestMismatch, validate_recreate_delta(&old, old[0..1], "x:one"));
+    const missing = [_]manifest.record_t{ old[0], test_record("x:three", "/data/applications/three.desktop", &digest_c) };
+    try std.testing.expectError(error.ManifestMismatch, validate_recreate_delta(&old, &missing, "x:one"));
+}
+
+test "recreate refuses absent manifests, unsafe modes, and paths outside the roots" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const docs = recreate_documents(scratch, fixture.data_path);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    try std.testing.expectError(error.FileNotFound, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes }));
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    try std.testing.expectError(error.InvalidArgument, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes, .artifact_mode = 0o600 }));
+    try std.testing.expectError(error.InvalidArgument, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = "", .artifact_bytes = docs.bytes }));
+    const outside_digest = hash_hex(docs.bytes);
+    const outside = test_spec_t{ .id = "handler:waddle-open", .kind = "handler_entry", .path = "/unused-root/applications/handler.desktop", .sha256 = &outside_digest };
+    const outside_list = [_]test_spec_t{outside};
+    const outside_original = test_document(scratch, 1, &outside_list);
+    if (c.unlinkat(fixture.state.fd, "manifest.json", 0) != 0) @panic("fixture unlink");
+    try write_test_file(fixture.state.fd, "manifest.json", outside_original, 0o600);
+    const outside_candidate = std.mem.replaceOwned(u8, scratch, outside_original, "2026-10-25T00:00:00Z", "2026-10-26T00:00:00Z") catch @panic("fixture candidate");
+    try std.testing.expectError(error.InvalidPath, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = outside_candidate, .artifact_bytes = docs.bytes }));
+}
+
+test "ensure_directory refuses a regular file in a directory component" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    write_status_file(fixture.data, "plain-file", "not a directory", 0o644);
+    try std.testing.expectError(error.AccessDenied, store.ensure_directory(.Data, "plain-file/child"));
+}
+
+test "recreate journal evidence rejects digest, delta, and path changes after a crash" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const docs = recreate_documents(scratch, fixture.data_path);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    store.fail_after.store(store.checkpoint_count.load(.monotonic) + 8, .monotonic);
+    try std.testing.expectError(error.InjectedFailure, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes }));
+    store.fail_after.store(0, .monotonic);
+    const txid = optional_transaction_id(fixture.state) orelse return error.TestExpectedEqual;
+    const journal_text = try store.read_tx_file(txid, "journal.json", MaxJournalBytes);
+    defer std.testing.allocator.free(journal_text);
+    var parsed = try parse_journal_v3(std.testing.allocator, journal_text);
+    defer parsed.deinit();
+    const other_digest = hash_hex("different");
+    const digest_path = std.fmt.allocPrint(scratch, "{s}/applications/handler.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const changed_digest = test_spec_t{ .id = "handler:waddle-open", .kind = "handler_entry", .path = digest_path, .sha256 = &other_digest };
+    const changed_list = [_]test_spec_t{changed_digest};
+    const candidate_digest = test_document(scratch, 1, &changed_list);
+    rewrite_manifest_evidence(fixture.state, txid, parsed.value, docs.original, candidate_digest);
+    try std.testing.expectError(error.RecoveryRequired, store.recover());
+    const moved_path = std.fmt.allocPrint(scratch, "{s}/applications/moved.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const digest = hash_hex(docs.bytes);
+    const moved = test_spec_t{ .id = "handler:waddle-open", .kind = "handler_entry", .path = moved_path, .sha256 = &digest };
+    const moved_list = [_]test_spec_t{moved};
+    rewrite_manifest_evidence(fixture.state, txid, parsed.value, docs.original, test_document(scratch, 1, &moved_list));
+    try std.testing.expectError(error.RecoveryRequired, store.recover());
+    replace_transaction_file(fixture.state, txid, "old-manifest", docs.original, 0o600);
+    replace_transaction_file(fixture.state, txid, "new-manifest", docs.candidate, 0o600);
+    replace_transaction_file(fixture.state, txid, "journal.json", journal_text, 0o600);
+    try store.recover();
+    try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
+}
+
+test "closed stores and I/O failures in directory creation and snapshot reads fail without corruption" {
+    defer {
+        injected_io_at = 0;
+        injected_io_count = 0;
+    }
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = recreate_documents(arena.allocator(), fixture.data_path);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    try std.testing.expectError(error.InvalidArgument, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = "", .artifact_bytes = docs.bytes }));
+    try std.testing.expectError(error.FileNotFound, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes }));
+    store.deinit();
+    try std.testing.expectError(error.Closed, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes }));
+    try std.testing.expectError(error.Closed, store.ensure_directory(.Data, "x"));
+    try std.testing.expectError(error.Closed, store.manifest_snapshot(std.testing.allocator));
+
+    var live = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer live.deinit();
+    var observed: usize = 0;
+    for (1..24) |fault_io| {
+        injected_io_at = fault_io;
+        injected_io_count = 0;
+        const created = live.ensure_directory(.Data, "fault/one/two");
+        injected_io_at = 0;
+        injected_io_count = 0;
+        if (created) |_| {} else |err| {
+            observed += 1;
+            try std.testing.expect(err == error.IoError or err == error.AccessDenied);
+        }
+        try live.ensure_directory(.Data, "fault/one/two");
+    }
+    try std.testing.expect(observed > 0);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    for (1..12) |fault_io| {
+        injected_io_at = fault_io;
+        injected_io_count = 0;
+        const snapshot = live.manifest_snapshot(std.testing.allocator);
+        injected_io_at = 0;
+        injected_io_count = 0;
+        if (snapshot) |maybe| {
+            if (maybe) |bytes| std.testing.allocator.free(bytes);
+        } else |err| try std.testing.expect(err == error.IoError or err == error.AccessDenied or err == error.RecoveryRequired);
+    }
+    const final = (try live.manifest_snapshot(std.testing.allocator)) orelse return error.TestExpectedEqual;
+    defer std.testing.allocator.free(final);
+    try std.testing.expectEqualStrings(docs.original, final);
+}
+
+test "recreate publish is idempotent for an identical live artifact and refuses a different one" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = recreate_documents(arena.allocator(), fixture.data_path);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    store.fail_after.store(store.checkpoint_count.load(.monotonic) + 8, .monotonic);
+    try std.testing.expectError(error.InjectedFailure, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes }));
+    store.fail_after.store(0, .monotonic);
+    const txid = optional_transaction_id(fixture.state) orelse return error.TestExpectedEqual;
+    const journal_text = try store.read_tx_file(txid, "journal.json", MaxJournalBytes);
+    defer std.testing.allocator.free(journal_text);
+    var parsed = try parse_journal_v3(std.testing.allocator, journal_text);
+    defer parsed.deinit();
+    try store.apply_prepared_v3(parsed.value);
+    write_status_file(fixture.data, "applications/handler.desktop", "different bytes", 0o644);
+    try std.testing.expectError(error.ArtifactConflict, store.apply_prepared_v3(parsed.value));
+    try store.recover();
+    const kept = try fixture.data.readFileAlloc(std.testing.allocator, "applications/handler.desktop", 4096);
+    defer std.testing.allocator.free(kept);
+    try std.testing.expectEqualStrings("different bytes", kept);
+}
+
+test "rollback keeps a recreated artifact that the user replaced with a symbolic link" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = recreate_documents(arena.allocator(), fixture.data_path);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    store.fail_after.store(store.checkpoint_count.load(.monotonic) + 8, .monotonic);
+    try std.testing.expectError(error.InjectedFailure, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes }));
+    store.fail_after.store(0, .monotonic);
+    if (c.unlinkat(fixture.data.fd, "applications/handler.desktop", 0) != 0) @panic("fixture unlink");
+    if (c.symlinkat("elsewhere", fixture.data.fd, "applications/handler.desktop") != 0) @panic("fixture symlink");
+    try store.recover();
+    var link_stat: c.struct_stat = undefined;
+    if (c.fstatat(fixture.data.fd, "applications/handler.desktop", &link_stat, c.AT_SYMLINK_NOFOLLOW) != 0) return error.TestExpectedEqual;
+    try std.testing.expect(link_stat.st_mode & c.S_IFMT == c.S_IFLNK);
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    try std.testing.expectEqualStrings(docs.original, on_disk);
+}
+
+test "recreate journal mutations of artifact fields are rejected before recovery" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = recreate_documents(arena.allocator(), fixture.data_path);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    store.fail_after.store(store.checkpoint_count.load(.monotonic) + 8, .monotonic);
+    try std.testing.expectError(error.InjectedFailure, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes }));
+    store.fail_after.store(0, .monotonic);
+    const txid = optional_transaction_id(fixture.state) orelse return error.TestExpectedEqual;
+    const journal_text = try store.read_tx_file(txid, "journal.json", MaxJournalBytes);
+    defer std.testing.allocator.free(journal_text);
+    var parsed = try parse_journal_v3(std.testing.allocator, journal_text);
+    defer parsed.deinit();
+    for (0..7) |case_index| {
+        var mutated = parsed.value;
+        switch (case_index) {
+            0 => mutated.new_artifact_hash = null,
+            1 => mutated.new_artifact_mode = 0o600,
+            2 => mutated.new_artifact_device = 0,
+            3 => mutated.new_artifact_inode = null,
+            4 => mutated.root = null,
+            5 => mutated.relative_path = null,
+            6 => mutated.old_artifact_hash = "0000000000000000000000000000000000000000000000000000000000000000",
+            else => unreachable,
+        }
+        const text = try std.json.stringifyAlloc(std.testing.allocator, mutated, .{});
+        defer std.testing.allocator.free(text);
+        replace_transaction_file(fixture.state, txid, "journal.json", text, 0o600);
+        try std.testing.expectError(error.RecoveryRequired, store.recover());
+    }
+    replace_transaction_file(fixture.state, txid, "journal.json", journal_text, 0o600);
+    try store.recover();
+    try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
 }
 
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
