@@ -24,8 +24,7 @@ catalog features; `waddle session stop` client behaviour (already specified by 3
 |---|---|
 | `src/interop/session_local_handler.h` | Public API: config, handler struct, stats, table export, pure decision helpers. |
 | `src/interop/session_local_handler.c` | Implementation. Calls only the codec, the activation store, the feature sender and libc. |
-| `src/interop/local_stream_abi.zig` | Zig frame scanner for the local direction (header decode and the 4096-byte bound). |
-| `tests/interop/session_local_handler_test.c` | Unit, socket and fault tests; includes the handler `.c` for private rules. |
+| `tests/interop/session_local_handler_test.c` | Unit, socket, and fault-injection tests; includes the handler `.c` for private rules. |
 | `tests/interop/session_local_harness.c` | Harness binary: real `interop_host_control_run` with a fake daemon and fake guest. |
 | `tests/interop/session_local_coverage.py` | gcov line and branch gate for the handler `.c`. |
 | `scripts/interop_lane_launch.mk` | Lane targets. |
@@ -53,7 +52,7 @@ void session_local_handler_stats(const session_local_handler_t *handler, session
 
 - `init` performs no I/O and no allocation. The handler struct is caller-owned (about 80 KiB) and
   contains every buffer, the epoll set bookkeeping and the activation store by value. It may be
-  heap or static storage. `init` returns 0, or 1 for NULL arguments, a bad device name, a
+  heap or static storage. `init` returns SessionLocalSuccess (0), SessionLocalInvalidArgument (1) for NULL arguments, a bad device name, a
   runtime directory that is not absolute, or a socket path of 107 bytes or more.
 - `table` fills `out_table` with: `name = "session_local"`, `context = handler`,
   `capabilities = InteropCapLaunch` (no other capability), and the callbacks in section 9.
@@ -98,7 +97,7 @@ socket is missing, so the socket appearing late is expected (IMPL 8.44).
    the bind is refused.
 4. `listen(fd, 8)`. `epoll_create1(EPOLL_CLOEXEC)`, then add the listening socket with EPOLLIN.
 5. Failures after any step release what was created in this call only, in reverse order.
-   `on_ready` returns 1, which fails the run (`HostControlFeatureFailed`).
+   `on_ready` returns SessionLocalCallbackFailure (2), which fails the run (`HostControlFeatureFailed`).
 
 ## 5. Peer credentials and client slots
 
@@ -119,8 +118,10 @@ socket is missing, so the socket appearing late is expected (IMPL 8.44).
 - Each client has a 4096-byte receive buffer. Frames larger than 4096 bytes (header included)
   close the client. This is stricter than the codec limit (65536); the open client's frames are
   far smaller.
-- The header is decoded by `interop_local_frame_scan` (Zig, `local_stream_abi.zig`), which
-  wraps `interop_header_decode` and adds the 4096-byte bound. Results:
+- The header is decoded by the codec (`interop_header_decode`) inside `session_local_frame_scan`,
+  which adds the 4096-byte bound. The scanner lives in C: a Zig module for these few lines could
+  not be coverage-gated (its branch edges were not attributed; 75 percent measured), so it was
+  folded into the handler. Header and payload validation remain Zig codec functions. Results:
   `NeedMore` (wait for bytes), `Ready` (a complete frame is at the start of the buffer),
   `Malformed` (bad magic, version, length or alignment: close), `TooLarge` (close).
 - Before dispatch the payload is validated with `interop_payload_validate(type,
@@ -196,7 +197,7 @@ except the Error message. The codec requires `process_id` in LaunchResult; zero 
 1. Find the entry by `header.request_id`. None: the frame is ignored and `ignored_results` is
    incremented. A release is not attempted (the identifier is not live from this handler).
 2. Validate the payload with `interop_payload_validate(LaunchResult, InteropFromGuest)`.
-   Malformed: the callback returns 1 (run fails, drain). This is a protocol violation.
+   Malformed: the callback returns SessionLocalCallbackFailure (run fails, drain). This is a protocol violation.
 3. Read `status` (u32) and `process_id` (u32). Read `message` when present.
 4. Token policy: when `status == Ok` and the entry holds a token, call
    `interop_activation_put(store, token, length, process_id, last_now)`. The token is the
@@ -235,9 +236,9 @@ identifier, and the reply is dropped (section 8.3 step 5).
 |---|---|
 | `owns_type` | Nonzero only for 0x0701. |
 | `on_ready` | Bind (section 4). Returns 0 or 1. |
-| `on_frame` | Section 8.3. Returns 0, or 1 for a malformed LaunchResult. |
+| `on_frame` | Section 8.3. Returns 0, or SessionLocalCallbackFailure for a malformed LaunchResult. |
 | `poll_fds` | Reports exactly one descriptor: the handler's epoll instance, events POLLIN, `revents` zero, count 1. |
-| `on_fds` | Calls `epoll_wait(0)`, accepts, reads and dispatches frames, flushes output, closes failed clients. Returns SessionHandlerRequestStop when a stop flush has completed (section 10); otherwise 0; 1 on an internal failure. |
+| `on_fds` | Calls `epoll_wait(0)`, accepts, reads and dispatches frames, flushes output, closes failed clients. Returns SessionHandlerRequestStop when a stop flush has completed (section 10); otherwise 0; SessionLocalCallbackFailure on an internal failure. |
 | `on_tick` | Enforces the idle timeout (section 13), the launch timeout (section 8.4), the stop flush bound, and flushes pending output. Returns SessionHandlerRequestStop when the stop is ready. |
 | `next_deadline_ms` | Earliest of: pending launch deadlines, idle deadlines of clients with no complete frame, the stop flush deadline. UINT64_MAX when none. |
 | `on_closing` | Section 12. Exactly once. |
@@ -297,17 +298,17 @@ until it closes or the handler stops. The handler keeps no other per-client time
 
 | Condition | Effect |
 |---|---|
-| Invalid config at init | init returns 1; no state change. |
-| Directory unsafe, socket live, stale without proof, non-socket path | on_ready returns 1; run fails. |
-| Probe or bind unexpected errno | on_ready returns 1. |
-| Epoll or listen failure | on_ready returns 1 after cleanup. |
+| Invalid config at init | init returns SessionLocalInvalidArgument (or Refused); no state change. |
+| Directory unsafe, socket live, stale without proof, non-socket path | on_ready returns SessionLocalCallbackFailure; run fails. |
+| Probe or bind unexpected errno | on_ready returns SessionLocalCallbackFailure. |
+| Epoll or listen failure | on_ready returns SessionLocalCallbackFailure after cleanup. |
 | Client malformed frame, wrong type, zero request id, oversize | client closed; no reply. |
 | Client send error or reset | client closed. |
 | Transmit buffer overflow | client closed; reply dropped. |
-| Guest LaunchResult malformed | on_frame returns 1; run fails. |
+| Guest LaunchResult malformed | on_frame returns SessionLocalCallbackFailure; run fails. |
 | Guest LaunchResult unknown or duplicate | ignored; counted. |
 | Activation store refusal | counted; reply unchanged. |
-| Epoll wait error other than EINTR | on_fds returns 1. |
+| Epoll wait error other than EINTR | on_fds returns SessionLocalCallbackFailure. |
 | Accept error other than EAGAIN/EINTR/ECONNABORTED | counted as `accept_errors`; the listener stays armed. |
 
 ## 15. Threading
@@ -327,21 +328,24 @@ restored before `on_ready` returns.
 
 ## 17. Verification
 
-- `make interop-session-local-test`: unit tests for every rule above (pure decisions, scanner
-  edge cases, correlation, token policy, send mapping, reply directions), real AF_UNIX tests in a
-  temporary `XDG_RUNTIME_DIR` (stale socket with and without proof, live socket refusal, directory
-  mode refusal, a 0755 directory, max clients, idle timeout with an injected clock, malformed and
-  oversize frames, unknown types, LocalStop ordering including a full client receive buffer, launch
-  correlation with timeout, duplicate and unknown results, client disconnect mid-launch, teardown
-  with outstanding ids), an fd-count check before and after a run, and `interop_local_frame_scan`
-  Zig tests.
-- `make interop-session-local-sanitizers`: the C suite under `-fsanitize=address,leak,undefined`
-  with `ASAN_OPTIONS=detect_leaks=1`.
-- `make interop-session-local-coverage`: gcov line and branch gate at 90 percent for the handler
-  `.c`, plus the Zig coverage gate for `local_stream_abi` (marker `tests/av/coverage_modes/local_stream_abi`).
+Run from the worktree root with `-j4` at most.
+
+- `make interop-session-local-test`: unit rules (decisions, scanner, correlation, token policy,
+  send mapping, reply directions, stop readiness, timeouts, teardown), real AF_UNIX tests in a
+  temporary `XDG_RUNTIME_DIR` (stale socket with and without proof, live rival refused,
+  unsafe directories and links, non-socket path, four-client limit with a fifth refused, idle
+  limit, malformed, oversize, unknown-type and zero-identifier frames, split and pipelined frames,
+  LocalStop ordering, launch correlation with timeout, duplicate and unknown results, disconnect
+  mid-launch), fault injection through linker wrappers (every on_ready step, accept and peer
+  errors, receive and send EAGAIN/EINTR/error, epoll failures, scripted epoll events), and a
+  descriptor count before and after the run.
+- `make interop-session-local-sanitizers`: the same suite under
+  `-fsanitize=address,leak,undefined` with `detect_leaks=1`.
+- `make interop-session-local-coverage`: `tests/interop/session_local_coverage.py`, a gcov
+  line and taken-branch gate at 90 percent for `src/interop/session_local_handler.c`.
 - `make interop-session-local-e2e-test`: `build/interop_session_local_harness` serves
-  `session.sock` in a temporary runtime directory while `tests/integration/open_e2e.py` runs
-  the built `build/waddle` against it.
+  `session.sock` in a temporary runtime directory while `tests/integration/open_e2e.py` runs the
+  built `build/waddle` against it (harness mode, 11 cases).
 
 ## 18. Open decisions for the lead
 
@@ -355,3 +359,5 @@ restored before `on_ready` returns.
 3. Guest-supplied `message` text is copied into the client's LaunchResult unchanged. The open
    client prints it to a terminal, so terminal control sequences are not filtered by this lane.
 4. The epoll descriptor (section 9) is the only descriptor reported by `poll_fds`.
+5. Callback failures return `SessionLocalCallbackFailure` (2). The graceful stop value 1 is
+   reserved by `session_handler.h`; a static assertion keeps the two distinct.
