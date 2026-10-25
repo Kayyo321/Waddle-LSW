@@ -10,6 +10,7 @@
 #include "window_coordinator.h"
 #include "window_observer_api_double.h"
 #include "window_state_adapter_double.h"
+#include "window_coordinator_faults.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -121,6 +122,16 @@ static int build_host(uint16_t type, uint8_t *frame, size_t capacity, size_t *le
     return interop_writer_finish(&writer, type, 0u, InteropFromHost, length) == InteropErrorNone ? 0 : 1;
 }
 
+/** @brief Builds a host popup update (window, generation, rect) in ascending tag order. */
+static int build_host_popup(uint8_t *frame, size_t capacity, size_t *length, uint64_t window, uint64_t generation) {
+    interop_writer_t writer;
+    interop_writer_init(&writer, frame, capacity);
+    if (interop_put_uint(&writer, InteropTagWindow, window) != InteropErrorNone) return 1;
+    if (interop_put_uint(&writer, InteropTagGeneration, generation) != InteropErrorNone) return 1;
+    if (interop_put_rect(&writer, InteropTagRect, 10, 20, 300, 200) != 0) return 1;
+    return interop_writer_finish(&writer, InteropMsgPopupRepositioned, 0u, InteropFromHost, length) == InteropErrorNone ? 0 : 1;
+}
+
 /** @brief Decodes one recorded frame with the real codec. Returns 0 on success. */
 static int decode_frame(const uint8_t *bytes, size_t length, sent_t *out) {
     interop_header_t header;
@@ -185,6 +196,7 @@ typedef struct capture_t {
     uint32_t stopped;
     uint32_t frames_written;
     uint32_t next_failure;     /* 0 none; 1 entered failure; 2 unentered failure on the next write */
+    uint32_t start_failure;    /* nonzero: the next start is refused */
     uint32_t last_offset_ok;   /* data_offset + data_bytes was inside the declared mapping */
     uint64_t mapping_bytes;
     uint32_t active[InteropMaxWindows];
@@ -197,6 +209,10 @@ static int capture_start(void *context, uint64_t window, uint32_t generation, ui
     capture_t *capture = (capture_t *)context;
     (void)width;
     (void)height;
+    if (capture->start_failure != 0u) {
+        capture->start_failure = 0u;
+        return 1;
+    }
     for (uint32_t index = 0; index < InteropMaxWindows; ++index) {
         if (capture->active[index] == 0u) {
             capture->active[index] = 1u;
@@ -288,12 +304,9 @@ static window_coordinator_config_t make_config(fixture_t *f, uint64_t epoch, uin
     return config;
 }
 
-static int fixture_open(fixture_t *f, uint64_t capabilities) {
-    window_coordinator_config_t config;
-    if (f->coordinator != NULL || f->observer != NULL) fixture_close(f);
+static void fixture_prepare(fixture_t *f) {
     memset(f, 0, sizeof(*f));
     f->observer = api_double_new();
-    if (f->observer == NULL) return 1;
     wsa_double_init(&f->adapter, 0u);
     f->adapter.current_thread = 0u;
     f->capture_ops = CaptureOpsTable;
@@ -302,15 +315,30 @@ static int fixture_open(fixture_t *f, uint64_t capabilities) {
     f->io = WireIo;
     f->io.context = &f->wire;
     f->epoch = CoordEpoch;
+}
+
+static int fixture_open(fixture_t *f, uint64_t capabilities) {
+    window_coordinator_config_t config;
+    if (f->coordinator != NULL || f->observer != NULL) fixture_close(f);
+    memset(&Faults, 0, sizeof(Faults));
+    fixture_prepare(f);
+    if (f->observer == NULL) return 1;
     config = make_config(f, CoordEpoch, capabilities);
     if (window_coordinator_create(&config, &f->coordinator) != WindowCoordinatorOk) return 1;
     return 0;
 }
 
 static void fixture_close(fixture_t *f) {
+    memset(&Faults, 0, sizeof(Faults));
+    if (f->coordinator != NULL && window_coordinator_state(f->coordinator) == WindowCoordinatorStateLost) {
+        /* A lost transport keeps its quarantines until the host proves its buffers are gone. */
+        f->wire.disconnected = 0;
+        f->epoch += 1u;
+        (void)window_coordinator_reconnect(f->coordinator, f->epoch, 1u);
+    }
     if (f->coordinator != NULL) {
         /* Retire every window and release every pin the host still holds, so the coordinator can be freed. */
-        for (uint32_t round = 0; round < 8u && window_coordinator_entry_count(f->coordinator) != 0u; ++round) {
+        if (f->observer != NULL) for (uint32_t round = 0; round < 8u && window_coordinator_entry_count(f->coordinator) != 0u; ++round) {
             while (f->visible_count != 0u) {
                 uint64_t window = f->visible[0];
                 uint32_t write = 0;
@@ -704,6 +732,901 @@ static int test_disconnect_and_reconnect_with_proof(void) {
     return 0;
 }
 
+/* ---- Fault injection at the ABI seams -------------------------------------------------------- */
+
+/** @brief Adds a window and reports its creation through a CREATE hint, so the next pass admits it. */
+static void admit_window_now(fixture_t *f, uint64_t window) {
+    add_window(f, window);
+    api_double_hint(f->observer, 0x8000u, window);
+    advance_clock(f, 300u);
+}
+
+/** @brief Generation of the newest Announce sent for one window, or 0 when none was sent. */
+static uint64_t announced_generation(fixture_t *f, uint64_t window) {
+    uint64_t generation = 0u;
+    sent_t sent;
+    for (uint32_t index = 0; index < f->wire.count; ++index) {
+        if (sent_at(&f->wire, index, &sent) && sent.type == InteropMsgWindowAnnounce && sent.window == window) {
+            generation = sent.generation;
+        }
+    }
+    return generation;
+}
+
+/** @brief Counts frames of one message type for one window in everything sent so far. */
+static uint32_t count_frames(fixture_t *f, uint16_t type, uint64_t window) {
+    uint32_t count = 0u;
+    sent_t sent;
+    for (uint32_t index = 0; index < f->wire.count; ++index) {
+        if (sent_at(&f->wire, index, &sent) && sent.type == type && sent.window == window) count += 1u;
+    }
+    return count;
+}
+
+/** @brief Releases every FrameReady sent so far for one window. Refused pushes are not retried here. */
+static void release_window_frames(fixture_t *f, uint64_t window) {
+    for (uint32_t index = 0; index < f->wire.count; ++index) {
+        sent_t sent;
+        if (sent_at(&f->wire, index, &sent) && sent.type == InteropMsgFrameReady && sent.window == window) {
+            (void)host_release(f, window, sent.generation, sent.slot, sent.sequence);
+        }
+    }
+}
+
+/** @brief Retires one window: removes it, releases its frames and ticks until its entry is gone. */
+static void retire_one_window(fixture_t *f, uint64_t window) {
+    remove_window(f, window);
+    api_double_hint(f->observer, 0x8001u, window);
+    advance_clock(f, 300u);
+    for (uint32_t pass = 0; pass < 8u && window_coordinator_entry_count(f->coordinator) != 0u; ++pass) {
+        release_window_frames(f, window);
+        advance_clock(f, 300u);
+        (void)tick(f);
+    }
+}
+
+/** @brief Create fails cleanly for each backend that cannot be built, and nothing is left allocated. */
+static int test_create_backend_faults(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_config_t config;
+    window_coordinator_t *coordinator;
+    for (uint32_t which = 0; which < 6u; ++which) {
+        if (fp->coordinator != NULL || fp->observer != NULL) fixture_close(fp);
+        memset(&Faults, 0, sizeof(Faults));
+        fixture_prepare(fp);
+        switch (which) {
+        case 0: Faults.adapter_create = 1u; break;
+        case 1: Faults.graph_create = 1u; break;
+        case 2: Faults.slot_create = 1u; break;
+        case 3: Faults.observer_create = 1u; break;
+        case 4: Faults.observer_bind = 1u; break;
+        default: Faults.observer_start = 1u; break;
+        }
+        config = make_config(fp, CoordEpoch, InteropCapWindows);
+        coordinator = NULL;
+        Check(window_coordinator_create(&config, &coordinator) == WindowCoordinatorBackendFailed);
+        Check(coordinator == NULL);
+    }
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief Admission, publish, reducer and quarantine refusals degrade one window without corrupting the rest. */
+static int test_admission_and_publish_seam_faults(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_stats_t stats;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+
+    /* Slot admission refused is a resource failure: the admission is retried on the next pass and then announced. */
+    Faults.slot_admit = 1u;
+    admit_window_now(fp, 0x4100);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.admission_failures >= 1u);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x4100) == 1u);
+    retire_one_window(fp, 0x4100);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+
+    /* Adapter admission refused: the same outcome. */
+    Faults.adapter_admit = 1u;
+    admit_window_now(fp, 0x4200);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x4200) == 0u);
+    /* Host frames that name the phantom (any of the first generations) are ignored or answered, never applied. */
+    for (uint64_t generation = 1u; generation <= 4u; ++generation) {
+        uint8_t frame[WireFrameBytes];
+        size_t length = 0;
+        Check(build_host(InteropMsgFrameRelease, frame, sizeof(frame), &length, 0x4200, generation, 1, 0, 1, 0, 0) == 0);
+        Check(wire_push_host(&fp->wire, frame, length) == 0);
+        Check(build_host_popup(frame, sizeof(frame), &length, 0x4200, generation) == 0);
+        Check(wire_push_host(&fp->wire, frame, length) == 0);
+    }
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(tick(fp) == WindowCoordinatorOk);
+    retire_one_window(fp, 0x4200);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+
+    /* A refused prepare skips one publish: the announce still goes out and the frame follows on a later pass. */
+    Faults.slot_prepare = 1u;
+    admit_window_now(fp, 0x4300);
+    for (uint32_t pass = 0; pass < 4u && count_frames(fp, InteropMsgWindowAnnounce, 0x4300) == 0u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x4300) == 1u);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.frames_skipped >= 1u);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_frames(fp, InteropMsgFrameReady, 0x4300) >= 1u);
+
+    /* A refused reducer plan drops a host configure; a refused reducer completion does too. */
+    Faults.reducer_plan = 1u;
+    {
+        uint8_t frame[WireFrameBytes];
+        size_t length = 0;
+        Check(build_host(InteropMsgWindowConfigure, frame, sizeof(frame), &length, 0x4300, announced_generation(fp, 0x4300), 0, 0, 0, 1, 0x3u) == 0);
+        Check(wire_push_host(&fp->wire, frame, length) == 0);
+    }
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.reducer_failures >= 1u);
+    Faults.reducer_complete = 1u;
+    {
+        uint8_t frame[WireFrameBytes];
+        size_t length = 0;
+        Check(build_host(InteropMsgWindowConfigure, frame, sizeof(frame), &length, 0x4300, announced_generation(fp, 0x4300), 0, 0, 0, 1, 0x1u) == 0);
+        Check(wire_push_host(&fp->wire, frame, length) == 0);
+    }
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.reducer_failures >= 2u);
+
+    retire_one_window(fp, 0x4300);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+
+    /* A refused quarantine completion is retried on a later pass, and the entry is gone afterwards. */
+    admit_window_now(fp, 0x4400);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Faults.graph_complete = 1u;
+    remove_window(fp, 0x4400);
+    retire_one_window(fp, 0x4400);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.admission_failures >= 1u);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+
+    /* A refused graph event read pauses staging for this pass only. */
+    admit_window_now(fp, 0x4500);
+    Faults.graph_next_event = 1u;
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x4500) == 1u);
+    retire_one_window(fp, 0x4500);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief Transport loss and reconnect survive refusals of every backend step they perform. */
+static int test_lost_and_reconnect_seam_faults(void) {
+    fixture_t *fp = &GlobalFixture;
+    uint64_t epoch = CoordEpoch;
+
+    /* Invalidation refused on loss: the coordinator keeps the request and retries it on the next pass. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x4600);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Faults.graph_invalidate = 1u;
+    /* Two invalidations are refused in a row: the request stays pending until a later pass succeeds. */
+    Faults.graph_invalidate = 2u;
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateLost);
+    Check(tick(fp) == WindowCoordinatorLost);
+    Check(tick(fp) == WindowCoordinatorLost);
+    fixture_close(fp);
+
+    /* A refused drain start on loss faults the coordinator, and its teardown still frees everything. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x4610);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Faults.slot_begin_drain = 1u;
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateFaulted);
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    fixture_close(fp);
+
+    /* Each reconnect backend step that can be refused reports BackendFailed and leaves the coordinator faulted. */
+    for (uint32_t which = 0; which < 5u; ++which) {
+        Check(fixture_open(fp, InteropCapWindows) == 0);
+        admit_window_now(fp, 0x4700 + 0x10u * which);
+        Check(tick(fp) == WindowCoordinatorOk);
+        Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+        memset(&Faults, 0, sizeof(Faults));
+        switch (which) {
+        case 0: Faults.slot_confirm = 1u; break;
+        case 1: Faults.graph_invalidate = 1u; break;
+        case 2: Faults.observer_destroy = 1u; break;
+        case 3: Faults.graph_create = 1u; break;
+        default: Faults.observer_start = 1u; break;
+        }
+        epoch += 1u;
+        Check(window_coordinator_reconnect(fp->coordinator, epoch, 1u) == WindowCoordinatorBackendFailed);
+        Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateFaulted);
+        fixture_close(fp);
+    }
+
+    /* A reconnect whose observer sync is refused still completes, because the sync result is advisory. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x4800);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+    Faults.observer_sync = 1u;
+    epoch += 1u;
+    Check(window_coordinator_reconnect(fp->coordinator, epoch, 1u) == WindowCoordinatorOk);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief Refusals inside admission (observe, reducer, capture) turn the window into a phantom. */
+static int test_admission_refusals_turn_into_phantoms(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_stats_t stats;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.adapter_observe = 1u;
+    admit_window_now(fp, 0x4900);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.admission_failures >= 1u && stats.phantoms >= 1u);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x4900) == 0u);
+    retire_one_window(fp, 0x4900);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+
+    Faults.reducer_create = 1u;
+    admit_window_now(fp, 0x4910);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x4910) == 0u);
+    retire_one_window(fp, 0x4910);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+
+    fp->capture.start_failure = 1u;
+    admit_window_now(fp, 0x4920);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.capture_failures >= 1u);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x4920) == 0u);
+    retire_one_window(fp, 0x4920);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+
+    /* A barrier from a retiring window with pins still held holds the next admission; the hold ends with the release. */
+    admit_window_now(fp, 0x4930);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_frames(fp, InteropMsgFrameReady, 0x4930) >= 1u);
+    remove_window(fp, 0x4930);
+    api_double_hint(fp->observer, 0x8001u, 0x4930);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    admit_window_now(fp, 0x4940);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.admissions_held >= 1u);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x4940) == 0u);
+    retire_one_window(fp, 0x4930);
+    retire_one_window(fp, 0x4940);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief Faults that can no longer be recovered by a retry leave the coordinator Faulted, and teardown still frees it. */
+static int test_faulted_transitions_and_teardown(void) {
+    fixture_t *fp = &GlobalFixture;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.slot_writer = 1u;
+    admit_window_now(fp, 0x4a00);
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateFaulted);
+    fixture_close(fp);
+
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.slot_commit = 1u;
+    admit_window_now(fp, 0x4a10);
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateFaulted);
+    fixture_close(fp);
+
+    /* A admission refused by the slot runtime on every pass exhausts the retry budget and faults. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.slot_admit = 1000u;
+    admit_window_now(fp, 0x4a20);
+    for (uint32_t pass = 0; pass < 200u && window_coordinator_state(fp->coordinator) != WindowCoordinatorStateFaulted; ++pass) {
+        (void)tick(fp);
+    }
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateFaulted);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief Malformed, unknown and popup host frames are answered or counted, and a disconnect on receive loses the transport. */
+static int test_host_frame_classes(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_stats_t stats;
+    uint8_t frame[WireFrameBytes];
+    size_t length = 0;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x4b00);
+    Check(tick(fp) == WindowCoordinatorOk);
+    /* A frame that is not a valid interop header is rejected and counted. */
+    {
+        const uint8_t garbage[4] = {0xde, 0xad, 0xbe, 0xef};
+        Check(wire_push_host(&fp->wire, garbage, sizeof(garbage)) == 0);
+    }
+    /* A popup update for a window that is not announced is answered as stale; for an announced one it is counted. */
+    Check(build_host_popup(frame, sizeof(frame), &length, 0x4fff, 1) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Check(build_host_popup(frame, sizeof(frame), &length, 0x4b00, announced_generation(fp, 0x4b00)) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    /* Popup dismissal reaches the popup case; the frame is accepted without effect. */
+    Check(build_host(InteropMsgPopupDismissed, frame, sizeof(frame), &length, 0x4b00, announced_generation(fp, 0x4b00), 0, 0, 0, 0, 0) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.host_frames_rejected >= 1u);
+    Check(stats.stale_replies >= 1u);
+    Check(stats.popup_frames >= 2u);
+
+    /* A disconnect seen while receiving moves the coordinator to Lost before anything else is sent. */
+    Check(build_host(InteropMsgFrameRelease, frame, sizeof(frame), &length, 0x4b00, announced_generation(fp, 0x4b00), 1, 0, 1, 0, 0) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    fp->wire.disconnected = 1;
+    Check(tick(fp) == WindowCoordinatorLost);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateLost);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief A refused observer destroy keeps the coordinator alive and reports Busy; a later destroy frees it. */
+static int test_destroy_refusal_is_recoverable(void) {
+    fixture_t *fp = &GlobalFixture;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.observer_destroy = 1u;
+    Check(window_coordinator_destroy(&fp->coordinator, 1u) == WindowCoordinatorBusy);
+    Check(fp->coordinator != NULL);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief Every required configuration field is checked: each one missing makes create refuse, with nothing allocated. */
+static int test_config_table_rejects_each_field(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_config_t config;
+    window_coordinator_t *coordinator = NULL;
+    window_observer_api_t observer_api;
+    window_capture_ops_t capture_ops;
+    window_coordinator_io_t io;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    for (uint32_t which = 0; which < 16u; ++which) {
+        config = make_config(fp, CoordEpoch, InteropCapWindows);
+        observer_api = ApiDoubleTable;
+        capture_ops = *config.capture;
+        io = *config.io;
+        switch (which) {
+        case 0: config.session_epoch = 0u; break;
+        case 1: config.uac_mode = 3u; break;
+        case 2: config.own_process_id = 0u; break;
+        case 3: config.app_key_lookup = NULL; break;
+        case 4: config.observer_api = NULL; break;
+        case 5: observer_api.current_thread_id = NULL; config.observer_api = &observer_api; break;
+        case 6: observer_api.monotonic_ms = NULL; config.observer_api = &observer_api; break;
+        case 7: config.native_api = NULL; break;
+        case 8: config.io = NULL; break;
+        case 9: io.send_frame = NULL; config.io = &io; break;
+        case 10: io.receive_frame = NULL; config.io = &io; break;
+        case 11: config.capture = NULL; break;
+        case 12: capture_ops.start = NULL; config.capture = &capture_ops; break;
+        case 13: capture_ops.stop = NULL; config.capture = &capture_ops; break;
+        case 14: capture_ops.write_frame = NULL; config.capture = &capture_ops; break;
+        default: config.observer_api = NULL; break;
+        }
+        coordinator = NULL;
+        Check(window_coordinator_create(&config, &coordinator) == WindowCoordinatorInvalidArgument);
+        Check(coordinator == NULL);
+    }
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief A calloc refusal fails create cleanly; a refused observer stop keeps destroy from freeing. */
+static int test_allocation_and_stop_refusals(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_config_t config;
+    window_coordinator_t *coordinator = NULL;
+    window_coordinator_stats_t stats;
+    /* The coordinator allocation is the first calloc of create. */
+    fixture_prepare(fp);
+    memset(&Faults, 0, sizeof(Faults));
+    Faults.allocation = 1u;
+    config = make_config(fp, CoordEpoch, InteropCapWindows);
+    Check(window_coordinator_create(&config, &coordinator) == WindowCoordinatorOutOfMemory);
+    Check(coordinator == NULL);
+    memset(&Faults, 0, sizeof(Faults));
+    fixture_close(fp);
+
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    /* A stats query into a caller buffer and a tick that reports its statistics. */
+    Check(window_coordinator_tick(fp->coordinator, 1u, &stats) == WindowCoordinatorOk);
+    /* A refused observer stop makes destroy report Busy and keeps the coordinator; the next destroy frees it. */
+    Faults.observer_stop = 1u;
+    Check(window_coordinator_destroy(&fp->coordinator, 1u) == WindowCoordinatorBusy);
+    Check(fp->coordinator != NULL);
+    fixture_close(fp);
+
+    /* A stop that answers BadState (already stopped) lets destroy proceed and free the coordinator. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.observer_stop = 2u;
+    Check(window_coordinator_destroy(&fp->coordinator, 1u) == WindowCoordinatorOk);
+    Check(fp->coordinator == NULL);
+    fixture_close(fp);
+
+    /* A protected-destroy drain that finds the graph queue full is retried after the queue is drained. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.observer_drain = 1u;
+    Check(window_coordinator_destroy(&fp->coordinator, 1u) == WindowCoordinatorOk);
+    Check(fp->coordinator == NULL);
+    fixture_close(fp);
+
+    /* A drain that keeps finding the queue full gives up after its bounded attempts; teardown still completes. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.observer_drain = 4u;
+    (void)window_coordinator_destroy(&fp->coordinator, 1u);
+    fixture_close(fp);
+
+    /* A faulted coordinator with an entry is refused by destroy until its entries are gone. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.slot_writer = 1u;
+    admit_window_now(fp, 0x4c00);
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    Check(window_coordinator_destroy(&fp->coordinator, 0u) == WindowCoordinatorBusy);
+    Check(fp->coordinator != NULL);
+    fixture_close(fp);
+
+    /* A reconnect needs a nonzero epoch. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+    Check(window_coordinator_reconnect(fp->coordinator, 0u, 1u) == WindowCoordinatorInvalidArgument);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateLost);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief Malformed, boundary and mismatched host frames are rejected or ignored without touching any entry. */
+static int test_host_frame_validation(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_stats_t stats;
+    uint8_t frame[WireFrameBytes];
+    size_t length = 0;
+    uint64_t generation;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x4d00);
+    Check(tick(fp) == WindowCoordinatorOk);
+    generation = announced_generation(fp, 0x4d00);
+    Check(generation != 0u);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    {
+        uint64_t before = stats.host_frames_rejected;
+        /* A release naming a slot outside the window's three is rejected. */
+        Check(build_host(InteropMsgFrameRelease, frame, sizeof(frame), &length, 0x4d00, generation, 1, 9u, 1, 0, 0) == 0);
+        Check(wire_push_host(&fp->wire, frame, length) == 0);
+        /* A valid frame with a trailing byte has a length the header does not describe. */
+        Check(build_host(InteropMsgWindowClose, frame, sizeof(frame), &length, 0x4d00, generation, 0, 0, 0, 0, 0) == 0);
+        Check(length < sizeof(frame));
+        frame[length] = 0u;
+        Check(wire_push_host(&fp->wire, frame, length + 1u) == 0);
+        Check(tick(fp) == WindowCoordinatorOk);
+        Check(tick(fp) == WindowCoordinatorOk);
+        Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+        Check(stats.host_frames_rejected >= before + 2u);
+    }
+    /* A release for a window that is not tracked, and one with the wrong sequence, leave the pin untouched. */
+    Check(build_host(InteropMsgFrameRelease, frame, sizeof(frame), &length, 0x4eee, 1, 1, 0, 1, 0, 0) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Check(build_host(InteropMsgFrameRelease, frame, sizeof(frame), &length, 0x4d00, generation, 1, 0, 99u, 0, 0) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    /* A configure carrying a rect is applied to the reducer as a host configure. */
+    {
+        interop_writer_t writer;
+        interop_writer_init(&writer, frame, sizeof(frame));
+        Check(interop_put_uint(&writer, InteropTagWindow, 0x4d00) == InteropErrorNone);
+        Check(interop_put_uint(&writer, InteropTagGeneration, generation) == InteropErrorNone);
+        Check(interop_put_rect(&writer, InteropTagRect, 5, 6, 640, 480) == 0);
+        Check(interop_put_uint(&writer, InteropTagState, 0x3u) == InteropErrorNone);
+        Check(interop_writer_finish(&writer, InteropMsgWindowConfigure, 0u, InteropFromHost, &length) == InteropErrorNone);
+        Check(wire_push_host(&fp->wire, frame, length) == 0);
+    }
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_entry_count(fp->coordinator) == 1u);
+    retire_one_window(fp, 0x4d00);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief An unsynchronized reducer is resynchronized and planned again; a refused resync counts as a reducer failure. */
+static int test_reducer_resynchronization(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_stats_t stats;
+    uint8_t frame[WireFrameBytes];
+    size_t length = 0;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x4e00);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Faults.reducer_unsynchronized = 1u;
+    Check(build_host(InteropMsgWindowConfigure, frame, sizeof(frame), &length, 0x4e00, announced_generation(fp, 0x4e00), 0, 0, 0, 1, 0x3u) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.reducer_failures == 0u);
+    /* A resync whose completion is refused is counted; the configure is then planned and applied again. */
+    Faults.reducer_unsynchronized = 1u;
+    Faults.reducer_complete = 1u;
+    Check(build_host(InteropMsgWindowConfigure, frame, sizeof(frame), &length, 0x4e00, announced_generation(fp, 0x4e00), 0, 0, 0, 1, 0x3u) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.reducer_failures >= 1u);
+    /* A resync whose own plan is refused is counted, and the configure is dropped. */
+    Faults.reducer_unsynchronized = 1u;
+    Faults.reducer_plan = 1u;
+    Check(build_host(InteropMsgWindowConfigure, frame, sizeof(frame), &length, 0x4e00, announced_generation(fp, 0x4e00), 0, 0, 0, 1, 0x1u) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.reducer_failures >= 1u || stats.configures >= 2u);
+    retire_one_window(fp, 0x4e00);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief With the wire stalled, the outbound queue fills: admissions and publishes are held until it drains. */
+static int test_outbound_backpressure_holds(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_stats_t stats;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    /* The budget counts refused sends: a large value stalls the wire for the whole test. */
+    fp->wire.backpressure_budget = 1000000u;
+    for (uint32_t index = 0; index < InteropMaxWindows; ++index) {
+        admit_window_now(fp, 0x5000u + 0x10u * index);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    for (uint32_t pass = 0; pass < 16u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.admissions_held >= 1u || stats.frames_skipped >= 1u);
+    /* With the queue full, a title update and then a retirement are each held until the queue has room. */
+    api_double_set_text(api_double_find(fp->observer, 0x5010)->facts.title, InteropWindowGraphMaxTitleBytes,
+                        &api_double_find(fp->observer, 0x5010)->facts.title_length, "held");
+    api_double_hint(fp->observer, 0x800Cu, 0x5010);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    remove_window(fp, 0x5000);
+    api_double_hint(fp->observer, 0x8001u, 0x5000);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    /* Restore the wire: the queue drains in order and every held admission completes. */
+    fp->wire.backpressure_budget = 0u;
+    for (uint32_t pass = 0; pass < 40u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(window_coordinator_entry_count(fp->coordinator) == InteropMaxWindows);
+    /* The graph exports at most InteropMaxWindows windows, so a retired entry makes room for the next admission. */
+    retire_one_window(fp, 0x5000);
+    admit_window_now(fp, 0x5800);
+    for (uint32_t pass = 0; pass < 4u && count_frames(fp, InteropMsgWindowAnnounce, 0x5800) == 0u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x5800) == 1u);
+    for (uint32_t index = 1; index < InteropMaxWindows; ++index) retire_one_window(fp, 0x5000u + 0x10u * index);
+    retire_one_window(fp, 0x5800);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief A refused encoder fails the coordinator at that encoder: announce, update, publish, retire and stale reply. */
+static int test_encoder_refusals_fault(void) {
+    fixture_t *fp = &GlobalFixture;
+    uint8_t frame[WireFrameBytes];
+    size_t length = 0;
+    /* Announce. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.writer_finish = 1u;
+    admit_window_now(fp, 0x5900);
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    fixture_close(fp);
+
+    /* Stale reply to a frame for an unknown window. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Check(build_host(InteropMsgFrameRelease, frame, sizeof(frame), &length, 0x5a00, 1, 1, 0, 1, 0, 0) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Faults.writer_finish = 1u;
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    fixture_close(fp);
+
+    /* Update after a title change. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x5b00);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Faults.writer_finish = 1u;
+    api_double_set_text(api_double_find(fp->observer, 0x5b00)->facts.title, InteropWindowGraphMaxTitleBytes,
+                        &api_double_find(fp->observer, 0x5b00)->facts.title_length, "changed");
+    api_double_hint(fp->observer, 0x800Cu, 0x5b00);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    fixture_close(fp);
+
+    /* Frame ready for a publish. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x5c00);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Faults.writer_finish = 1u;
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    fixture_close(fp);
+
+    /* Retire after a window goes away. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x5d00);
+    Check(tick(fp) == WindowCoordinatorOk);
+    release_window_frames(fp, 0x5d00);
+    Faults.writer_finish = 1u;
+    remove_window(fp, 0x5d00);
+    api_double_hint(fp->observer, 0x8001u, 0x5d00);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief A window without a title is announced with no title field. */
+static int test_untitled_window_announces(void) {
+    fixture_t *fp = &GlobalFixture;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    add_window(fp, 0x5e00);
+    api_double_find(fp->observer, 0x5e00)->facts.title_length = 0u;
+    api_double_hint(fp->observer, 0x8000u, 0x5e00);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x5e00) == 1u);
+    retire_one_window(fp, 0x5e00);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief Owner-thread calls made from inside the observer's query are refused as reentrant. */
+typedef struct reentry_probe_t {
+    fixture_t *fixture;
+    int fired;
+    int slot_kept;
+    window_coordinator_status_t tick_status;
+    window_coordinator_status_t mark_status;
+    window_coordinator_status_t reconnect_status;
+    window_coordinator_status_t destroy_status;
+} reentry_probe_t;
+
+static void reentry_probe_query(api_double_t *dbl, uint64_t window, void *argument) {
+    reentry_probe_t *probe = (reentry_probe_t *)argument;
+    window_coordinator_t *coordinator;
+    window_coordinator_t *slot;
+    (void)dbl;
+    (void)window;
+    if (probe->fired != 0) return;
+    probe->fired = 1;
+    coordinator = probe->fixture->coordinator;
+    probe->tick_status = window_coordinator_tick(coordinator, 1u, NULL);
+    probe->mark_status = window_coordinator_mark_lost(coordinator);
+    probe->reconnect_status = window_coordinator_reconnect(coordinator, CoordEpoch + 7u, 1u);
+    slot = coordinator;
+    probe->destroy_status = window_coordinator_destroy(&slot, 1u);
+    probe->slot_kept = slot == coordinator;
+}
+
+static int test_reentry_and_budgeted_passes(void) {
+    fixture_t *fp = &GlobalFixture;
+    reentry_probe_t probe;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    memset(&probe, 0, sizeof(probe));
+    probe.fixture = fp;
+    fp->observer->query_hook = reentry_probe_query;
+    fp->observer->query_hook_arg = &probe;
+    admit_window_now(fp, 0x5f00);
+    Check(tick(fp) == WindowCoordinatorOk);
+    fp->observer->query_hook = NULL;
+    fp->observer->query_hook_arg = NULL;
+    Check(probe.fired == 1);
+    Check(probe.tick_status == WindowCoordinatorReentrant);
+    Check(probe.mark_status == WindowCoordinatorReentrant);
+    Check(probe.reconnect_status == WindowCoordinatorReentrant);
+    Check(probe.destroy_status == WindowCoordinatorReentrant);
+    Check(probe.slot_kept == 1);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning);
+    retire_one_window(fp, 0x5f00);
+    fixture_close(fp);
+
+    /* One pump call per tick with a budget of one: several windows are admitted across many passes, each budget-limited. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    for (uint32_t index = 0; index < 10u; ++index) {
+        add_window(fp, 0x6000u + 0x10u * index);
+        api_double_hint(fp->observer, 0x8000u, 0x6000u + 0x10u * index);
+    }
+    for (uint32_t pass = 0; pass < 40u && window_coordinator_entry_count(fp->coordinator) < 10u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(window_coordinator_tick(fp->coordinator, 1u, NULL) == WindowCoordinatorOk);
+    }
+    Check(window_coordinator_entry_count(fp->coordinator) == 10u);
+    for (uint32_t index = 0; index < 10u; ++index) retire_one_window(fp, 0x6000u + 0x10u * index);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+
+    /* A reconnect needs the host proof. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+    Check(window_coordinator_reconnect(fp->coordinator, CoordEpoch + 1u, 0u) == WindowCoordinatorMissingProof);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateLost);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief A tracking minimum size is carried by the announce and by a later update. */
+static int test_minimum_size_is_encoded(void) {
+    fixture_t *fp = &GlobalFixture;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    add_window(fp, 0x6100);
+    api_double_find(fp->observer, 0x6100)->facts.min_width = 320u;
+    api_double_find(fp->observer, 0x6100)->facts.min_height = 240u;
+    api_double_hint(fp->observer, 0x8000u, 0x6100);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x6100) == 1u);
+    api_double_find(fp->observer, 0x6100)->facts.min_width = 400u;
+    api_double_hint(fp->observer, 0x800Bu, 0x6100);
+    for (uint32_t pass = 0; pass < 3u && count_frames(fp, InteropMsgWindowUpdate, 0x6100) == 0u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(count_frames(fp, InteropMsgWindowUpdate, 0x6100) >= 1u);
+    /* A height-only minimum size is encoded as well. */
+    add_window(fp, 0x6200);
+    api_double_find(fp->observer, 0x6200)->facts.min_width = 0u;
+    api_double_find(fp->observer, 0x6200)->facts.min_height = 200u;
+    api_double_hint(fp->observer, 0x8000u, 0x6200);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x6200) == 1u);
+    retire_one_window(fp, 0x6100);
+    retire_one_window(fp, 0x6200);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief A pump that finds the input desktop away from Default does nothing; admission resumes when it returns. */
+static int test_desktop_change_pauses_observation(void) {
+    fixture_t *fp = &GlobalFixture;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    fp->observer->desktop = WindowObserverDesktopOther;
+    add_window(fp, 0x6300);
+    api_double_hint(fp->observer, 0x8000u, 0x6300);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x6300) == 0u);
+    fp->observer->desktop = WindowObserverDesktopDefault;
+    for (uint32_t pass = 0; pass < 4u && count_frames(fp, InteropMsgWindowAnnounce, 0x6300) == 0u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(count_frames(fp, InteropMsgWindowAnnounce, 0x6300) == 1u);
+    retire_one_window(fp, 0x6300);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
+/* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
+
+/** @brief Results of the owner-only calls made from a foreign thread. */
+typedef struct wrong_thread_t {
+    fixture_t *fixture;
+    window_coordinator_status_t status[6];
+    uint32_t state;
+    uint32_t entries;
+    window_coordinator_stats_t stats;
+} wrong_thread_t;
+
+static void wrong_thread_calls(void *argument) {
+    wrong_thread_t *ctx = (wrong_thread_t *)argument;
+    window_coordinator_t *coordinator = ctx->fixture->coordinator;
+    window_coordinator_t *slot = coordinator;
+    ctx->status[0] = window_coordinator_tick(coordinator, 1u, NULL);
+    ctx->status[1] = window_coordinator_mark_lost(coordinator);
+    ctx->status[2] = window_coordinator_reconnect(coordinator, CoordEpoch + 9u, 1u);
+    ctx->status[3] = window_coordinator_get_stats(coordinator, &ctx->stats);
+    ctx->status[4] = window_coordinator_destroy(&slot, 1u);
+    ctx->state = window_coordinator_state(coordinator);
+    ctx->entries = window_coordinator_entry_count(coordinator);
+    ctx->status[5] = slot == coordinator ? WindowCoordinatorOk : WindowCoordinatorBadState;
+}
+
+static int test_defensive_guards_and_owner_thread(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_stats_t stats;
+    window_coordinator_t *none = NULL;
+    wrong_thread_t ctx;
+    uint32_t index;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+
+    /* Invalid arguments on every entry point that takes a pointer or a budget. */
+    Check(window_coordinator_tick(NULL, 1u, NULL) == WindowCoordinatorInvalidArgument);
+    Check(window_coordinator_tick(fp->coordinator, 0u, NULL) == WindowCoordinatorInvalidArgument);
+    Check(window_coordinator_get_stats(NULL, &stats) == WindowCoordinatorInvalidArgument);
+    Check(window_coordinator_get_stats(fp->coordinator, NULL) == WindowCoordinatorInvalidArgument);
+    Check(window_coordinator_entry_count(NULL) == 0u);
+    Check(window_coordinator_state(NULL) == 0u);
+    Check(window_coordinator_destroy(NULL, 1u) == WindowCoordinatorInvalidArgument);
+    Check(window_coordinator_destroy(&none, 1u) == WindowCoordinatorOk);
+    Check(window_coordinator_reconnect(fp->coordinator, CoordEpoch, 1u) == WindowCoordinatorBadState);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+
+    /* Destroy refuses while a window is admitted, and while the host proof is missing. */
+    add_window(fp, 0x3100);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_entry_count(fp->coordinator) == 1u);
+    Check(window_coordinator_destroy(&fp->coordinator, 1u) == WindowCoordinatorBusy);
+    Check(fp->coordinator != NULL);
+    remove_window(fp, 0x3100);
+    for (index = 0; index < fp->wire.count; ++index) {
+        sent_t sent;
+        Check(sent_at(&fp->wire, index, &sent));
+        if (sent.type == InteropMsgFrameReady && sent.window == 0x3100u) {
+            Check(host_release(fp, 0x3100, 1, sent.slot, sent.sequence) == 0);
+        }
+    }
+    for (index = 0; index < 4u && window_coordinator_entry_count(fp->coordinator) != 0u; ++index) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    Check(window_coordinator_destroy(&fp->coordinator, 0u) == WindowCoordinatorMissingProof);
+    Check(fp->coordinator != NULL);
+
+    /* A lost coordinator refuses a second mark_lost, and every owner-only call from a foreign thread is refused. */
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorBadState);
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.fixture = fp;
+    Check(api_double_run_on_other_thread(fp->observer, 0x7777u, wrong_thread_calls, &ctx) == 0);
+    Check(ctx.status[0] == WindowCoordinatorWrongThread);
+    Check(ctx.status[1] == WindowCoordinatorWrongThread);
+    Check(ctx.status[2] == WindowCoordinatorWrongThread);
+    Check(ctx.status[3] == WindowCoordinatorWrongThread);
+    Check(ctx.status[4] == WindowCoordinatorWrongThread);
+    Check(ctx.status[5] == WindowCoordinatorOk);
+    Check(ctx.state == 0u);
+    Check(ctx.entries == 0u);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateLost);
+    fixture_close(fp);
+    return 0;
+}
+
 /* A title change reported through a NAMECHANGE hint reaches the host as WindowUpdate for the announced pair. */
 static int test_title_change_sends_window_update(void) {
     fixture_t *fp = &GlobalFixture;
@@ -969,7 +1892,7 @@ static int test_random_long_sequences_with_faults(void) {
             Check(consume_wire(fp, &model, pins) == 0);
             Check(window_coordinator_entry_count(fp->coordinator) <= InteropMaxWindows);
             if (rng_pick(3u) == 0u) {
-                fp->wire.backpressure_budget = 8u;
+                fp->wire.backpressure_budget = 0u;
                 fp->adapter.fault_per_mille = 0u;
             }
             next_window_slot += 1u;
@@ -983,7 +1906,7 @@ static int test_random_long_sequences_with_faults(void) {
             model_reset_epoch(&model, pins);
             model.reconnects += 1u;
         }
-        fp->wire.backpressure_budget = 8u;
+        fp->wire.backpressure_budget = 0u;
         fp->adapter.fault_per_mille = 0u;
         if (window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning) {
             /* Slot accounting: release pins and remove the random windows so every retirement completes; then a
@@ -1043,6 +1966,24 @@ int main(void) {
         {"phantom when the native window cannot be served", test_phantom_when_the_native_window_cannot_be_served},
         {"capture failure cancels the claim", test_capture_failure_cancels_the_claim},
         {"disconnect and reconnect with host proof", test_disconnect_and_reconnect_with_proof},
+        {"create refuses each backend cleanly", test_create_backend_faults},
+        {"admission and publish seam refusals", test_admission_and_publish_seam_faults},
+        {"lost and reconnect seam refusals", test_lost_and_reconnect_seam_faults},
+        {"admission refusals become phantoms and barriers hold", test_admission_refusals_turn_into_phantoms},
+        {"faulted transitions and teardown", test_faulted_transitions_and_teardown},
+        {"host frame classes and receive disconnect", test_host_frame_classes},
+        {"destroy refusal is recoverable", test_destroy_refusal_is_recoverable},
+        {"config table rejects each field", test_config_table_rejects_each_field},
+        {"allocation and stop refusals", test_allocation_and_stop_refusals},
+        {"host frame validation", test_host_frame_validation},
+        {"reducer resynchronization", test_reducer_resynchronization},
+        {"outbound backpressure holds", test_outbound_backpressure_holds},
+        {"encoder refusals fault the coordinator", test_encoder_refusals_fault},
+        {"untitled window announces", test_untitled_window_announces},
+        {"reentry and budgeted passes", test_reentry_and_budgeted_passes},
+        {"minimum size is encoded", test_minimum_size_is_encoded},
+        {"desktop change pauses observation", test_desktop_change_pauses_observation},
+        {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},
     };
