@@ -434,6 +434,23 @@ static void host_feature_close_once(const interop_host_feature_ops_t *ops,
     host_feature_close(sender);
 }
 
+/** @brief Refuse a run after feature ops validation, announcing closing exactly once.
+ * @param[in] ops Validated feature table or NULL.
+ * @param[in,out] sender Sender of the run; valid only during the closing call.
+ * @param[in,out] notified Set once on_closing has been announced.
+ * @return HostControlInvalidArgument.
+ */
+static interop_host_control_result_t host_control_refuse_after_ops(
+    const interop_host_feature_ops_t *ops,
+    interop_host_feature_sender_t *sender,
+    bool *notified)
+{
+    host_feature_close_once(ops, sender, notified, host_control_monotonic_ms(),
+                            HostControlInvalidArgument);
+    return HostControlInvalidArgument;
+}
+
+
 /** @brief Fold a send-induced drain into the run outcome; idempotent. */
 static void host_feature_observe_drain(interop_host_feature_sender_t *sender,
                                        interop_host_control_result_t *outcome,
@@ -520,15 +537,15 @@ interop_host_control_result_t interop_host_control_run_detailed(
          admission_start < version_start + config->admission->agent_version_bytes) ||
         (device_start < version_start + config->admission->agent_version_bytes &&
          version_start < device_start + sizeof(device_info_t)))
-        return HostControlInvalidArgument;
+        return host_control_refuse_after_ops(feature_ops, &sender, &closing_notified);
     int stop_status = fcntl(config->stop_fd, F_GETFL);
     int stop_descriptor_flags = fcntl(config->stop_fd, F_GETFD);
     if (stop_status < 0 || stop_descriptor_flags < 0 ||
         (stop_status & O_NONBLOCK) == 0 ||
         (stop_descriptor_flags & FD_CLOEXEC) == 0)
-        return HostControlInvalidArgument;
+        return host_control_refuse_after_ops(feature_ops, &sender, &closing_notified);
     token = config->admission->connection_token;
-    if (token == 0) return HostControlInvalidArgument;
+    if (token == 0) return host_control_refuse_after_ops(feature_ops, &sender, &closing_notified);
 
     interop_host_session_config_t admission = *config->admission;
     interop_host_session_result_t admitted = interop_host_session_admit(
