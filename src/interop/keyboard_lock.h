@@ -33,8 +33,10 @@ typedef enum waddle_keyboard_lock_status_t {
     WaddleKeyboardLockInvalidMask = 3,
     /** The protocol serial is zero; nothing was written. */
     WaddleKeyboardLockInvalidSerial = 4,
-    /** The lease epoch is zero; nothing was written. */
-    WaddleKeyboardLockInvalidEpoch = 5
+    /** The lease epoch or the current epoch is zero; nothing was written. */
+    WaddleKeyboardLockInvalidEpoch = 5,
+    /** The update epoch differs from the current epoch in either direction; nothing was written. */
+    WaddleKeyboardLockEpochMismatch = 6
 } waddle_keyboard_lock_status_t;
 
 /**
@@ -154,12 +156,15 @@ waddle_keyboard_lock_status_t waddle_keyboard_lock_host_leave(waddle_keyboard_lo
 /**
  * @brief Guest InputLockState handling with the epoch and serial staleness gate.
  * @param state inout, non-NULL; written only on Ok.
- * @param epoch in; must be nonzero. @param serial in; must be nonzero.
+ * @param current_epoch in; the guest's live lease epoch; must be nonzero.
+ * @param epoch in; the update's lease epoch; must equal current_epoch.
+ * @param serial in; must be nonzero. Ordered wrap-safely within one epoch.
  * @param desired in; lock mask from the host. @param current in; GetKeyState toggle bits.
  * @param out out, non-NULL; written only on Ok.
- * @return Ok, NullArgument, InvalidEpoch, InvalidSerial, or InvalidMask. Caller serializes per state.
+ * @return Ok, NullArgument, InvalidEpoch, InvalidSerial, EpochMismatch, or InvalidMask.
+ *         Caller serializes calls per state.
  */
-waddle_keyboard_lock_status_t waddle_keyboard_lock_guest_update(waddle_keyboard_lock_guest_t *state, uint64_t epoch, uint32_t serial, uint8_t desired, uint8_t current, waddle_keyboard_lock_update_t *out);
+waddle_keyboard_lock_status_t waddle_keyboard_lock_guest_update(waddle_keyboard_lock_guest_t *state, uint64_t current_epoch, uint64_t epoch, uint32_t serial, uint8_t desired, uint8_t current, waddle_keyboard_lock_update_t *out);
 
 /**
  * @brief Build the toggle plan turning `current` into `desired`, without guest state.
