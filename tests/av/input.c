@@ -69,7 +69,7 @@ static void ownership(void) {
     message = event(MsgInputKey, 3, 30, 1);
     assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && state.keys[30]);
     ++message.buffer_index;
-    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 2); /* repeatable duplicate */
     message = event(MsgInputButton, 5, 1, 1);
     assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && state.buttons[1]);
     message = event(MsgInputRelease, 6, 0, AvInputReleaseButtons);
@@ -150,6 +150,50 @@ static void all_keys_and_stress(void) {
     assert(!av_input_scan_code(0) && !av_input_scan_code(128) && !av_input_scan_code(UINT32_MAX));
     assert(av_input_scan_code(30) == 0x1e && av_input_scan_code(97) == 0x11d);
 }
+static void repeat_admission(void) {
+    fixture_t fixture = {.allowed_id = 7, .incarnation = 99};
+    av_input_state_t state = {0};
+    av_message_t message = event(MsgInputFocus, 1, 0, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0);
+    message = event(MsgInputKey, 2, 30, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 1 && state.keys[30] == 1);
+    /* Host typematic repeats: each is a plain down while the key stays held. */
+    for (uint32_t serial = 3; serial <= 6; ++serial) {
+        message = event(MsgInputKey, serial, 30, 1);
+        assert(av_input_apply(&state, &message, &Ops, &fixture) == 0);
+    }
+    assert(fixture.emitted == 5 && state.keys[30] == 1 && fixture.last.flags == 1);
+    /* Duplicate downs for modifier and lock keys stay suppressed. */
+    message = event(MsgInputKey, 7, 42, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 6);
+    message = event(MsgInputKey, 8, 42, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 6);
+    message = event(MsgInputKey, 9, 58, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 7);
+    message = event(MsgInputKey, 10, 58, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 7);
+    /* A release clears the held bit, so the next down is a fresh press, not a repeat. */
+    message = event(MsgInputKey, 11, 30, 0);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 8 && !state.keys[30]);
+    message = event(MsgInputKey, 12, 30, 0);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 8);
+    message = event(MsgInputKey, 13, 30, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && fixture.emitted == 9 && state.keys[30] == 1);
+    /* Repeat emit failure keeps the key held and reports failure. */
+    fixture.fail_emit = 1;
+    message = event(MsgInputKey, 14, 30, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == -1 && state.keys[30] == 1);
+    fixture.fail_emit = 0;
+    message = event(MsgInputRelease, 15, 0, AvInputReleaseKeys);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && !state.keys[30]);
+}
+static void repeat_policy(void) {
+    assert(av_input_key_repeatable(30) && av_input_key_repeatable(1) && av_input_key_repeatable(767));
+    assert(av_input_key_repeatable(0) == 0 && av_input_key_repeatable(768) == 0);
+    static const uint32_t NotRepeatable[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 125, 126, 142};
+    for (size_t index = 0; index < sizeof(NotRepeatable) / sizeof(NotRepeatable[0]); ++index)
+        assert(av_input_key_repeatable(NotRepeatable[index]) == 0);
+}
 static void transfer_and_partial_release(void) {
     fixture_t fixture = {.allowed_id = 7, .incarnation = 99};
     av_input_state_t state = {0};
@@ -183,7 +227,7 @@ static void transfer_and_partial_release(void) {
     assert(av_input_apply(&state, &message, &Ops, &fixture) == -1);
 }
 int main(void) {
-    invalid_arguments(); ownership(); failures(); all_keys_and_stress(); transfer_and_partial_release();
+    invalid_arguments(); ownership(); repeat_admission(); repeat_policy(); failures(); all_keys_and_stress(); transfer_and_partial_release();
     puts("AV input ownership, replay, failure and release fixtures passed");
     return 0;
 }

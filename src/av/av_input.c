@@ -94,6 +94,17 @@ uint16_t av_input_scan_code(uint32_t key) {
     if (translation.kind != AvKeyTranslationScanCode) return 0;
     return (uint16_t)translation.scan_code | (translation.extended ? 0x100 : 0);
 }
+/* Keys that never auto-repeat: modifiers, lock keys, Pause, and the suppressed
+ * power/sleep keys. Same set as keyboard_repeat.zig policy_repeatable(). */
+static const uint16_t NonRepeatKeys[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 125, 126, 142};
+
+int av_input_key_repeatable(uint32_t key) {
+    if (key == 0 || key > 767) return 0;
+    for (size_t index = 0; index < sizeof(NonRepeatKeys) / sizeof(NonRepeatKeys[0]); ++index)
+        if (NonRepeatKeys[index] == key) return 0;
+    return 1;
+}
+
 static int release_held(av_input_state_t *state, unsigned mask,
                         const av_input_ops_t *ops, void *context) {
     int result = 0;
@@ -162,7 +173,11 @@ int av_input_apply_admitted(av_input_state_t *state, const av_message_t *event,
     if (target != 0) return target > 0 ? 1 : -1;
     if (event->type == MsgInputKey || event->type == MsgInputButton) {
         uint8_t *held = event->type == MsgInputKey ? &state->keys[event->width] : &state->buttons[event->width];
-        if (*held == event->flags) return 0;
+        /* A repeated down for a held repeatable key is an admitted typematic repeat:
+         * it is injected as a plain down with no intervening up (IMPL_DESC 3.6.3). */
+        int repeat = event->type == MsgInputKey && event->flags && *held &&
+            av_input_key_repeatable(event->width);
+        if (*held == event->flags && !repeat) return 0;
         int emitted = ops->emit(context, event);
         if (emitted != 0) return emitted > 0 ? 1 : -1;
         *held = (uint8_t)event->flags;

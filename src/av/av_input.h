@@ -112,4 +112,14 @@ int av_input_reset(av_input_state_t *state, const av_input_ops_t *ops, void *con
  * widen the AV wire codec's 1..127 admission bound.
  */
 uint16_t av_input_scan_code(uint32_t key);
+/** @brief Whether a duplicate down of this evdev key is an admitted host typematic repeat.
+ * @param[in] key Linux evdev code. @return 1 for repeatable keys; 0 for modifiers
+ * (Shift, Ctrl, Alt, Meta), lock keys (CapsLock, NumLock, ScrollLock), Pause,
+ * suppressed power/sleep, and any code outside 1..767.
+ * @note Pure, allocation-free, thread-safe. Mirrors the host policy of
+ * keyboard_repeat.zig so the guest admits exactly the repeats the host generates.
+ * A duplicate down for a repeatable key is injected as a plain down; a duplicate
+ * for any other key stays suppressed.
+ */
+int av_input_key_repeatable(uint32_t key);
 #endif
