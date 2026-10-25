@@ -204,8 +204,12 @@ static bool add_item(catalog_collector_t *collector, app_catalog_source_t source
     size_t canonical_units = 0;
     bool has_target = target_wide != NULL && target_units != 0;
     if (has_target && !canonical_target(collector, target_wide, canonical, AppCatalogMaxPathUnits, &canonical_units)) {
-        if (collector->status == AppCatalogStatusOk) collector->status = AppCatalogStatusNativeFailure;
-        return false;
+        /* A stale/non-file Shell target is incomplete per-item metadata.
+         * Exact failed-close ownership and global failures remain terminal.
+         * AUMID activation does not require an optional filesystem target. */
+        if (collector->status != AppCatalogStatusOk) return false;
+        if (kind == AppCatalogIdentityCanonicalPath) return true;
+        has_target = false;
     }
     app_catalog_candidate_t candidate = {0};
     candidate.source = source;

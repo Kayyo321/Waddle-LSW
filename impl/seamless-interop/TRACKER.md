@@ -1527,7 +1527,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     tests/coverage include it; actual Wayland/queue/guest composition remains
     the unaccepted second half of the existing repeat allocation.
 
-- **Commit `HEAD`**: `test(interop): qualify bounded Windows guest control composition`
+- **Commit `62a583e`**: `test(interop): qualify bounded Windows guest control composition`
   - **Task Impact**: +25% to TODO #6 (+1.00% overall; total24.90%).
   - **Summary**: Exact59a1c8d Windows job121249151787 passes all3composition
     cases: real Hello/header/Ack/Ready/repeated heartbeat, bounded stop/drain,
@@ -1536,3 +1536,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     sanitizers. Real WinSock/VirtualAlloc composition substitutes Viosock and
     driver discovery/IOCTL boundaries; installed driver/native20% and deploy30%
     remain open. Separate icon/catalog workflow failures earn no credit.
+
+- **Commit `HEAD`**: `fix(interop): skip stale catalog targets without hiding close failures`
+  - **Task Impact**: +0% to TODO #27/#34 pending native provider qualification.
+  - **Summary**: Real59a1c8d smoke returned NativeFailure/ERROR_INVALID_NAME.
+    Treat unreadable individual target metadata according to the contract:
+    skip path-key items without canonical identity, retain AUMID activation
+    without optional target. Failed native closes and global limits remain
+    terminal with exact ownership retained. Add real temporary stale-shortcut
+    regression; root strict native SDK/link passes, actual rerun pending.

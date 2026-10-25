@@ -153,7 +153,11 @@ documented node cap, path/string limits, and a monotonic deadline; an optional
 cancellation callback is checked between nodes. Limits/cancellation return a
 typed error and discard the incomplete snapshot. Invalid individual shell
 items that lack required readable metadata may be skipped without logging
-their application metadata; malformed global state,
+their application metadata. A stale/non-file target with no canonical identity
+skips that individual path-key item. An otherwise valid AUMID item retains its
+activation identity with empty optional target fields when canonical target
+metadata is unavailable. Any failed native handle close remains terminal and
+retains the exact handle; it is never downgraded to a skipped item. Malformed global state,
 collision, cap exhaustion, or allocation failure fails the whole enumeration.
 Desktop shortcut origin is preserved for the flag rule above.
 

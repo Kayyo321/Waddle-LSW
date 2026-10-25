@@ -185,6 +185,8 @@ int main(void) {
     wchar_t roots_storage[4][MAX_PATH];
     wchar_t program_link[MAX_PATH];
     wchar_t desktop_link[MAX_PATH];
+    wchar_t stale_link[MAX_PATH] = {0};
+    wchar_t absent_target[MAX_PATH] = {0};
     wchar_t target[MAX_PATH];
     char program_link_hash[65] = {0};
     char desktop_link_hash[65] = {0};
@@ -217,6 +219,7 @@ int main(void) {
     bool public_desktop_exists = false;
     bool program_link_exists = false;
     bool desktop_link_exists = false;
+    bool stale_link_exists = false;
 
     HRESULT initialized = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     Require(SUCCEEDED(initialized));
@@ -282,6 +285,10 @@ int main(void) {
     Require(app_catalog_cleanup_owner_retry(&cleanup_owner) == AppCatalogStatusOk && cleanup_owner.count == 0);
     roots.close_fault = NULL;
     roots.close_fault_context = NULL;
+    Require(make_child_path(stale_link, MAX_PATH, roots_storage[0], L"stale-fixture.lnk"));
+    Require(make_child_path(absent_target, MAX_PATH, fixture_root, L"never-created-target.exe"));
+    Require(create_shortcut(stale_link, absent_target, L"Stale catalog fixture", L""));
+    stale_link_exists = true;
     Require(app_catalog_windows_enumerate_fixture_roots(allocator, &options, &roots, &before) == AppCatalogStatusOk);
     Require(before.count == 1 && before.entries[0].identity_kind == AppCatalogIdentityCanonicalPath);
     Require(before.entries[0].app_flags == 0 && before.duplicate_launch_conflicts == 0);
@@ -324,6 +331,7 @@ cleanup:
             ok = false;
         }
     }
+    if (stale_link_exists) DeleteFileW(stale_link);
     if (desktop_link_exists) DeleteFileW(desktop_link);
     if (program_link_exists) DeleteFileW(program_link);
     if (public_desktop_exists) RemoveDirectoryW(roots_storage[3]);
