@@ -144,6 +144,24 @@ static int session_app_on_tick(void *context, uint64_t now_ms, interop_host_feat
     return 0;
 }
 
+static int session_app_on_peer_error(void *context, uint32_t error_code, uint32_t request_id,
+    interop_host_feature_sender_t *sender)
+{
+    session_app_state_t *state = context;
+    size_t index;
+
+    for (index = 0; index < state->count; ++index) {
+        const session_handler_t *handler = &state->handlers[index];
+        int status;
+
+        if (handler->on_error == NULL) continue;
+        status = session_app_translate(handler->on_error(handler->context, error_code,
+            request_id, sender));
+        if (status != 0) return status;
+    }
+    return 0;
+}
+
 static uint64_t session_app_next_deadline(void *context, uint64_t now_ms)
 {
     session_app_state_t *state = context;
@@ -233,6 +251,7 @@ interop_host_control_result_t session_app_run_detailed(
     ops.on_fds = session_app_on_fds;
     ops.on_tick = session_app_on_tick;
     ops.next_deadline_ms = session_app_next_deadline;
+    ops.on_peer_error = session_app_on_peer_error;
     ops.on_closing = session_app_on_closing;
 
     /* The runtime requires admission and offer to match; the caller's zero offer is replaced here. */

@@ -47,6 +47,11 @@ typedef struct fake_t {
     interop_host_feature_result_t last_send;
     interop_host_feature_result_t closing_send;
     bool skip_closing;
+    bool skip_error;
+    uint32_t error_calls;
+    uint32_t error_code;
+    uint32_t error_request;
+    int error_status;
 } fake_t;
 
 static uint32_t closing_sequence;
@@ -178,6 +183,17 @@ static interop_host_control_result_t app_runner(const interop_host_control_confi
     return session_app_run_detailed(&app, owners, detail);
 }
 
+static int fake_on_error(void *context, uint32_t error_code, uint32_t request_id,
+                         interop_host_feature_sender_t *sender)
+{
+    fake_t *fake = context;
+    (void)sender;
+    ++fake->error_calls;
+    fake->error_code = error_code;
+    fake->error_request = request_id;
+    return fake->error_status;
+}
+
 static void make_fake_handler(session_handler_t *handler, fake_t *fake, const char *name, uint64_t caps)
 {
     memset(handler, 0, sizeof(*handler));
@@ -192,6 +208,7 @@ static void make_fake_handler(session_handler_t *handler, fake_t *fake, const ch
     handler->on_tick = fake_on_tick;
     handler->next_deadline_ms = fake_next_deadline;
     handler->on_closing = fake_on_closing;
+    handler->on_error = fake->skip_error ? NULL : fake_on_error;
 }
 
 static void fake_defaults(fake_t *fake)
@@ -544,6 +561,54 @@ static void test_ownership_conflicts(void)
     reset_guest_after();
 }
 
+static void test_peer_errors(void)
+{
+    fake_t first;
+    fake_t second;
+    session_handler_t table[2];
+    interop_host_control_result_t result;
+
+    /* A scoped remote Error reaches each handler that defines on_error, in registration order. */
+    fake_defaults(&first);
+    fake_defaults(&second);
+    second.skip_error = true;
+    make_fake_handler(&table[0], &first, "first", InteropCapWindows);
+    make_fake_handler(&table[1], &second, "second", InteropCapLaunch);
+    app_table[0] = table[0];
+    app_table[1] = table[1];
+    reset_guest(InteropCapWindows | InteropCapLaunch, InteropCapWindows | InteropCapLaunch);
+    arm_peer_send_error = true;
+    result = run_app(2, 300, 0);
+    assert(result == HostControlSuccess);
+    assert(first.error_calls == 1 && first.error_code == 1 && first.error_request == 2);
+    assert(second.error_calls == 0 && first.closing_calls == 1 && second.closing_calls == 1);
+    reset_guest_after();
+
+    /* A stop from on_error ends the run as Cancelled. */
+    fake_defaults(&first);
+    first.error_status = SessionHandlerRequestStop;
+    make_fake_handler(&table[0], &first, "first", InteropCapWindows);
+    app_table[0] = table[0];
+    reset_guest(InteropCapWindows, InteropCapWindows);
+    arm_peer_send_error = true;
+    result = run_app(1, 2000, 0);
+    assert(result == HostControlCancelled);
+    assert(first.error_calls == 1 && first.closing_calls == 1);
+    reset_guest_after();
+
+    /* Any other nonzero result from on_error fails the run. */
+    fake_defaults(&first);
+    first.error_status = 7;
+    make_fake_handler(&table[0], &first, "first", InteropCapWindows);
+    app_table[0] = table[0];
+    reset_guest(InteropCapWindows, InteropCapWindows);
+    arm_peer_send_error = true;
+    result = run_app(1, 2000, 0);
+    assert(result == HostControlFeatureFailed);
+    assert(first.error_calls == 1 && first.closing_calls == 1);
+    reset_guest_after();
+}
+
 static void test_graceful_stop_and_closing(void)
 {
     fake_t first;
@@ -781,6 +846,7 @@ int main(void)
     test_callback_failures();
     test_ownership_conflicts();
     test_graceful_stop_and_closing();
+    test_peer_errors();
     test_deadlines_and_capability_zero();
     test_stress();
     test_minimal_handlers();
