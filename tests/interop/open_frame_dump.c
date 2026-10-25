@@ -44,6 +44,11 @@ int main(int argc, char **argv) {
         if (!is_absent(argv[4]) && interop_put_bytes(&writer, InteropTagMessage, argv[4], (uint16_t)strlen(argv[4])) != 0) return 1;
         return print_frame(&writer, InteropMsgLaunchResult, request_id, InteropFromGuest);
     }
+    if (strcmp(argv[1], "stop-result") == 0 && argc == 5) {
+        if (interop_put_uint(&writer, InteropTagStatus, strtoul(argv[3], NULL, 10)) != 0) return 1;
+        if (!is_absent(argv[4]) && interop_put_bytes(&writer, InteropTagMessage, argv[4], (uint16_t)strlen(argv[4])) != 0) return 1;
+        return print_frame(&writer, InteropMsgLocalStopResult, request_id, InteropFromLocal);
+    }
     if (strcmp(argv[1], "error") == 0 && argc == 5) {
         if (!is_absent(argv[4]) && interop_put_bytes(&writer, InteropTagMessage, argv[4], (uint16_t)strlen(argv[4])) != 0) return 1;
         if (interop_put_uint(&writer, InteropTagErrorCode, strtoul(argv[3], NULL, 10)) != 0) return 1;
