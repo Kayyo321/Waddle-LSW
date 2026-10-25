@@ -38,7 +38,7 @@ static bool test_fail_fallback_lookup;
 static bool test_fail_image_list_query;
 static bool test_fail_image_list_icon;
 static bool test_fail_delete_once;
-static bool test_fail_cleanup_delete_once;
+static uint32_t test_fail_cleanup_delete_remaining;
 static bool test_fail_cleanup_dc_once;
 static bool test_fail_cleanup_icon_once;
 static bool test_fail_close_dc_once;
@@ -913,8 +913,8 @@ icon_windows_status_t icon_windows_cleanup_retry(icon_windows_cleanup_t *cleanup
         HBITMAP bitmap = (HBITMAP)cleanup->bitmap_handles[index];
         BOOL deleted = FALSE;
 #ifdef IconWindowsTestSeams
-        if (bitmap != NULL && test_fail_cleanup_delete_once) {
-            test_fail_cleanup_delete_once = false;
+        if (bitmap != NULL && test_fail_cleanup_delete_remaining != 0u) {
+            --test_fail_cleanup_delete_remaining;
             SetLastError(ERROR_BUSY);
         } else if (bitmap != NULL) {
             deleted = DeleteObject(bitmap);
@@ -959,13 +959,9 @@ icon_windows_status_t icon_windows_cleanup_retry(icon_windows_cleanup_t *cleanup
             cleanup->bitmap_handles[retained++] = cleanup->bitmap_handles[index];
         }
     }
-    while (retained < 2u) {
+    cleanup->bitmap_count = retained;
+    while (retained < 4u) {
         cleanup->bitmap_handles[retained++] = 0u;
-    }
-    cleanup->bitmap_count = 0u;
-    while (cleanup->bitmap_count < 2u &&
-           cleanup->bitmap_handles[cleanup->bitmap_count] != 0u) {
-        ++cleanup->bitmap_count;
     }
     if (cleanup->icon_handles[0] == 0u) cleanup->icon_count = 0u;
     if (cleanup->device_context_handles[0] == 0u) cleanup->device_context_count = 0u;

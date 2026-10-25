@@ -297,6 +297,35 @@ static void icon_windows_run_private_helper_tests(void)
 
 static void icon_windows_run_fault_tests(void)
 {
+    /* Every accepted retained identity survives repeated partial closes,
+       including the documented four-bitmap capacity. */
+    icon_windows_cleanup_t four_cleanup = {0};
+    HBITMAP four_bitmaps[4] = {0};
+    for (uint32_t index = 0u; index < 4u; ++index) {
+        void *pixels = NULL;
+        four_bitmaps[index] = create_color_bitmap(16u, &pixels);
+        assert(four_bitmaps[index] != NULL && pixels != NULL);
+        four_cleanup.bitmap_handles[index] = (uintptr_t)four_bitmaps[index];
+    }
+    four_cleanup.bitmap_count = 4u;
+    const uint32_t RetainedCounts[] = {4u, 3u, 1u};
+    for (size_t attempt = 0u; attempt < 3u; ++attempt) {
+        test_fail_cleanup_delete_remaining = RetainedCounts[attempt];
+        assert(icon_windows_cleanup_retry(&four_cleanup) == IconWindowsStatusCleanupRequired);
+        assert(test_fail_cleanup_delete_remaining == 0u);
+        assert(four_cleanup.bitmap_count == RetainedCounts[attempt]);
+        for (uint32_t index = 0u; index < 4u; ++index) {
+            if (index < four_cleanup.bitmap_count) {
+                assert(four_cleanup.bitmap_handles[index] == (uintptr_t)four_bitmaps[index]);
+                assert(GetObjectType((HGDIOBJ)four_cleanup.bitmap_handles[index]) == OBJ_BITMAP);
+            } else {
+                assert(four_cleanup.bitmap_handles[index] == 0u);
+            }
+        }
+    }
+    assert(icon_windows_cleanup_retry(&four_cleanup) == IconWindowsStatusOk);
+    assert(cleanup_is_empty(&four_cleanup));
+
     icon_windows_cleanup_t invalid_cleanup = {0};
     assert(icon_windows_cleanup_retry(NULL) == IconWindowsStatusInvalidArgument);
     const uintptr_t unaligned_cleanup_address =
@@ -367,7 +396,7 @@ static void icon_windows_run_fault_tests(void)
     cleanup.bitmap_count = 2u;
 
     /* Inject one native cleanup failure while retaining a genuine owned bitmap. */
-    test_fail_cleanup_delete_once = true;
+    test_fail_cleanup_delete_remaining = 1u;
     assert(icon_windows_cleanup_retry(&cleanup) == IconWindowsStatusCleanupRequired);
     assert(cleanup.bitmap_count == 1u);
     assert(cleanup.bitmap_handles[0] == (uintptr_t)selected_bitmap);
