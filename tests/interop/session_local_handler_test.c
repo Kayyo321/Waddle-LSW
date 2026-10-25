@@ -11,8 +11,15 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <dirent.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #define Check(condition) assert((condition) && #condition)
 
@@ -619,6 +626,418 @@ static void test_duplicate_live_token_is_refused(void)
     free_handler(handler);
 }
 
+/* ---- Real sockets: bind, accept, frames ---- */
+
+static char test_runtime[128];
+
+static void make_runtime(void)
+{
+    strcpy(test_runtime, "/tmp/session-local-XXXXXX");
+    assert(mkdtemp(test_runtime) != NULL);
+    assert(chmod(test_runtime, 0700) == 0);
+}
+
+static void remove_tree(const char *path)
+{
+    char command[256];
+    assert(snprintf(command, sizeof(command), "rm -rf '%s'", path) > 0);
+    assert(system(command) == 0);
+}
+
+static session_local_handler_t *open_handler(const char *device, uint32_t proof)
+{
+    session_local_handler_t *handler = calloc(1, sizeof(*handler));
+    session_local_config_t config = {
+        .runtime_dir = test_runtime,
+        .device_name = device,
+        .lock_held_proof = proof,
+        .reserved_zero = 0,
+    };
+    assert(handler != NULL);
+    assert(session_local_handler_init(handler, &config) == SessionLocalSuccess);
+    return handler;
+}
+
+static int socket_path_mode(const char *path, mode_t *mode)
+{
+    struct stat status;
+    if (lstat(path, &status) != 0) return -1;
+    *mode = status.st_mode;
+    return 0;
+}
+
+static int connect_path(const char *path)
+{
+    struct sockaddr_un address;
+    struct timeval timeout = {.tv_sec = 2};
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    assert(fd >= 0);
+    assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    memcpy(address.sun_path, path, strlen(path) + 1u);
+    assert(connect(fd, (const struct sockaddr *)&address, sizeof(address)) == 0);
+    return fd;
+}
+
+static void send_all(int fd, const void *bytes, size_t length)
+{
+    const uint8_t *data = bytes;
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t sent = send(fd, data + offset, length - offset, MSG_NOSIGNAL);
+        assert(sent > 0);
+        offset += (size_t)sent;
+    }
+}
+
+/** @brief Read one whole reply frame from a client socket; returns false on end of stream. */
+static bool recv_frame(int fd, interop_header_t *header, uint8_t *payload, size_t *payload_length)
+{
+    uint8_t head[InteropHeaderBytes];
+    size_t got = 0;
+    while (got < sizeof(head)) {
+        ssize_t received = recv(fd, head + got, sizeof(head) - got, 0);
+        if (received <= 0) return false;
+        got += (size_t)received;
+    }
+    assert(interop_header_decode(head, sizeof(head), header) == 0);
+    got = 0;
+    while (got < header->length) {
+        ssize_t received = recv(fd, payload + got, header->length - got, 0);
+        if (received <= 0) return false;
+        got += (size_t)received;
+    }
+    *payload_length = header->length;
+    return true;
+}
+
+/** @brief One runtime-style poll cycle through the callback table. */
+static void pump_once(const session_handler_t *table, uint64_t now_ms)
+{
+    struct pollfd fds[SessionHandlerMaxDescriptors];
+    size_t count = 0;
+    assert(table->poll_fds(table->context, fds, SessionHandlerMaxDescriptors, &count) == 0);
+    assert(count <= SessionHandlerMaxDescriptors);
+    if (count == 0) return;
+    /* Two rounds: a connection accepted in one round has its first bytes reported in the next. */
+    for (int round = 0; round < 2; ++round) {
+        fds[0].revents = 0;
+        (void)poll(fds, count, round == 0 ? 20 : 0);
+        if (fds[0].revents != 0) assert(table->on_fds(table->context, fds, count, now_ms, FakeSender) == 0);
+    }
+}
+
+static size_t count_open_descriptors(void)
+{
+    size_t count = 0;
+    DIR *directory = opendir("/proc/self/fd");
+    assert(directory != NULL);
+    while (readdir(directory) != NULL) ++count;
+    assert(closedir(directory) == 0);
+    return count;
+}
+
+static void test_ready_creates_private_socket_and_directories(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(strcmp(table.name, "session_local") == 0 && table.capabilities == InteropCapLaunch);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    Check(handler->bound == 1 && handler->socket_created == 1);
+    mode_t mode = 0;
+    char path[256];
+    Check(snprintf(path, sizeof(path), "%s/waddle", test_runtime) > 0);
+    Check(socket_path_mode(path, &mode) == 0 && (mode & 07777) == 0700);
+    Check(snprintf(path, sizeof(path), "%s/waddle/alpha", test_runtime) > 0);
+    Check(socket_path_mode(path, &mode) == 0 && (mode & 07777) == 0700);
+    Check(snprintf(path, sizeof(path), "%s/waddle/alpha/session.sock", test_runtime) > 0);
+    Check(socket_path_mode(path, &mode) == 0 && S_ISSOCK(mode) && (mode & 07777) == 0600);
+    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+
+    struct pollfd fds[SessionHandlerMaxDescriptors];
+    size_t count = 0;
+    Check(table.poll_fds(table.context, fds, SessionHandlerMaxDescriptors, &count) == 0 && count == 1);
+    Check(fds[0].fd == handler->epoll_fd && fds[0].events == POLLIN && fds[0].revents == 0);
+    session_local_handler_destroy(handler);
+    Check(socket_path_mode(path, &mode) != 0);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
+static void test_ready_refuses_unsafe_directories_and_paths(void)
+{
+    fake_reset();
+    make_runtime();
+    char waddle[256];
+    char device[256];
+    char socket_path[256];
+    Check(snprintf(waddle, sizeof(waddle), "%s/waddle", test_runtime) > 0);
+    Check(snprintf(device, sizeof(device), "%s/waddle/alpha", test_runtime) > 0);
+    Check(snprintf(socket_path, sizeof(socket_path), "%s/session.sock", device) > 0);
+
+    /* A group-readable device directory is refused and left as it is. */
+    Check(mkdir(waddle, 0700) == 0 && mkdir(device, 0755) == 0);
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+    mode_t mode = 0;
+    Check(socket_path_mode(device, &mode) == 0 && (mode & 07777) == 0755);
+    Check(!handler->bound && !handler->socket_created);
+    session_local_handler_destroy(handler);
+    free(handler);
+    Check(rmdir(device) == 0);
+
+    /* A symbolic link where the device directory belongs is refused and never followed. */
+    Check(symlink("/tmp", device) == 0);
+    handler = open_handler("alpha", 1);
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+    Check(socket_path_mode(device, &mode) == 0 && S_ISLNK(mode));
+    session_local_handler_destroy(handler);
+    free(handler);
+    Check(unlink(device) == 0);
+
+    /* A regular file at the socket path is never unlinked. */
+    Check(mkdir(device, 0700) == 0);
+    int fd = open(socket_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    Check(fd >= 0);
+    Check(write(fd, "keep", 4) == 4);
+    Check(close(fd) == 0);
+    handler = open_handler("alpha", 1);
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+    Check(socket_path_mode(socket_path, &mode) == 0 && S_ISREG(mode));
+    session_local_handler_destroy(handler);
+    free(handler);
+    Check(unlink(socket_path) == 0);
+    remove_tree(test_runtime);
+}
+
+static void test_stale_socket_policy(void)
+{
+    fake_reset();
+    make_runtime();
+    char socket_path[256];
+    char device[256];
+    Check(snprintf(device, sizeof(device), "%s/waddle/alpha", test_runtime) > 0);
+    Check(snprintf(socket_path, sizeof(socket_path), "%s/session.sock", device) > 0);
+    session_handler_t table;
+
+    /* Leave a socket file with no listener: the crash leftover. */
+    Check(snprintf(device, sizeof(device), "%s/waddle", test_runtime) > 0);
+    Check(mkdir(device, 0700) == 0);
+    Check(snprintf(device, sizeof(device), "%s/waddle/alpha", test_runtime) > 0);
+    Check(mkdir(device, 0700) == 0);
+    int stale = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    struct sockaddr_un address;
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    memcpy(address.sun_path, socket_path, strlen(socket_path) + 1u);
+    Check(stale >= 0 && bind(stale, (const struct sockaddr *)&address, sizeof(address)) == 0);
+    Check(close(stale) == 0);
+
+    /* Without the singleton lock proof the stale file is never unlinked. */
+    session_local_handler_t *handler = open_handler("alpha", 0);
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+    mode_t mode = 0;
+    Check(socket_path_mode(socket_path, &mode) == 0 && S_ISSOCK(mode));
+    session_local_handler_destroy(handler);
+    free(handler);
+
+    /* With proof, the stale file is replaced, and this handler owns and removes it. */
+    handler = open_handler("alpha", 1);
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    Check(handler->socket_created == 1);
+    session_local_handler_destroy(handler);
+    free(handler);
+    Check(socket_path_mode(socket_path, &mode) != 0);
+
+    /* A live listener is never unlinked, even with proof. */
+    handler = open_handler("alpha", 1);
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    session_handler_t second_table;
+    session_local_handler_t *rival = open_handler("alpha", 1);
+    session_local_handler_table(rival, &second_table);
+    Check(second_table.on_ready(second_table.context, 0, FakeSender) == 1);
+    Check(rival->socket_created == 0);
+    session_local_handler_destroy(rival);
+    free(rival);
+    Check(socket_path_mode(socket_path, &mode) == 0 && S_ISSOCK(mode));
+    session_local_handler_destroy(handler);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
+
+static size_t build_frame_with(uint8_t *frame, size_t capacity, uint16_t type, uint32_t request_id, uint32_t direction)
+{
+    interop_writer_t writer;
+    size_t length = 0;
+    interop_writer_init(&writer, frame, capacity);
+    assert(interop_writer_finish(&writer, type, request_id, (interop_direction_t)direction, &length) == 0);
+    return length;
+}
+
+static void test_client_launch_roundtrip_and_token(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    int client = connect_path(handler->socket_path);
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = build_local_launch(frame, sizeof(frame), 11, InteropLaunchPath, "Z:\\a.exe", "x", NULL, "tok-c");
+    send_all(client, frame, length);
+    pump_once(&table, 1000);
+    Check(handler->stats.accepted == 1 && fake_sends == 1);
+    Check(handler->clients[0].frame_seen == 1);
+
+    uint8_t result[InteropMaxFrameBytes];
+    size_t result_length = build_guest_result(result, sizeof(result), 1, InteropOk, 77, "ok", NULL);
+    Check(table.on_frame(table.context, InteropMsgLaunchResult, 1, result, result_length, FakeSender) == 0);
+    Check(table.on_tick(table.context, 1100, FakeSender) == 0);
+    interop_header_t reply;
+    uint8_t payload[InteropMaxPayloadBytes];
+    size_t payload_length = 0;
+    Check(recv_frame(client, &reply, payload, &payload_length));
+    Check(reply.type == InteropMsgLaunchResult && reply.request_id == 11);
+    uint64_t status = 9;
+    uint64_t process_id = 0;
+    Check(interop_field_uint(payload, payload_length, InteropTagStatus, 4, &status) == 0 && status == InteropOk);
+    Check(interop_field_uint(payload, payload_length, InteropTagProcessId, 4, &process_id) == 0 && process_id == 77);
+    uint8_t taken[InteropActivationTokenBufferBytes];
+    size_t taken_length = 0;
+    Check(interop_activation_take(&handler->tokens, 77, 1100, taken, &taken_length) == InteropActivationTakeFound);
+    Check(taken_length == 5 && memcmp(taken, "tok-c", 5) == 0);
+
+    /* Split and pipelined frames are reassembled and dispatched in order. */
+    length = build_local_launch(frame, sizeof(frame), 12, InteropLaunchPath, "Z:\\b.exe", NULL, NULL, NULL);
+    send_all(client, frame, 10);
+    pump_once(&table, 1200);
+    Check(fake_sends == 1);
+    send_all(client, frame + 10, length - 10);
+    pump_once(&table, 1210);
+    Check(fake_sends == 2);
+    uint8_t twice[2 * InteropMaxFrameBytes / 4];
+    size_t one = build_local_launch(frame, sizeof(frame), 13, InteropLaunchPath, "Z:\\c.exe", NULL, NULL, NULL);
+    size_t two = build_local_launch(twice + one, sizeof(twice) - one, 14, InteropLaunchPath, "Z:\\d.exe", NULL, NULL, NULL);
+    memcpy(twice, frame, one);
+    send_all(client, twice, one + two);
+    pump_once(&table, 1220);
+    Check(fake_sends == 4 && handler->stats.launches_forwarded == 4);
+
+    Check(close(client) == 0);
+    pump_once(&table, 1300);
+    Check(handler->clients[0].fd == -1 && handler->stats.closed_io == 1);
+    session_local_handler_destroy(handler);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
+static void test_client_protocol_violations_close(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length;
+
+    /* Bad magic. */
+    int client = connect_path(handler->socket_path);
+    memset(frame, 'x', InteropHeaderBytes);
+    send_all(client, frame, InteropHeaderBytes);
+    pump_once(&table, 10);
+    Check(handler->stats.closed_malformed == 1);
+    uint8_t byte;
+    Check(recv(client, &byte, 1, 0) == 0);
+    Check(close(client) == 0);
+
+    /* Wrong type: a guest-only frame sent on the local socket. */
+    client = connect_path(handler->socket_path);
+    length = build_frame_with(frame, sizeof(frame), InteropMsgPong, 1, InteropFromGuest);
+    send_all(client, frame, length);
+    pump_once(&table, 20);
+    Check(handler->stats.closed_unknown_type == 1);
+    Check(recv(client, &byte, 1, 0) == 0);
+    Check(close(client) == 0);
+
+    /* Zero request identifier. */
+    client = connect_path(handler->socket_path);
+    length = build_local_launch(frame, sizeof(frame), 0, InteropLaunchPath, "Z:\\z.exe", NULL, NULL, NULL);
+    send_all(client, frame, length);
+    pump_once(&table, 30);
+    Check(handler->stats.closed_zero_request == 1);
+    Check(recv(client, &byte, 1, 0) == 0);
+    Check(close(client) == 0);
+
+    /* Oversize announcement: the header alone is refused. */
+    client = connect_path(handler->socket_path);
+    length = build_local_launch(frame, sizeof(frame), 5, InteropLaunchPath, "Z:\\z.exe", NULL, NULL, NULL);
+    frame[8] = 0x00;
+    frame[9] = 0x10;
+    frame[10] = 0x00;
+    frame[11] = 0x00;
+    send_all(client, frame, InteropHeaderBytes);
+    pump_once(&table, 40);
+    Check(handler->stats.closed_oversize == 1);
+    Check(recv(client, &byte, 1, 0) == 0);
+    Check(close(client) == 0);
+
+    /* Unknown critical tag in a LocalLaunch payload fails validation. */
+    client = connect_path(handler->socket_path);
+    uint8_t bad[] = {
+        0x57, 0x49, 0x4F, 0x50, 0x02, 0x00, 0x00, 0x7F, 0x08, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+        0x99, 0x80, 0x04, 0x00, 0x01, 0x02, 0x03, 0x04,
+    };
+    send_all(client, bad, sizeof(bad));
+    pump_once(&table, 50);
+    Check(handler->stats.closed_malformed == 2);
+    Check(close(client) == 0);
+
+    /* A LocalStop is not yet implemented here: its client is closed as an unknown type. */
+    Check(handler->clients[0].fd == -1);
+    session_local_handler_destroy(handler);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
+static void test_max_clients_and_flush_order(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    int clients[SessionLocalMaxClients + 1];
+    for (uint32_t index = 0; index <= SessionLocalMaxClients; ++index) {
+        clients[index] = connect_path(handler->socket_path);
+        pump_once(&table, 100 + index);
+    }
+    Check(handler->stats.accepted == SessionLocalMaxClients);
+    Check(handler->stats.refused_capacity == 1);
+    uint8_t byte;
+    Check(recv(clients[SessionLocalMaxClients], &byte, 1, 0) == 0);
+    for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) Check(close(clients[index]) == 0);
+    Check(close(clients[SessionLocalMaxClients]) == 0);
+    session_local_handler_destroy(handler);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
 int main(void)
 {
     test_init_rejects_bad_input();
@@ -636,6 +1055,14 @@ int main(void)
     test_unknown_duplicate_and_malformed_results();
     test_token_refusals_and_disconnect();
     test_duplicate_live_token_is_refused();
-    printf("session_local_handler_test: pure rules passed\n");
+    size_t descriptors_before = count_open_descriptors();
+    test_ready_creates_private_socket_and_directories();
+    test_ready_refuses_unsafe_directories_and_paths();
+    test_stale_socket_policy();
+    test_client_launch_roundtrip_and_token();
+    test_client_protocol_violations_close();
+    test_max_clients_and_flush_order();
+    Check(count_open_descriptors() == descriptors_before);
+    printf("session_local_handler_test: passed\n");
     return 0;
 }

@@ -10,9 +10,12 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/epoll.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 /* Largest runtime directory string accepted by init; far above any real XDG value. */
@@ -35,9 +38,11 @@ static int device_name_valid(const char *name)
 
 int session_local_handler_init(session_local_handler_t *handler, const session_local_config_t *config)
 {
+    char parent[SessionLocalSocketPathBytes];
     char directory[SessionLocalSocketPathBytes];
     char socket[SessionLocalSocketPathBytes];
     size_t runtime_length = 0;
+    int written_parent;
     int written_directory;
     int written_socket;
 
@@ -50,6 +55,8 @@ int session_local_handler_init(session_local_handler_t *handler, const session_l
     if (!device_name_valid(config->device_name)) return SessionLocalInvalidArgument;
 
     /* Paths are composed before any handler byte is written, so failure leaves the handler unchanged. */
+    written_parent = snprintf(parent, sizeof(parent), "%s/waddle", config->runtime_dir);
+    if (written_parent < 0 || (size_t)written_parent >= sizeof(parent)) return SessionLocalInvalidArgument;
     written_directory = snprintf(directory, sizeof(directory), "%s/waddle/%s",
         config->runtime_dir, config->device_name);
     if (written_directory < 0 || (size_t)written_directory >= sizeof(directory)) return SessionLocalInvalidArgument;
@@ -57,6 +64,7 @@ int session_local_handler_init(session_local_handler_t *handler, const session_l
     if (written_socket < 0 || (size_t)written_socket >= sizeof(socket)) return SessionLocalInvalidArgument;
 
     memset(handler, 0, sizeof(*handler));
+    memcpy(handler->parent_path, parent, (size_t)written_parent + 1u);
     memcpy(handler->directory_path, directory, (size_t)written_directory + 1u);
     memcpy(handler->socket_path, socket, (size_t)written_socket + 1u);
     handler->lock_held_proof = config->lock_held_proof;
@@ -439,4 +447,369 @@ static int handle_launch_result(session_local_handler_t *handler, interop_host_f
     (void)interop_host_feature_release_request(sender, entry->guest_request_id);
     memset(entry, 0, sizeof(*entry));
     return 0;
+}
+
+/* ---- Runtime directory and socket (contract sections 4 and 5) ------------------------------ */
+
+/**
+ * @brief Verify or create one runtime directory. Never chmods or follows a link.
+ * @return 0 when the entry is usable (existing or freshly created with mode 0700), -1 otherwise.
+ */
+static int ensure_directory(const char *path, uint32_t expected_uid)
+{
+    struct stat status;
+    if (lstat(path, &status) != 0) {
+        if (errno != ENOENT) return -1;
+        if (mkdir(path, 0700) != 0 && errno != EEXIST) return -1;
+        if (lstat(path, &status) != 0) return -1;
+    }
+    return session_local_directory_decision(S_ISDIR(status.st_mode), S_ISLNK(status.st_mode),
+        (uint32_t)status.st_uid, (uint32_t)status.st_mode, expected_uid) == SessionLocalDirectoryUsable ? 0 : -1;
+}
+
+/** @brief Fill an AF_UNIX address for the socket path; the path length was bounded at init. */
+static socklen_t socket_address(const char *path, struct sockaddr_un *address)
+{
+    memset(address, 0, sizeof(*address));
+    address->sun_family = AF_UNIX;
+    memcpy(address->sun_path, path, strlen(path) + 1u);
+    return (socklen_t)sizeof(*address);
+}
+
+/**
+ * @brief Apply the stale-socket policy to an existing session.sock path.
+ * @return 0 when the path is free or was unlinked under proof, -1 when the bind must be refused.
+ */
+static int prepare_socket_path(session_local_handler_t *handler)
+{
+    struct stat status;
+    struct sockaddr_un address;
+    socklen_t address_length;
+    int probe;
+    int probe_errno = 0;
+
+    if (lstat(handler->socket_path, &status) != 0) return errno == ENOENT ? 0 : -1;
+    if (!S_ISSOCK(status.st_mode)) return -1;
+    probe = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (probe < 0) return -1;
+    address_length = socket_address(handler->socket_path, &address);
+    if (connect(probe, (const struct sockaddr *)&address, address_length) != 0) probe_errno = errno;
+    (void)close(probe);
+    if (session_local_stale_decision(probe_errno, handler->lock_held_proof) != SessionLocalStaleUnlink) return -1;
+    return unlink(handler->socket_path) == 0 ? 0 : -1;
+}
+
+/** @brief Create, bind (mode 0600 by umask window), listen, and register the listener in epoll. */
+static int bind_listener(session_local_handler_t *handler)
+{
+    struct sockaddr_un address;
+    socklen_t address_length = socket_address(handler->socket_path, &address);
+    struct stat status;
+    struct epoll_event event;
+    mode_t previous_umask;
+    int bind_result;
+    int listener = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (listener < 0) return -1;
+
+    previous_umask = umask(0177);
+    bind_result = bind(listener, (const struct sockaddr *)&address, address_length);
+    (void)umask(previous_umask);
+    if (bind_result != 0) {
+        (void)close(listener);
+        return -1;
+    }
+    handler->socket_created = 1;
+    if (lstat(handler->socket_path, &status) != 0 || !S_ISSOCK(status.st_mode) || (status.st_mode & 0777) != 0600) {
+        (void)close(listener);
+        return -1;
+    }
+    if (listen(listener, SessionLocalListenBacklog) != 0) {
+        (void)close(listener);
+        return -1;
+    }
+    handler->listen_fd = listener;
+    handler->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    if (handler->epoll_fd < 0) return -1;
+    memset(&event, 0, sizeof(event));
+    event.events = EPOLLIN;
+    event.data.u64 = 0;
+    if (epoll_ctl(handler->epoll_fd, EPOLL_CTL_ADD, handler->listen_fd, &event) != 0) return -1;
+    return 0;
+}
+
+static int local_on_ready(void *context, uint64_t negotiated_capabilities, interop_host_feature_sender_t *sender)
+{
+    session_local_handler_t *handler = context;
+    (void)negotiated_capabilities;
+    (void)sender;
+    if (handler->bound || handler->closed) return 1;
+    if (ensure_directory(handler->parent_path, handler->expected_uid) != 0) return 1;
+    if (ensure_directory(handler->directory_path, handler->expected_uid) != 0) return 1;
+    if (prepare_socket_path(handler) != 0) return 1;
+    if (bind_listener(handler) != 0) {
+        release_descriptors(handler);
+        return 1;
+    }
+    handler->bound = 1;
+    return 0;
+}
+
+/* ---- Client I/O (contract sections 5, 6 and 7) --------------------------------------------- */
+
+/** @brief Set the epoll interest of a client: input unless stopping, output while bytes are pending. */
+static void update_interest(session_local_handler_t *handler, uint32_t client_index)
+{
+    session_local_client_t *client = &handler->clients[client_index];
+    struct epoll_event event;
+    int writable = client->tx_offset < client->tx_length;
+    uint32_t events = (handler->stopping ? 0u : EPOLLIN) | (writable ? EPOLLOUT : 0u);
+    if (client->fd < 0 || handler->epoll_fd < 0) return;
+    memset(&event, 0, sizeof(event));
+    event.events = events;
+    event.data.u64 = (uint64_t)client_index + 1u;
+    if (epoll_ctl(handler->epoll_fd, EPOLL_CTL_MOD, client->fd, &event) == 0) client->epoll_writable = writable;
+}
+
+/** @brief Send as much pending output as the socket accepts. Closes the client on a send error. */
+static void flush_client(session_local_handler_t *handler, uint32_t client_index)
+{
+    session_local_client_t *client = &handler->clients[client_index];
+    while (client->fd >= 0 && client->tx_offset < client->tx_length) {
+        ssize_t sent = send(client->fd, client->tx + client->tx_offset, client->tx_length - client->tx_offset,
+            MSG_NOSIGNAL | MSG_DONTWAIT);
+        if (sent < 0 && errno == EINTR) continue;
+        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+        if (sent <= 0) {
+            handler->stats.closed_io++;
+            client_close(handler, client_index);
+            return;
+        }
+        client->tx_offset += (size_t)sent;
+    }
+    if (client->fd >= 0 && client->tx_offset == client->tx_length) {
+        client->tx_offset = 0;
+        client->tx_length = 0;
+    }
+    if (client->fd >= 0 && client->epoll_writable != (client->tx_offset < client->tx_length)) update_interest(handler, client_index);
+}
+
+/** @brief Accept every pending connection, enforcing the peer uid and the four-slot limit. */
+static void accept_clients(session_local_handler_t *handler, uint64_t now_ms)
+{
+    for (uint32_t attempt = 0; attempt < SessionLocalMaxClients + 1u; ++attempt) {
+        struct ucred credentials;
+        socklen_t credentials_length = sizeof(credentials);
+        uint32_t slot = SessionLocalMaxClients;
+        int descriptor = accept4(handler->listen_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if (descriptor < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+            if (errno != EINTR && errno != ECONNABORTED) handler->stats.accept_errors++;
+            if (errno == EINTR || errno == ECONNABORTED) continue;
+            return;
+        }
+        if (getsockopt(descriptor, SOL_SOCKET, SO_PEERCRED, &credentials, &credentials_length) != 0 ||
+            session_local_peer_decision((uint32_t)credentials.uid, handler->expected_uid) != SessionLocalPeerAllowed) {
+            handler->stats.refused_peer++;
+            (void)close(descriptor);
+            continue;
+        }
+        if (handler->stopping) {
+            handler->stats.refused_capacity++;
+            (void)close(descriptor);
+            continue;
+        }
+        for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
+            if (handler->clients[index].fd < 0) {
+                slot = index;
+                break;
+            }
+        }
+        if (slot == SessionLocalMaxClients) {
+            handler->stats.refused_capacity++;
+            (void)close(descriptor);
+            continue;
+        }
+        session_local_client_t *client = &handler->clients[slot];
+        struct epoll_event event;
+        memset(&event, 0, sizeof(event));
+        event.events = EPOLLIN;
+        event.data.u64 = (uint64_t)slot + 1u;
+        if (epoll_ctl(handler->epoll_fd, EPOLL_CTL_ADD, descriptor, &event) != 0) {
+            handler->stats.closed_io++;
+            (void)close(descriptor);
+            continue;
+        }
+        client->fd = descriptor;
+        client->serial = handler->next_serial++;
+        client->accepted_ms = now_ms;
+        client->frame_seen = 0;
+        client->epoll_writable = 0;
+        client->rx_length = 0;
+        client->tx_length = 0;
+        client->tx_offset = 0;
+        handler->stats.accepted++;
+    }
+}
+
+/**
+ * @brief Dispatch every complete frame in a client receive buffer, in order.
+ * @return 1 when the client is still open, 0 when it was closed.
+ */
+static int process_frames(session_local_handler_t *handler, uint32_t client_index, uint64_t now_ms,
+    interop_host_feature_sender_t *sender)
+{
+    session_local_client_t *client = &handler->clients[client_index];
+    while (client->fd >= 0 && client->rx_length != 0) {
+        interop_header_t header;
+        size_t frame_length = 0;
+        const uint8_t *payload;
+        int scan = interop_local_frame_scan(client->rx, client->rx_length, &header, &frame_length);
+        if (scan == InteropLocalScanNeedMore) break;
+        if (scan == InteropLocalScanTooLarge) {
+            handler->stats.closed_oversize++;
+            client_close(handler, client_index);
+            return 0;
+        }
+        if (scan != InteropLocalScanReady) {
+            handler->stats.closed_malformed++;
+            client_close(handler, client_index);
+            return 0;
+        }
+        client->frame_seen = 1;
+        if (header.type != InteropMsgLocalLaunch && header.type != InteropMsgLocalStop) {
+            handler->stats.closed_unknown_type++;
+            client_close(handler, client_index);
+            return 0;
+        }
+        if (header.request_id == 0) {
+            handler->stats.closed_zero_request++;
+            client_close(handler, client_index);
+            return 0;
+        }
+        payload = client->rx + InteropHeaderBytes;
+        if (interop_payload_validate(header.type, InteropFromLocal, payload, header.length) != InteropErrorNone) {
+            handler->stats.closed_malformed++;
+            client_close(handler, client_index);
+            return 0;
+        }
+        if (header.type == InteropMsgLocalLaunch) {
+            forward_launch(handler, sender, client_index, client->serial, header.request_id, payload,
+                header.length, now_ms);
+        }
+        memmove(client->rx, client->rx + frame_length, client->rx_length - frame_length);
+        client->rx_length -= frame_length;
+    }
+    return client->fd >= 0;
+}
+
+/** @brief Read once from a readable client; end of stream, errors, and overflow close it. */
+static void read_client(session_local_handler_t *handler, uint32_t client_index, uint64_t now_ms,
+    interop_host_feature_sender_t *sender)
+{
+    session_local_client_t *client = &handler->clients[client_index];
+    size_t room = SessionLocalRxBytes - client->rx_length;
+    ssize_t received;
+    if (room == 0) {
+        handler->stats.closed_oversize++;
+        client_close(handler, client_index);
+        return;
+    }
+    received = recv(client->fd, client->rx + client->rx_length, room, 0);
+    if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return;
+    if (received <= 0) {
+        handler->stats.closed_io++;
+        client_close(handler, client_index);
+        return;
+    }
+    client->rx_length += (size_t)received;
+    (void)process_frames(handler, client_index, now_ms, sender);
+}
+
+/* ---- Callbacks ----------------------------------------------------------------------------- */
+
+static int local_owns_type(void *context, uint32_t message_type)
+{
+    (void)context;
+    return message_type == InteropMsgLaunchResult;
+}
+
+static int local_on_frame(void *context, uint32_t message_type, uint32_t request_id,
+    const uint8_t *frame, size_t length, interop_host_feature_sender_t *sender)
+{
+    session_local_handler_t *handler = context;
+    if (message_type != InteropMsgLaunchResult) return 1;
+    return handle_launch_result(handler, sender, request_id, frame, length);
+}
+
+static int local_poll_fds(void *context, struct pollfd *fds, size_t capacity, size_t *count)
+{
+    session_local_handler_t *handler = context;
+    if (fds == NULL || count == NULL || capacity < 1) return 1;
+    *count = 0;
+    if (!handler->bound || handler->epoll_fd < 0) return 0;
+    fds[0].fd = handler->epoll_fd;
+    fds[0].events = POLLIN;
+    fds[0].revents = 0;
+    *count = 1;
+    return 0;
+}
+
+static int local_on_fds(void *context, const struct pollfd *fds, size_t count, uint64_t now_ms,
+    interop_host_feature_sender_t *sender)
+{
+    session_local_handler_t *handler = context;
+    struct epoll_event events[SessionLocalMaxClients + 1u];
+    int ready;
+
+    handler->last_now_ms = now_ms;
+    if (!handler->bound || handler->closed || count == 0 || fds[0].revents == 0) return 0;
+    ready = epoll_wait(handler->epoll_fd, events, (int)(sizeof(events) / sizeof(events[0])), 0);
+    if (ready < 0) return errno == EINTR ? 0 : 1;
+    for (int index = 0; index < ready; ++index) {
+        uint64_t tag = events[index].data.u64;
+        if (tag == 0) {
+            accept_clients(handler, now_ms);
+            continue;
+        }
+        uint32_t client_index = (uint32_t)(tag - 1u);
+        if (client_index >= SessionLocalMaxClients || handler->clients[client_index].fd < 0) continue;
+        if (events[index].events & EPOLLOUT) flush_client(handler, client_index);
+        if (handler->clients[client_index].fd >= 0 && (events[index].events & (EPOLLIN | EPOLLHUP | EPOLLERR)) &&
+            !handler->stopping) {
+            read_client(handler, client_index, now_ms, sender);
+        } else if (handler->clients[client_index].fd >= 0 && (events[index].events & (EPOLLHUP | EPOLLERR))) {
+            handler->stats.closed_io++;
+            client_close(handler, client_index);
+        }
+    }
+    for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
+        if (handler->clients[index].fd >= 0) flush_client(handler, index);
+    }
+    return 0;
+}
+
+static int local_on_tick(void *context, uint64_t now_ms, interop_host_feature_sender_t *sender)
+{
+    session_local_handler_t *handler = context;
+    (void)sender;
+    handler->last_now_ms = now_ms;
+    if (!handler->bound || handler->closed) return 0;
+    for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
+        if (handler->clients[index].fd >= 0) flush_client(handler, index);
+    }
+    return 0;
+}
+
+void session_local_handler_table(session_local_handler_t *handler, session_handler_t *out_table)
+{
+    memset(out_table, 0, sizeof(*out_table));
+    out_table->name = "session_local";
+    out_table->context = handler;
+    out_table->capabilities = InteropCapLaunch;
+    out_table->owns_type = local_owns_type;
+    out_table->on_ready = local_on_ready;
+    out_table->on_frame = local_on_frame;
+    out_table->poll_fds = local_poll_fds;
+    out_table->on_fds = local_on_fds;
+    out_table->on_tick = local_on_tick;
 }

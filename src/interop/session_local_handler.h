@@ -93,7 +93,7 @@ typedef struct session_local_config_t {
 /** @brief Counters reported by session_local_handler_stats. All unsigned 64-bit, never reset. */
 typedef struct session_local_stats_t {
     uint64_t accepted; /**< Connections accepted into a slot. */
-    uint64_t refused_capacity; /**< Connections closed because all slots were occupied. */
+    uint64_t refused_capacity; /**< Connections closed because no slot was free or the handler was stopping. */
     uint64_t refused_peer; /**< Connections closed by the uid check or a failed SO_PEERCRED read. */
     uint64_t closed_malformed; /**< Clients closed for a malformed or invalid frame. */
     uint64_t closed_unknown_type; /**< Clients closed for a type other than LocalLaunch or LocalStop. */
@@ -147,6 +147,7 @@ typedef struct session_local_pending_t {
 typedef struct session_local_handler_t {
     uint32_t lock_held_proof; /**< Copy of the config proof; the borrowed strings are never kept. */
     uint32_t expected_uid; /**< geteuid() at init; the only peer and directory owner accepted. */
+    char parent_path[SessionLocalSocketPathBytes]; /**< <runtime>/waddle, created with mode 0700 when missing. */
     char directory_path[SessionLocalSocketPathBytes]; /**< <runtime>/waddle/<device>. */
     char socket_path[SessionLocalSocketPathBytes]; /**< <directory>/session.sock. */
     int listen_fd; /**< Listening socket, or -1. */
