@@ -58,12 +58,22 @@ Routing:
 - `poll_fds`: handlers in registration order each report at most `SessionHandlerMaxDescriptors` (4).
   Their descriptors are concatenated; the total is at most `InteropHostFeatureFdCapacity` (8). A total
   above 8, a handler failure or a count above 4 fails the run. Each handler's slice is recorded.
+  Budget note: four handlers at four descriptors each can report 16, so the total budget cannot be
+  checked at configuration time from the handler table alone. It is enforced per poll cycle at
+  runtime. A per-handler `max_descriptors` field in `session_handler_t` would allow a static check;
+  that interface change is requested, not made here.
+  The runtime also refuses any reported descriptor equal to the socket, stop, or daemon descriptor,
+  and fails the run when a reported descriptor has POLLERR, POLLHUP, or POLLNVAL.
 - `on_fds`: the runtime passes the same descriptor array. Each handler whose slice contains a
   nonzero `revents` receives its own slice, with its revents, in the order it reported.
 - `on_tick`: every handler with `on_tick`, in registration order; the first nonzero status stops.
+- `on_error` (optional handler member): a scoped remote Error (nonzero request identifier) received
+  while Ready is broadcast to every handler that defines it, in registration order; the first nonzero
+  status stops. Remote Errors with identifier zero are fatal in the runtime and never reach handlers.
 - `next_deadline_ms`: the minimum over handlers that provide it; `UINT64_MAX` when none does.
 - `on_closing`: reverse registration order, exactly once per handler, through the closing sender
-  (every send returns Draining). The runtime calls the application's closing exactly once even if
+  (every send returns Draining). The runtime also announces closing when a refusal follows table
+  validation (device, stop-descriptor flags, zero token), so no validated handler is left unannounced. The runtime calls the application's closing exactly once even if
   the run ends before any handler was readied; handlers that were never readied still receive
   `on_closing`. A NULL `on_closing` is skipped; the others are still called.
 
@@ -135,3 +145,37 @@ Report: `attempts`, `retries` (waits), `ready_sessions`, `cleanup_retries`, `bac
 - `tests/interop/session_app_coverage.py` builds the runner with coverage on `session_app.c` and
   `session_supervisor.c`, gates both at 90% line and branch, and runs the same runner under
   ASan, LSan and UBSan.
+
+## 6. CLI mode and supervisor integration
+
+`session_main` runs the supervisor with `--supervised --device NAME`, with optional `--max-retries N`
+(0 means unlimited). Exactly one of `--supervised` and `--control-only` is required with `--device`.
+`--control-only` keeps the one-shot path and its messages unchanged, so the existing CLI tests still apply.
+`--max-retries` is accepted only with `--supervised`.
+
+Each supervised attempt is independent: it connects the daemon, opens the configured mapping, reads a
+fresh token, admits, runs the application session and closes its descriptors. Daemon connection failures are
+recorded as `HostSessionDaemonError` so the supervisor retries them. Mapping, token, and clock failures
+are recorded as terminal admission results. The supervisor's summary (attempts, retries, ready sessions,
+backoff total) is written to stderr.
+
+Default-on supervised mode is not implemented. The existing private parse test requires a mode flag
+with `--device`, and changing that contract would change an existing test; the lead decides.
+
+The built-in registry is empty, so the supervised binary currently advertises zero capabilities.
+
+## 7. Review fixes applied to this contract
+
+- Poll cookie: a feature poll failure that starts drain refreshes the socket poll cookie before the drive.
+- Remote Error: a scoped Error (nonzero identifier) is non-fatal while Ready and reaches `on_peer_error` and
+  the handler `on_error`; a zero-identifier Error or any Error before Ready stays fatal.
+- Inbound identifiers: classes are enforced on receipt in the peer (see the host contract).
+- Re-entry: `poll_fds` and `next_deadline_ms` run under the re-entry guard.
+- Closing: refusals after table validation announce closing exactly once.
+- `on_fds`: withheld after a same-iteration peer Draining or fatal Error.
+- Descriptors: aliases of the socket, stop, or daemon descriptor and POLLHUP/POLLERR/POLLNVAL fail the run.
+- Peer results: out-of-range raw results are a peer fault in the socket owner, never a table index.
+- Sender results: QueueFull and RequestIdsFull are exercised end to end through the fixture. NotReady,
+  Closed, and OutOfMemory are not producible from a feature callback (callbacks run only inside a Ready
+  pump, and the runtime never closes the peer during a callback). They are covered at the socket layer.
+
