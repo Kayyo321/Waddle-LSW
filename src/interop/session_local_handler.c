@@ -652,6 +652,44 @@ static void accept_clients(session_local_handler_t *handler, uint64_t now_ms)
 }
 
 /**
+ * @brief Accept a LocalStop: queue its reply, stop reading from every client, and start the flush bound.
+ * @param[in] client_index Client that sent the stop; its reply is the only one flushed for the stop.
+ * @param[in] request_id Nonzero identifier to echo.
+ * @param[in] now_ms Monotonic time of the frame.
+ */
+static void begin_stop(session_local_handler_t *handler, uint32_t client_index, uint32_t request_id, uint64_t now_ms)
+{
+    session_local_client_t *client = &handler->clients[client_index];
+    handler->stats.stop_requests++;
+    handler->stopping = 1;
+    handler->stop_client_index = client_index;
+    handler->stop_client_serial = client->serial;
+    handler->stop_deadline_ms = now_ms + SessionLocalStopFlushMs;
+    (void)reply_stop_ok(handler, client_index, client->serial, request_id);
+    for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
+        if (handler->clients[index].fd >= 0) update_interest(handler, index);
+    }
+}
+
+/**
+ * @brief Whether the stop may now end the run: the LocalStopResult is fully written, the client is
+ *        gone, or the flush bound expired (counted).
+ * @return Nonzero when SessionHandlerRequestStop may be returned.
+ */
+static int stop_ready(session_local_handler_t *handler, uint64_t now_ms)
+{
+    const session_local_client_t *client = &handler->clients[handler->stop_client_index];
+    if (!handler->stopping) return 0;
+    if (client->fd < 0 || client->serial != handler->stop_client_serial) return 1;
+    if (client->tx_offset == client->tx_length) return 1;
+    if (now_ms >= handler->stop_deadline_ms) {
+        handler->stats.stop_deadline_expired++;
+        return 1;
+    }
+    return 0;
+}
+
+/**
  * @brief Dispatch every complete frame in a client receive buffer, in order.
  * @return 1 when the client is still open, 0 when it was closed.
  */
@@ -659,7 +697,7 @@ static int process_frames(session_local_handler_t *handler, uint32_t client_inde
     interop_host_feature_sender_t *sender)
 {
     session_local_client_t *client = &handler->clients[client_index];
-    while (client->fd >= 0 && client->rx_length != 0) {
+    while (client->fd >= 0 && client->rx_length != 0 && !handler->stopping) {
         interop_header_t header;
         size_t frame_length = 0;
         const uint8_t *payload;
@@ -695,6 +733,9 @@ static int process_frames(session_local_handler_t *handler, uint32_t client_inde
         if (header.type == InteropMsgLocalLaunch) {
             forward_launch(handler, sender, client_index, client->serial, header.request_id, payload,
                 header.length, now_ms);
+        } else {
+            begin_stop(handler, client_index, header.request_id, now_ms);
+            return client->fd >= 0;
         }
         memmove(client->rx, client->rx + frame_length, client->rx_length - frame_length);
         client->rx_length -= frame_length;
@@ -785,7 +826,7 @@ static int local_on_fds(void *context, const struct pollfd *fds, size_t count, u
     for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
         if (handler->clients[index].fd >= 0) flush_client(handler, index);
     }
-    return 0;
+    return stop_ready(handler, now_ms) ? SessionHandlerRequestStop : 0;
 }
 
 static int local_on_tick(void *context, uint64_t now_ms, interop_host_feature_sender_t *sender)
@@ -797,7 +838,7 @@ static int local_on_tick(void *context, uint64_t now_ms, interop_host_feature_se
     for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
         if (handler->clients[index].fd >= 0) flush_client(handler, index);
     }
-    return 0;
+    return stop_ready(handler, now_ms) ? SessionHandlerRequestStop : 0;
 }
 
 void session_local_handler_table(session_local_handler_t *handler, session_handler_t *out_table)

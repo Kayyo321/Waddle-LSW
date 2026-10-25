@@ -724,7 +724,10 @@ static void pump_once(const session_handler_t *table, uint64_t now_ms)
     for (int round = 0; round < 2; ++round) {
         fds[0].revents = 0;
         (void)poll(fds, count, round == 0 ? 20 : 0);
-        if (fds[0].revents != 0) assert(table->on_fds(table->context, fds, count, now_ms, FakeSender) == 0);
+        if (fds[0].revents != 0) {
+            int result = table->on_fds(table->context, fds, count, now_ms, FakeSender);
+            assert(result == 0 || result == SessionHandlerRequestStop);
+        }
     }
 }
 
@@ -1007,8 +1010,6 @@ static void test_client_protocol_violations_close(void)
     Check(handler->stats.closed_malformed == 2);
     Check(close(client) == 0);
 
-    /* A LocalStop is not yet implemented here: its client is closed as an unknown type. */
-    Check(handler->clients[0].fd == -1);
     session_local_handler_destroy(handler);
     free(handler);
     remove_tree(test_runtime);
@@ -1038,6 +1039,87 @@ static void test_max_clients_and_flush_order(void)
     remove_tree(test_runtime);
 }
 
+static void test_local_stop_replies_then_requests_stop(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    int client = connect_path(handler->socket_path);
+    int other = connect_path(handler->socket_path);
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = build_frame_with(frame, sizeof(frame), InteropMsgLocalStop, 21, InteropFromLocal);
+    send_all(client, frame, length);
+    /* Accepted on the same cycle: the reply is flushed before the stop is returned. */
+    struct pollfd fds[SessionHandlerMaxDescriptors];
+    size_t count = 0;
+    Check(table.poll_fds(table.context, fds, SessionHandlerMaxDescriptors, &count) == 0);
+    int stop = 0;
+    for (int round = 0; round < 3 && !stop; ++round) {
+        (void)poll(fds, count, round == 0 ? 20 : 5);
+        if (fds[0].revents != 0) stop = table.on_fds(table.context, fds, count, 2000, FakeSender) == SessionHandlerRequestStop;
+    }
+    Check(stop);
+    Check(handler->stopping == 1 && handler->stats.stop_requests == 1);
+    interop_header_t reply;
+    uint8_t payload[InteropMaxPayloadBytes];
+    size_t payload_length = 0;
+    Check(recv_frame(client, &reply, payload, &payload_length));
+    Check(reply.type == InteropMsgLocalStopResult && reply.request_id == 21);
+    Check(interop_payload_validate(reply.type, InteropFromLocal, payload, payload_length) == 0);
+    uint64_t status = 9;
+    Check(interop_field_uint(payload, payload_length, InteropTagStatus, 4, &status) == 0 && status == InteropOk);
+
+    /* Input after the stop is never read, and a new launch is answered Cancelled. */
+    length = build_local_launch(frame, sizeof(frame), 22, InteropLaunchPath, "Z:\\late.exe", NULL, NULL, NULL);
+    send_all(other, frame, length);
+    pump_once(&table, 2100);
+    Check(fake_sends == 0);
+    Check(handler->stats.accepted == 2);
+    int late = connect_path(handler->socket_path);
+    pump_once(&table, 2200);
+    uint8_t byte;
+    Check(recv(late, &byte, 1, 0) == 0);
+    Check(close(late) == 0);
+    Check(handler->stats.refused_capacity == 1);
+
+    Check(close(client) == 0);
+    Check(close(other) == 0);
+    session_local_handler_destroy(handler);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
+static void test_local_stop_flush_bound_and_lost_client(void)
+{
+    /* The socket flushes a small reply at once, so the bound and the lost-client rules are
+     * exercised on the stop state directly: pending bytes, a torn-down client, or a flushed reply. */
+    fake_reset();
+    session_local_handler_t *handler = new_handler();
+    uint64_t serial = attach_client(handler, 0);
+    handler->stopping = 1;
+    handler->stop_client_index = 0;
+    handler->stop_client_serial = serial;
+    handler->stop_deadline_ms = 5000;
+    handler->clients[0].tx_length = 10;
+    Check(stop_ready(handler, 4999) == 0);
+    Check(handler->stats.stop_deadline_expired == 0);
+    Check(stop_ready(handler, 5000) == 1);
+    Check(handler->stats.stop_deadline_expired == 1);
+    handler->clients[0].tx_offset = 10;
+    Check(stop_ready(handler, 4000) == 1);
+    Check(handler->stats.stop_deadline_expired == 1);
+    handler->clients[0].tx_length = 0;
+    handler->clients[0].tx_offset = 0;
+    detach_client(handler, 0);
+    Check(stop_ready(handler, 0) == 1);
+    handler->stopping = 0;
+    Check(stop_ready(handler, 99999) == 0);
+    free_handler(handler);
+}
+
 int main(void)
 {
     test_init_rejects_bad_input();
@@ -1062,6 +1144,8 @@ int main(void)
     test_client_launch_roundtrip_and_token();
     test_client_protocol_violations_close();
     test_max_clients_and_flush_order();
+    test_local_stop_replies_then_requests_stop();
+    test_local_stop_flush_bound_and_lost_client();
     Check(count_open_descriptors() == descriptors_before);
     printf("session_local_handler_test: passed\n");
     return 0;
