@@ -9604,6 +9604,89 @@ test "a socket at a recorded path is foreign, not an I/O failure, for status and
     try std.testing.expectEqualStrings(original, on_disk);
 }
 
+test "migrate refuses a candidate that only adds a record while keeping every existing record" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const docs = remove_documents(scratch, fixture.data_path);
+    install_remove_artifacts(&fixture);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    const extra_digest = hash_hex("extra bytes");
+    const extra_path = std.fmt.allocPrint(scratch, "{s}/applications/extra.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const extra = test_spec_t{ .id = "desktop:extra", .kind = "desktop_entry", .path = extra_path, .sha256 = &extra_digest };
+    const target_digest = hash_hex("target bytes");
+    const keep_digest = hash_hex("keep bytes");
+    const target_path = std.fmt.allocPrint(scratch, "{s}/applications/target.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const keep_path = std.fmt.allocPrint(scratch, "{s}/applications/keep.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const target = test_spec_t{ .id = "desktop:target", .kind = "desktop_entry", .path = target_path, .sha256 = &target_digest };
+    const keep = test_spec_t{ .id = "desktop:keep", .kind = "desktop_entry", .path = keep_path, .sha256 = &keep_digest };
+    const grown = test_document(scratch, 1, &[_]test_spec_t{ target, keep, extra });
+    try std.testing.expectError(error.ManifestMismatch, store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = grown }));
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    try std.testing.expectEqualStrings(docs.original, on_disk);
+}
+
+test "status recovers a pending journal before classifying any record" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = remove_documents(arena.allocator(), fixture.data_path);
+    install_remove_artifacts(&fixture);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    store.fail_after.store(store.checkpoint_count.load(.monotonic) + 8, .monotonic);
+    try std.testing.expectError(error.InjectedFailure, store.remove(.{ .record_id = "desktop:target", .candidate_manifest = docs.candidate }));
+    store.fail_after.store(0, .monotonic);
+    try std.testing.expect(optional_transaction_id(fixture.state) != null);
+    var listed = try store.status(std.testing.allocator);
+    defer listed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), listed.items.len);
+    try std.testing.expectEqual(record_state_t.Ok, listed.items[0].state);
+    try std.testing.expect(optional_transaction_id(fixture.state) == null);
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    try std.testing.expectEqualStrings(docs.original, on_disk);
+}
+
+test "committed remove refuses a displaced manifest with a foreign identity before any artifact change" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = remove_documents(arena.allocator(), fixture.data_path);
+    install_remove_artifacts(&fixture);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    store.fail_after.store(store.checkpoint_count.load(.monotonic) + 9, .monotonic);
+    try std.testing.expectError(error.InjectedFailure, store.remove(.{ .record_id = "desktop:target", .candidate_manifest = docs.candidate }));
+    store.fail_after.store(0, .monotonic);
+    const txid = optional_transaction_id(fixture.state) orelse return error.TestExpectedEqual;
+    const temp_name = manifest_temp_name(txid);
+    const temp: [:0]const u8 = temp_name[0 .. std.mem.indexOfScalar(u8, &temp_name, 0) orelse unreachable :0];
+    const saved_temp: [:0]const u8 = "displaced-identity-saved.tmp";
+
+    if (c.renameat(fixture.state.fd, temp.ptr, fixture.state.fd, saved_temp.ptr) != 0) @panic("fixture rename");
+    write_status_file(fixture.state, temp, "foreign displaced manifest", 0o600);
+    try std.testing.expectError(error.ArtifactConflict, store.recover());
+    try std.testing.expect(target_exists(fixture.data));
+    try std.testing.expect(optional_transaction_id(fixture.state) != null);
+    if (c.unlinkat(fixture.state.fd, temp.ptr, 0) != 0) @panic("fixture unlink");
+    if (c.renameat(fixture.state.fd, saved_temp.ptr, fixture.state.fd, temp.ptr) != 0) @panic("fixture rename");
+    try store.recover();
+    try std.testing.expect(!target_exists(fixture.data));
+}
+
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
     const fd = c.openat(dir_fd, name, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC | c.O_NOFOLLOW, mode);
     if (fd < 0) return error.IoError;

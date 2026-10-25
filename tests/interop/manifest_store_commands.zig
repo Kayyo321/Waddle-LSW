@@ -20,6 +20,13 @@ fn document(allocator: std.mem.Allocator, path: []const u8, id: []const u8, hex:
     return std.fmt.allocPrint(allocator, "{{\"schema\":1,\"waddle_version\":\"{s}\",\"updated\":\"2026-10-25T00:00:00Z\",\"records\":[{{\"id\":\"{s}\",\"kind\":\"desktop_entry\",\"path\":\"{s}\",\"sha256\":\"{s}\",\"created_by\":\"0.2.0\",\"prior\":null}}]}}", .{ version, id, path, hex });
 }
 
+/// Assert that the stored manifest equals `expected` byte for byte.
+fn expect_manifest_bytes(state: std.fs.Dir, expected: []const u8) !void {
+    const stored = try state.readFileAlloc(std.testing.allocator, "manifest.json", 4 * 1024 * 1024);
+    defer std.testing.allocator.free(stored);
+    try std.testing.expectEqualStrings(expected, stored);
+}
+
 fn write_manifest(state: std.fs.Dir, bytes: []const u8) !void {
     const fd = c.openat(state.fd, "manifest.json", c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC | c.O_NOFOLLOW, @as(c_uint, 0o600));
     if (fd < 0) return error.IoError;
@@ -73,12 +80,15 @@ test "public status, migrate, and remove drive one recorded artifact through its
     defer std.testing.allocator.free(migrated);
     const migration = try store.migrate_record(.{ .record_id = "desktop:public", .candidate_manifest = migrated });
     try std.testing.expect(migration.changed);
+    try expect_manifest_bytes(state, migrated);
 
-    const removal = try store.remove(.{ .record_id = "desktop:public", .candidate_manifest = "{\"schema\":1,\"waddle_version\":\"0.3.0\",\"updated\":\"2026-10-25T00:00:00Z\",\"records\":[]}" });
+    const emptied = "{\"schema\":1,\"waddle_version\":\"0.3.0\",\"updated\":\"2026-10-25T00:00:00Z\",\"records\":[]}";
+    const removal = try store.remove(.{ .record_id = "desktop:public", .candidate_manifest = emptied });
     try std.testing.expectEqual(manifest_store.remove_outcome_t.Removed, removal.outcome);
     try std.testing.expect(removal.record_found);
     try std.testing.expect(std.meta.activeTag(removal.prior) == .None);
     try std.testing.expectError(error.FileNotFound, data.access("applications/public.desktop", .{}));
+    try expect_manifest_bytes(state, emptied);
 
     const repeat = try store.remove(.{ .record_id = "desktop:public", .candidate_manifest = "{\"schema\":1,\"waddle_version\":\"0.3.0\",\"updated\":\"2026-10-25T00:00:00Z\",\"records\":[]}" });
     try std.testing.expectEqual(manifest_store.remove_outcome_t.AlreadyMissing, repeat.outcome);
