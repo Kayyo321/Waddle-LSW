@@ -21,6 +21,10 @@
 /* Largest runtime directory string accepted by init; far above any real XDG value. */
 enum { SessionLocalRuntimeDirMax = 4096 };
 
+/** @brief Nonzero value returned by a callback on an internal failure. Must differ from SessionHandlerRequestStop. */
+enum { SessionLocalCallbackFailure = 2 };
+_Static_assert((int)SessionLocalCallbackFailure != (int)SessionHandlerRequestStop, "failure must not equal the graceful stop value");
+
 /** @brief Device name grammar: one or more of [A-Za-z0-9_-], at most SessionLocalDeviceNameMax bytes. */
 static int device_name_valid(const char *name)
 {
@@ -427,12 +431,12 @@ static int handle_launch_result(session_local_handler_t *handler, interop_host_f
         return 0;
     }
     if (interop_payload_validate(InteropMsgLaunchResult, InteropFromGuest, payload, payload_length) != InteropErrorNone) {
-        return 1;
+        return SessionLocalCallbackFailure;
     }
-    if (interop_field_uint(payload, payload_length, InteropTagStatus, 4, &status) != 0) return 1;
-    if (interop_field_uint(payload, payload_length, InteropTagProcessId, 4, &process_id) != 0) return 1;
+    if (interop_field_uint(payload, payload_length, InteropTagStatus, 4, &status) != 0) return SessionLocalCallbackFailure;
+    if (interop_field_uint(payload, payload_length, InteropTagProcessId, 4, &process_id) != 0) return SessionLocalCallbackFailure;
     message_found = interop_field_get(payload, payload_length, InteropTagMessage, 0, &message, &message_length);
-    if (message_found < 0) return 1;
+    if (message_found < 0) return SessionLocalCallbackFailure;
 
     if (status == InteropOk && entry->token_length != 0) {
         int stored = interop_activation_put(&handler->tokens, entry->token, entry->token_length,
@@ -542,13 +546,13 @@ static int local_on_ready(void *context, uint64_t negotiated_capabilities, inter
     session_local_handler_t *handler = context;
     (void)negotiated_capabilities;
     (void)sender;
-    if (handler->bound || handler->closed) return 1;
-    if (ensure_directory(handler->parent_path, handler->expected_uid) != 0) return 1;
-    if (ensure_directory(handler->directory_path, handler->expected_uid) != 0) return 1;
-    if (prepare_socket_path(handler) != 0) return 1;
+    if (handler->bound || handler->closed) return SessionLocalCallbackFailure;
+    if (ensure_directory(handler->parent_path, handler->expected_uid) != 0) return SessionLocalCallbackFailure;
+    if (ensure_directory(handler->directory_path, handler->expected_uid) != 0) return SessionLocalCallbackFailure;
+    if (prepare_socket_path(handler) != 0) return SessionLocalCallbackFailure;
     if (bind_listener(handler) != 0) {
         release_descriptors(handler);
-        return 1;
+        return SessionLocalCallbackFailure;
     }
     handler->bound = 1;
     return 0;
@@ -778,14 +782,14 @@ static int local_on_frame(void *context, uint32_t message_type, uint32_t request
     const uint8_t *frame, size_t length, interop_host_feature_sender_t *sender)
 {
     session_local_handler_t *handler = context;
-    if (message_type != InteropMsgLaunchResult) return 1;
+    if (message_type != InteropMsgLaunchResult) return SessionLocalCallbackFailure;
     return handle_launch_result(handler, sender, request_id, frame, length);
 }
 
 static int local_poll_fds(void *context, struct pollfd *fds, size_t capacity, size_t *count)
 {
     session_local_handler_t *handler = context;
-    if (fds == NULL || count == NULL || capacity < 1) return 1;
+    if (fds == NULL || count == NULL || capacity < 1) return SessionLocalCallbackFailure;
     *count = 0;
     if (!handler->bound || handler->epoll_fd < 0) return 0;
     fds[0].fd = handler->epoll_fd;
@@ -805,7 +809,7 @@ static int local_on_fds(void *context, const struct pollfd *fds, size_t count, u
     handler->last_now_ms = now_ms;
     if (!handler->bound || handler->closed || count == 0 || fds[0].revents == 0) return 0;
     ready = epoll_wait(handler->epoll_fd, events, (int)(sizeof(events) / sizeof(events[0])), 0);
-    if (ready < 0) return errno == EINTR ? 0 : 1;
+    if (ready < 0) return errno == EINTR ? 0 : SessionLocalCallbackFailure;
     for (int index = 0; index < ready; ++index) {
         uint64_t tag = events[index].data.u64;
         if (tag == 0) {

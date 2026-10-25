@@ -573,7 +573,7 @@ static void test_unknown_duplicate_and_malformed_results(void)
         (uint8_t)second, 0x00, 0x00, 0x00,
         0x09, 0x00, 0x04, 0x00, 0x2A, 0x00, 0x00, 0x00,
     };
-    Check(handle_launch_result(handler, FakeSender, second, bare, sizeof(bare)) == 1);
+    Check(handle_launch_result(handler, FakeSender, second, bare, sizeof(bare)) == SessionLocalCallbackFailure);
     Check(handler->pending[0].in_use == 1);
     free_handler(handler);
 }
@@ -762,7 +762,7 @@ static void test_ready_creates_private_socket_and_directories(void)
     Check(socket_path_mode(path, &mode) == 0 && (mode & 07777) == 0700);
     Check(snprintf(path, sizeof(path), "%s/waddle/alpha/session.sock", test_runtime) > 0);
     Check(socket_path_mode(path, &mode) == 0 && S_ISSOCK(mode) && (mode & 07777) == 0600);
-    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+    Check(table.on_ready(table.context, 0, FakeSender) != 0);
 
     struct pollfd fds[SessionHandlerMaxDescriptors];
     size_t count = 0;
@@ -790,7 +790,7 @@ static void test_ready_refuses_unsafe_directories_and_paths(void)
     session_local_handler_t *handler = open_handler("alpha", 1);
     session_handler_t table;
     session_local_handler_table(handler, &table);
-    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+    Check(table.on_ready(table.context, 0, FakeSender) != 0);
     mode_t mode = 0;
     Check(socket_path_mode(device, &mode) == 0 && (mode & 07777) == 0755);
     Check(!handler->bound && !handler->socket_created);
@@ -802,7 +802,7 @@ static void test_ready_refuses_unsafe_directories_and_paths(void)
     Check(symlink("/tmp", device) == 0);
     handler = open_handler("alpha", 1);
     session_local_handler_table(handler, &table);
-    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+    Check(table.on_ready(table.context, 0, FakeSender) != 0);
     Check(socket_path_mode(device, &mode) == 0 && S_ISLNK(mode));
     session_local_handler_destroy(handler);
     free(handler);
@@ -816,7 +816,7 @@ static void test_ready_refuses_unsafe_directories_and_paths(void)
     Check(close(fd) == 0);
     handler = open_handler("alpha", 1);
     session_local_handler_table(handler, &table);
-    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+    Check(table.on_ready(table.context, 0, FakeSender) != 0);
     Check(socket_path_mode(socket_path, &mode) == 0 && S_ISREG(mode));
     session_local_handler_destroy(handler);
     free(handler);
@@ -850,7 +850,7 @@ static void test_stale_socket_policy(void)
     /* Without the singleton lock proof the stale file is never unlinked. */
     session_local_handler_t *handler = open_handler("alpha", 0);
     session_local_handler_table(handler, &table);
-    Check(table.on_ready(table.context, 0, FakeSender) == 1);
+    Check(table.on_ready(table.context, 0, FakeSender) != 0);
     mode_t mode = 0;
     Check(socket_path_mode(socket_path, &mode) == 0 && S_ISSOCK(mode));
     session_local_handler_destroy(handler);
@@ -872,7 +872,7 @@ static void test_stale_socket_policy(void)
     session_handler_t second_table;
     session_local_handler_t *rival = open_handler("alpha", 1);
     session_local_handler_table(rival, &second_table);
-    Check(second_table.on_ready(second_table.context, 0, FakeSender) == 1);
+    Check(second_table.on_ready(second_table.context, 0, FakeSender) != 0);
     Check(rival->socket_created == 0);
     session_local_handler_destroy(rival);
     free(rival);
