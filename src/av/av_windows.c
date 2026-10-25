@@ -554,16 +554,41 @@ static int point_owned(HWND handle, POINT point) {
     HWND hit = WindowFromPoint(point);
     return hit && GetAncestor(hit, GA_ROOT) == handle;
 }
+/* Typed keyboard injection (IMPL_DESC 3.6.3). The translation kind selects the
+ * INPUT form; the key-up flag is added for every class:
+ * - ScanCode: KEYEVENTF_SCANCODE with the Set-1 byte; E0 keys add KEYEVENTF_EXTENDEDKEY.
+ * - VirtualKey (Hangul 0x15, Hanja 0x19): wVk only, no scan code, no scan flag.
+ * - Pause: SendInput has no E1 prefix flag, so the key is expressed as the virtual key
+ *   VK_PAUSE with the scan code 0x45 and no scan flag. Windows derives the Pause scan
+ *   sequence (make E1 1D 45, break E1 9D C5) from that virtual key. Make is the key-down
+ *   form and break is the key-up form, exactly as the release path emits them.
+ * - Suppressed and unsupported keys are never injected. */
+enum { AvWinVkPause = 0x13, AvWinScanPause = 0x45 };
+static int keyboard_input(const av_message_t *event, INPUT *input) {
+    const av_key_translation_t translation = av_input_translate_key(event->width);
+    input->type = INPUT_KEYBOARD;
+    input->ki.dwFlags = event->flags ? 0 : KEYEVENTF_KEYUP;
+    switch (translation.kind) {
+    case AvKeyTranslationScanCode:
+        input->ki.wScan = translation.scan_code;
+        input->ki.dwFlags |= KEYEVENTF_SCANCODE | (translation.extended ? KEYEVENTF_EXTENDEDKEY : 0);
+        return 0;
+    case AvKeyTranslationVirtualKey:
+        input->ki.wVk = translation.virtual_key;
+        return 0;
+    case AvKeyTranslationPause:
+        input->ki.wVk = AvWinVkPause;
+        input->ki.wScan = AvWinScanPause;
+        return 0;
+    default:
+        return -1;
+    }
+}
 static int legacy_input_emit(void *context, const av_message_t *event) {
     (void)context;
     INPUT input = {0};
     if (event->type == MsgInputKey) {
-        uint16_t scan = av_input_scan_code(event->width);
-        if (!scan) return -1;
-        input.type = INPUT_KEYBOARD;
-        input.ki.wScan = scan & 0xff;
-        input.ki.dwFlags = KEYEVENTF_SCANCODE | ((scan & 0x100) ? KEYEVENTF_EXTENDEDKEY : 0) |
-                          (event->flags ? 0 : KEYEVENTF_KEYUP);
+        if (keyboard_input(event, &input) != 0) return -1;
     } else {
         input.type = INPUT_MOUSE;
         HWND handle = (HWND)(uintptr_t)event->window_id;
@@ -679,11 +704,7 @@ static int lease_input_emit(void *context, const av_message_t *event) {
     int cleanup = !event->buffer_index && !event->flags &&
         (event->type == MsgInputKey || event->type == MsgInputButton);
     if (event->type == MsgInputKey) {
-        uint16_t scan = av_input_scan_code(event->width);
-        if (!scan) return -1;
-        input.type = INPUT_KEYBOARD; input.ki.wScan = scan & 0xff;
-        input.ki.dwFlags = KEYEVENTF_SCANCODE | ((scan & 0x100) ? KEYEVENTF_EXTENDEDKEY : 0) |
-            (event->flags ? 0 : KEYEVENTF_KEYUP);
+        if (keyboard_input(event, &input) != 0) return -1;
     } else {
         input.type = INPUT_MOUSE;
         HWND handle = (HWND)(uintptr_t)event->window_id;

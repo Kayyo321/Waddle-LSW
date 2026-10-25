@@ -466,7 +466,64 @@ static void failure_tests(void) {
     assert(av_windows_start_v3(FixturePid,fixture_notify,NULL)==-1);
     fail_unhook=0; assert(av_windows_stop()==-1); /* Permanent failed-teardown latch. */
 }
+/* Typed injection: exact INPUT fields per class, through both emit paths. */
+static void expect_input(INPUT input, uint16_t vk, uint16_t scan, DWORD flags) {
+    assert(input.type == INPUT_KEYBOARD && input.ki.wVk == vk && input.ki.wScan == scan && input.ki.dwFlags == flags);
+}
+static void typed_injection_tests(void) {
+    fixture_reset();
+    start_ready();
+    foreground = native_handle(1);
+    focus(1);
+    unsigned base = insertions;
+    key(30, 1);
+    assert(insertions == base + 1); expect_input(inserted[insertions - 1], 0, 0x1e, KEYEVENTF_SCANCODE);
+    key(30, 0);
+    expect_input(inserted[insertions - 1], 0, 0x1e, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    key(96, 1); /* KP Enter: E0 scan 1C */
+    expect_input(inserted[insertions - 1], 0, 0x1c, KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY);
+    key(96, 0);
+    expect_input(inserted[insertions - 1], 0, 0x1c, KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP);
+    key(122, 1); /* Hangul: virtual key, no scan code */
+    expect_input(inserted[insertions - 1], 0x15, 0, 0);
+    key(122, 0);
+    expect_input(inserted[insertions - 1], 0x15, 0, KEYEVENTF_KEYUP);
+    key(123, 1); /* Hanja */
+    expect_input(inserted[insertions - 1], 0x19, 0, 0);
+    key(123, 0);
+    expect_input(inserted[insertions - 1], 0x19, 0, KEYEVENTF_KEYUP);
+    key(119, 1); /* Pause make: VK_PAUSE with scan 45 and no scan flag */
+    expect_input(inserted[insertions - 1], 0x13, 0x45, 0);
+    key(119, 0); /* Pause break */
+    expect_input(inserted[insertions - 1], 0x13, 0x45, KEYEVENTF_KEYUP);
+    /* Suppressed and unsupported keys never reach SendInput, on either path. */
+    unsigned count = insertions;
+    av_message_t unsupported = {.type = MsgInputKey, .width = 118, .flags = 1};
+    assert(legacy_input_emit(NULL, &unsupported) == -1 && insertions == count);
+    av_message_t power = {.type = MsgInputKey, .width = 116, .flags = 1};
+    assert(legacy_input_emit(NULL, &power) == -1 && insertions == count);
+    /* The legacy path emits the same structures as the lease path. */
+    av_message_t legacy = {.type = MsgInputKey, .width = 96, .flags = 1};
+    assert(legacy_input_emit(NULL, &legacy) == 0 && insertions == count + 1);
+    expect_input(inserted[insertions - 1], 0, 0x1c, KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY);
+    legacy.width = 119; legacy.flags = 1;
+    assert(legacy_input_emit(NULL, &legacy) == 0);
+    expect_input(inserted[insertions - 1], 0x13, 0x45, 0);
+    legacy.width = 122; legacy.flags = 0;
+    assert(legacy_input_emit(NULL, &legacy) == 0);
+    expect_input(inserted[insertions - 1], 0x15, 0, KEYEVENTF_KEYUP);
+    /* Revocation releases a held Pause with its break form. */
+    key(119, 1);
+    unsigned before_release = insertions;
+    foreground = native_handle(2); foreground_event(foreground);
+    assert(av_windows_tick() == 0 && lease_state.phase == AvLeaseAwaitAck);
+    assert(insertions > before_release);
+    expect_input(inserted[insertions - 1], 0x13, 0x45, KEYEVENTF_KEYUP);
+    finish();
+    puts("Win32 typed injection: plain, extended, virtual-key, Pause make/break, suppressed rejection and release passed");
+}
 int main(void) {
+    typed_injection_tests();
     startup_tests(); transition_tests(); accounting_tests(); cleanup_retry_tests(); eligibility_tests(); legacy_tests(); failure_tests();
     puts("Win32 lease API doubles: startup, recovery, exact accounting, lifecycle, deadlines and teardown passed");
     return 0;
