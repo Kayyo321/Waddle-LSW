@@ -93,8 +93,9 @@ Accepted token forms (exact spelling only):
 - `--wait`, `--new-console`: flags.
 - `--`: introduces the EXE form. Everything after it is EXE then ARG tokens.
 - Any other token beginning with `-` (including a lone `-`, `--device=NAME`,
-  `--app=KEY`) is `UnknownOption`. Targets that begin with `-` cannot be given
-  as a PATH; they must use the `--` form.
+  `--app=KEY`, `-x.txt`) is `UnknownOption`. A PATH whose spelling begins with
+  `-` is named with a leading path component, for example `./-x.txt`. The `--`
+  form does not help here: it accepts only an executable (next rule).
 - Any other token is a PATH.
 
 Rules:
@@ -127,7 +128,11 @@ Rules:
 7. **Missing target.** No `--app`, PATH or `--` is `MissingTarget`. This includes
    an argv made only of options.
 8. **Empty PATH.** A zero-length PATH token is `EmptyPath`.
-9. **EXE form.** `--` must be followed by an EXE token. Missing EXE, or a
+9. **EXE form.** The frozen grammar defines `-- EXE [ARG...]` only, so `--` is
+   an executable-launch form and every other target is a PATH. `-- notes.txt`
+   is therefore `ExecutableNotExe` (usage, exit 2), not a silent PATH. Silently
+   dropping the arguments of a non-executable would lose information, and
+   honoring them would extend the frozen grammar. `--` must be followed by an EXE token. Missing EXE, or a
    zero-length EXE, is `EmptyExecutable`. The EXE token must end with `.exe`
    (case-insensitive) after the extension rule of section 4, otherwise
    `ExecutableNotExe`. Tokens after EXE are ARG tokens, verbatim, including

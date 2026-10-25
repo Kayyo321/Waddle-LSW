@@ -1284,3 +1284,15 @@ test "non-UTF-8 PATH, EXE or argument-tail bytes are usage errors before any cal
     try testing.expectEqualSlices(u8, "caf\xc3\xa9.txt", out.item_text(0));
     try testing.expectEqual(open_error_t.None, run(&.{ "--", "g.exe", "\xc3\xa9t\xc3\xa9" }, &fake, 0, &out));
 }
+
+test "dash-prefixed targets: ./-x is a PATH, -x is UnknownOption, -- notes.txt is usage" {
+    var fake = fake_reader_t{ .entries = &.{} };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.None, run(&.{"./-x.txt"}, &fake, 0, &out));
+    try testing.expectEqualSlices(u8, "./-x.txt", out.item_text(0));
+    try testing.expectEqual(item_kind_t.Path, out.items[0].kind);
+    try testing.expectEqual(open_error_t.UnknownOption, run(&.{"-x.txt"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.ExecutableNotExe, run(&.{ "--", "notes.txt" }, &fake, 0, &out));
+    try testing.expectEqual(ExitUsage, exit_code_for_error(.ExecutableNotExe));
+    try testing.expectEqual(@as(usize, 0), fake.calls);
+}
