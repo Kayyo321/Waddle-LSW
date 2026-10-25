@@ -3594,3 +3594,25 @@ consumed. Preparation succeeded at fresh-0ef763355e3b44cbac3c0fa3414f95fa
 with CID52943, private files0600 and directory0700. Preparation is not boot,
 listener, interop, or installed-session acceptance. The live run must retain
 its own exact result; no tracker credit is assigned to this test tooling.
+
+### 8.29 Linux raw mapping owner (2026-10-25)
+
+[The mapper contract](mapping_linux_contract.md) freezes the new local C API.
+The opaque owner is confined to its creating pthread. It duplicates an explicit
+borrowed regular/private-file or KVMFR fd CLOEXEC, validates exact2GiB capacity
+and type/ownership before shared RW mmap, never creates/truncates/unlinks backing
+and never initializes mapping bytes. Guest's Hello selects nonzero epoch and
+ordinary header immutability before snapshots; live atomics are individually
+loaded after lock-free checks, ordinary ranges copied privately, and the
+existing Zig layout ABI validates all untrusted header facts. Only success
+publishes a borrowed view. A valid close expires that view; munmap failure keeps
+map+fd and a closing state blocks all re-publication until retry succeeds.
+Linux fd close is attempted exactly once on every outcome, with CloseDiagnostic
+and relinquished fd even on error. The reuse regression prevents closing an
+unrelated file after an injected close error. Local user quiescence is asserted
+only by a truthful caller and grants no guest/host-drain or backing-reuse
+permission. No protocol or frozen layout changes. Normal make gate and exact
+production169/173lines,176/188taken arcs pass with no source exclusions;
+ASan/LSan/UBSan fail-fast with detect_leaks=1 pass outside the restricted tracer.
+Evidence is in mapping_linux_evidence_2026_10_25. The raw adapter is a prerequisite;
+live session integration and native KVMFR/Windows acceptance remain separate.

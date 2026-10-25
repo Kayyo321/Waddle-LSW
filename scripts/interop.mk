@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
+interop-test: interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -23,7 +23,8 @@ interop-codec-test: build/interop_codec_abi_test
 interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test interop-control-peer-abi-test interop-linux-socket-test interop-linux-session-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
-interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o
+interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o build/interop_layout_abi.o
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/mapping_linux_coverage.py
 	python3 tests/av/coverage.py interop_codec
 	python3 tests/av/coverage.py interop_layout
 	python3 tests/av/coverage.py interop_heap
@@ -274,3 +275,19 @@ interop-native-runner-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/interop -p native_guest_runner_test.py
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/interop -p fresh_native_guest_test.py
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/interop -p fresh_native_install_test.py
+
+# Borrowed Linux backing descriptor -> immutable-header validation -> retryable local cleanup.
+InteropMappingLinuxSources = tests/interop/mapping_linux.c tests/interop/mapping_linux_private.c src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c
+InteropMappingLinuxDependencies = src/interop/interop_mapping_linux.c src/interop/interop_mapping_linux.h src/interop/interop_layout.h src/interop/interop_native_atomic.h src/av/av_kvmfr.h submodules/looking_glass/module/kvmfr.h
+InteropMappingLinuxWrapFlags = -Wl,--wrap=calloc,--wrap=close,--wrap=fcntl,--wrap=fstat,--wrap=ioctl,--wrap=mmap,--wrap=munmap,--wrap=interop_atomic_validate_mapping,--wrap=interop_layout_validate_shm_header
+build/interop_mapping_linux.o: src/interop/interop_mapping_linux.c $(InteropMappingLinuxDependencies) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isubmodules/looking_glass/module -pthread -c $< -o $@
+build/interop_mapping_linux_test: $(InteropMappingLinuxSources) $(InteropMappingLinuxDependencies) build/interop_layout_abi.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG -Isrc/interop -Isubmodules/looking_glass/module $(InteropMappingLinuxSources) build/interop_layout_abi.o $(LDFLAGS) $(InteropMappingLinuxWrapFlags) -pthread -o $@
+.PHONY: interop-mapping-linux-test interop-mapping-linux-coverage interop-mapping-linux-sanitizers
+interop-mapping-linux-test: build/interop_mapping_linux.o build/interop_mapping_linux_test
+	./build/interop_mapping_linux_test
+interop-mapping-linux-coverage: build/interop_layout_abi.o
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/mapping_linux_coverage.py
+interop-mapping-linux-sanitizers:
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 $(MAKE) -W tests/interop/mapping_linux.c interop-mapping-linux-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"

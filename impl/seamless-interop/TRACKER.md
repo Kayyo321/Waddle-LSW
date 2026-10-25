@@ -1251,9 +1251,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     join CI hardware-free gates. Actual repaired preparation succeeds with
     CID52943 in a new private run; native acceptance remains unclaimed.
 
-- **Commit `HEAD`**: `fix(interop): enter installation media within its firmware input window`
+- **Commit `a041f15`**: `fix(interop): enter installation media within its firmware input window`
   - **Task Impact**: +0% to TODO #34; failed native attempt retained.
   - **Summary**: First isolated KVM run missed the CD/DVD boot key and never
     installed or exposed guest-exec. Controlled stop reaped both children and
     joined the bounded probe; forced shutdown is recorded. Add opt-in finite
     boot input for a new blank disk, disabled by default;17 supervisor tests pass.
+
+- **Commit `HEAD`**: `feat(interop): own Linux layout mapping and retryable local teardown`
+  - **Task Impact**: +0% to TODO #5/#7; actual runtime integration remains open.
+  - **Summary**: Reviewed fd/mmap owner validates live immutable-header snapshots
+    through Zig and preserves failed unmap ownership. Close errors never retry
+    a reused Linux fd. Normal build, real sparse2GiB/fault/thread tests, exact
+    97.69% lines/93.62% taken arcs and fail-fast ASan/LSan/UBSan all pass.
+    Coverage and sanitizer evidence is retained and wired into CI.
