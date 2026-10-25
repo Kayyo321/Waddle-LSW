@@ -99,6 +99,19 @@ typedef struct interop_host_feature_ops_t {
     /** @brief Called exactly once when drain begins or the run ends, before owner cleanup.
      *  @param[in] reason interop_host_control_result_t value recorded at this moment.
      *  @param[in] sender Valid only during this call; every admission returns HostFeatureDraining. */
+    /**
+     * @brief Remote Error frame carrying a nonzero request identifier, received while Ready and not
+     *        draining. Such an Error is not fatal: the run continues unless this callback fails it.
+     * @param[in] context Passed unchanged from ops.context.
+     * @param[in] error_code Frozen protocol error code copied from the Error frame.
+     * @param[in] request_id Nonzero request identifier copied from the Error frame.
+     * @param[in] sender Valid only during this call.
+     * @return Zero to continue, InteropHostFeatureStopRequested for a graceful stop, any other
+     *         nonzero value to fail the run with HostControlFeatureFailed.
+     * @note Remote Errors with request identifier zero, and Errors before Ready, remain fatal.
+     */
+    int (*on_peer_error)(void *context, uint32_t error_code, uint32_t request_id,
+                         interop_host_feature_sender_t *sender);
     void (*on_closing)(void *context, uint32_t reason, interop_host_feature_sender_t *sender);
 } interop_host_feature_ops_t;
 

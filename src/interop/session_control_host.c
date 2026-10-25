@@ -386,6 +386,17 @@ static int host_feature_call_fds(const interop_host_feature_ops_t *ops,
     return status;
 }
 
+static int host_feature_call_peer_error(const interop_host_feature_ops_t *ops,
+                                        uint32_t error_code, uint32_t request_id,
+                                        uint64_t now_ms, interop_host_feature_sender_t *sender)
+{
+    int status;
+    host_feature_open(sender, now_ms);
+    status = ops->on_peer_error(ops->context, error_code, request_id, sender);
+    host_feature_close(sender);
+    return status;
+}
+
 /** @brief Announce closing exactly once; the sender refuses admissions from then on. */
 static void host_feature_close_once(const interop_host_feature_ops_t *ops,
                                     interop_host_feature_sender_t *sender,
@@ -822,6 +833,16 @@ interop_host_control_result_t interop_host_control_run_detailed(
                 if (!host_feature_settle(frame_status, &outcome, socket_owner, token, now_ms, &draining))
                     break;
             }
+        } else if (work.event.kind == InteropPeerEventError && work.event.request_id != 0 &&
+                   ready && !draining) {
+            /* A scoped remote Error is reported to the features and does not end the connection. */
+            int error_status = feature_ops != NULL && feature_ops->on_peer_error != NULL
+                ? host_feature_call_peer_error(feature_ops, work.event.error_code,
+                    work.event.request_id, now_ms, &sender)
+                : 0;
+            host_feature_observe_drain(&sender, &outcome, &draining);
+            if (!host_feature_settle(error_status, &outcome, socket_owner, token, now_ms, &draining))
+                break;
         } else if (work.event.kind == InteropPeerEventError ||
                    work.event.kind == InteropPeerEventDraining) {
             /* A refused unnegotiated feature frame is still an unexpected feature here. */

@@ -773,13 +773,15 @@ static size_t make_feature(uint8_t *frame, size_t capacity)
     return frame_length;
 }
 
+static uint32_t peer_error_request_id = 2;
+
 static size_t make_error(uint8_t *frame, size_t capacity)
 {
     interop_writer_t writer;
     size_t frame_length = 0;
     interop_writer_init(&writer, frame, capacity);
     assert(interop_put_uint(&writer, InteropTagErrorCode, 1) == InteropErrorNone);
-    assert(interop_writer_finish(&writer, InteropMsgError, 2, InteropFromGuest,
+    assert(interop_writer_finish(&writer, InteropMsgError, peer_error_request_id, InteropFromGuest,
         &frame_length) == InteropErrorNone);
     return frame_length;
 }
@@ -1559,6 +1561,10 @@ typedef struct feature_probe_t {
     uint32_t fds_mode;
     uint32_t poll_fail_after;
     uint32_t poll_calls;
+    uint32_t peer_error_calls;
+    uint32_t peer_error_code;
+    uint32_t peer_error_request;
+    int peer_error_status;
     int ready_status;
     int tick_status;
     int frame_status;
@@ -1690,6 +1696,17 @@ static int probe_on_tick(void *context, uint64_t now_ms, interop_host_feature_se
     return probe->tick_status;
 }
 
+static int probe_on_peer_error(void *context, uint32_t error_code, uint32_t request_id,
+                               interop_host_feature_sender_t *sender)
+{
+    feature_probe_t *probe = context;
+    (void)sender;
+    ++probe->peer_error_calls;
+    probe->peer_error_code = error_code;
+    probe->peer_error_request = request_id;
+    return probe->peer_error_status;
+}
+
 static int probe_poll_fds(void *context, struct pollfd *fds, size_t capacity, size_t *count)
 {
     feature_probe_t *probe = context;
@@ -1776,6 +1793,7 @@ static interop_host_control_result_t run_feature_case(feature_probe_t *probe,
     ops.on_fds = probe->use_pipe || probe->fds_mode != 0 ? probe_on_fds : NULL;
     ops.next_deadline_ms = probe->use_deadline ? probe_next_deadline : NULL;
     ops.on_closing = probe_on_closing;
+    ops.on_peer_error = probe_on_peer_error;
     peer_hello_capabilities = hello_capabilities;
     peer_expected_ack_capabilities = ack_capabilities;
     peer_script_enabled = true;
@@ -1929,6 +1947,37 @@ __attribute__((unused)) static void session_control_host_feature_tests(void)
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.closing_calls == 1);
+
+    /* 7c. A remote Error with a nonzero request id is not fatal while Ready. */
+    memset(&probe, 0, sizeof(probe));
+    arm_peer_send_error = true;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 300, 0, NULL);
+    assert(result == HostControlSuccess);
+    assert(probe.peer_error_calls == 1 && probe.peer_error_code == 1);
+    assert(probe.peer_error_request == 2 && probe.closing_calls == 1);
+
+    /* 7d. A remote Error with request id zero is fatal and never reaches on_peer_error. */
+    memset(&probe, 0, sizeof(probe));
+    arm_peer_send_error = true;
+    peer_error_request_id = 0;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    peer_error_request_id = 2;
+    assert(result == HostControlPeerFailed);
+    assert(probe.peer_error_calls == 0 && probe.closing_calls == 1);
+
+    /* 7e. on_peer_error results follow the feature settle rules: stop is graceful, other fails. */
+    memset(&probe, 0, sizeof(probe));
+    arm_peer_send_error = true;
+    probe.peer_error_status = InteropHostFeatureStopRequested;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlCancelled);
+    assert(probe.peer_error_calls == 1 && probe.closing_calls == 1);
+    memset(&probe, 0, sizeof(probe));
+    arm_peer_send_error = true;
+    probe.peer_error_status = 2;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
+    assert(probe.peer_error_calls == 1 && probe.closing_calls == 1);
 
     /* 8. No run bound: the run lasts until cancellation, and closing sends are refused. */
     memset(&probe, 0, sizeof(probe));
@@ -2162,9 +2211,15 @@ int main(void)
     arm_closed_transport_status = true;
     assert(run_control_fixture(false, false, false, 0, false, false, false, 0,
         false, 0, false, false, 500, NULL) == HostControlPeerFailed);
+    /* A scoped remote Error (request id 2) is not fatal while Ready; request id 0 is. */
     arm_peer_send_error = true;
     assert(run_control_fixture(false, false, false, 0, false, false, false, 0,
+        false, 0, false, false, 500, NULL) == HostControlSuccess);
+    arm_peer_send_error = true;
+    peer_error_request_id = 0;
+    assert(run_control_fixture(false, false, false, 0, false, false, false, 0,
         false, 0, false, false, 500, NULL) == HostControlPeerFailed);
+    peer_error_request_id = 2;
     assert(run_control_fixture(false, false, false, 150, false, false, false, 0, false, 0, false, false,
         1000, NULL) ==
            HostControlCancelled);
