@@ -254,6 +254,7 @@ static void test_shell_extraction(void)
         .allocate = test_allocate,
         .deallocate = test_deallocate
     };
+    icon_windows_run_input_guard_tests(item, allocator);
     const uint32_t Dimensions[IconWindowsSupportedDimensionCount] = {
         16u, 24u, 32u, 48u, 64u, 128u, 256u
     };
@@ -380,6 +381,15 @@ static void test_shell_extraction(void)
         assert(image.rgba != NULL && image.width == FallbackDimensions[index]);
         icon_windows_image_deinit(&image);
     }
+    test_fail_shell_factory_query = false;
+
+    test_fail_shell_factory_query = true;
+    assert(icon_windows_extract_rgba(item, path, 24u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    assert(icon_windows_extract_rgba(item, L"", 16u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
     test_fail_shell_factory_query = false;
 
     test_fail_shell_factory_query = true;

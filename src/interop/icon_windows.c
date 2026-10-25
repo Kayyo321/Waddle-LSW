@@ -46,6 +46,7 @@ static bool test_fail_close_icon_once;
 static bool test_fail_get_icon_info_once;
 static bool test_force_icon_mask_null_once;
 static bool test_fail_mask_dibits_once;
+static bool test_fail_copy_dibits_once;
 static bool test_fail_select_object_once;
 static bool test_fail_draw_icon_once;
 static bool test_fail_restore_object_once;
@@ -145,15 +146,17 @@ static bool close_bitmap(HBITMAP *bitmap, icon_windows_cleanup_t *cleanup)
         return true;
     }
 #ifdef IconWindowsTestSeams
+    BOOL deleted = FALSE;
     if (test_fail_delete_once) {
         test_fail_delete_once = false;
         SetLastError(ERROR_BUSY);
-        cleanup->last_error = GetLastError();
-        keep_bitmap(cleanup, *bitmap);
-        return false;
+    } else {
+        deleted = DeleteObject(*bitmap);
     }
+#else
+    const BOOL deleted = DeleteObject(*bitmap);
 #endif
-    if (DeleteObject(*bitmap) == 0) {
+    if (deleted == 0) {
         cleanup->last_error = GetLastError();
         keep_bitmap(cleanup, *bitmap);
         return false;
@@ -168,15 +171,17 @@ static bool close_icon(HICON *icon, icon_windows_cleanup_t *cleanup)
         return true;
     }
 #ifdef IconWindowsTestSeams
+    BOOL destroyed = FALSE;
     if (test_fail_close_icon_once) {
         test_fail_close_icon_once = false;
         SetLastError(ERROR_BUSY);
-        cleanup->last_error = GetLastError();
-        keep_icon(cleanup, *icon);
-        return false;
+    } else {
+        destroyed = DestroyIcon(*icon);
     }
+#else
+    const BOOL destroyed = DestroyIcon(*icon);
 #endif
-    if (DestroyIcon(*icon) == 0) {
+    if (destroyed == 0) {
         cleanup->last_error = GetLastError();
         keep_icon(cleanup, *icon);
         return false;
@@ -191,15 +196,17 @@ static bool close_dc(HDC *device_context, icon_windows_cleanup_t *cleanup)
         return true;
     }
 #ifdef IconWindowsTestSeams
+    BOOL deleted = FALSE;
     if (test_fail_close_dc_once) {
         test_fail_close_dc_once = false;
         SetLastError(ERROR_BUSY);
-        cleanup->last_error = GetLastError();
-        keep_dc(cleanup, *device_context);
-        return false;
+    } else {
+        deleted = DeleteDC(*device_context);
     }
+#else
+    const BOOL deleted = DeleteDC(*device_context);
 #endif
-    if (DeleteDC(*device_context) == 0) {
+    if (deleted == 0) {
         cleanup->last_error = GetLastError();
         keep_dc(cleanup, *device_context);
         return false;
@@ -395,9 +402,20 @@ static bool copy_bitmap_to_top_down_dib(HDC device_context,
     *source_has_alpha_out = dib_section_bytes == sizeof(source_dib_section) &&
         source_dib_section.dsBmih.biBitCount == 32u &&
         source_dib_section.dsBmih.biCompression == BI_RGB;
-    const int Rows = GetDIBits(device_context, source_bitmap, 0u, source_height,
+#ifdef IconWindowsTestSeams
+    int rows = 0;
+    if (test_fail_copy_dibits_once) {
+        test_fail_copy_dibits_once = false;
+        SetLastError(ERROR_GEN_FAILURE);
+    } else {
+        rows = GetDIBits(device_context, source_bitmap, 0u, source_height,
+                         destination_bits, destination_info, DIB_RGB_COLORS);
+    }
+#else
+    const int rows = GetDIBits(device_context, source_bitmap, 0u, source_height,
                                destination_bits, destination_info, DIB_RGB_COLORS);
-    if (Rows != (int)source_height) {
+#endif
+    if (rows != (int)source_height) {
         *error_out = GetLastError();
         return false;
     }

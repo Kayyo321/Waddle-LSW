@@ -151,6 +151,44 @@ static void icon_windows_run_private_helper_tests(void)
     assert(close_bitmap(&null_bitmap, &close_cleanup));
     assert(close_icon(&null_icon, &close_cleanup));
     assert(close_dc(&null_context, &close_cleanup));
+    void *failure_pixels = NULL;
+    HBITMAP failure_bitmap = create_color_bitmap(1u, &failure_pixels);
+    assert(failure_bitmap != NULL && failure_pixels != NULL);
+    test_fail_delete_once = true;
+    assert(!close_bitmap(&failure_bitmap, &close_cleanup));
+    assert(close_cleanup.bitmap_count == 1u &&
+           close_cleanup.bitmap_handles[0] != 0u && failure_bitmap != NULL);
+    assert(icon_windows_cleanup_retry(&close_cleanup) == IconWindowsStatusOk);
+    HICON failure_icon = icon_windows_create_test_icon();
+    assert(failure_icon != NULL);
+    test_fail_close_icon_once = true;
+    assert(!close_icon(&failure_icon, &close_cleanup));
+    assert(close_cleanup.icon_count == 1u && close_cleanup.icon_handles[0] != 0u &&
+           failure_icon != NULL);
+    assert(icon_windows_cleanup_retry(&close_cleanup) == IconWindowsStatusOk);
+    HDC failure_context = CreateCompatibleDC(NULL);
+    assert(failure_context != NULL);
+    test_fail_close_dc_once = true;
+    assert(!close_dc(&failure_context, &close_cleanup));
+    assert(close_cleanup.device_context_count == 1u &&
+           close_cleanup.device_context_handles[0] != 0u && failure_context != NULL);
+    assert(icon_windows_cleanup_retry(&close_cleanup) == IconWindowsStatusOk);
+
+    for (uint32_t target = 0u; target < 3u; ++target) {
+        failure_pixels = NULL;
+        failure_bitmap = create_color_bitmap(1u, &failure_pixels);
+        assert(failure_bitmap != NULL && failure_pixels != NULL);
+        HBITMAP shell_bitmap = target == 0u ? failure_bitmap : NULL;
+        HBITMAP color_bitmap = target == 1u ? failure_bitmap : NULL;
+        HBITMAP mask_bitmap = target == 2u ? failure_bitmap : NULL;
+        test_fail_delete_once = true;
+        assert(!close_locals(&shell_bitmap, &null_bitmap, &color_bitmap,
+                             &mask_bitmap, &null_icon, &null_context,
+                             &close_cleanup));
+        assert(close_cleanup.bitmap_count == 1u &&
+               close_cleanup.bitmap_handles[0] == (uintptr_t)failure_bitmap);
+        assert(icon_windows_cleanup_retry(&close_cleanup) == IconWindowsStatusOk);
+    }
     void *closing_pixels = NULL;
     HBITMAP closing_bitmap = create_color_bitmap(1u, &closing_pixels);
     assert(closing_bitmap != NULL && closing_pixels != NULL &&
@@ -229,6 +267,29 @@ static void icon_windows_run_private_helper_tests(void)
     assert(native_error == ERROR_INVALID_DATA && icon_mask_bitmap != NULL);
     assert(DeleteObject(icon_mask_bitmap) != 0);
     assert(DestroyIcon(malformed_icon) != 0);
+
+    BITMAPINFO copy_info;
+    memset(&copy_info, 0, sizeof(copy_info));
+    copy_info.bmiHeader.biSize = sizeof(copy_info.bmiHeader);
+    copy_info.bmiHeader.biWidth = 16;
+    copy_info.bmiHeader.biHeight = -16;
+    copy_info.bmiHeader.biPlanes = 1u;
+    copy_info.bmiHeader.biBitCount = 32u;
+    copy_info.bmiHeader.biCompression = BI_RGB;
+    bool source_has_alpha = false;
+    assert(!copy_bitmap_to_top_down_dib(draw_context, draw_bitmap, 17u, 16u,
+                                        mask_pixels, &copy_info, &source_has_alpha,
+                                        &native_error));
+    assert(native_error == ERROR_INVALID_DATA);
+    assert(!copy_bitmap_to_top_down_dib(draw_context, draw_bitmap, 16u, 17u,
+                                        mask_pixels, &copy_info, &source_has_alpha,
+                                        &native_error));
+    assert(native_error == ERROR_INVALID_DATA);
+    test_fail_copy_dibits_once = true;
+    assert(!copy_bitmap_to_top_down_dib(draw_context, draw_bitmap, 16u, 16u,
+                                        mask_pixels, &copy_info, &source_has_alpha,
+                                        &native_error));
+    assert(native_error == ERROR_GEN_FAILURE);
     assert(DestroyIcon(draw_icon) != 0);
     assert(DeleteDC(draw_context) != 0);
     assert(DeleteObject(draw_bitmap) != 0);
@@ -252,6 +313,22 @@ static void icon_windows_run_fault_tests(void)
            IconWindowsStatusInvalidArgument);
 
     invalid_cleanup.bitmap_count = 5u;
+    assert(icon_windows_cleanup_retry(&invalid_cleanup) ==
+           IconWindowsStatusInvalidArgument);
+    memset(&invalid_cleanup, 0, sizeof(invalid_cleanup));
+    invalid_cleanup.icon_count = 2u;
+    assert(icon_windows_cleanup_retry(&invalid_cleanup) ==
+           IconWindowsStatusInvalidArgument);
+    memset(&invalid_cleanup, 0, sizeof(invalid_cleanup));
+    invalid_cleanup.device_context_count = 2u;
+    assert(icon_windows_cleanup_retry(&invalid_cleanup) ==
+           IconWindowsStatusInvalidArgument);
+    memset(&invalid_cleanup, 0, sizeof(invalid_cleanup));
+    invalid_cleanup.icon_handles[0] = 1u;
+    assert(icon_windows_cleanup_retry(&invalid_cleanup) ==
+           IconWindowsStatusInvalidArgument);
+    memset(&invalid_cleanup, 0, sizeof(invalid_cleanup));
+    invalid_cleanup.device_context_handles[0] = 1u;
     assert(icon_windows_cleanup_retry(&invalid_cleanup) ==
            IconWindowsStatusInvalidArgument);
     memset(&invalid_cleanup, 0, sizeof(invalid_cleanup));
@@ -380,4 +457,66 @@ static void icon_windows_run_fault_tests(void)
     nonempty_without_pixels.stride = 4u;
     icon_windows_image_deinit(&nonempty_without_pixels);
     assert(nonempty_without_pixels.stride == 4u);
+}
+
+static void icon_windows_run_input_guard_tests(IShellItem *item,
+                                                icon_windows_allocator_t allocator)
+{
+    icon_windows_image_t image = {0};
+    icon_windows_cleanup_t cleanup = {0};
+    assert(icon_windows_extract_rgba(NULL, NULL, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusInvalidArgument);
+    assert(icon_windows_extract_rgba(item, NULL, 32u, allocator, NULL, &cleanup) ==
+           IconWindowsStatusInvalidArgument);
+    assert(icon_windows_extract_rgba(item, NULL, 32u, allocator, &image, NULL) ==
+           IconWindowsStatusInvalidArgument);
+    icon_windows_allocator_t invalid_allocator = allocator;
+    invalid_allocator.allocate = NULL;
+    assert(icon_windows_extract_rgba(item, NULL, 32u, invalid_allocator, &image, &cleanup) ==
+           IconWindowsStatusInvalidArgument);
+    invalid_allocator = allocator;
+    invalid_allocator.deallocate = NULL;
+    assert(icon_windows_extract_rgba(item, NULL, 32u, invalid_allocator, &image, &cleanup) ==
+           IconWindowsStatusInvalidArgument);
+
+    const uintptr_t unaligned_image_address = (uintptr_t)&image + 1u;
+    assert(icon_windows_extract_rgba(item, NULL, 32u, allocator,
+                                     (icon_windows_image_t *)unaligned_image_address,
+                                     &cleanup) == IconWindowsStatusInvalidArgument);
+    const uintptr_t unaligned_cleanup_address = (uintptr_t)&cleanup + 1u;
+    assert(icon_windows_extract_rgba(item, NULL, 32u, allocator, &image,
+                                     (icon_windows_cleanup_t *)unaligned_cleanup_address) ==
+           IconWindowsStatusInvalidArgument);
+
+    union {
+        max_align_t alignment;
+        unsigned char bytes[(IconWindowsMaxFallbackPathUnits + 1u) * sizeof(wchar_t) +
+                            256u];
+    } alias_arena;
+    memset(&alias_arena, 0, sizeof(alias_arena));
+    icon_windows_image_t *alias_image =
+        (icon_windows_image_t *)(void *)(alias_arena.bytes + 128u);
+    icon_windows_cleanup_t *alias_cleanup =
+        (icon_windows_cleanup_t *)(void *)(alias_arena.bytes + 128u);
+    assert(icon_windows_extract_rgba(item, NULL, 32u, allocator, alias_image,
+                                     alias_cleanup) == IconWindowsStatusInvalidArgument);
+    assert(icon_windows_extract_rgba((IShellItem *)(void *)alias_image, NULL, 32u,
+                                     allocator, alias_image, &cleanup) ==
+           IconWindowsStatusInvalidArgument);
+    assert(icon_windows_extract_rgba((IShellItem *)(void *)&cleanup, NULL, 32u,
+                                     allocator, &image, &cleanup) ==
+           IconWindowsStatusInvalidArgument);
+
+    wchar_t *path_in_image = (wchar_t *)(void *)alias_image;
+    assert(icon_windows_extract_rgba(item, path_in_image, 32u, allocator, alias_image,
+                                     &cleanup) == IconWindowsStatusInvalidArgument);
+    wchar_t *path_near_image = (wchar_t *)(void *)((unsigned char *)alias_image - sizeof(wchar_t));
+    path_near_image[0] = L'x';
+    path_near_image[1] = L'x';
+    path_near_image[2] = L'\0';
+    assert(icon_windows_extract_rgba(item, path_near_image, 32u, allocator, alias_image,
+                                     &cleanup) == IconWindowsStatusInvalidArgument);
+
+    assert(image.rgba == NULL && cleanup.bitmap_count == 0u &&
+           cleanup.icon_count == 0u && cleanup.device_context_count == 0u);
 }

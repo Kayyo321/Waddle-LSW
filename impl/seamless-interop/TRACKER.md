@@ -1589,7 +1589,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Link real Automation APIs and hash the exact fixture in CI provenance.
     Root strict fixture link and standalone provider compile pass; execution pending.
 
-- **Commit `HEAD`**: `feat(interop): reduce window state with generation-bound action plans`
+- **Commit `f0ea711`**: `feat(interop): reduce window state with generation-bound action plans`
   - **Task Impact**: +50% to TODO #13 (+1.50% overall; total26.40%).
   - **Summary**: Fixed-size owner-thread reducer separates observation, applied
     state and host policy; orders up to five actions with nonwrapping completion
@@ -1599,3 +1599,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     Root170tests and whole-source100%lines/93.90%taken arcs pass; retain exact
     source hash/logs. Default test, allocator and coverage gates include it.
     Native adapter25%, wire/compositor15%, integrated native10% remain open.
+
+- **Commit `HEAD`**: `test(interop): cover icon alias guards and genuine native cleanup errors`
+  - **Task Impact**: +0% to TODO #27/#34 pending native90% taken-arc gate.
+  - **Summary**: Exact9341928 realWindows functional cases pass; whole-source
+    icon95.34%lines/85.25%arcs still below gate. Add valid-storage alias and
+    alignment guards, malformed cleanup shapes, source dimension/GetDIBits
+    failures and fallback limits. Route fail-before-close seams through actual
+    production error branches. Root strict standalone and profile build/link
+    pass; no coverage exclusions or premature completion credit.
