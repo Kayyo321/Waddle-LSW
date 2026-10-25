@@ -3806,3 +3806,17 @@ changes never revive a previous held key. No implicit activation/grab authority
 is attached. The existing20%TODO#15repeat allocation consists of10%portable
 reducer and10%actual Wayland/queue/guest composition; only the former is
 eligible for acceptance from pure tests. The live input path remains pending.
+
+### Portable window state amendment — 2026-10-25
+
+[window_state_contract.md](window_state_contract.md) defines the allocation-free,
+generation-bound owner-thread reducer, fixed eight-action plans, monotonic
+completion tickets, and explicit partial-action failure/resynchronization.
+Initial guest observation reconciles the host before configure/policy/close;
+close never retires an application until an actual Hide/Destroy observation.
+Minimize is the frozen one-shot xdg-shell request, never persistent host state.
+Host maximize policy remains distinct from guest observation and native state.
+The largest grammar path has five ordered actions. The #13 allocation is
+portable reducer50%, native adapter25%, wire/compositor15%, integrated native10%.
+This module earns only portable50% after root tests and whole-module90% gates;
+it makes no claim that a real Windows/Wayland adapter executes those plans.

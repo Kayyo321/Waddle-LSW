@@ -40,7 +40,7 @@ acceptance remain pending.
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 80% | Pure graph25%, C ABI10%, portable observer15%, native adapter15%, installed-session15% accepted. Fresh Windows guest graph/observer/foreign lifecycle tests pass; coordinator/capture/slot/wire20% remains open |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
-| #13 | Minimize/maximize/fullscreen/restore/close state machine | Pending | 3% | 0% | Waits on #11 |
+| #13 | Minimize/maximize/fullscreen/restore/close state machine | In Progress | 3% | 50% | Portable generation-safe ordered reducer50% accepted with root170tests/100%lines/93.90%arcs. Native adapters25%, wire/compositor15% and integrated native10% remain open; waits on #11 for runtime |
 | #14 | Guest display sizing, fractional scale/DPI, multi-output | Pending | 3% | 0% | Waits on #11 |
 | #15 | Keyboard completeness (full scancode table, host repeat, lock sync, layout sync, shortcut inhibit) | In Progress | 3% | 20% | Typed translation10% and portable repeat timing10% accepted with root gates. Live repeat/injection, lock/layout, inhibit and native integration remain open |
 | #16 | Pointer completeness (XBUTTONs, value120, activating click) + cursor shape/image sync | Pending | 3% | 0% | Waits on #7, #10 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 40% | Schema15%, absent-add journal/recovery15% and rooted absent artifact API10% accepted. Replacement/backup/restore, commands/producers and full-removal qualification remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `24.90%`
+**Total Feature Completion**: `26.40%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -78,6 +78,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; portable observer15%; native adapter15%. O5 preservation qualified by89ff058 local coverage/sanitizers and exact Windows native smoke/failure guards at d77dcb3, CI40144415938; installed-session15% accepted by the hash-bound fresh Windows guest run; coordinator20% remains open |
+| #13 | Portable generation-safe ordered reducer50%; native adapters25%; wire/compositor15%; integrated native10% | Portable50% accepted: exact generation/revision, partial-failure reconciliation, close veto/retry and one-shot Wayland minimize semantics. Root170tests,100%lines/93.90%arcs; native integration remains open |
 | #15 | Typed full translation10%; native injection15%; host repeat20%(pure timing10%,live composition10%); lock sync15%; layout sync20%; shortcut inhibit10%; integrated/native qualification10% | Typed translation10% and portable repeat timing10% accepted; root repeat five tests/2000lifecycles/3000runtime events,95.24%lines/100%arcs. Live repeat10%, typed injection and other milestones remain open |
 | #27 | Source snapshot/diff20%; native enumeration20%; watch/enrichment15%; PNG encoder10%; native icon extraction15%; wire/integration10%; integrated/native qualification10% | PNG encoder10% and source snapshot/diff20% accepted. Core root97.40%lines/90.15%taken arcs, validator100%lines/93.94%arcs and leak-enabled sanitizers. Native Shell/catalog and integrated qualification remain open |
 | #31 | Bounded classifier20%; preserving MIME editor20%; journaled handler artifacts20%; configuration/route integration20%; integrated/native qualification20% | Classifier20% and preserving MIME editor20% accepted; editor six tests,2000 prefixes, all publication-shape OOM tests,100%lines/93.28%arcs. Artifact/config/route/native integration remain open |
@@ -1579,7 +1580,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Keep one production source-size guard; standalone production and instrumented
     fixture strict Windows SDK builds/link pass. Native execution pending.
 
-- **Commit `HEAD`**: `test(interop): profile native catalog allocation and COM failure ownership`
+- **Commit `9341928`**: `test(interop): profile native catalog allocation and COM failure ownership`
   - **Task Impact**: +0% to TODO #27/#34 pending whole-source native90% gates.
   - **Summary**: Include the production provider exactly once with private
     fail-before-consumption SDK/CRT wrappers. Exercise real temporary shortcuts,
@@ -1587,3 +1588,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     Refresh each attempt deadline and report static failure stage/index only.
     Link real Automation APIs and hash the exact fixture in CI provenance.
     Root strict fixture link and standalone provider compile pass; execution pending.
+
+- **Commit `HEAD`**: `feat(interop): reduce window state with generation-bound action plans`
+  - **Task Impact**: +50% to TODO #13 (+1.50% overall; total26.40%).
+  - **Summary**: Fixed-size owner-thread reducer separates observation, applied
+    state and host policy; orders up to five actions with nonwrapping completion
+    tickets and explicit partial-failure reconciliation. Every close may be
+    vetoed; only matching Hide/Destroy retires. Root review corrected initial
+    synchronization, activation bookkeeping and one-shot minimize semantics.
+    Root170tests and whole-source100%lines/93.90%taken arcs pass; retain exact
+    source hash/logs. Default test, allocator and coverage gates include it.
+    Native adapter25%, wire/compositor15%, integrated native10% remain open.

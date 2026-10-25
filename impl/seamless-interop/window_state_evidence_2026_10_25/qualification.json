@@ -1,0 +1,16 @@
+{
+  "attempt": "build/coverage/interop/window_state/run-20261025T184533643704Z-276941",
+  "tests": 170,
+  "owned_module_tests": 22,
+  "line": {
+    "covered": 102,
+    "total": 102
+  },
+  "taken_arcs": {
+    "covered": 77,
+    "total": 82
+  },
+  "compiler_panic_stack_guards_excluded": 61,
+  "ownership": "allocation-free owner-thread reducer; no native adapter/compositor/wire claim",
+  "source_sha256": "82e4e8539048591613a38e49a8fb01675fe9c10985e923cfc04f98d8a873da0e"
+}
