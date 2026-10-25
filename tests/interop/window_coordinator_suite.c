@@ -575,20 +575,23 @@ static int test_retire_waits_for_pins_then_completes(void) {
     Check(tick(fp) == WindowCoordinatorOk);
     Check(fp->capture.started == 1u);
 
-    /* The window disappears: the observer retires it; the coordinator stops capture and sends Retire. */
+    /* The window disappears: the observer retires it; the coordinator stops capture. IMPL 5.3: WindowRetire is
+     * sent only after the host released every slot, so it stays unsent while the pin is held. */
     remove_window(fp, 0x1000);
     advance_clock(fp, 300u);
     Check(tick(fp) == WindowCoordinatorOk);
-    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 1u);
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 0u);
     Check(fp->capture.stopped == 1u);
     /* The frame pin is still held by the host, so the quarantine remains. */
     Check(window_coordinator_entry_count(fp->coordinator) == 1u);
     Check(tick(fp) == WindowCoordinatorOk);
     Check(window_coordinator_entry_count(fp->coordinator) == 1u);
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 0u);
 
-    /* The host releases the pin. The next pass completes the retirement. */
+    /* The host releases the pin. The next pass sends Retire and completes the retirement. */
     Check(host_release(fp, 0x1000, 1, 0, 1) == 0);
     Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 1u);
     Check(window_coordinator_entry_count(fp->coordinator) == 0u);
     {
         window_coordinator_stats_t stats;
@@ -622,21 +625,16 @@ static int test_children_retire_before_parents(void) {
     remove_window(fp, 0x2000);
     advance_clock(fp, 300u);
     Check(tick(fp) == WindowCoordinatorOk);
-    /* Both retirements were sent; the child's Retire comes first in the wire order. */
-    {
-        uint32_t child_index = 0, parent_index = 0;
-        sent_t sent;
-        for (uint32_t index = 0; index < fp->wire.count; ++index) {
-            if (!sent_at(&fp->wire, index, &sent) || sent.type != InteropMsgWindowRetire) continue;
-            if (sent.window == 0x2000u && child_index == 0u) child_index = index + 1u;
-            if (sent.window == 0x1000u && parent_index == 0u) parent_index = index + 1u;
-        }
-        Check(child_index != 0u && parent_index != 0u && child_index < parent_index);
-    }
-    /* Parent cannot complete while the child still holds its pin. */
+    /* Retire waits for the pins (IMPL 5.3): neither Retire is sent while both pins are held. */
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x2000, 2) == 0u);
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 0u);
+    /* The child's pin drains first: its Retire goes out; the parent still waits for its own pin. */
     Check(host_release(fp, 0x2000, 2, 0, 1) == 0);
     Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x2000, 2) == 1u);
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 0u);
     Check(window_coordinator_entry_count(fp->coordinator) == 1u);
+    /* Then the parent: its Retire follows the child's in the wire order. */
     Check(host_release(fp, 0x1000, 1, 0, 1) == 0);
     Check(tick(fp) == WindowCoordinatorOk);
     Check(window_coordinator_entry_count(fp->coordinator) == 0u);
@@ -1571,6 +1569,68 @@ static int test_review_p1_stale_reply_under_full_outbound_drops(void) {
     return 0;
 }
 
+/**
+ * @brief A generation whose pins drain while the FIFO is full waits for room for its Retire; it is never dropped.
+ *
+ * Setup: window X puts its three slots on the wire while the wire accepts, then the wire stalls. Its slots are
+ * all pinned, so it cannot publish more. X is removed (Retiring, no publish), the stalled FIFO is filled by
+ * other windows, and only then does the host release X's frames (its releases are inbound and still work).
+ */
+static int test_review_retire_waits_for_fifo_room(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_stats_t stats;
+    uint32_t index;
+    uint32_t guard;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    fp->wire.backpressure_budget = 0u;
+    admit_window_now(fp, 0x5000);
+    for (guard = 0; guard < 10u && count_type(&fp->wire, InteropMsgFrameReady, 0x5000, 1) < 3u; ++guard) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(count_type(&fp->wire, InteropMsgFrameReady, 0x5000, 1) == 3u);
+    fp->wire.backpressure_budget = 1000000u;
+    for (index = 1; index < InteropMaxWindows; ++index) {
+        admit_window_now(fp, 0x5000u + 0x10u * index);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    for (uint32_t pass = 0; pass < 16u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.frames_skipped >= 1u);
+    /* X goes away while the wire is stalled; its pins are still held. */
+    remove_window(fp, 0x5000);
+    api_double_hint(fp->observer, 0x8001u, 0x5000);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    /* The host releases X's frames now, and four stale frames fill the last FIFO slots (each queues one Error
+     * reply). The receive pass runs before the retirement pass, so X's pins drain while the FIFO is full. */
+    release_window_frames(fp, 0x5000);
+    for (index = 0; index < 4u; ++index) {
+        uint8_t stale[WireFrameBytes];
+        size_t stale_length = 0;
+        Check(build_host(InteropMsgFrameRelease, stale, sizeof(stale), &stale_length, 0x9999, 1, 1, 0, 1, 0, 0) == 0);
+        Check(wire_push_host(&fp->wire, stale, stale_length) == 0);
+    }
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x5000, 1) == 0u);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning);
+    Check(window_coordinator_entry_count(fp->coordinator) >= 1u);
+    /* Room returns: the queued Retire goes out and the generation completes. */
+    fp->wire.backpressure_budget = 0u;
+    for (guard = 0; guard < 40u && count_type(&fp->wire, InteropMsgWindowRetire, 0x5000, 1) == 0u; ++guard) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x5000, 1) == 1u);
+    for (index = 1; index < InteropMaxWindows; ++index) retire_one_window(fp, 0x5000u + 0x10u * index);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2014,6 +2074,7 @@ int main(void) {
         {"minimum size is encoded", test_minimum_size_is_encoded},
         {"desktop change pauses observation", test_desktop_change_pauses_observation},
         {"review P1: stale reply under full outbound is dropped", test_review_p1_stale_reply_under_full_outbound_drops},
+        {"review: retire waits for FIFO room", test_review_retire_waits_for_fifo_room},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},

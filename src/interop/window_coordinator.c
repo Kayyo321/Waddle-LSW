@@ -63,6 +63,7 @@ typedef struct coord_entry_t {
     /** @brief Nonzero while capture is started for this generation. */
     uint32_t capture_started;
     /** @brief Last frame sequence consumed for this generation (0 before the first). */
+    uint32_t retire_sent; /**< 1 once WindowRetire was queued for this generation (IMPL 5.3: only after the drain). */
     uint64_t last_sequence;
     /** @brief Per slot: the published sequence still pinned by the host, or 0. */
     uint64_t pinned[CoordSlotsPerWindow];
@@ -600,22 +601,11 @@ static int handle_retire_intent(window_coordinator_t *coordinator, const interop
         return CoordEventDone;
     }
     if (entry->kind != CoordEntryAnnounced) return CoordEventDone;
-    if (coordinator->state == WindowCoordinatorStateRunning && outbound_full(coordinator)) {
-        coordinator->stats.admissions_held = saturate_add(coordinator->stats.admissions_held);
-        return CoordEventHold;
-    }
     capture_stop(coordinator, entry);
     slots_retire(coordinator, entry->window, entry->generation);
     if (entry->reducer != NULL) waddle_window_state_destroy(&entry->reducer);
     release_native(coordinator, entry->window, entry->generation);
     entry->kind = CoordEntryRetiring;
-    if (coordinator->state == WindowCoordinatorStateRunning) {
-        if (encode_retire(coordinator, entry->window, entry->generation) != 0) {
-            coordinator->state = WindowCoordinatorStateFaulted;
-            return CoordEventDone;
-        }
-        coordinator->stats.retires = saturate_add(coordinator->stats.retires);
-    }
     return CoordEventDone;
 }
 
@@ -681,6 +671,16 @@ static void progress_retirements(window_coordinator_t *coordinator) {
             if (entry->in_use == 0u || entry->kind != CoordEntryRetiring) continue;
             if (pins_held(entry) != 0u) continue;
             if (has_child(coordinator, entry->window, entry->generation) != 0u) continue;
+            if (coordinator->state == WindowCoordinatorStateRunning && entry->retire_sent == 0u) {
+                /* The FIFO-full case waits: a dropped Retire would leave the host holding a generation forever. */
+                if (outbound_full(coordinator)) continue;
+                if (encode_retire(coordinator, entry->window, entry->generation) != 0) {
+                    coordinator->state = WindowCoordinatorStateFaulted;
+                    return;
+                }
+                entry->retire_sent = 1u;
+                coordinator->stats.retires = saturate_add(coordinator->stats.retires);
+            }
             proof.capture_stopped = 1u;
             proof.pins_drained = 1u;
             status = interop_window_graph_complete_retire(coordinator->graph, coordinator->epoch, entry->window,
