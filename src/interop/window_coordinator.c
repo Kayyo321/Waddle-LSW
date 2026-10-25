@@ -123,6 +123,9 @@ struct window_coordinator_t {
 };
 
 static void enter_lost(window_coordinator_t *coordinator);
+static void retire_all_entries(window_coordinator_t *coordinator);
+static int complete_graph_retirements(window_coordinator_t *coordinator);
+static void drain_observer_destroys(window_coordinator_t *coordinator);
 
 /* ---- Small helpers ----------------------------------------------------------------------------- */
 
@@ -371,20 +374,18 @@ static void resync_reducer(window_coordinator_t *coordinator, coord_entry_t *ent
 static int run_reducer_input(window_coordinator_t *coordinator, coord_entry_t *entry,
                              const waddle_window_state_input_t *input) {
     waddle_window_state_plan_t plan;
+    waddle_window_state_status_t plan_status;
     uint64_t completed = 0;
     window_state_adapter_status_t status;
     int ok;
     if (entry->reducer == NULL) return 1;
-    if (waddle_window_state_plan(entry->reducer, entry->window, (uint32_t)entry->generation, input, &plan) ==
-        WaddleWindowStateUnsynchronized) {
+    /* One plan call per input. An unsynchronized reducer is resynchronized once and planned again. */
+    plan_status = waddle_window_state_plan(entry->reducer, entry->window, (uint32_t)entry->generation, input, &plan);
+    if (plan_status == WaddleWindowStateUnsynchronized) {
         resync_reducer(coordinator, entry);
-        if (waddle_window_state_plan(entry->reducer, entry->window, (uint32_t)entry->generation, input, &plan) !=
-            WaddleWindowStateOk) {
-            coordinator->stats.reducer_failures = saturate_add(coordinator->stats.reducer_failures);
-            return 1;
-        }
-    } else if (waddle_window_state_plan(entry->reducer, entry->window, (uint32_t)entry->generation, input, &plan) !=
-               WaddleWindowStateOk) {
+        plan_status = waddle_window_state_plan(entry->reducer, entry->window, (uint32_t)entry->generation, input, &plan);
+    }
+    if (plan_status != WaddleWindowStateOk) {
         coordinator->stats.reducer_failures = saturate_add(coordinator->stats.reducer_failures);
         return 1;
     }
@@ -730,9 +731,18 @@ static void publish_one(window_coordinator_t *coordinator, coord_entry_t *entry)
     entry->last_sequence = sequence;
     if (write_result == 0) {
         if (waddle_slot_runtime_mark_writer_entered(coordinator->slots, coordinator->epoch, entry->window, entry->generation,
-                                                    slot, sequence) != WaddleSlotOk ||
-            waddle_slot_runtime_commit_publish(coordinator->slots, coordinator->epoch, entry->window, entry->generation,
+                                                    slot, sequence) != WaddleSlotOk) {
+            /* The slot stays prepared but unentered; releasing it keeps the runtime drainable. */
+            (void)waddle_slot_runtime_cancel_unentered(coordinator->slots, coordinator->epoch, entry->window, entry->generation,
+                                                       slot, sequence);
+            coordinator->state = WindowCoordinatorStateFaulted;
+            return;
+        }
+        if (waddle_slot_runtime_commit_publish(coordinator->slots, coordinator->epoch, entry->window, entry->generation,
                                                slot, sequence) != WaddleSlotOk) {
+            /* A writer that entered and never committed would keep the runtime from draining. */
+            (void)waddle_slot_runtime_cancel_entered(coordinator->slots, coordinator->epoch, entry->window, entry->generation,
+                                                     slot, sequence);
             coordinator->state = WindowCoordinatorStateFaulted;
             return;
         }
@@ -1006,12 +1016,16 @@ static int config_valid(const window_coordinator_config_t *config) {
 
 /** @brief Frees a coordinator whose creation failed. No host ever saw it, so no drain proof is needed. */
 static void free_unpublished(window_coordinator_t *coordinator) {
-    if (coordinator->observer != NULL) (void)window_observer_destroy(&coordinator->observer);
+    if (coordinator->observer != NULL) {
+        /* A bound observer must be stopped before it can be destroyed; BadState means it never started. */
+        (void)window_observer_stop(coordinator->observer);
+        (void)window_observer_destroy(&coordinator->observer);
+    }
     if (coordinator->graph != NULL) (void)interop_window_graph_destroy(&coordinator->graph);
     if (coordinator->slots != NULL) {
-        if (waddle_slot_runtime_begin_drain(coordinator->slots, coordinator->epoch, 1u) == WaddleSlotOk) {
-            (void)waddle_slot_runtime_confirm_host_drained(coordinator->slots, coordinator->epoch, 1u);
-        }
+        /* The caller's proof covers every host buffer of this epoch; a refused earlier drain step must not block the free. */
+        (void)waddle_slot_runtime_begin_drain(coordinator->slots, coordinator->epoch, 1u);
+        (void)waddle_slot_runtime_confirm_host_drained(coordinator->slots, coordinator->epoch, 1u);
         (void)waddle_slot_runtime_destroy(&coordinator->slots);
     }
     if (coordinator->adapter != NULL) (void)window_state_adapter_destroy(&coordinator->adapter);
@@ -1052,10 +1066,17 @@ window_coordinator_status_t window_coordinator_create(const window_coordinator_c
 
 window_coordinator_status_t window_coordinator_destroy(window_coordinator_t **coordinator_slot, uint32_t host_buffers_destroyed) {
     window_coordinator_t *coordinator;
+    window_coordinator_status_t status;
     if (coordinator_slot == NULL) return WindowCoordinatorInvalidArgument;
     coordinator = *coordinator_slot;
     if (coordinator == NULL) return WindowCoordinatorOk;
-    if (enter(coordinator) != WindowCoordinatorOk) return WindowCoordinatorBusy;
+    status = enter(coordinator);
+    if (status != WindowCoordinatorOk) return status;
+    if (coordinator->state == WindowCoordinatorStateFaulted && host_buffers_destroyed == 1u) {
+        /* A faulted coordinator makes no progress; the host proof lets its entries be ended here. */
+        retire_all_entries(coordinator);
+        (void)complete_graph_retirements(coordinator);
+    }
     if (entry_count(coordinator) != 0u) {
         leave(coordinator);
         return WindowCoordinatorBusy;
@@ -1073,6 +1094,9 @@ window_coordinator_status_t window_coordinator_destroy(window_coordinator_t **co
         }
         coordinator->observer_started = 0u;
         (void)window_observer_sync_tracked(coordinator->observer);
+        /* Generations without an entry (an admission that was retried while its window went away) still listed by the graph would block the observer. */
+        drain_observer_destroys(coordinator);
+        (void)complete_graph_retirements(coordinator);
         if (window_observer_destroy(&coordinator->observer) != WindowObserverStatusOk) {
             leave(coordinator);
             return WindowCoordinatorBusy;
@@ -1082,9 +1106,9 @@ window_coordinator_status_t window_coordinator_destroy(window_coordinator_t **co
         (void)interop_window_graph_destroy(&coordinator->graph);
     }
     if (coordinator->slots != NULL) {
-        if (waddle_slot_runtime_begin_drain(coordinator->slots, coordinator->epoch, 1u) == WaddleSlotOk) {
-            (void)waddle_slot_runtime_confirm_host_drained(coordinator->slots, coordinator->epoch, 1u);
-        }
+        /* The caller's proof covers every host buffer of this epoch; a refused earlier drain step must not block the free. */
+        (void)waddle_slot_runtime_begin_drain(coordinator->slots, coordinator->epoch, 1u);
+        (void)waddle_slot_runtime_confirm_host_drained(coordinator->slots, coordinator->epoch, 1u);
         (void)waddle_slot_runtime_destroy(&coordinator->slots);
     }
     if (coordinator->adapter != NULL) {
@@ -1175,6 +1199,32 @@ window_coordinator_status_t window_coordinator_mark_lost(window_coordinator_t *c
 }
 
 /**
+ * @brief Ends every entry of the current epoch: stops capture, releases the native window and completes
+ *        the graph quarantine. Caller guarantees the host proof (every pin of the epoch is drained).
+ *
+ * @param[in,out] coordinator Owner-thread coordinator with the host proof already given.
+ */
+static void retire_all_entries(window_coordinator_t *coordinator) {
+    uint32_t index;
+    for (index = 0; index < InteropMaxWindows; ++index) {
+        coord_entry_t *entry = &coordinator->entries[index];
+        interop_window_retire_proof_t proof;
+        if (entry->in_use == 0u) continue;
+        if (entry->reducer != NULL) waddle_window_state_destroy(&entry->reducer);
+        if (entry->kind == CoordEntryAnnounced) {
+            capture_stop(coordinator, entry);
+            /* The slot runtime refuses to drain or be destroyed while an admitted window still holds its slots. */
+            slots_retire(coordinator, entry->window, entry->generation);
+        }
+        release_native(coordinator, entry->window, entry->generation);
+        proof.capture_stopped = 1u;
+        proof.pins_drained = 1u;
+        (void)interop_window_graph_complete_retire(coordinator->graph, coordinator->epoch, entry->window, entry->generation, &proof);
+        memset(entry, 0, sizeof(*entry));
+    }
+}
+
+/**
  * @brief Completes one graph RetireIntent without a wire message.
  *
  * Used by reconnect for generations that never had a coordinator entry (for example a window observed
@@ -1191,6 +1241,21 @@ static void complete_retirement_event(window_coordinator_t *coordinator, const i
     proof.pins_drained = 1u;
     (void)interop_window_graph_complete_retire(coordinator->graph, coordinator->epoch, event->window,
                                                event->generation, &proof);
+}
+
+/**
+ * @brief Applies the observer's retained protected Destroy entries to the graph before the observer is destroyed.
+ *
+ * The observer refuses to destroy while such entries remain. A full graph queue is drained by completing
+ * the queued retirements, then the pass is repeated; the attempt count is bounded.
+ *
+ * @param[in,out] coordinator Owner-thread coordinator with its observer stopped.
+ */
+static void drain_observer_destroys(window_coordinator_t *coordinator) {
+    for (uint32_t attempt = 0; attempt < 4u; ++attempt) {
+        if (window_observer_drain_protected_destroys(coordinator->observer) != WindowObserverStatusGraphQueueFull) return;
+        (void)complete_graph_retirements(coordinator);
+    }
 }
 
 /**
@@ -1220,7 +1285,6 @@ static int complete_graph_retirements(window_coordinator_t *coordinator) {
 window_coordinator_status_t window_coordinator_reconnect(window_coordinator_t *coordinator, uint64_t new_epoch,
                                                          uint32_t host_buffers_destroyed) {
     window_coordinator_status_t status = enter(coordinator);
-    uint32_t index;
     if (status != WindowCoordinatorOk) return status;
     if (coordinator->state != WindowCoordinatorStateLost) {
         leave(coordinator);
@@ -1240,18 +1304,7 @@ window_coordinator_status_t window_coordinator_reconnect(window_coordinator_t *c
         leave(coordinator);
         return WindowCoordinatorBackendFailed;
     }
-    for (index = 0; index < InteropMaxWindows; ++index) {
-        coord_entry_t *entry = &coordinator->entries[index];
-        interop_window_retire_proof_t proof;
-        if (entry->in_use == 0u) continue;
-        if (entry->reducer != NULL) waddle_window_state_destroy(&entry->reducer);
-        if (entry->kind == CoordEntryAnnounced) capture_stop(coordinator, entry);
-        release_native(coordinator, entry->window, entry->generation);
-        proof.capture_stopped = 1u;
-        proof.pins_drained = 1u;
-        (void)interop_window_graph_complete_retire(coordinator->graph, coordinator->epoch, entry->window, entry->generation, &proof);
-        memset(entry, 0, sizeof(*entry));
-    }
+    retire_all_entries(coordinator);
     (void)window_observer_sync_tracked(coordinator->observer);
     if (coordinator->observer_started != 0u) {
         (void)window_observer_stop(coordinator->observer);
@@ -1264,6 +1317,7 @@ window_coordinator_status_t window_coordinator_reconnect(window_coordinator_t *c
     }
     coordinator->staging_count = 0u;
     coordinator->staging_head = 0u;
+    drain_observer_destroys(coordinator);
     if (window_observer_destroy(&coordinator->observer) != WindowObserverStatusOk) {
         coordinator->state = WindowCoordinatorStateFaulted;
         leave(coordinator);
