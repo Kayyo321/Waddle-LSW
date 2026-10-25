@@ -51,6 +51,17 @@ pub const IoError = error{ Failed, Timeout };
 pub const DirState = enum { missing, ok, unsafe };
 /// Failure to spawn waddle-session.
 pub const SpawnError = error{Failed};
+/// What waitpid(WNOHANG) reports about a waddle-session child this client started.
+pub const ChildState = union(enum) {
+    /// Still running: nothing to act on yet.
+    running,
+    /// Terminated with this exit status. Status 0 is a handover (see connect_session).
+    exited: u8,
+    /// Terminated by this signal number.
+    signaled: u8,
+    /// waitpid failed (for example ECHILD); the child cannot be observed, so polling stops.
+    unknown,
+};
 
 /// Device selected for this invocation. Strings are owned by the hook implementation.
 pub const Device = struct {
@@ -91,8 +102,10 @@ pub const Hooks = struct {
     write_all: *const fn (*anyopaque, c_int, []const u8) IoError!void,
     /// Read some bytes; returns 0 at end of stream. timeout_ms < 0 waits forever.
     poll_read: *const fn (*anyopaque, c_int, []u8, i32) IoError!usize,
-    /// Spawn waddle-session for the device, detached.
-    spawn_session: *const fn (*anyopaque, []const u8) SpawnError!void,
+    /// Spawn waddle-session for the device, detached; returns the child's pid (positive).
+    spawn_session: *const fn (*anyopaque, []const u8) SpawnError!c_int,
+    /// Observe a child started by spawn_session without blocking; reaps it once it has ended.
+    poll_child: *const fn (*anyopaque, c_int) ChildState,
     /// Best-effort desktop notification; never fails the command.
     notify: *const fn (*anyopaque, []const u8) void,
     /// Delegate a console executable to `waddle exec`; returns its exit code.
@@ -114,6 +127,12 @@ const Sent = struct {
 const Conn = struct {
     fd: c_int = -1,
     spawned: bool = false,
+    /// pid of the waddle-session this client started; 0 when none was started or it has ended.
+    child: c_int = 0,
+    /// How the child ended unsuccessfully before the socket became connectable; null otherwise.
+    child_failure: ?ChildState = null,
+    /// Set once the single extra retry after a failed child exit has been taken.
+    child_retry_spent: bool = false,
 };
 
 /// Outcome of waiting for the reply to one frame.
@@ -273,11 +292,11 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
     const token = pick_token(hooks);
     const wait = request.wait != 0;
     var conn = Conn{};
-    if (connect_session(hooks, a, &device, &conn)) |code| return code;
+    if (connect_session(hooks, &device, &conn)) |code| return code;
     var result: u8 = 0;
     for (sent.items, 0..) |item, position| {
         if (conn.fd < 0) {
-            if (connect_session(hooks, a, &device, &conn)) |code| {
+            if (connect_session(hooks, &device, &conn)) |code| {
                 if (result == 0) result = code;
                 break;
             }
@@ -368,7 +387,59 @@ fn build_frame(a: std.mem.Allocator, item: Sent, token: ?[]const u8, request_id:
     return buffer[0..length];
 }
 
-fn connect_session(hooks: *const Hooks, a: std.mem.Allocator, device: *const Device, conn: *Conn) ?u8 {
+/// Fixed-capacity diagnostic text built without std.fmt or allocation. Every message this client
+/// prints is at most a device name (63 bytes) plus a fixed sentence, so 256 bytes always fit.
+const Message = struct {
+    buffer: [256]u8 = undefined,
+    len: usize = 0,
+
+    fn add(self: *Message, text: []const u8) void {
+        @memcpy(self.buffer[self.len..][0..text.len], text);
+        self.len += text.len;
+    }
+
+    /// Append a decimal number (0 to 255) without leading zeros.
+    fn add_number(self: *Message, value: u8) void {
+        var digits: [3]u8 = undefined;
+        var count: usize = 0;
+        var rest = value;
+        while (true) {
+            digits[count] = '0' + rest % 10;
+            count += 1;
+            rest /= 10;
+            if (rest == 0) break;
+        }
+        while (count > 0) {
+            count -= 1;
+            self.add(digits[count..][0..1]);
+        }
+    }
+
+    fn slice(self: *const Message) []const u8 {
+        return self.buffer[0..self.len];
+    }
+};
+
+/// Diagnostic for a waddle-session that ended before the socket appeared.
+fn child_failure_message(failure: ChildState) Message {
+    var message = Message{};
+    switch (failure) {
+        .exited => |status| {
+            message.add("waddle: waddle-session exited with status ");
+            message.add_number(status);
+            message.add(" before the Windows session started");
+        },
+        .signaled => |signal| {
+            message.add("waddle: waddle-session was killed by signal ");
+            message.add_number(signal);
+            message.add(" before the Windows session started");
+        },
+        .running, .unknown => unreachable,
+    }
+    return message;
+}
+
+fn connect_session(hooks: *const Hooks, device: *const Device, conn: *Conn) ?u8 {
     const dir = std.fs.path.dirname(device.session_path) orelse unreachable;
     const start = hooks.now_ms(hooks.ctx);
     const deadline = start + DeadlineMs;
@@ -392,9 +463,35 @@ fn connect_session(hooks: *const Hooks, a: std.mem.Allocator, device: *const Dev
                 return 125;
             },
         }
+        if (conn.child != 0) {
+            switch (hooks.poll_child(hooks.ctx, conn.child)) {
+                .running => {},
+                .unknown => conn.child = 0,
+                // Status 0 is a handover: waddle-session may have forked a background session
+                // that will create the socket, so retries continue to the deadline (no failure).
+                .exited => |status| {
+                    conn.child = 0;
+                    if (status != 0) conn.child_failure = .{ .exited = status };
+                },
+                .signaled => |signal| {
+                    conn.child = 0;
+                    conn.child_failure = .{ .signaled = signal };
+                },
+            }
+        }
+        if (conn.child_failure) |failure| {
+            // One more retry after a failed exit covers a socket created just before the exit;
+            // if the socket is still not connectable then, fail now instead of waiting out the deadline.
+            if (conn.child_retry_spent) {
+                const message = child_failure_message(failure);
+                hooks.message(hooks.ctx, message.slice());
+                return 125;
+            }
+            conn.child_retry_spent = true;
+        }
         if (!conn.spawned) {
             conn.spawned = true;
-            hooks.spawn_session(hooks.ctx, device.name) catch {
+            conn.child = hooks.spawn_session(hooks.ctx, device.name) catch {
                 hooks.message(hooks.ctx, "waddle open: could not start waddle-session");
                 return 125;
             };
@@ -405,7 +502,11 @@ fn connect_session(hooks: *const Hooks, a: std.mem.Allocator, device: *const Dev
             notice_sent = true;
         }
         if (now >= deadline) {
-            hooks.message(hooks.ctx, std.fmt.allocPrint(a, "waddle: Windows ({s}) did not start", .{device.name}) catch "waddle: Windows did not start");
+            var message = Message{};
+            message.add("waddle: Windows (");
+            message.add(device.name);
+            message.add(") did not start");
+            hooks.message(hooks.ctx, message.slice());
             return 125;
         }
         hooks.sleep_ms(hooks.ctx, backoff);
@@ -526,6 +627,7 @@ const RealHooks = struct {
             .write_all = write_all,
             .poll_read = poll_read,
             .spawn_session = spawn_session,
+            .poll_child = poll_child,
             .notify = notify,
             .delegate = delegate,
             .message = message,
@@ -666,7 +768,7 @@ const RealHooks = struct {
         return std.posix.read(fd, buffer) catch error.Failed;
     }
 
-    fn spawn_session(ctx: *anyopaque, device: []const u8) SpawnError!void {
+    fn spawn_session(ctx: *anyopaque, device: []const u8) SpawnError!c_int {
         _ = ctx;
         // Device names are validated to at most 63 bytes before they reach this hook.
         var name_z: [c.WaddleMaxDeviceNameLen]u8 = undefined;
@@ -682,7 +784,19 @@ const RealHooks = struct {
                 return spawn_detached(path.ptr, &argv_storage);
             } else |_| {}
         } else |_| {}
-        try spawn_detached("waddle-session", &argv_storage);
+        return spawn_detached("waddle-session", &argv_storage);
+    }
+
+    fn poll_child(ctx: *anyopaque, pid: c_int) ChildState {
+        _ = ctx;
+        var status: c_int = 0;
+        const result = waitpid(pid, &status, WaitNoHang);
+        if (result == 0) return .running;
+        if (result != pid) return .unknown;
+        // Without WUNTRACED a reaped child has either exited (low 7 bits zero) or been signaled.
+        const low = status & 0x7f;
+        if (low == 0) return .{ .exited = @intCast((status >> 8) & 0xff) };
+        return .{ .signaled = @intCast(low) };
     }
 
     fn notify(ctx: *anyopaque, text: []const u8) void {
@@ -690,7 +804,7 @@ const RealHooks = struct {
         var buffer: [1024]u8 = undefined;
         const z = std.fmt.bufPrintZ(&buffer, "{s}", .{text}) catch return;
         var argv_storage = [_:null]?[*:0]const u8{ "notify-send", "--app-name=waddle", z.ptr };
-        spawn_detached("notify-send", &argv_storage) catch {};
+        if (spawn_detached("notify-send", &argv_storage)) |_| {} else |_| {}
     }
 
     fn delegate(ctx: *anyopaque, device: []const u8, guest: []const u8, tail: []const []const u8) u8 {
@@ -733,8 +847,13 @@ extern "c" fn posix_spawn_file_actions_addopen(actions: *anyopaque, fd: c_int, p
 /// glibc flag: start the child in a new session (POSIX_SPAWN_SETSID).
 const SpawnSetsid: c_short = 0x80;
 
-/// Spawn a program fully detached: new session, stdio on /dev/null, no wait.
-fn spawn_detached(program: [*:0]const u8, argv: [*:null]const ?[*:0]const u8) SpawnError!void {
+/// WNOHANG for waitpid on Linux (glibc and musl agree on the value).
+const WaitNoHang: c_int = 1;
+extern "c" fn waitpid(pid: c_int, status: *c_int, options: c_int) c_int;
+
+/// Spawn a program fully detached: new session, stdio on /dev/null, no wait. Returns the child pid
+/// so the caller can observe it with waitpid; the caller owns reaping it.
+fn spawn_detached(program: [*:0]const u8, argv: [*:null]const ?[*:0]const u8) SpawnError!c_int {
     var attr: [1024]u8 align(16) = undefined;
     var actions: [512]u8 align(16) = undefined;
     // The attribute and action objects are initialized in place; these calls cannot fail for
@@ -748,6 +867,7 @@ fn spawn_detached(program: [*:0]const u8, argv: [*:null]const ?[*:0]const u8) Sp
     }
     var pid: std.c.pid_t = 0;
     if (posix_spawnp(&pid, program, &actions, &attr, argv, @ptrCast(std.c.environ)) != 0) return error.Failed;
+    return pid;
 }
 
 // Test-only fixtures.
@@ -779,6 +899,9 @@ const Fake = struct {
     written_len: usize = 0,
     spawns: usize = 0,
     spawn_fails: bool = false,
+    /// Scripted waitpid results for the child, one per poll; the last entry repeats.
+    child_script: []const ChildState = &.{.running},
+    child_polls: usize = 0,
     notices: usize = 0,
     notice_text: [64]u8 = undefined,
     notice_len: usize = 0,
@@ -819,6 +942,7 @@ const Fake = struct {
             .write_all = fake_write,
             .poll_read = fake_poll,
             .spawn_session = fake_spawn,
+            .poll_child = fake_poll_child,
             .notify = fake_notify,
             .delegate = fake_delegate,
             .message = fake_message,
@@ -933,11 +1057,23 @@ fn fake_poll(ctx: *anyopaque, fd: c_int, buffer: []u8, timeout_ms: i32) IoError!
     return count;
 }
 
-fn fake_spawn(ctx: *anyopaque, device: []const u8) SpawnError!void {
+/// pid reported for the fake child; any positive value stands for a real child.
+const FakeChildPid: c_int = 4242;
+
+fn fake_spawn(ctx: *anyopaque, device: []const u8) SpawnError!c_int {
     _ = device;
     const f = Fake.of(ctx);
     f.spawns += 1;
     if (f.spawn_fails) return error.Failed;
+    return FakeChildPid;
+}
+
+fn fake_poll_child(ctx: *anyopaque, pid: c_int) ChildState {
+    const f = Fake.of(ctx);
+    std.debug.assert(pid == FakeChildPid);
+    const index = @min(f.child_polls, f.child_script.len - 1);
+    f.child_polls += 1;
+    return f.child_script[index];
 }
 
 fn fake_notify(ctx: *anyopaque, text: []const u8) void {
@@ -1149,6 +1285,56 @@ test "spawn failure and connect failure exit 125 with a message" {
     try testing.expectEqual(@as(usize, 0), connect_fail.spawns);
 }
 
+test "a child that exits nonzero before the socket appears fails after one more retry, naming its status" {
+    var fake = Fake{ .connect_script = &.{error.NotFound}, .child_script = &.{.{ .exited = 3 }} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 1), fake.spawns);
+    // Connect before the spawn, a connect that observes the exit, then the one extra retry that fails.
+    try testing.expectEqual(@as(usize, 3), fake.connect_calls);
+    try testing.expectEqual(@as(usize, 1), fake.child_polls);
+    try testing.expect(fake.now - 1000 < 1000);
+    try testing.expectEqualSlices(u8, "waddle: waddle-session exited with status 3 before the Windows session started", fake.message_at(fake.message_count - 1));
+}
+
+test "a child that exits nonzero still connects when the socket appears on the extra retry" {
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ok});
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{ error.NotFound, @as(c_int, 9) }, .child_script = &.{.{ .exited = 3 }} };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 2), fake.connect_calls);
+}
+
+test "a child killed by a signal fails the same way and names the signal" {
+    var fake = Fake{ .connect_script = &.{error.NotFound}, .child_script = &.{.{ .signaled = 9 }} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqualSlices(u8, "waddle: waddle-session was killed by signal 9 before the Windows session started", fake.message_at(fake.message_count - 1));
+}
+
+test "a child whose state cannot be observed stops being polled and retries run to the deadline" {
+    var fake = Fake{ .connect_script = &.{error.Refused}, .child_script = &.{.unknown} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 1), fake.child_polls);
+    try testing.expect(fake.now >= 1000 + DeadlineMs);
+    try testing.expectEqualSlices(u8, "waddle: Windows (dev1) did not start", fake.message_at(fake.message_count - 1));
+}
+
+test "a three-digit exit status is printed in full" {
+    var fake = Fake{ .connect_script = &.{error.NotFound}, .child_script = &.{.{ .exited = 130 }} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqualSlices(u8, "waddle: waddle-session exited with status 130 before the Windows session started", fake.message_at(fake.message_count - 1));
+}
+
+test "exit status 0 is a handover: the child is no longer polled and retries run to the deadline" {
+    var fake = Fake{ .connect_script = &.{error.Refused}, .child_script = &.{.{ .exited = 0 }} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 1), fake.child_polls);
+    try testing.expect(fake.connect_calls > 100);
+    try testing.expect(fake.now >= 1000 + DeadlineMs);
+    try testing.expectEqualSlices(u8, "waddle: Windows (dev1) did not start", fake.message_at(fake.message_count - 1));
+}
+
 test "an unsafe runtime directory is refused before any connect" {
     var fake = Fake{ .dir = .unsafe };
     try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
@@ -1310,6 +1496,49 @@ test "production dir_state accepts only a private directory owned by this user" 
     try testing.expectEqual(DirState.missing, RealHooks.dir_state(&real, missing));
 }
 
+test "production poll_child reports a real child's exit status and terminating signal" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("bin");
+    var bin = try tmp.dir.openDir("bin", .{});
+    defer bin.close();
+    try write_script(bin, "exit3", "#!/bin/sh\nexit 3\n");
+    try write_script(bin, "selfkill", "#!/bin/sh\nkill -9 $$\n");
+
+    var real = RealHooks.init(null, null);
+    const exit3 = try tmp_path(testing.allocator, &tmp, "bin/exit3");
+    defer testing.allocator.free(exit3);
+    const exit3_z = try testing.allocator.dupeZ(u8, exit3);
+    defer testing.allocator.free(exit3_z);
+    var exit_argv = [_:null]?[*:0]const u8{exit3_z.ptr};
+    const exit_pid = try spawn_detached(exit3_z.ptr, &exit_argv);
+    var state: ChildState = RealHooks.poll_child(&real, exit_pid);
+    var waited: usize = 0;
+    while (state == .running and waited < 500) : (waited += 1) {
+        std.time.sleep(10 * std.time.ns_per_ms);
+        state = RealHooks.poll_child(&real, exit_pid);
+    }
+    try testing.expect(state == .exited);
+    try testing.expectEqual(@as(u8, 3), state.exited);
+    // Reaped by the first terminal observation: a second poll finds no such child.
+    try testing.expect(RealHooks.poll_child(&real, exit_pid) == .unknown);
+
+    const kill = try tmp_path(testing.allocator, &tmp, "bin/selfkill");
+    defer testing.allocator.free(kill);
+    const kill_z = try testing.allocator.dupeZ(u8, kill);
+    defer testing.allocator.free(kill_z);
+    var kill_argv = [_:null]?[*:0]const u8{kill_z.ptr};
+    const kill_pid = try spawn_detached(kill_z.ptr, &kill_argv);
+    state = .running;
+    waited = 0;
+    while (state == .running and waited < 500) : (waited += 1) {
+        std.time.sleep(10 * std.time.ns_per_ms);
+        state = RealHooks.poll_child(&real, kill_pid);
+    }
+    try testing.expect(state == .signaled);
+    try testing.expectEqual(@as(u8, 9), state.signaled);
+}
+
 test "production connect distinguishes a live socket, a stale socket file, and a missing one" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1429,7 +1658,7 @@ test "production spawn runs waddle-session detached from PATH and notify-send is
     defer _ = c.setenv("PATH", old_path.ptr, 1);
 
     var real = RealHooks.init(null, null);
-    try RealHooks.spawn_session(&real, "dev1");
+    _ = try RealHooks.spawn_session(&real, "dev1");
     RealHooks.notify(&real, "Starting Windows");
     // Both helpers run detached; poll until each has written its marker, bounded to 2 s.
     var waited: usize = 0;
