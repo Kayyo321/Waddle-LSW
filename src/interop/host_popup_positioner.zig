@@ -254,6 +254,26 @@ export fn host_popup_positioner_reposition(guest: ?*const rect_t, scale: u32, re
     return .Ok;
 }
 
+/// Constants exported to the C ABI, indexed by `host_popup_positioner_constant`.
+const exported_constants = [_]u32{
+    MaxScale,
+    @intCast(MaxLogicalExtent),
+    AnchorTopLeft,
+    GravityBottomRight,
+    ConstraintSlideFlip,
+};
+
+/// C ABI: read one of the frozen constants compiled into this object. The index is one of the
+/// `HostPopupConstant*` values in `host_popup_positioner.h`. Any other index returns 0, which is never
+/// a valid constant, so a C caller can detect a mismatched header.
+///
+/// @param which In. Constant index, 0..4.
+/// @return The constant value, or 0 for an unknown index. Thread safety: pure; any thread.
+export fn host_popup_positioner_constant(which: u32) callconv(.C) u32 {
+    if (which >= exported_constants.len) return 0;
+    return exported_constants[which];
+}
+
 comptime {
     // Layout frozen by src/interop/host_popup_positioner.h (checked there by _Static_assert).
     if (@sizeOf(rect_t) != 16) @compileError("host popup rect layout changed");
@@ -314,6 +334,10 @@ const abi_shim_t = struct {
 
     fn request(guest: ?*const rect_t, scale: u32, parent_width: u32, parent_height: u32, out: ?*popup_request_t) status_t {
         return @call(.never_inline, host_popup_positioner_request, .{ guest, scale, parent_width, parent_height, out });
+    }
+
+    fn constant(which: u32) u32 {
+        return @call(.never_inline, host_popup_positioner_constant, .{which});
     }
 
     fn reposition(guest: ?*const rect_t, scale: u32, requested: ?*const popup_request_t, adjusted_x: i32, adjusted_y: i32, out: ?*rect_t) status_t {
@@ -625,4 +649,14 @@ test "C ABI maps every error to its status and writes output only on success" {
     // Scale 8 request for (-8, 16); the compositor places it at (0, 0): x' = -8 + (0 + 1) * 8 = 0, y' = 16 + (0 - 2) * 8 = 0.
     try testing.expectEqual(status_t.Ok, abi_shim_t.reposition(&guest, 8, &requested, 0, 0, &guest_out));
     try testing.expectEqual(make_rect(0, 0, 9, 17), guest_out);
+}
+
+test "exported constants match the module constants and unknown indexes return zero" {
+    try testing.expectEqual(@as(u32, MaxScale), abi_shim_t.constant(0));
+    try testing.expectEqual(@as(u32, 32768), abi_shim_t.constant(1));
+    try testing.expectEqual(AnchorTopLeft, abi_shim_t.constant(2));
+    try testing.expectEqual(GravityBottomRight, abi_shim_t.constant(3));
+    try testing.expectEqual(ConstraintSlideFlip, abi_shim_t.constant(4));
+    try testing.expectEqual(@as(u32, 0), abi_shim_t.constant(5));
+    try testing.expectEqual(@as(u32, 0), abi_shim_t.constant(std.math.maxInt(u32)));
 }

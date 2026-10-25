@@ -20,6 +20,26 @@ enum host_popup_positioner_constants_t {
     HostPopupConstraintSlideFlip = 15 /**< constraint_adjustment slide_x | slide_y | flip_x | flip_y. */
 };
 
+/** @brief Index of a frozen constant read through `host_popup_positioner_constant`. */
+enum host_popup_constant_t {
+    HostPopupConstantMaxScale = 0, /**< Value of HostPopupMaxScale. */
+    HostPopupConstantMaxLogicalExtent = 1, /**< Value of HostPopupMaxLogicalExtent. */
+    HostPopupConstantAnchorTopLeft = 2, /**< Value of HostPopupAnchorTopLeft. */
+    HostPopupConstantGravityBottomRight = 3, /**< Value of HostPopupGravityBottomRight. */
+    HostPopupConstantConstraintSlideFlip = 4 /**< Value of HostPopupConstraintSlideFlip. */
+};
+
+/**
+ * @brief Read a constant as compiled into the Zig object.
+ *
+ * The C test compares every header constant with this value, so a header that drifts from the
+ * implementation fails the build.
+ *
+ * @param which In. A `host_popup_constant_t` index. Any other index returns 0, which is never a valid constant.
+ * @return The constant value. Thread safety: any thread.
+ */
+uint32_t host_popup_positioner_constant(uint32_t which);
+
 /** @brief Result of every positioner function. */
 typedef enum host_popup_status_t {
     HostPopupOk = 0, /**< Output written. */

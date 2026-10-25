@@ -32,12 +32,15 @@ static int same(host_popup_rect_t left, host_popup_rect_t right) {
 }
 
 static int check_constants(void) {
-    Check(HostPopupMaxScale == 8);
-    Check(HostPopupMaxLogicalExtent == 32768);
-    Check(HostPopupAnchorTopLeft == 5);
-    Check(HostPopupGravityBottomRight == 8);
-    Check(HostPopupConstraintSlideFlip == 15);
+    /* The header enum values must equal the constants compiled into the Zig object. */
+    Check(HostPopupMaxScale == host_popup_positioner_constant(HostPopupConstantMaxScale));
+    Check(HostPopupMaxLogicalExtent == host_popup_positioner_constant(HostPopupConstantMaxLogicalExtent));
+    Check(HostPopupAnchorTopLeft == host_popup_positioner_constant(HostPopupConstantAnchorTopLeft));
+    Check(HostPopupGravityBottomRight == host_popup_positioner_constant(HostPopupConstantGravityBottomRight));
+    Check(HostPopupConstraintSlideFlip == host_popup_positioner_constant(HostPopupConstantConstraintSlideFlip));
+    Check(host_popup_positioner_constant(5) == 0);
     Check(sizeof(host_popup_rect_t) == 16);
+    Check(sizeof(host_popup_request_t) == 44);
     return 0;
 }
 
@@ -76,9 +79,9 @@ static int check_request(void) {
     Check(out.offset_x == 0 && out.offset_y == 0);
     Check(out.width == 20 && out.height == 10);
     Check(out.anchor_width == 1 && out.anchor_height == 1);
-    Check(out.anchor == HostPopupAnchorTopLeft);
-    Check(out.gravity == HostPopupGravityBottomRight);
-    Check(out.constraint_adjustment == HostPopupConstraintSlideFlip);
+    Check(out.anchor == host_popup_positioner_constant(HostPopupConstantAnchorTopLeft));
+    Check(out.gravity == host_popup_positioner_constant(HostPopupConstantGravityBottomRight));
+    Check(out.constraint_adjustment == host_popup_positioner_constant(HostPopupConstantConstraintSlideFlip));
 
     /* Negative origin: clamped to the parent edge, the remainder is the offset. */
     guest = rect(-7, -3, 4, 4);
