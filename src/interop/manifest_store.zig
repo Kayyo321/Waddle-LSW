@@ -2261,6 +2261,8 @@ pub const store_t = struct {
         const fd = io_openat3(parent.fd, leaf, c.O_RDONLY | c.O_CLOEXEC | c.O_NOFOLLOW | c.O_NONBLOCK);
         if (fd < 0) {
             if (errno_value() == c.ENOENT) return null;
+            // A socket, FIFO-less device node, or other special object cannot be opened as a regular file.
+            if (errno_value() == c.ENXIO) return error.AccessDenied;
             return native_error();
         }
         defer _ = c.close(fd);
@@ -9570,6 +9572,36 @@ test "artifact unlink moves the name aside, verifies the moved inode, and return
     try std.testing.expectError(error.FileNotFound, fixture.data.access(staging, .{}));
     const again = try store.unlink_owned_artifact(fixture.data.fd, "applications/target.desktop", current, txid);
     try std.testing.expect(std.meta.activeTag(again) == .AlreadyAbsent);
+}
+
+test "a socket at a recorded path is foreign, not an I/O failure, for status and remove" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const digest = hash_hex("socket bytes");
+    const path = std.fmt.allocPrint(scratch, "{s}/applications/socket.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const spec = test_spec_t{ .id = "desktop:socket", .kind = "desktop_entry", .path = path, .sha256 = &digest };
+    const specs = [_]test_spec_t{spec};
+    const original = test_document(scratch, 1, &specs);
+    const candidate = test_document(scratch, 1, &[_]test_spec_t{});
+    try write_test_file(fixture.state.fd, "manifest.json", original, 0o600);
+    const sock = std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0) catch return error.SkipZigTest;
+    defer std.posix.close(sock);
+    var addr = try std.net.Address.initUnix(path);
+    std.posix.bind(sock, &addr.any, addr.getOsSockLen()) catch return error.SkipZigTest;
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    var listed = try store.status(std.testing.allocator);
+    defer listed.deinit();
+    try std.testing.expectEqual(record_state_t.Foreign, listed.items[0].state);
+    const receipt = try store.remove(.{ .record_id = "desktop:socket", .candidate_manifest = candidate });
+    try std.testing.expectEqual(remove_outcome_t.KeptForeign, receipt.outcome);
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    try std.testing.expectEqualStrings(original, on_disk);
 }
 
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
