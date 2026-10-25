@@ -76,7 +76,17 @@ class fresh_native_guest_tests_t(unittest.TestCase):
     def _qemu_validator(self, qemu: Path, stamp: Path) -> dict[str, object]:
         self.assertEqual(qemu, self.qemu_build / "qemu-system-x86_64")
         self.assertEqual(stamp, self.qemu_build / ".waddle-qemu-build.json")
-        return {"path": str(qemu), "version": "pinned-test-qemu", "sha256": "ab" * 32}
+        # Match native_guest_runner._validate_qemu: location is supplied by
+        # the caller, while the validator returns provenance only.
+        return {"version": "pinned-test-qemu", "sha256": "ab" * 32,
+                "source_commit": "b2995afed254e4804611df52210067a4d5dbdf0b",
+                "accelerators": "tcg", "stamp": str(stamp)}
+
+    def test_validated_qemu_path_is_separate_from_real_provenance_shape(self) -> None:
+        validated = fresh._validate_config(self._config(), qemu_validator=self._qemu_validator)
+        self.assertEqual(validated["qemu_path"], str(self.qemu_build / "qemu-system-x86_64"))
+        self.assertEqual(set(validated["qemu"]),
+                         {"version", "sha256", "source_commit", "accelerators", "stamp"})
 
     def _preparation_run(self, *, fail_tool: str | None = None):
         def run(argv, **kwargs):

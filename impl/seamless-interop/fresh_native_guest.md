@@ -137,3 +137,11 @@ explicit field in `_validate_config`, consume that field, and add a regression
 using the real provenance result shape. Do not weaken QEMU provenance checks.
 The blank disk, private vars/TPM directory and answer media remain recoverable;
 no QEMU or swtpm process was started. Installation and guest startup are untested.
+
+## Resume repair (2026-10-25)
+
+The result-shape KeyError is repaired in the separate location field
+`validated["qemu_path"]`; provenance remains unchanged and tests now supply
+exactly the real validator keys. All16 prepare-only units pass. The retained
+failed run is not overwritten; actual new preparation/install remains a
+separate reviewed operation.

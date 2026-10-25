@@ -1221,10 +1221,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     retained native assets, the preparation KeyError, unapproved coordinator
     proposals, and secret/base-image safeguards. HEAD identifies this checkpoint.
 
-- **Commit `HEAD`**: `docs(interop): accept qualified observer and native adapter milestones`
+- **Commit `3d07daf`**: `docs(interop): accept qualified observer and native adapter milestones`
   - **Task Impact**: +30% to TODO #10 (+1.20% overall,18.00% ->19.20%).
   - **Summary**: Accepts the existing portable observer15% and native adapter15%
     allocations only after source89ff058 passed local full gates and exact
     descendantd77dcb3 passed actual Windows CI40144415938. Saved job metadata
     and raw compressed Windows log in ci_evidence_2026_10_25. All three exact
     checkpoint workflows are green. No installed-session/coordinator credit.
+
+- **Commit `HEAD`**: `fix(interop): retain validated QEMU location outside provenance metadata`
+  - **Task Impact**: +0% to TODO #34; preparation repair only.
+  - **Summary**: Repair the real prepare KeyError saved at0965410 by keeping
+    canonical binary location separate from immutable QEMU provenance. Tests
+    now use the real validator result keys rather than inventing a path key;
+    all16 preparation units pass. No guest boot or native acceptance claimed.

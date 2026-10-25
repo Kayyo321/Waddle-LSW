@@ -207,6 +207,9 @@ def _validate_config(config: fresh_guest_config_t, *,
                        "size_bytes": guest_exec.stat().st_size},
         "ovmf_code": {"path": str(ovmf_code), "sha256": _sha256_file(ovmf_code)},
         "ovmf_vars_template": {"path": str(ovmf_vars), "sha256": _sha256_file(ovmf_vars)},
+        # Keep the canonical binary path separately: native_guest_runner's
+        # provenance result intentionally describes identity, not location.
+        "qemu_path": str(qemu),
         "qemu": qemu_info,
         "tools": {"qemu_img": str(Path(qemu_img).resolve(strict=True)),
                   "swtpm": str(Path(swtpm).resolve(strict=True)),
@@ -597,7 +600,7 @@ def prepare_fresh_guest(config: fresh_guest_config_t = fresh_guest_config_t(), *
         os.chmod(answer_iso, 0o600)
         shutil.rmtree(stage)
 
-        qemu_path = Path(validated["qemu"]["path"])
+        qemu_path = Path(validated["qemu_path"])
         qemu_args = _qemu_argv(run_root, qemu_path, guest_cid=config.guest_cid,
                                vhost_fd="CALLER_VALIDATED_VHOST_VSOCK_FD",
                                ovmf_code=Path(validated["ovmf_code"]["path"]),
