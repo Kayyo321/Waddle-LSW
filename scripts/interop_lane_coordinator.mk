@@ -49,3 +49,59 @@ interop-window-state-abi-sanitizers: $(WsAbiObj)
 # The recorder compiles the module with -Iinclude only; see the report for the required patch.
 interop-window-state-abi-coverage:
 	python3 tests/av/coverage.py window_state_abi
+
+# ---- Native window-state adapter (TODO #13, native adapters 25 percent) ------------------------
+# src/interop/window_state_adapter_windows.c is the guest Win32 adapter. Its portable logic runs
+# against tests/interop/window_state_adapter_double.h on every platform. The _WIN32 table is compiled
+# only by the mingw cross build of the native smoke below, and is executed by Windows CI only.
+#
+# Targets:
+#   make interop-window-state-adapter-test       double suite and reducer integration, plain and sanitized
+#   make interop-window-state-adapter-coverage   gcov line and branch gate (90 percent) on the portable logic
+#   make build/interop_window_state_adapter_native_test.exe
+#                                                mingw cross build of the Windows smoke (not executed here)
+#
+# Run the Windows smoke on a Windows desktop as: .\build\interop_window_state_adapter_native_test.exe
+
+WsaAdapterBuild := build/window_state_adapter
+WsaAdapterSrc := src/interop/window_state_adapter_windows.c
+WsaAdapterHdr := src/interop/window_state_adapter_windows.h
+WsaAdapterDouble := tests/interop/window_state_adapter_double.h
+WsaAdapterSuite := tests/interop/window_state_adapter_suite.c
+WsaAdapterIntegration := tests/interop/window_state_adapter_integration.c
+WsaAdapterNative := tests/interop/window_state_adapter_native_windows.c
+WsaMingwCC ?= x86_64-w64-mingw32-gcc
+WsaAdapterCFlags := -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Isrc/interop -Itests/interop
+WsaAdapterSanFlags := -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer
+WsaAdapterWrap := -Wl,--wrap=calloc
+WsaAdapterWinDefs := -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE
+WsaAdapterSanEnv := ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+
+InteropLaneTests += interop-window-state-adapter-test
+InteropLaneCoverage += interop-window-state-adapter-coverage
+
+$(WsaAdapterBuild):
+	mkdir -p $@
+
+.PHONY: interop-window-state-adapter-test interop-window-state-adapter-coverage
+
+# Double suite and reducer integration, each plain and under ASan, LSan and UBSan with leak detection on.
+# The integration links the ReleaseSafe Zig ABI object of the window-state ABI lane.
+interop-window-state-adapter-test: $(WsAbiObj) $(WsaAdapterSrc) $(WsaAdapterHdr) $(WsaAdapterDouble) | $(WsaAdapterBuild)
+	$(CC) $(WsaAdapterCFlags) $(WsaAdapterWrap) $(WsaAdapterSrc) $(WsaAdapterSuite) -o $(WsaAdapterBuild)/suite
+	$(WsaAdapterBuild)/suite
+	$(CC) $(WsaAdapterCFlags) $(WsaAdapterSanFlags) $(WsaAdapterWrap) $(WsaAdapterSrc) $(WsaAdapterSuite) -o $(WsaAdapterBuild)/suite_san
+	$(WsaAdapterSanEnv) $(WsaAdapterBuild)/suite_san
+	$(CC) $(WsaAdapterCFlags) $(WsaAdapterSrc) $(WsaAdapterIntegration) $(WsAbiObj) -o $(WsaAdapterBuild)/integration
+	$(WsaAdapterBuild)/integration
+	$(CC) $(WsaAdapterCFlags) $(WsaAdapterSanFlags) $(WsaAdapterSrc) $(WsaAdapterIntegration) $(WsAbiObj) -o $(WsaAdapterBuild)/integration_san
+	$(WsaAdapterSanEnv) $(WsaAdapterBuild)/integration_san
+
+# gcov line and branch gate on the portable logic, driven by the double suite (see the script header).
+interop-window-state-adapter-coverage:
+	python3 tests/interop/window_state_adapter_coverage.py
+
+# Cross-built Windows smoke. Compiled with mingw, linked against user32; executed only by Windows CI.
+build/interop_window_state_adapter_native_test.exe: $(WsaAdapterNative) $(WsaAdapterSrc) $(WsaAdapterHdr) src/interop/window_state.h
+	mkdir -p build
+	$(WsaMingwCC) $(WsaAdapterCFlags) $(WsaAdapterWinDefs) $(WsaAdapterNative) $(WsaAdapterSrc) -luser32 -o $@
