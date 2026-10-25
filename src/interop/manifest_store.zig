@@ -379,6 +379,15 @@ pub const restore_receipt_t = struct {
     target: artifact_identity_t,
 };
 
+/// True for record kinds whose artifact is a file the store can resolve under a root.
+/// Other kinds are deleted as records only.
+fn store_managed_kind(kind: manifest.record_kind_t) bool {
+    return switch (kind) {
+        .DesktopEntry, .HandlerEntry, .Icon, .Menu, .DesktopShortcut, .Autostart => true,
+        else => false,
+    };
+}
+
 /// Read-only classification of one recorded artifact returned by `status`.
 pub const record_state_t = enum {
     /// Owned regular file with mode 0644 or 0755 whose SHA-256 equals the record.
@@ -449,17 +458,24 @@ pub const remove_request_t = struct {
     candidate_manifest: []const u8,
 };
 
-/// Decision made by `remove` under the held store lock.
+/// Decision made by `remove` under the held store lock. Record deletions are
+/// journaled; the caller restores any prior value before it asks for a deletion.
 pub const remove_outcome_t = enum {
     /// The owned artifact matched the record; it was unlinked and the record deleted.
     Removed,
     /// The artifact exists but its digest differs from the record. Both are kept.
     KeptModified,
-    /// The record is absent, or its artifact file is absent. Nothing changed.
+    /// The record is not in the manifest (or no manifest exists). Nothing changed;
+    /// repeated removal converges to this outcome with `record_found = false`.
     AlreadyMissing,
     /// The path is unauthorized or unsafe (symlink, hardlink, foreign owner,
-    /// unexpected mode). Nothing changed.
+    /// unexpected mode, path outside the roots). Nothing changed.
     KeptForeign,
+    /// The artifact file is absent. Only the record was deleted, in one journal.
+    RecordRemovedArtifactMissing,
+    /// The record kind has no store-managed file (for example `mime_default`,
+    /// `binfmt`, or guest kinds). Only the record was deleted, in one journal.
+    RecordRemovedNonFile,
 };
 
 /// Explicit metadata migration request for one recorded artifact.
@@ -1084,12 +1100,19 @@ pub const store_t = struct {
         const record = find_record(parsed.records, request.record_id) orelse
             return .{ .outcome = .AlreadyMissing, .record_found = false, .prior = .None };
         const prior = copy_prior(record.prior);
+        if (!store_managed_kind(record.kind)) {
+            try self.forget_record(snapshot, parsed.records, candidate.records, request.record_id, request.candidate_manifest);
+            return .{ .outcome = .RecordRemovedNonFile, .record_found = true, .prior = prior };
+        }
         const target = (try self.resolve_for_record(record.*)) orelse
             return .{ .outcome = .KeptForeign, .record_found = true, .prior = prior };
         defer self.allocator.free(target.relative);
         const artifact = switch (try self.classify_target(target, record.sha256)) {
             .Ok => |info| info,
-            .Missing => return .{ .outcome = .AlreadyMissing, .record_found = true, .prior = prior },
+            .Missing => {
+                try self.forget_record(snapshot, parsed.records, candidate.records, request.record_id, request.candidate_manifest);
+                return .{ .outcome = .RecordRemovedArtifactMissing, .record_found = true, .prior = prior };
+            },
             .Modified => return .{ .outcome = .KeptModified, .record_found = true, .prior = prior },
             .Foreign => return .{ .outcome = .KeptForeign, .record_found = true, .prior = prior },
         };
@@ -1264,6 +1287,19 @@ pub const store_t = struct {
         defer self.allocator.free(resolved.relative);
         if (resolved.root.kind != root.kind or !std.mem.eql(u8, resolved.relative, journal.relative_path.?) or
             !std.ascii.eqlIgnoreCase(new_record.sha256, journal.new_artifact_hash.?)) return error.RecoveryRequired;
+    }
+
+    /// Delete one record without touching any file, in a version-3 `forget`
+    /// transaction. The candidate must be the current manifest minus exactly that record.
+    fn forget_record(self: *store_t, snapshot: manifest_snapshot_t, old_records: []const manifest.record_t, new_records: []const manifest.record_t, record_id: []const u8, candidate: []const u8) !void {
+        try validate_removal(old_records, new_records, record_id);
+        _ = try self.run_manifest_transaction(.{
+            .operation = "forget",
+            .record_id = record_id,
+            .old_manifest = snapshot.bytes,
+            .old_info = snapshot.info,
+            .candidate = candidate,
+        });
     }
 
     /// Shared journaled engine for version-3 operations. `spec.artifact` is set
@@ -1541,6 +1577,10 @@ pub const store_t = struct {
         const old_record = find_record(old.records, journal.record_id) orelse return error.RecoveryRequired;
         if (v3_is_recreate(journal)) {
             try self.validate_recreate_evidence(journal, old.records, candidate.records);
+            return;
+        }
+        if (std.mem.eql(u8, journal.operation, "forget")) {
+            validate_removal(old.records, candidate.records, journal.record_id) catch return error.RecoveryRequired;
             return;
         }
         if (!v3_is_remove(journal)) {
@@ -2768,7 +2808,7 @@ fn validate_journal_v3(journal: journal_v3_t, entry_name: []const u8) !void {
             (journal.new_artifact_mode != 0o644 and journal.new_artifact_mode != 0o755) or
             artifact_device == 0 or artifact_inode == 0 or journal.old_artifact_hash != null or
             journal.old_artifact_mode != 0 or journal.old_artifact_device != null or journal.old_artifact_inode != null) return error.RecoveryRequired;
-    } else if (std.mem.eql(u8, journal.operation, "migrate")) {
+    } else if (std.mem.eql(u8, journal.operation, "migrate") or std.mem.eql(u8, journal.operation, "forget")) {
         if (journal.root != null or journal.relative_path != null or journal.old_artifact_hash != null or
             journal.old_artifact_mode != 0 or journal.old_artifact_device != null or journal.old_artifact_inode != null or
             journal.new_artifact_hash != null or journal.new_artifact_mode != 0 or journal.new_artifact_device != null or journal.new_artifact_inode != null)
@@ -7844,11 +7884,17 @@ test "remove reports every non-removable record without changing any file or rec
         const expected: remove_outcome_t = switch (case_index) {
             0 => .KeptModified,
             1, 3, 4 => .KeptForeign,
-            2 => .AlreadyMissing,
+            2 => .RecordRemovedArtifactMissing,
             else => .AlreadyMissing,
         };
         try std.testing.expectEqual(expected, receipt.outcome);
         try std.testing.expectEqual(case_index != 5, receipt.record_found);
+        if (case_index == 2) {
+            const removed = read_stored_manifest(fixture.state);
+            defer std.testing.allocator.free(removed);
+            try std.testing.expectEqualStrings(docs.candidate, removed);
+            continue;
+        }
         {
             const on_disk = read_stored_manifest(fixture.state);
             defer std.testing.allocator.free(on_disk);
@@ -7889,24 +7935,23 @@ test "remove returns the record prior value as an owned receipt for every outcom
     const policy = test_spec_t{ .id = "policy:target", .kind = "guest_policy", .path = "HKLM-Policy-Waddle", .sha256 = &policy_digest, .extra = "\"device\":\"default\",", .prior = "7" };
     const specs = [_]test_spec_t{ binfmt, policy };
     const document = test_document(scratch, 1, &specs);
-    const candidate = test_document(scratch, 1, specs[0..0]);
+    const policy_only = test_document(scratch, 1, &[_]test_spec_t{policy});
+    const empty = test_document(scratch, 1, &[_]test_spec_t{});
     try write_test_file(fixture.state.fd, "manifest.json", document, 0o600);
     const roots = fixture.roots();
     var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
     defer store.deinit();
 
-    const text_receipt = try store.remove(.{ .record_id = "binfmt:target", .candidate_manifest = candidate });
-    try std.testing.expectEqual(remove_outcome_t.KeptForeign, text_receipt.outcome);
+    const text_receipt = try store.remove(.{ .record_id = "binfmt:target", .candidate_manifest = policy_only });
+    try std.testing.expectEqual(remove_outcome_t.RecordRemovedNonFile, text_receipt.outcome);
     try std.testing.expect(text_receipt.record_found);
     try std.testing.expectEqualStrings(binfmt_prior, text_receipt.prior.Text.bytes[0..text_receipt.prior.Text.len]);
-    const policy_receipt = try store.remove(.{ .record_id = "policy:target", .candidate_manifest = candidate });
-    try std.testing.expectEqual(remove_outcome_t.KeptForeign, policy_receipt.outcome);
+    const policy_receipt = try store.remove(.{ .record_id = "policy:target", .candidate_manifest = empty });
+    try std.testing.expectEqual(remove_outcome_t.RecordRemovedNonFile, policy_receipt.outcome);
     try std.testing.expectEqual(@as(u32, 7), policy_receipt.prior.U32Value);
-    {
-        const on_disk = read_stored_manifest(fixture.state);
-        defer std.testing.allocator.free(on_disk);
-        try std.testing.expectEqualStrings(document, on_disk);
-    }
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    try std.testing.expectEqualStrings(empty, on_disk);
 }
 
 test "remove rejects every candidate mismatch and malformed request before mutation" {
@@ -9330,6 +9375,91 @@ test "remove journals survive user edits of the artifact and init recovers witho
             if (completed) break;
         }
     }
+}
+
+test "remove deletes non-file and artifact-missing records through a journaled record-only transaction" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    install_remove_artifacts(&fixture);
+    _ = fixture.data.deleteFile("applications/target.desktop") catch {};
+    const binfmt_digest = hash_hex("binfmt bytes");
+    const binfmt_prior = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const binfmt = test_spec_t{ .id = "binfmt:system", .kind = "binfmt", .path = "/etc/binfmt.d/waddle.conf", .sha256 = &binfmt_digest, .prior = "\"" ++ binfmt_prior ++ "\"" };
+    const target_digest = hash_hex("target bytes");
+    const keep_digest = hash_hex("keep bytes");
+    const target_path = std.fmt.allocPrint(scratch, "{s}/applications/target.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const keep_path = std.fmt.allocPrint(scratch, "{s}/applications/keep.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const target = test_spec_t{ .id = "desktop:target", .kind = "desktop_entry", .path = target_path, .sha256 = &target_digest };
+    const keep = test_spec_t{ .id = "desktop:keep", .kind = "desktop_entry", .path = keep_path, .sha256 = &keep_digest };
+    const all = [_]test_spec_t{ binfmt, target, keep };
+    const without_binfmt = [_]test_spec_t{ target, keep };
+    const only_keep = [_]test_spec_t{keep};
+    const original = test_document(scratch, 1, &all);
+    try write_test_file(fixture.state.fd, "manifest.json", original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+
+    const first = try store.remove(.{ .record_id = "binfmt:system", .candidate_manifest = test_document(scratch, 1, &without_binfmt) });
+    try std.testing.expectEqual(remove_outcome_t.RecordRemovedNonFile, first.outcome);
+    try std.testing.expect(first.record_found);
+    try std.testing.expectEqualStrings(binfmt_prior, first.prior.Text.bytes[0..first.prior.Text.len]);
+    const second = try store.remove(.{ .record_id = "desktop:target", .candidate_manifest = test_document(scratch, 1, &only_keep) });
+    try std.testing.expectEqual(remove_outcome_t.RecordRemovedArtifactMissing, second.outcome);
+    const third = try store.remove(.{ .record_id = "desktop:target", .candidate_manifest = test_document(scratch, 1, &only_keep) });
+    try std.testing.expectEqual(remove_outcome_t.AlreadyMissing, third.outcome);
+    try std.testing.expect(!third.record_found);
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    try std.testing.expectEqualStrings(test_document(scratch, 1, &only_keep), on_disk);
+    const kept = try fixture.data.readFileAlloc(std.testing.allocator, "applications/keep.desktop", 4096);
+    defer std.testing.allocator.free(kept);
+    try std.testing.expectEqualStrings("keep bytes", kept);
+}
+
+test "forget recovers at every injected checkpoint and a second recovery is a no-op" {
+    var completed = false;
+    for (1..40) |step| {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const scratch = arena.allocator();
+        const digest = hash_hex("binfmt bytes");
+        const binfmt = test_spec_t{ .id = "binfmt:system", .kind = "binfmt", .path = "/etc/binfmt.d/waddle.conf", .sha256 = &digest };
+        const target_digest = hash_hex("target bytes");
+        const target_path = std.fmt.allocPrint(scratch, "{s}/applications/target.desktop", .{fixture.data_path}) catch @panic("fixture path");
+        const target = test_spec_t{ .id = "desktop:target", .kind = "desktop_entry", .path = target_path, .sha256 = &target_digest };
+        const original = test_document(scratch, 1, &[_]test_spec_t{ binfmt, target });
+        const candidate = test_document(scratch, 1, &[_]test_spec_t{target});
+        try write_test_file(fixture.state.fd, "manifest.json", original, 0o600);
+        const roots = fixture.roots();
+        var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+        defer store.deinit();
+        store.fail_after.store(store.checkpoint_count.load(.monotonic) + step, .monotonic);
+        const outcome = store.remove(.{ .record_id = "binfmt:system", .candidate_manifest = candidate });
+        store.fail_after.store(0, .monotonic);
+        if (outcome) |receipt| {
+            try std.testing.expectEqual(remove_outcome_t.RecordRemovedNonFile, receipt.outcome);
+            completed = true;
+        } else |err| {
+            try std.testing.expectEqual(error.InjectedFailure, err);
+            try store.recover();
+        }
+        const on_disk = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(on_disk);
+        try std.testing.expect(std.mem.eql(u8, on_disk, original) or std.mem.eql(u8, on_disk, candidate));
+        if (completed) try std.testing.expectEqualStrings(candidate, on_disk);
+        try store.recover();
+        const again = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(again);
+        try std.testing.expectEqualStrings(on_disk, again);
+        if (completed) break;
+    }
+    try std.testing.expect(completed);
 }
 
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
