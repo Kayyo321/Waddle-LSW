@@ -161,6 +161,23 @@ pub const dismiss_status_t = enum(c_int) {
     RefuseInvalid = 3,
 };
 
+/// Result code of `reparent`.
+pub const reparent_status_t = enum(c_int) {
+    /// The window's direct parent is now the new parent. Its slot and sequence number are unchanged.
+    Reparented = 1,
+    /// No realized entry with the window's exact pair. Nothing changed.
+    Stale = 2,
+    /// The new parent pair is not realized: never announced, retired, or another generation. Nothing changed.
+    RefuseStaleParent = 3,
+    /// The new parent is the window itself or one of its descendants, which would close a cycle. Nothing changed.
+    RefuseCycle = 4,
+    /// The window is not a Dialog. Only Dialogs change parent; Toplevel and UacConsent carry no parent and
+    /// popups keep the parent they were realized with. Nothing changed.
+    RefuseRole = 5,
+    /// Zero identity, a parent of none, a self parent, or a corrupt table. Nothing changed.
+    RefuseInvalid = 6,
+};
+
 /// Result code of `set_user_data` and `get_user_data`.
 pub const user_data_status_t = enum(c_int) {
     /// The value was set or read.
@@ -206,6 +223,21 @@ pub fn retire_error_code(status: retire_status_t) u32 {
     return switch (status) {
         .Retired => ErrorNone,
         .Stale => ErrorStaleWindow,
+        .RefuseInvalid => ErrorMalformedFrame,
+    };
+}
+
+/// Protocol error code for a reparent status. Reparented is `ErrorNone`; a stale window or a stale parent is
+/// `ErrorStaleWindow`; a cycle or a role that may not change parent is `ErrorProtocolViolation`; an invalid
+/// identity or corrupt table is `ErrorMalformedFrame`.
+///
+/// @param status Status returned by `reparent`.
+/// @return The `interop_error_t` value.
+pub fn reparent_error_code(status: reparent_status_t) u32 {
+    return switch (status) {
+        .Reparented => ErrorNone,
+        .Stale, .RefuseStaleParent => ErrorStaleWindow,
+        .RefuseCycle, .RefuseRole => ErrorProtocolViolation,
         .RefuseInvalid => ErrorMalformedFrame,
     };
 }
@@ -464,6 +496,38 @@ fn emit_subtree(map: *const host_window_map_t, index: usize, depth: usize, order
     return true;
 }
 
+/// Change the direct parent of a realized Dialog to another realized window.
+///
+/// The new parent must be realized under its exact generation, and it must not be the window itself or a
+/// descendant of it. Walking the new parent's ancestors is bounded by MaxRealized steps, so corrupt storage
+/// with a cycle is refused rather than followed. Only Dialogs change parent; any other role is refused.
+///
+/// @param map Table; must not be null.
+/// @param window Exact identity of the Dialog; both fields nonzero.
+/// @param new_parent Exact identity of the new realized parent; both fields nonzero.
+/// @return Status. Changes only the parent of `window` on Reparented.
+/// @thread_safety Owner thread only; no internal synchronization.
+pub fn reparent(map: *host_window_map_t, window: window_ref_t, new_parent: window_ref_t) reparent_status_t {
+    if (!valid_ref(window) or !valid_ref(new_parent) or window.window == new_parent.window or !is_consistent(map)) return .RefuseInvalid;
+    const target = find_exact(map, window) orelse return .Stale;
+    if (map.slots[target].role != RoleDialog) return .RefuseRole;
+    const parent_index = find_exact(map, new_parent) orelse return .RefuseStaleParent;
+
+    var current = new_parent;
+    var steps: usize = 0;
+    while (steps <= MaxRealized) : (steps += 1) {
+        if (current.window == window.window) return .RefuseCycle;
+        const index = find_exact(map, current) orelse break;
+        const up = map.slots[index].parent;
+        if (up.window == 0) break;
+        current = up;
+    } else {
+        return .RefuseInvalid;
+    }
+    map.slots[target].parent = map.slots[parent_index].window;
+    return .Reparented;
+}
+
 /// Remove a realized window and its realized subtree. Other slots keep their indices.
 ///
 /// The output lists the removed pairs children first: every descendant precedes its ancestor, siblings
@@ -644,6 +708,25 @@ export fn host_window_map_get_user_data(map: ?*const host_window_map_t, slot: u3
     return get_user_data(target, slot, window, destination);
 }
 
+/// C ABI: change the parent of a realized Dialog. See `reparent`.
+///
+/// @param map In/out. Table; NULL gives RefuseInvalid.
+/// @param window In. Identity by value; both fields nonzero.
+/// @param new_parent In. New parent by value; both fields nonzero.
+/// @return Status. Thread safety: owner thread only.
+export fn host_window_map_reparent(map: ?*host_window_map_t, window: window_ref_t, new_parent: window_ref_t) callconv(.C) reparent_status_t {
+    const target = map orelse return .RefuseInvalid;
+    return reparent(target, window, new_parent);
+}
+
+/// C ABI: protocol error code for a reparent status. See `reparent_error_code`.
+///
+/// @param status In. Status returned by `host_window_map_reparent`.
+/// @return The `interop_error_t` value. Thread safety: pure; any thread.
+export fn host_window_map_reparent_error_code(status: reparent_status_t) callconv(.C) u32 {
+    return reparent_error_code(status);
+}
+
 /// C ABI: protocol error code for an announce status. See `announce_error_code`.
 ///
 /// @param status In. Status returned by `host_window_map_announce`.
@@ -736,6 +819,14 @@ const abi_shim_t = struct {
 
     fn mark_dismissed(map: ?*host_window_map_t, window: window_ref_t) dismiss_status_t {
         return @call(.never_inline, host_window_map_mark_dismissed, .{ map, window });
+    }
+
+    fn reparent(map: ?*host_window_map_t, window: window_ref_t, new_parent: window_ref_t) reparent_status_t {
+        return @call(.never_inline, host_window_map_reparent, .{ map, window, new_parent });
+    }
+
+    fn reparent_error_code(status: reparent_status_t) u32 {
+        return @call(.never_inline, host_window_map_reparent_error_code, .{status});
     }
 
     fn get_user_data(map: ?*const host_window_map_t, slot: u32, window: window_ref_t, value: ?*u64) user_data_status_t {
@@ -1186,6 +1277,32 @@ const reference_model_t = struct {
         return .Marked;
     }
 
+    fn model_reparent(self: *reference_model_t, window: window_ref_t, new_parent: window_ref_t) reparent_status_t {
+        if (window.window == 0 or window.generation == 0) return .RefuseInvalid;
+        if (new_parent.window == 0 or new_parent.generation == 0) return .RefuseInvalid;
+        if (window.window == new_parent.window) return .RefuseInvalid;
+        const target = self.model_find_window(window.window) orelse return .Stale;
+        if (!same_ref(self.entries[target].?.window, window)) return .Stale;
+        if (self.entries[target].?.role != 2) return .RefuseRole;
+        const parent_index = self.model_find_window(new_parent.window) orelse return .RefuseStaleParent;
+        if (!same_ref(self.entries[parent_index].?.window, new_parent)) return .RefuseStaleParent;
+        // Walk the ancestors of the new parent; a visit to the window is a cycle.
+        var current = new_parent;
+        var steps: usize = 0;
+        while (steps <= MaxRealized) : (steps += 1) {
+            if (current.window == window.window) return .RefuseCycle;
+            const index = self.model_find_window(current.window) orelse break;
+            if (!same_ref(self.entries[index].?.window, current)) break;
+            const up = self.entries[index].?.parent;
+            if (up.window == 0) break;
+            current = up;
+        } else {
+            return .RefuseInvalid;
+        }
+        self.entries[target].?.parent = self.entries[parent_index].?.window;
+        return .Reparented;
+    }
+
     fn model_user_data(self: *reference_model_t, slot: u32, window: window_ref_t, set: ?u64) user_data_status_t {
         if (window.window == 0 or window.generation == 0 or slot >= MaxRealized) return .RefuseInvalid;
         const entry = &(self.entries[slot] orelse return .Stale);
@@ -1273,7 +1390,7 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
             // Per-slot user data and dismissal: slots past the table and mismatched windows are refused or stale.
             const slot: u32 = random.uintLessThan(u32, MaxRealized + 2);
             const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
-            switch (random.uintLessThan(u8, 3)) {
+            switch (random.uintLessThan(u8, 4)) {
                 0 => {
                     const value = random.int(u64);
                     try testing.expectEqual(model.model_user_data(slot, window, value), set_user_data(&map, slot, window, value));
@@ -1284,7 +1401,11 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
                     try testing.expectEqual(model.model_user_data(slot, window, null), status);
                     if (status == .Ok) try testing.expectEqual(model.entries[slot].?.user_data, got) else try testing.expectEqual(@as(u64, 0xDEAD), got);
                 },
-                else => try testing.expectEqual(model.model_mark_dismissed(window), mark_dismissed(&map, window)),
+                2 => try testing.expectEqual(model.model_mark_dismissed(window), mark_dismissed(&map, window)),
+                else => {
+                    const new_parent = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
+                    try testing.expectEqual(model.model_reparent(window, new_parent), reparent(&map, window, new_parent));
+                },
             }
         }
         try expect_same_state(&map, &model);
@@ -1324,6 +1445,77 @@ test "user data is stored per slot, validated by slot and window, and reset when
     try testing.expectEqual(user_data_status_t.Stale, get_user_data(&map, a.slot + 60, ref(3, 1), &value));
     try testing.expectEqual(user_data_status_t.Stale, set_user_data(&map, a.slot + 60, ref(3, 1), 1));
     try testing.expectEqual(@as(u64, 0), lookup(&map, ref(3, 1)).?.user_data);
+}
+
+test "a dialog moves to another realized parent without changing its slot or sequence" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(3, 1), ref(1, 1), RoleDialog);
+    const before = lookup(&map, ref(3, 1)).?;
+    try testing.expectEqual(reparent_status_t.Reparented, reparent(&map, ref(3, 1), ref(2, 1)));
+    const after = lookup(&map, ref(3, 1)).?;
+    try expect_ref(ref(2, 1), after.parent);
+    try testing.expectEqual(before.slot, after.slot);
+    try testing.expectEqual(before.realize_seq, after.realize_seq);
+    // Retiring the old parent leaves the dialog; retiring the new parent takes it.
+    try testing.expectEqual(@as(u32, 1), retire(&map, ref(1, 1), &out).count);
+    try testing.expect(is_current(&map, ref(3, 1)));
+    try testing.expectEqual(@as(u32, 2), retire(&map, ref(2, 1), &out).count);
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
+}
+
+test "reparent refuses every invalid, stale, role and cycle case without changing the table" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel); // T1
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog); // D2 under T1
+    _ = announce(&map, ref(3, 1), ref(2, 1), RoleDialog); // D3 under D2
+    _ = announce(&map, ref(4, 1), none(), RoleToplevel); // T4
+    _ = announce(&map, ref(5, 1), ref(1, 1), RoleMenu); // M5 popup under T1
+    _ = announce(&map, ref(6, 1), none(), RoleUacConsent); // U6
+    const before = map;
+
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, reparent(&map, ref(0, 1), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, reparent(&map, ref(2, 1), none()));
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, reparent(&map, ref(2, 1), ref(2, 1)));
+    try testing.expectEqual(reparent_status_t.Stale, reparent(&map, ref(7, 1), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.Stale, reparent(&map, ref(2, 2), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseRole, reparent(&map, ref(5, 1), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseRole, reparent(&map, ref(4, 1), ref(2, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseRole, reparent(&map, ref(6, 1), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseStaleParent, reparent(&map, ref(2, 1), ref(9, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseStaleParent, reparent(&map, ref(2, 1), ref(4, 2)));
+    // D3 is a descendant of D2, so making D3 the parent of D2 closes the loop D2 -> D3 -> D2.
+    try testing.expectEqual(reparent_status_t.RefuseCycle, reparent(&map, ref(2, 1), ref(3, 1)));
+
+    try testing.expectEqual(before.realized_count, map.realized_count);
+    for (before.slots, 0..) |slot, index| {
+        try testing.expectEqual(slot.occupied, map.slots[index].occupied);
+        try expect_ref(slot.parent, map.slots[index].parent);
+        try testing.expectEqual(slot.realize_seq, map.slots[index].realize_seq);
+    }
+}
+
+test "a dialog may move under its former grandchild once the cycle through it is broken" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
+    _ = announce(&map, ref(3, 1), ref(2, 1), RoleDialog);
+    try testing.expectEqual(reparent_status_t.Reparented, reparent(&map, ref(3, 1), ref(1, 1)));
+    // Now D3 hangs under T1 directly, so D2 may move under D3 without a cycle.
+    try testing.expectEqual(reparent_status_t.Reparented, reparent(&map, ref(2, 1), ref(3, 1)));
+    try expect_ref(ref(3, 1), lookup(&map, ref(2, 1)).?.parent);
+}
+
+test "a reparent cycle in corrupt caller storage is refused by the step bound" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
+    _ = announce(&map, ref(3, 1), ref(1, 1), RoleDialog);
+    // Corrupt storage: window 1 is a child of window 2, so the ancestors of window 2 never reach a root.
+    map.slots[0].parent = ref(2, 1);
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, reparent(&map, ref(3, 1), ref(2, 1)));
 }
 
 test "a dismissed popup stays realized with its slot until the guest retires it" {
@@ -1396,6 +1588,22 @@ test "C ABI dismissal accepts NULL and reports the status" {
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
     try testing.expectEqual(dismiss_status_t.RefuseInvalid, abi_shim_t.mark_dismissed(null, ref(2, 1)));
     try testing.expectEqual(dismiss_status_t.Marked, abi_shim_t.mark_dismissed(&map, ref(2, 1)));
+}
+
+test "every reparent status maps to its protocol error code" {
+    try testing.expectEqual(ErrorNone, reparent_error_code(.Reparented));
+    try testing.expectEqual(ErrorStaleWindow, reparent_error_code(.Stale));
+    try testing.expectEqual(ErrorStaleWindow, reparent_error_code(.RefuseStaleParent));
+    try testing.expectEqual(ErrorProtocolViolation, reparent_error_code(.RefuseCycle));
+    try testing.expectEqual(ErrorProtocolViolation, reparent_error_code(.RefuseRole));
+    try testing.expectEqual(ErrorMalformedFrame, reparent_error_code(.RefuseInvalid));
+    try testing.expectEqual(ErrorProtocolViolation, abi_shim_t.reparent_error_code(.RefuseCycle));
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, abi_shim_t.reparent(null, ref(1, 1), ref(2, 1)));
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(3, 1), ref(1, 1), RoleDialog);
+    try testing.expectEqual(reparent_status_t.Reparented, abi_shim_t.reparent(&map, ref(3, 1), ref(2, 1)));
 }
 
 test "C ABI counts and lookup accept NULL and report the table" {

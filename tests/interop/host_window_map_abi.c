@@ -259,6 +259,32 @@ static int check_dismissal(host_window_map_t *map) {
     return 0;
 }
 
+static int check_reparent(host_window_map_t *map) {
+    host_window_entry_t entry;
+
+    clear_table(map);
+    Check(announce(map, ref(1, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
+    Check(announce(map, ref(2, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
+    Check(announce(map, ref(3, 1), ref(1, 1), HostWindowMapRoleDialog) == HostWindowMapRealize);
+    Check(announce(map, ref(4, 1), ref(3, 1), HostWindowMapRoleMenu) == HostWindowMapRealize);
+    Check(host_window_map_reparent(map, ref(3, 1), ref(2, 1)) == HostWindowMapReparented);
+    Check(host_window_map_lookup(map, ref(3, 1), &entry) && same(entry.parent, ref(2, 1)));
+    Check(host_window_map_reparent(map, ref(4, 1), ref(2, 1)) == HostWindowMapReparentRefuseRole);
+    Check(host_window_map_reparent(map, ref(3, 1), ref(4, 1)) == HostWindowMapReparentRefuseCycle);
+    Check(host_window_map_reparent(map, ref(3, 1), ref(9, 1)) == HostWindowMapReparentRefuseStaleParent);
+    Check(host_window_map_reparent(map, ref(3, 2), ref(2, 1)) == HostWindowMapReparentStale);
+    Check(host_window_map_reparent(map, ref(3, 1), none()) == HostWindowMapReparentRefuseInvalid);
+    Check(host_window_map_reparent(NULL, ref(3, 1), ref(2, 1)) == HostWindowMapReparentRefuseInvalid);
+    Check(host_window_map_reparent_error_code(HostWindowMapReparented) == InteropErrorNone);
+    Check(host_window_map_reparent_error_code(HostWindowMapReparentStale) == InteropErrorStaleWindow);
+    Check(host_window_map_reparent_error_code(HostWindowMapReparentRefuseStaleParent) == InteropErrorStaleWindow);
+    Check(host_window_map_reparent_error_code(HostWindowMapReparentRefuseCycle) == InteropErrorProtocolViolation);
+    Check(host_window_map_reparent_error_code(HostWindowMapReparentRefuseRole) == InteropErrorProtocolViolation);
+    Check(host_window_map_reparent_error_code(HostWindowMapReparentRefuseInvalid) == InteropErrorMalformedFrame);
+    clear_table(map);
+    return 0;
+}
+
 static int check_aliasing(host_window_map_t *map) {
     host_window_ref_t *alias = (host_window_ref_t *)(void *)map;
     uint32_t *inside = &map->realized_count;
@@ -287,6 +313,7 @@ int main(void) {
     if (check_stable_slots(&map) != 0) return 1;
     if (check_user_data(&map) != 0) return 1;
     if (check_dismissal(&map) != 0) return 1;
+    if (check_reparent(&map) != 0) return 1;
     if (check_capacity_edges(&map) != 0) return 1;
     if (check_aliasing(&map) != 0) return 1;
     clear_table(&map);

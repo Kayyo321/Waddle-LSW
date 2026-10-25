@@ -107,6 +107,16 @@ typedef enum host_window_map_dismiss_status_t {
     HostWindowMapDismissRefuseInvalid = 3 /**< Zero identity, corrupt table, or a window that is not a popup. No change. */
 } host_window_map_dismiss_status_t;
 
+/** @brief Result of `host_window_map_reparent`. Only `HostWindowMapReparented` changes the table. */
+typedef enum host_window_map_reparent_status_t {
+    HostWindowMapReparented = 1, /**< The Dialog's parent is now the new parent. Its slot and sequence are unchanged. */
+    HostWindowMapReparentStale = 2, /**< No realized entry with the window's exact pair. No change. */
+    HostWindowMapReparentRefuseStaleParent = 3, /**< The new parent is not realized exactly (never announced, retired, or another generation). No change. */
+    HostWindowMapReparentRefuseCycle = 4, /**< The new parent is the window itself or one of its descendants. No change. */
+    HostWindowMapReparentRefuseRole = 5, /**< The window is not a Dialog; only Dialogs change parent. No change. */
+    HostWindowMapReparentRefuseInvalid = 6 /**< Zero identity, a parent of none, a self parent, or a corrupt table. No change. */
+} host_window_map_reparent_status_t;
+
 /** @brief Result of `host_window_map_set_user_data` and `host_window_map_get_user_data`. */
 typedef enum host_window_map_user_data_status_t {
     HostWindowMapUserDataOk = 1, /**< The value was set or read. */
@@ -208,6 +218,31 @@ host_window_map_announce_result_t host_window_map_announce(host_window_map_t *ma
  * @return Retire status. Thread safety: owner thread only.
  */
 host_window_map_retire_status_t host_window_map_retire(host_window_map_t *map, host_window_ref_t window, host_window_ref_t *out, uint32_t out_capacity, uint32_t *out_count);
+
+/**
+ * @brief Change the direct parent of a realized Dialog to another realized window.
+ *
+ * The new parent must be realized under its exact generation. It must not be the window itself or a
+ * descendant of it. Only Dialogs change parent. The slot and the realization sequence are unchanged.
+ *
+ * @param map In/out. Table; NULL gives `HostWindowMapReparentRefuseInvalid`.
+ * @param window In. Identity of the Dialog; both fields nonzero.
+ * @param new_parent In. Exact identity of the new realized parent; both fields nonzero.
+ * @return Status. Thread safety: owner thread only.
+ */
+host_window_map_reparent_status_t host_window_map_reparent(host_window_map_t *map, host_window_ref_t window, host_window_ref_t new_parent);
+
+/**
+ * @brief Protocol error code (`interop_error_t`) for a reparent status.
+ *
+ * Reparented gives `InteropErrorNone`; a stale window or stale parent gives `InteropErrorStaleWindow`; a cycle or
+ * a role that may not change parent gives `InteropErrorProtocolViolation`; an invalid argument or corrupt table
+ * gives `InteropErrorMalformedFrame`.
+ *
+ * @param status In. Status returned by `host_window_map_reparent`.
+ * @return The `interop_error_t` value. Thread safety: any thread.
+ */
+uint32_t host_window_map_reparent_error_code(host_window_map_reparent_status_t status);
 
 /**
  * @brief Mark a realized popup dismissed by the compositor (`popup_done`).
