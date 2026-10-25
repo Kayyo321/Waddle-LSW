@@ -54,7 +54,7 @@ acceptance remain pending.
 | #24 | USB redirection (CLI, daemon QMP, polkit ACL grant) for webcams, wired gamepads, other USB | Pending | 3% | 0% | Waits on #8 |
 | #25 | Bluetooth/evdev gamepads via virtual XInput | Pending | 2% | 0% | User selected ViGEmBus inclusion 2026-10-23; source/installer pins, implementation and native acceptance pending; IMPL_DESC §3.18 |
 | #26 | Printing via IPP guestfwd to host CUPS | Pending | 2% | 0% | Waits on #8 |
-| #27 | Guest app catalog, icon extraction (PNG), change notifications | Pending | 4% | 0% | Waits on #6 |
+| #27 | Guest app catalog, icon extraction (PNG), change notifications | In Progress | 4% | 10% | Portable PNG encoder10% accepted with independent full decode and root100%line/arc + leak gates. Source/diff, native enumeration/extraction, watches and runtime remain open |
 | #28 | Host desktop-entry/icon/menu materialization, app_id matching, toplevel icon, desktop-shortcut mirroring | Pending | 4% | 0% | Waits on #27 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
 | #29 | `waddle open` launch path, activation tokens, cold-boot feedback, File Explorer seed | Pending | 3% | 0% | Waits on #7, #27 |
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 40% | Schema15%, absent-add journal/recovery15% and rooted absent artifact API10% accepted. Replacement/backup/restore, commands/producers and full-removal qualification remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `22.00%`
+**Total Feature Completion**: `22.40%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -79,6 +79,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; portable observer15%; native adapter15%. O5 preservation qualified by89ff058 local coverage/sanitizers and exact Windows native smoke/failure guards at d77dcb3, CI40144415938; installed-session15% accepted by the hash-bound fresh Windows guest run; coordinator20% remains open |
 | #15 | Typed full translation10%; native injection15%; host repeat20%; lock sync15%; layout sync20%; shortcut inhibit10%; integrated/native qualification10% | Typed translation10% accepted; full1..767/gaps/inverse, correct VKs, legacy bounds, root100%lines/94.53%taken arcs and leak-enabled ASan/LSan/UBSan. No widened wire or typed injection credit |
+| #27 | Source snapshot/diff20%; native enumeration20%; watch/enrichment15%; PNG encoder10%; native icon extraction15%; wire/integration10%; integrated/native qualification10% | PNG encoder10% accepted; all7sizes, independent complete pixels/chunks/zlib, root100%lines/arcs and leak-enabled sanitizer. Native Shell/catalog and integrated qualification remain open |
 | #31 | Bounded classifier20%; preserving MIME editor20%; journaled handler artifacts20%; configuration/route integration20%; integrated/native qualification20% | Classifier20% accepted; five Zig/C tests,20k prefixes,100%lines/96.43%arcs and real C consumer ASan/LSan/UBSan; Windows execution and launch/file-read binding remain open |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec15%; absent-add journal15%/30% and rooted absent API10%/20%, root-reviewed43 tests,90.03% taken arcs/99.77% lines. Replacement journal15% and replacement/backup API10% remain open |
 
@@ -1395,7 +1396,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     independent golden/inverse consumer and source/CSV hash checks, preserving
     full scope and90%threshold. Combined100%lines/94.53%taken arcs pass.
 
-- **Commit `HEAD`**: `feat(interop): classify bounded PE headers through Zig and C ABI`
+- **Commit `dec3304`**: `feat(interop): classify bounded PE headers through Zig and C ABI`
   - **Task Impact**: +20% to TODO #31 (+0.40% overall; total22.00%).
   - **Summary**: Bounds-checked allocation-free PE32/PE32+ GUI/console routing
     with transactional C argument guards, exact truncation/offset cases and20k
@@ -1403,3 +1404,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     C sanitizers and Windows SDK/link pass; CI runs both platforms separately.
     File-read errors, launch, MIME artifacts and binfmt remain open. Also
     compress host sanitizer logs for inclusion in retained evidence.
+
+- **Commit `HEAD`**: `feat(interop): encode bounded RGBA icons as minimal PNG`
+  - **Task Impact**: +10% to TODO #27 (+0.40% overall; total22.40%).
+  - **Summary**: Allocation-free caller-buffer PNG with checked stride/full
+    output ranges and aliases, stored deflate, CRC32/Adler32 and all7frozen
+    sizes. Root independently decodes every pixel and passes159/159lines,
+    74/74taken arcs and real ASan/LSan/UBSan. CI gates the portable encoder;
+    native extraction/catalog/artifact integration remain open.

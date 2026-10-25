@@ -3763,3 +3763,15 @@ Classifier accepts20% of #31. Remaining allocations are MIME preserving editor20
 journaled handler artifacts20%, configuration/route integration20%, integrated/
 native qualification20%. No MIME defaults, launch or binfmt registration changes
 are performed by this parser.
+
+### 8.40 Portable stored-deflate icon PNG writer (2026-10-25)
+
+[png_writer_contract.md](png_writer_contract.md) defines caller-buffer RGBA8
+encoding, all frozen square sizes, stride/size/range/alias validation, filter0,
+CRC32, Adler32 and bounded stored-deflate blocks. No allocation or pointer is
+retained; every reject precedes output writes. Independent full pixel decoding,
+100%production lines/taken arcs and leak-enabled sanitizer evidence are retained
+in png_writer_evidence_2026_10_25. PNG encoding accepts10%of #27. Other allocations
+are source snapshot/diff20%, native enumeration20%, watch/enrichment15%, native
+icon extraction15%, wire/integration10%, integrated/native qualification10%.
+Shell/GDI extraction and actual catalog/artifact runtime remain separate.

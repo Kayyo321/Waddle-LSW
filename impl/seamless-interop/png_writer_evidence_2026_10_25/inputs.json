@@ -1,0 +1,64 @@
+{
+  "sha256": {
+    "tests/interop/png_writer_coverage.py": "36cced81e13bb6494be6ea2902dd7a368c2a432651b07720ec96cbc036fa7eee",
+    "src/interop/png_writer.c": "3b11a36f4df6fe80c7591e7f979d25618678b6fc88486743e9317c1834445c02",
+    "src/interop/png_writer.h": "f989ff9b2fc5eb36dbaedcf5c343eb321e63ff1a5810be89a0325982e7167f1d",
+    "tests/interop/png_writer.c": "8161ab2597cc75d1328533618ee738245ea0633b41b755ed8a177f4fb99281c9",
+    "tests/interop/png_check.py": "5d371d95f04d85e51e505edd1c778010dfde51c236c7708755b6e7205ac120fb",
+    "impl/seamless-interop/png_writer_contract.md": "4832d426fbf8562f152e124db043c98562040207d06c34b4a50646fdf73746c2"
+  },
+  "commands": [
+    [
+      "cc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-I.",
+      "--coverage",
+      "-fprofile-update=atomic",
+      "-fprofile-abs-path",
+      "-c",
+      "/home/dev/Waddle-LSW/src/interop/png_writer.c",
+      "-o",
+      "/tmp/png_writer_coverage/run-20261025T172431-c56c0e36/png_writer.o"
+    ],
+    [
+      "cc",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-Werror",
+      "-UNDEBUG",
+      "-O0",
+      "-g",
+      "-I.",
+      "--coverage",
+      "/home/dev/Waddle-LSW/tests/interop/png_writer.c",
+      "/tmp/png_writer_coverage/run-20261025T172431-c56c0e36/png_writer.o",
+      "-o",
+      "/tmp/png_writer_coverage/run-20261025T172431-c56c0e36/runner"
+    ],
+    [
+      "/tmp/png_writer_coverage/run-20261025T172431-c56c0e36/runner",
+      "/tmp/png_writer_coverage/run-20261025T172431-c56c0e36/png"
+    ],
+    [
+      "python3",
+      "/home/dev/Waddle-LSW/tests/interop/png_check.py",
+      "/tmp/png_writer_coverage/run-20261025T172431-c56c0e36/png"
+    ],
+    [
+      "gcov",
+      "--json-format",
+      "-b",
+      "-c",
+      "/tmp/png_writer_coverage/run-20261025T172431-c56c0e36/png_writer.gcno"
+    ]
+  ]
+}

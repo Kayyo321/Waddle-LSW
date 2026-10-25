@@ -1,0 +1,12 @@
+{
+  "lines": {
+    "covered": 159,
+    "total": 159,
+    "percent": 100.0
+  },
+  "taken_arcs": {
+    "covered": 74,
+    "total": 74,
+    "percent": 100.0
+  }
+}
