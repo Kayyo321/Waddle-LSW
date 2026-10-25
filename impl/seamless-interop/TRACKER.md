@@ -1554,10 +1554,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     total path working storage <=8519680bytes. Add24real nested temporary
     directories and reverse cleanup. Strict native compile/link passes.
 
-- **Commit `HEAD`**: `test(interop): retain native DIB field diagnostics and exact GDI retries`
+- **Commit `0fbfe70`**: `test(interop): retain native DIB field diagnostics and exact GDI retries`
   - **Task Impact**: +0% to TODO #27/#34 pending native90%gates.
   - **Summary**: Actual59a1c8d reports stage6/ERROR_INVALID_DATA; record the
     exact GetObject DIB dimensions, bit depths and compression before changing
     acceptance rules. Add real1bpp conversion/opaque-alpha and authentic
     fail-before-close HDC/HICON retries plus image deinit guards. Root strict
     production(no seams) and profile fixture compile/link pass.
+
+- **Commit `HEAD`**: `fix(interop): validate DIB extent independently of normalized header sign`
+  - **Task Impact**: +0% to TODO #27/#34 pending native90%gates.
+  - **Summary**: Exact0fbfe70 Windows DIB reports valid32x32/32bpp/BI_RGB with
+    positive header height despite requested negative creation height. Accept
+    the exact signed magnitude; creation still fixes orientation. Independent
+    asymmetric first/last row bytes verify actual top-down copying. Strict SDK
+    profile link passes. Catalog smoke/deep-tree now pass; provider coverage
+    87.09%lines/62.21%arcs and icon71.51%lines/55.31%arcs remain unaccepted.

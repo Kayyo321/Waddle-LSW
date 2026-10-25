@@ -533,6 +533,7 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
     test_last_output_header_bits_pixel = output_description.dsBmih.biBitCount;
     test_last_output_compression = output_description.dsBmih.biCompression;
 #endif
+    /* GetObject may normalize the DIBSECTION height sign; creation requested top-down. */
     if (output_description_bytes != sizeof(output_description)) {
         native_detail = 3u;
     } else if (output_description.dsBm.bmWidth != (LONG)source_width) {
@@ -541,7 +542,8 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
         native_detail = 5u;
     } else if (output_description.dsBm.bmBitsPixel != 32u) {
         native_detail = 6u;
-    } else if (output_description.dsBmih.biHeight != -(LONG)source_height) {
+    } else if (output_description.dsBmih.biHeight != -(LONG)source_height &&
+               output_description.dsBmih.biHeight != (LONG)source_height) {
         native_detail = 7u;
     } else if (output_description.dsBmih.biBitCount != 32u) {
         native_detail = 8u;

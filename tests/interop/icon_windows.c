@@ -83,6 +83,15 @@ static void test_owned_gdi_fixtures(void)
         source_bytes[offset + 2u] = 64u;
         source_bytes[offset + 3u] = 128u;
     }
+    const size_t last_row_offset = (size_t)(Dimension - 1u) * Dimension * 4u;
+    source_bytes[0] = 1u;
+    source_bytes[1] = 2u;
+    source_bytes[2] = 3u;
+    source_bytes[3] = 255u;
+    source_bytes[last_row_offset] = 17u;
+    source_bytes[last_row_offset + 1u] = 34u;
+    source_bytes[last_row_offset + 2u] = 51u;
+    source_bytes[last_row_offset + 3u] = 128u;
 
     HDC device_context = CreateCompatibleDC(NULL);
     assert(device_context != NULL);
@@ -104,6 +113,13 @@ static void test_owned_gdi_fixtures(void)
                                        &source_has_alpha, &error));
     assert(source_has_alpha);
     assert(memcmp(source_bits, destination_bits, (size_t)Dimension * Dimension * 4u) == 0);
+    const uint8_t *copied_pixels = destination_bits;
+    assert(copied_pixels[0] == 1u && copied_pixels[1] == 2u &&
+           copied_pixels[2] == 3u && copied_pixels[3] == 255u);
+    assert(copied_pixels[last_row_offset] == 17u &&
+           copied_pixels[last_row_offset + 1u] == 34u &&
+           copied_pixels[last_row_offset + 2u] == 51u &&
+           copied_pixels[last_row_offset + 3u] == 128u);
 
     HBITMAP monochrome_bitmap = CreateBitmap((int)Dimension, (int)Dimension,
                                               1u, 1u, NULL);
