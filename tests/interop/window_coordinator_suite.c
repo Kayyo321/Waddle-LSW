@@ -377,6 +377,7 @@ static int host_release(fixture_t *f, uint64_t window, uint64_t generation, uint
     return wire_push_host(&f->wire, frame, length);
 }
 
+
 /* ---- Suites ------------------------------------------------------------------------------------- */
 
 static int test_create_without_capability_is_idle(void) {
@@ -703,6 +704,328 @@ static int test_disconnect_and_reconnect_with_proof(void) {
     return 0;
 }
 
+/* A title change reported through a NAMECHANGE hint reaches the host as WindowUpdate for the announced pair. */
+static int test_title_change_sends_window_update(void) {
+    fixture_t *fp = &GlobalFixture;
+    sent_t sent;
+    uint32_t index;
+    uint32_t found = 0u;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    add_window(fp, 0x3000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(fp->wire.count >= 1u);
+    Check(sent_at(&fp->wire, 0, &sent));
+    Check(sent.type == InteropMsgWindowAnnounce && sent.window == 0x3000u);
+    {
+        uint32_t baseline = fp->wire.count;
+        api_double_window_t *record = api_double_find(fp->observer, 0x3000);
+        Check(record != NULL);
+        api_double_set_text(record->facts.title, InteropWindowGraphMaxTitleBytes, &record->facts.title_length, "retitled");
+        api_double_hint(fp->observer, 0x800Cu, 0x3000);
+        for (index = 0; index < 4u; ++index) {
+            advance_clock(fp, 300u);
+            Check(tick(fp) == WindowCoordinatorOk);
+        }
+        for (index = baseline; index < fp->wire.count; ++index) {
+            Check(sent_at(&fp->wire, index, &sent));
+            if (sent.type == InteropMsgWindowUpdate && sent.window == 0x3000u && sent.generation == 1u) found += 1u;
+        }
+    }
+    Check(found >= 1u);
+    fixture_close(fp);
+    return 0;
+}
+
+/* ---- Seeded long sequences with fault injection and wire invariants ----------------------------- */
+
+static uint64_t rng_state = UINT64_C(0x2545f4914f6cdd1d);
+
+static uint32_t rng_pick(uint32_t bound) {
+    rng_state ^= rng_state << 13;
+    rng_state ^= rng_state >> 7;
+    rng_state ^= rng_state << 17;
+    return (uint32_t)(rng_state % bound);
+}
+
+/** @brief Pairs the host has been told are announced in the current epoch. */
+#define ModelCapacity 1024u
+typedef struct model_t {
+    uint64_t window[ModelCapacity];
+    uint64_t generation[ModelCapacity];
+    uint32_t live[ModelCapacity];
+    uint32_t announces;
+    uint32_t retires;
+    uint32_t updates;
+    uint32_t frames;
+    uint32_t releases_sent;
+    uint32_t errors;
+    uint32_t configures_sent;
+    uint32_t closes_sent;
+    uint32_t lost_passes;
+    uint32_t reconnects;
+    uint32_t processed;
+    uint32_t hints;
+    uint32_t admits;
+} model_t;
+
+/** @brief Host-side record of one frame pin: a FrameReady the host has received and not yet released. */
+#define PinCapacity 256u
+typedef struct pin_t {
+    uint64_t window;
+    uint64_t generation;
+    uint32_t slot;
+    uint64_t sequence;
+    uint32_t outstanding;
+} pin_t;
+
+static int model_find(const model_t *model, uint64_t window, uint64_t generation) {
+    for (uint32_t index = 0; index < ModelCapacity; ++index) {
+        if (model->live[index] != 0u && model->window[index] == window && model->generation[index] == generation) {
+            return (int)index;
+        }
+    }
+    return -1;
+}
+
+static int model_add(model_t *model, uint64_t window, uint64_t generation) {
+    for (uint32_t index = 0; index < ModelCapacity; ++index) {
+        if (model->live[index] == 0u) {
+            model->live[index] = 1u;
+            model->window[index] = window;
+            model->generation[index] = generation;
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/** @brief Queues a FrameRelease for every outstanding pin the wire can take; refused pushes stay outstanding. */
+static void release_outstanding(fixture_t *f, pin_t *pins) {
+    for (uint32_t index = 0; index < PinCapacity; ++index) {
+        if (pins[index].outstanding != 0u &&
+            host_release(f, pins[index].window, pins[index].generation, pins[index].slot, pins[index].sequence) == 0) {
+            pins[index].outstanding = 0u;
+        }
+    }
+}
+
+/**
+ * @brief Reads every frame the coordinator sent since the last call and checks the wire invariants:
+ *        Announce once per pair, Retire only for an announced pair, Update and FrameReady only for an
+ *        announced pair. Records FrameReady pins for the host and counts error replies.
+ */
+static int consume_wire(fixture_t *f, model_t *model, pin_t *pins) {
+    for (; model->processed < f->wire.count; model->processed += 1u) {
+        sent_t sent;
+        if (decode_frame(f->wire.frames[model->processed], f->wire.lengths[model->processed], &sent) != 0) return 1;
+        if (sent.type == InteropMsgWindowAnnounce) {
+            if (model_find(model, sent.window, sent.generation) >= 0) return 1;
+            if (model_add(model, sent.window, sent.generation) != 0) return 1;
+            model->announces += 1u;
+        } else if (sent.type == InteropMsgWindowRetire) {
+            int index = model_find(model, sent.window, sent.generation);
+            if (index < 0) return 1;
+            model->live[index] = 0u;
+            model->retires += 1u;
+        } else if (sent.type == InteropMsgWindowUpdate) {
+            if (model_find(model, sent.window, sent.generation) < 0) return 1;
+            model->updates += 1u;
+        } else if (sent.type == InteropMsgFrameReady) {
+            uint32_t placed = 0;
+            if (model_find(model, sent.window, sent.generation) < 0) return 1;
+            for (uint32_t index = 0; index < PinCapacity && placed == 0u; ++index) {
+                if (pins[index].outstanding == 0u) {
+                    pins[index].window = sent.window;
+                    pins[index].generation = sent.generation;
+                    pins[index].slot = sent.slot;
+                    pins[index].sequence = sent.sequence;
+                    pins[index].outstanding = 1u;
+                    placed = 1u;
+                }
+            }
+            if (placed == 0u) return 1;
+            model->frames += 1u;
+        } else if (sent.type == InteropMsgError) {
+            model->errors += 1u;
+        }
+    }
+    return 0;
+}
+
+/** @brief Clears the host's view of the epoch: after reconnect the host starts from nothing. */
+static void model_reset_epoch(model_t *model, pin_t *pins) {
+    memset(model->live, 0, sizeof(model->live));
+    memset(pins, 0, sizeof(pin_t) * PinCapacity);
+}
+
+static int test_random_long_sequences_with_faults(void) {
+    fixture_t *fp = &GlobalFixture;
+    static model_t model;
+    static pin_t pins[PinCapacity];
+    uint64_t epoch = CoordEpoch;
+    uint64_t total_rounds = 10u;
+    for (uint64_t round = 0; round < total_rounds; ++round) {
+        uint32_t next_window_slot = 0;
+        memset(&model, 0, sizeof(model));
+        memset(pins, 0, sizeof(pins));
+        rng_state = UINT64_C(0x9e3779b97f4a7c15) ^ (round * UINT64_C(0x100000001b3) + 7u);
+        Check(fixture_open(fp, InteropCapWindows) == 0);
+        for (uint32_t step = 0; step < 300u; ++step) {
+            uint32_t roll = rng_pick(100u);
+            advance_clock(fp, 100u);
+            uint64_t window = 0x1000u + 0x10u * (uint64_t)rng_pick(12u);
+            window_coordinator_status_t status;
+            if (window_coordinator_state(fp->coordinator) == WindowCoordinatorStateLost && rng_pick(10u) == 0u) {
+                roll = 200u; /* a Lost coordinator reconnects with a fresh epoch on about one step in ten */
+            }
+            if (roll < 10u && fp->visible_count < 10u) {
+                /* Admit a window, sometimes a large one that stresses the heap. */
+                api_double_window_t *record;
+                if (api_double_find(fp->observer, window) == NULL) {
+                    add_window(fp, window);
+                    model.admits += 1u;
+                    record = api_double_find(fp->observer, window);
+                    if (record != NULL) {
+                        uint32_t side = rng_pick(4u) == 0u ? 1500u : 16u + rng_pick(96u);
+                        record->facts.width = side;
+                        record->facts.height = side;
+                    }
+                }
+            } else if (roll < 16u && fp->visible_count != 0u) {
+                remove_window(fp, fp->visible[rng_pick(fp->visible_count)]);
+            } else if (roll < 22u) {
+                /* Reuse: the same HWND value comes back as a new incarnation after its old one went away. */
+                if (api_double_find(fp->observer, window) != NULL) {
+                    remove_window(fp, window);
+                } else {
+                    add_window(fp, window);
+                }
+            } else if (roll < 30u) {
+                /* Change a visible window's title or width and report it through a hint, so the next refresh
+                 * sends a WindowUpdate for an announced pair. */
+                uint64_t target = fp->visible_count != 0u ? fp->visible[rng_pick(fp->visible_count)] : 0u;
+                api_double_window_t *record = target != 0u ? api_double_find(fp->observer, target) : NULL;
+                if (record != NULL) {
+                    model.hints += 1u;
+                    if (rng_pick(2u) == 0u) {
+                        api_double_set_text(record->facts.title, InteropWindowGraphMaxTitleBytes,
+                                            &record->facts.title_length, "retitled");
+                        api_double_hint(fp->observer, 0x800Cu, target);
+                    } else {
+                        record->facts.width = 16u + rng_pick(96u);
+                        api_double_hint(fp->observer, 0x800Bu, target);
+                    }
+                    advance_clock(fp, 300u);
+                }
+            } else if (roll < 40u) {
+                advance_clock(fp, 300u);
+            } else if (roll < 50u) {
+                /* Host release of an outstanding pin, or a bogus release for an unknown generation. */
+                uint32_t index = rng_pick(PinCapacity);
+                if (rng_pick(5u) == 0u) {
+                    (void)host_release(fp, 0x7000u, 1, 0, 1);
+                } else if (pins[index].outstanding != 0u) {
+                    if (host_release(fp, pins[index].window, pins[index].generation, pins[index].slot, pins[index].sequence) == 0) {
+                        pins[index].outstanding = 0u;
+                        model.releases_sent += 1u;
+                    }
+                }
+            } else if (roll < 56u) {
+                /* Host configure: random state bits for a random window (exported or not). */
+                uint8_t frame[WireFrameBytes];
+                size_t length = 0;
+                uint32_t state = rng_pick(16u);
+                uint64_t generation = 1u + rng_pick(4u);
+                if (build_host(InteropMsgWindowConfigure, frame, sizeof(frame), &length, window, generation, 0, 0, 0, 1, state) == 0 &&
+                    wire_push_host(&fp->wire, frame, length) == 0) {
+                    model.configures_sent += 1u;
+                }
+            } else if (roll < 60u) {
+                uint8_t frame[WireFrameBytes];
+                size_t length = 0;
+                if (build_host(InteropMsgWindowClose, frame, sizeof(frame), &length, window, 1u + rng_pick(3u), 0, 0, 0, 0, 0) == 0 &&
+                    wire_push_host(&fp->wire, frame, length) == 0) {
+                    model.closes_sent += 1u;
+                }
+            } else if (roll < 63u) {
+                fp->wire.backpressure_budget = rng_pick(3u);
+            } else if (roll < 65u) {
+                fp->capture.next_failure = 1u + rng_pick(2u);
+            } else if (roll < 67u) {
+                fp->adapter.fault_per_mille = rng_pick(60u);
+            } else if (roll < 68u && window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning) {
+                fp->wire.disconnected = 1;
+            } else if (roll == 200u) {
+                /* The host restarts: a fresh epoch once it has proved its buffers are gone. */
+                fp->wire.disconnected = 0;
+                epoch += 1u;
+                Check(window_coordinator_reconnect(fp->coordinator, epoch, 1u) == WindowCoordinatorOk);
+                model_reset_epoch(&model, pins);
+                model.reconnects += 1u;
+            }
+            status = tick(fp);
+            if (status == WindowCoordinatorLost) model.lost_passes += 1u;
+            Check(status == WindowCoordinatorOk || status == WindowCoordinatorLost);
+            Check(consume_wire(fp, &model, pins) == 0);
+            Check(window_coordinator_entry_count(fp->coordinator) <= InteropMaxWindows);
+            if (rng_pick(3u) == 0u) {
+                fp->wire.backpressure_budget = 8u;
+                fp->adapter.fault_per_mille = 0u;
+            }
+            next_window_slot += 1u;
+        }
+        /* Drain: the host releases every pin, the windows go away, and the epoch must end with no entry and
+         * every announced pair retired exactly once. */
+        if (window_coordinator_state(fp->coordinator) == WindowCoordinatorStateLost) {
+            fp->wire.disconnected = 0;
+            epoch += 1u;
+            Check(window_coordinator_reconnect(fp->coordinator, epoch, 1u) == WindowCoordinatorOk);
+            model_reset_epoch(&model, pins);
+            model.reconnects += 1u;
+        }
+        fp->wire.backpressure_budget = 8u;
+        fp->adapter.fault_per_mille = 0u;
+        if (window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning) {
+            /* Slot accounting: release pins and remove the random windows so every retirement completes; then a
+             * full set of MaxWindows admissions must announce, which fails if slots leaked. */
+            uint32_t before;
+            while (fp->visible_count != 0u) remove_window(fp, fp->visible[0]);
+            for (uint32_t pass = 0; pass < 40u && window_coordinator_entry_count(fp->coordinator) != 0u; ++pass) {
+                release_outstanding(fp, pins);
+                advance_clock(fp, 300u);
+                Check(tick(fp) == WindowCoordinatorOk);
+                Check(consume_wire(fp, &model, pins) == 0);
+            }
+            Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+            before = model.announces;
+            for (uint32_t index = 0; index < InteropMaxWindows; ++index) add_window(fp, 0x9000u + 0x10u * (uint64_t)index);
+            for (uint32_t pass = 0; pass < 40u && model.announces - before < InteropMaxWindows; ++pass) {
+                advance_clock(fp, 300u);
+                Check(tick(fp) == WindowCoordinatorOk);
+                Check(consume_wire(fp, &model, pins) == 0);
+            }
+            Check(model.announces - before == InteropMaxWindows);
+            Check(window_coordinator_entry_count(fp->coordinator) == InteropMaxWindows);
+        }
+        while (fp->visible_count != 0u) remove_window(fp, fp->visible[0]);
+        for (uint32_t pass = 0; pass < 40u; ++pass) {
+            release_outstanding(fp, pins);
+            advance_clock(fp, 300u);
+            Check(tick(fp) == WindowCoordinatorOk);
+            Check(consume_wire(fp, &model, pins) == 0);
+        }
+        /* Every announced pair was retired, and nothing is left in the coordinator or on the host side. */
+        Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+        for (uint32_t index = 0; index < ModelCapacity; ++index) {
+            Check(model.live[index] == 0u);
+        }
+        fixture_close(fp);
+        printf("random round %llu: announces=%u retires=%u frames=%u releases=%u updates=%u errors=%u hints=%u admits=%u lost=%u reconnects=%u\n",
+            (unsigned long long)round, model.announces, model.retires, model.frames, model.releases_sent, model.updates, model.errors, model.hints, model.admits, model.lost_passes, model.reconnects);
+    }
+    return 0;
+}
+
 int main(void) {
     int failures = 0;
     struct {
@@ -720,6 +1043,8 @@ int main(void) {
         {"phantom when the native window cannot be served", test_phantom_when_the_native_window_cannot_be_served},
         {"capture failure cancels the claim", test_capture_failure_cancels_the_claim},
         {"disconnect and reconnect with host proof", test_disconnect_and_reconnect_with_proof},
+        {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
+        {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},
     };
     for (size_t index = 0; index < sizeof(suites) / sizeof(suites[0]); ++index) {
         int result = suites[index].test();
