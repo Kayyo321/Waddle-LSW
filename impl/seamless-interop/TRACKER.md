@@ -1360,7 +1360,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     composition and pre-Ready failure fixtures to Windows CI; driver and
     deployment acceptance remain separate. Standalone entry fails closed.
 
-- **Commit `HEAD`**: `feat(input): define complete typed evdev keyboard translation`
+- **Commit `1a1cffa`**: `feat(input): define complete typed evdev keyboard translation`
   - **Task Impact**: +10% to TODO #15 (+0.30% overall; total20.85%).
   - **Summary**: Immutable full frozen table with typed scan/E0, Pause E1
     metadata, Hangul/Hanja VK and suppressed power/sleep; preserve legacy wire
@@ -1368,3 +1368,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     Microsoft docs with independent assertions. Root whole-module100% lines/
     94.53% taken arcs and leak-enabled ASan/LSan/UBSan pass; CI gate added.
     Native typed injection and other keyboard milestones remain open.
+
+- **Commit `HEAD`**: `test(daemon): isolate readiness probe and bound partial response waits`
+  - **Task Impact**: +0% to TODO #7/#34; preserve accurate failing CI evidence.
+  - **Summary**: Exact7007856 CI failed an earlier500ms responsiveness check.
+    Refuse only native VSOCK in the hardware-free fixture, assert timed-out
+    probes and keep real Unix concurrency plus original budget. Bound every
+    partial response read by one deadline and add a real incomplete-header
+    timeout regression. Normal and leak-enabled sanitizers pass; rerun CI.

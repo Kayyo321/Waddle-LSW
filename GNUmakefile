@@ -159,7 +159,7 @@ build/test_daemon_client: tests/daemon/test_daemon_client.c src/daemon/daemon_cl
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_client.c src/daemon/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
 
 build/test_guest_ready_runtime: tests/daemon/test_guest_ready_runtime.c $(DAEMON_COMMON) | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(DAEMON_COMMON) $(LDFLAGS) -Wl,--wrap=clock_gettime -lpthread -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(DAEMON_COMMON) $(LDFLAGS) -Wl,--wrap=clock_gettime,--wrap=socket -lpthread -o $@
 
 GuestReadyClientWrapFlags = -Wl,--wrap=clock_gettime,--wrap=send,--wrap=recv,--wrap=poll
 build/test_guest_ready_client_faults: tests/daemon/test_guest_ready_client_faults.c src/daemon/daemon_guest_ready_client.c build/daemon_wire.o | build

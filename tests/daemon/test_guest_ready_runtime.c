@@ -28,6 +28,16 @@ typedef struct server_context_t {
 } server_context_t;
 
 static atomic_int fail_server_clock;
+static atomic_uint isolated_probe_attempts;
+int __real_socket(int domain, int type, int protocol);
+int __wrap_socket(int domain, int type, int protocol) {
+    if (domain == AF_VSOCK) {
+        atomic_fetch_add_explicit(&isolated_probe_attempts, 1, memory_order_relaxed);
+        errno = EAFNOSUPPORT;
+        return -1;
+    }
+    return __real_socket(domain, type, protocol);
+}
 int __real_clock_gettime(clockid_t clock_id, struct timespec *value);
 int __wrap_clock_gettime(clockid_t clock_id, struct timespec *value) {
     if (atomic_exchange_explicit(&fail_server_clock, 0, memory_order_relaxed)) {
@@ -92,27 +102,48 @@ static void send_bytes(int fd, const uint8_t *bytes, size_t count) {
     }
 }
 
+static uint64_t fixture_monotonic_ms(void) {
+    struct timespec value;
+    assert(__real_clock_gettime(CLOCK_MONOTONIC, &value) == 0);
+    return (uint64_t)value.tv_sec * 1000u + (uint64_t)value.tv_nsec / 1000000u;
+}
+
 static int receive_frame(int fd, uint8_t *frame, size_t capacity, size_t *out_length,
                          int timeout_ms) {
-    struct pollfd descriptor = {.fd = fd, .events = POLLIN};
-    int ready;
-    do { ready = poll(&descriptor, 1, timeout_ms); } while (ready < 0 && errno == EINTR);
-    if (ready <= 0) return ready;
-    size_t offset = 0;
-    while (offset < WaddleDaemonHeaderSize) {
-        ssize_t count = recv(fd, frame + offset, WaddleDaemonHeaderSize - offset, 0);
+    assert(capacity >= WaddleDaemonHeaderSize && timeout_ms > 0);
+    uint64_t deadline = fixture_monotonic_ms() + (uint32_t)timeout_ms;
+    size_t offset = 0, needed = WaddleDaemonHeaderSize;
+    while (offset < needed) {
+        uint64_t now = fixture_monotonic_ms();
+        if (now >= deadline) return 0;
+        struct pollfd descriptor = {.fd = fd, .events = POLLIN};
+        int ready = poll(&descriptor, 1, (int)(deadline - now));
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready <= 0) return ready;
+        ssize_t count = recv(fd, frame + offset, needed - offset, MSG_DONTWAIT);
+        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) continue;
         if (count <= 0) return -1;
         offset += (size_t)count;
-    }
-    uint32_t payload_len = get_u32(frame + 12);
-    if (payload_len > capacity - WaddleDaemonHeaderSize) return -1;
-    while (offset < WaddleDaemonHeaderSize + payload_len) {
-        ssize_t count = recv(fd, frame + offset, WaddleDaemonHeaderSize + payload_len - offset, 0);
-        if (count <= 0) return -1;
-        offset += (size_t)count;
+        if (offset == WaddleDaemonHeaderSize) {
+            uint32_t payload_len = get_u32(frame + 12);
+            if (payload_len > capacity - WaddleDaemonHeaderSize) return -1;
+            needed += payload_len;
+        }
     }
     *out_length = offset;
     return 1;
+}
+
+static void test_partial_response_has_one_absolute_deadline(void) {
+    int pair[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+    const uint8_t partial[] = {1, 2, 3};
+    send_bytes(pair[0], partial, sizeof(partial));
+    uint8_t response[32];
+    size_t length = 77;
+    assert(receive_frame(pair[1], response, sizeof(response), &length, 20) == 0);
+    assert(length == 77);
+    assert(close(pair[0]) == 0 && close(pair[1]) == 0);
 }
 
 static void send_request(int fd, uint16_t type, uint32_t sequence,
@@ -179,7 +210,8 @@ static void test_fragmented_guest_ready_and_two_client_responsiveness(void) {
     assert(get_u32(reply + 12) == 8 && reply_length == WaddleDaemonHeaderSize + 8);
     int32_t status = (int32_t)get_u32(reply + WaddleDaemonHeaderSize);
     uint32_t cid = get_u32(reply + WaddleDaemonHeaderSize + 4);
-    assert(status == 0 || status == -ETIMEDOUT || status == -ENOTCONN);
+    assert(status == -ETIMEDOUT);
+    assert(atomic_load_explicit(&isolated_probe_attempts, memory_order_relaxed) > 0);
     assert(cid >= 3 && cid != UINT32_MAX);
     assert(receive_frame(waiting_client, reply, sizeof(reply), &reply_length, 500) == 1);
     assert((reply[6] | (uint16_t)reply[7] << 8) == DaemonMsgStatusResp);
@@ -235,6 +267,7 @@ static void test_probe_deadline_wins_over_late_pollout(void) {
 }
 
 int main(void) {
+    test_partial_response_has_one_absolute_deadline();
     test_probe_deadline_wins_over_late_pollout();
     test_fragmented_guest_ready_and_two_client_responsiveness();
     puts("test_guest_ready_runtime: all tests passed");
