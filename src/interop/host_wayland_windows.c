@@ -850,7 +850,9 @@ host_wayland_status_t host_wayland_windows_handle_frame(host_wayland_t *ctx, con
     if (interop_header_decode(frame, length, &header) != InteropErrorNone) return HostWaylandMalformedFrame;
     if (length < InteropHeaderBytes || (size_t)header.length > length - InteropHeaderBytes) return HostWaylandMalformedFrame;
     const uint8_t *payload = frame + InteropHeaderBytes;
-    if (interop_payload_validate(header.type, InteropFromGuest, payload, header.length) != InteropErrorNone) return HostWaylandMalformedFrame;
+    int validation = interop_payload_validate(header.type, InteropFromGuest, payload, header.length);
+    if (validation == InteropErrorUnsupportedType) return HostWaylandUnsupportedType;
+    if (validation != InteropErrorNone) return HostWaylandMalformedFrame;
     switch (header.type) {
     case InteropMsgWindowAnnounce:
         return handle_announce(ctx, payload, header.length, now_ms);

@@ -46,7 +46,7 @@ InteropWaylandWindowsObjects = build/host_window_map.o build/host_popup_position
 InteropWaylandWindowsProtocol = build/xdg_shell_protocol.c build/xdg_decoration_protocol.c
 InteropWaylandWindowsProtocolHeaders = build/xdg_shell_client.h build/xdg_decoration_client.h
 InteropWaylandWindowsWraps = -Wl,--wrap=wl_proxy_marshal_flags,--wrap=wl_proxy_add_listener,--wrap=wl_proxy_destroy,--wrap=wl_proxy_get_version
-build/host_wayland_windows_test: tests/interop/host_wayland_windows_test.c tests/interop/host_wayland_windows_fake.h src/interop/host_wayland_windows.c src/interop/host_wayland_windows.h $(InteropWaylandWindowsObjects) $(InteropWaylandWindowsProtocolHeaders) $(InteropWaylandWindowsProtocol) | build
+build/host_wayland_windows_test: tests/interop/host_wayland_windows_test.c tests/interop/host_wayland_windows_fake.h tests/interop/host_wayland_windows_fixtures.h src/interop/host_wayland_windows.c src/interop/host_wayland_windows.h $(InteropWaylandWindowsObjects) $(InteropWaylandWindowsProtocolHeaders) $(InteropWaylandWindowsProtocol) | build
 	$(CC) $(InteropWaylandWindowsFlags) $(shell pkg-config --cflags wayland-client) tests/interop/host_wayland_windows_test.c $(InteropWaylandWindowsProtocol) $(InteropWaylandWindowsObjects) -fsanitize=address,leak,undefined $(shell pkg-config --libs wayland-client) $(InteropWaylandWindowsWraps) -o $@
 .PHONY: interop-host-wayland-windows-test
 interop-host-wayland-windows-test: build/host_wayland_windows_test

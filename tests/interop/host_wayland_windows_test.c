@@ -1160,6 +1160,8 @@ static int check_reset(void) {
     return 0;
 }
 
+#include "host_wayland_windows_fixtures.h"
+
 int main(void) {
     if (check_init() != 0) return 1;
     if (check_scale() != 0) return 1;
@@ -1189,6 +1191,7 @@ int main(void) {
     if (check_late_events_after_retire() != 0) return 1;
     if (check_retire_releases_press() != 0) return 1;
     if (check_reset() != 0) return 1;
+    if (check_codec_fixtures() != 0) return 1;
     puts("host_wayland_windows_test: all checks passed");
     return 0;
 }
