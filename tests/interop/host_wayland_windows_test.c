@@ -1297,6 +1297,62 @@ static int check_grab_topmost_rules(void) {
     return 0;
 }
 
+/**
+ * @brief A popup whose guest rectangle changes is repositioned with a fresh positioner and token (8.44). The same
+ * rectangle is not a change. A stale token leaves the reposition pending. PopupRepositioned is computed from the
+ * request the reposition sent together with the new rectangle, never a mix of old and new.
+ */
+static int check_popup_rect_update(void) {
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    Check(menu_under(3, 1, 1, false, 0, 1100) == HostWaylandOk);
+    host_wayland_record_t *menu = find_record(&session_ctx, 3, 1);
+    Check(menu != NULL);
+    unsigned popup = fake_nth("xdg_popup", 0);
+    unsigned before = fake_request_count;
+    unsigned positioners = fake_count_requests("xdg_wm_base", XDG_WM_BASE_CREATE_POSITIONER);
+    update_spec_t moved = {3, 1, false, 0, 0, NULL, false, 0, 0}; /* rectangle 10, 20, 640, 480 */
+    Check(update_frame(&moved) == HostWaylandOk);
+    int reposition = fake_find("xdg_popup", XDG_POPUP_REPOSITION, before);
+    Check(reposition >= 0 && fake_requests[reposition].proxy == popup);
+    Check(fake_count_requests("xdg_wm_base", XDG_WM_BASE_CREATE_POSITIONER) == positioners + 1);
+    uint32_t token = (uint32_t)fake_requests[reposition].a1;
+    Check(token != 0 && menu->reposition_token == token && menu->reposition_pending == 1);
+    Check(menu->guest_x == 10 && menu->guest_width == 640);
+
+    /* The same rectangle again is not a change: no new reposition, and the pending token stays. */
+    unsigned repositions = fake_count_requests("xdg_popup", XDG_POPUP_REPOSITION);
+    Check(update_frame(&moved) == HostWaylandOk);
+    Check(fake_count_requests("xdg_popup", XDG_POPUP_REPOSITION) == repositions);
+
+    /* A token other than the current one is stale and leaves the reposition pending. */
+    deliver_popup_repositioned(popup, token - 1);
+    Check(menu->reposition_pending == 1);
+    deliver_popup_repositioned(popup, token);
+    Check(menu->reposition_pending == 0);
+
+    /* The compositor places the popup at the origin of the new request: the guest rectangle must be the new one. */
+    int32_t origin_x = menu->request.anchor_x + menu->request.offset_x;
+    int32_t origin_y = menu->request.anchor_y + menu->request.offset_y;
+    deliver_popup_configure(popup, origin_x, origin_y, 1, 1);
+    Check(captured.repositioned == 1 && captured.last_x == 10 && captured.last_y == 20);
+
+    /* Without xdg_popup.reposition (xdg_wm_base below version 3) a changed rectangle is refused, atomically. */
+    Check(begin_popup_session(2) == 0);
+    root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    Check(menu_under(3, 1, 1, false, 0, 1100) == HostWaylandOk);
+    menu = find_record(&session_ctx, 3, 1);
+    Check(menu != NULL);
+    before = fake_request_count;
+    Check(update_frame(&moved) == HostWaylandRefused);
+    Check(captured.last_error_code == InteropErrorVersionMismatch && captured.last_refused_type == 0x0101);
+    Check(fake_request_count == before);
+    Check(menu->guest_x == 30 && menu->guest_width == 40 && menu->reposition_pending == 0);
+    return 0;
+}
+
 /** @brief Every request the module sent was accepted by the strict double. Runs last. */
 static int check_fake_protocol_clean(void) {
     Check(fake_dead_requests == 0);
@@ -1331,6 +1387,7 @@ int main(void) {
     if (check_update_title_and_size() != 0) return 1;
     if (check_update_parent() != 0) return 1;
     if (check_update_is_atomic() != 0) return 1;
+    if (check_popup_rect_update() != 0) return 1;
     if (check_retire_order() != 0) return 1;
     if (check_retire_stale_and_invalid() != 0) return 1;
     if (check_late_events_after_retire() != 0) return 1;

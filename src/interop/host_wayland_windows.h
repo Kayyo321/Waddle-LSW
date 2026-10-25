@@ -110,6 +110,8 @@ typedef struct host_wayland_record_t {
     uint8_t grabbed; /**< Nonzero while this popup holds an xdg_popup grab on `grab_seat` (3.6.2). */
     struct wl_seat *grab_seat; /**< Seat of the grab; meaningful while `grabbed` is nonzero. */
     uint64_t grab_sequence; /**< Grab order on the context; the highest live sequence of a seat is its topmost grab. */
+    uint32_t reposition_token; /**< Token of the last xdg_popup.reposition sent; zero before the first. */
+    uint8_t reposition_pending; /**< Nonzero from a reposition request until its token is acknowledged. */
     uint32_t decoration_pending; /**< Staged decoration mode, zero when nothing is staged. */
     uint32_t decoration_applied; /**< Last applied decoration mode, zero before the first surface configuration. */
     int32_t guest_x; /**< Guest rectangle, most recent announce or update. */

@@ -324,10 +324,12 @@ static void on_popup_done(void *data, struct xdg_popup *popup) {
     if (ctx->config.callbacks.on_popup_dismissed) ctx->config.callbacks.on_popup_dismissed(ctx->config.callbacks.user, rec->window, rec->generation);
 }
 
+/* xdg_popup.repositioned: the compositor applied the reposition with this token. Only the current token completes
+ * it; an older token is a stale acknowledgement and is ignored. */
 static void on_popup_repositioned(void *data, struct xdg_popup *popup, uint32_t token) {
-    (void)data;
-    (void)popup;
-    (void)token;
+    host_wayland_record_t *rec = resolve(data, popup);
+    if (rec == NULL || token != rec->reposition_token) return;
+    rec->reposition_pending = 0;
 }
 
 static const struct xdg_popup_listener popup_listener = {
@@ -540,6 +542,25 @@ static void maybe_grab(host_wayland_t *ctx, host_wayland_record_t *rec, const an
     rec->grab_sequence = ++ctx->grab_counter;
 }
 
+/** @brief Logical size of a direct parent, as the positioner clamp uses it (8.44): ceil of the guest size, at least 1. */
+static void parent_logical_size(const host_wayland_record_t *parent, uint32_t scale, uint32_t *width, uint32_t *height) {
+    *width = ceil_div_scale(parent->guest_width, scale);
+    *height = ceil_div_scale(parent->guest_height, scale);
+    if (*width == 0) *width = 1;
+    if (*height == 0) *height = 1;
+}
+
+/** @brief Apply the pure request to a positioner. set_reactive needs xdg_wm_base version 3. */
+static void set_positioner(const host_wayland_t *ctx, struct xdg_positioner *positioner, const host_popup_request_t *request) {
+    xdg_positioner_set_size(positioner, (int32_t)request->width, (int32_t)request->height);
+    xdg_positioner_set_anchor_rect(positioner, request->anchor_x, request->anchor_y, (int32_t)request->anchor_width, (int32_t)request->anchor_height);
+    xdg_positioner_set_anchor(positioner, request->anchor);
+    xdg_positioner_set_gravity(positioner, request->gravity);
+    xdg_positioner_set_offset(positioner, request->offset_x, request->offset_y);
+    xdg_positioner_set_constraint_adjustment(positioner, request->constraint_adjustment);
+    if (ctx->config.wm_base_version >= 3) xdg_positioner_set_reactive(positioner);
+}
+
 /**
  * @brief Create the popup objects of one record and commit the initial buffer-less surface.
  *
@@ -555,14 +576,7 @@ static int realize_popup(host_wayland_t *ctx, host_wayland_record_t *rec, const 
 
     rec->positioner = xdg_wm_base_create_positioner(ctx->config.wm_base);
     if (rec->positioner == NULL) return -1;
-    const host_popup_request_t *request = &rec->request;
-    xdg_positioner_set_size(rec->positioner, (int32_t)request->width, (int32_t)request->height);
-    xdg_positioner_set_anchor_rect(rec->positioner, request->anchor_x, request->anchor_y, (int32_t)request->anchor_width, (int32_t)request->anchor_height);
-    xdg_positioner_set_anchor(rec->positioner, request->anchor);
-    xdg_positioner_set_gravity(rec->positioner, request->gravity);
-    xdg_positioner_set_offset(rec->positioner, request->offset_x, request->offset_y);
-    xdg_positioner_set_constraint_adjustment(rec->positioner, request->constraint_adjustment);
-    if (ctx->config.wm_base_version >= 3) xdg_positioner_set_reactive(rec->positioner);
+    set_positioner(ctx, rec->positioner, &rec->request);
 
     rec->popup = xdg_surface_get_popup(rec->xdg_surface, parent->xdg_surface, rec->positioner);
     if (rec->popup == NULL) return -1;
@@ -673,10 +687,9 @@ static host_wayland_status_t handle_announce(host_wayland_t *ctx, const uint8_t 
         host_wayland_record_t *parent = find_record(ctx, req.parent, req.parent_generation);
         /* The table only realizes a popup under a realized parent, so this is a defensive refusal. */
         if (parent == NULL) return fail_realization(ctx, rec, req.window, req.generation, InteropErrorStaleWindow);
-        uint32_t parent_width = ceil_div_scale(parent->guest_width, ctx->scale);
-        uint32_t parent_height = ceil_div_scale(parent->guest_height, ctx->scale);
-        if (parent_width == 0) parent_width = 1;
-        if (parent_height == 0) parent_height = 1;
+        uint32_t parent_width = 0;
+        uint32_t parent_height = 0;
+        parent_logical_size(parent, ctx->scale, &parent_width, &parent_height);
         host_popup_rect_t guest;
         guest.x = req.x;
         guest.y = req.y;
@@ -760,6 +773,55 @@ static void mirror_parent(host_wayland_t *ctx, host_wayland_record_t *rec) {
 }
 
 /**
+ * @brief Move a realized popup to a new guest rectangle (8.44). The new request is built in temporaries, the
+ * positioner is created, and xdg_popup.reposition is sent with the next token. Only after all of that succeeds are
+ * the rectangle, the request and the token stored, so a refusal leaves the record and the compositor unchanged.
+ */
+static host_wayland_status_t reposition_popup(host_wayland_t *ctx, host_wayland_record_t *rec, const update_t *req) {
+    host_wayland_record_t *parent = find_record(ctx, rec->parent, rec->parent_generation);
+    if (parent == NULL) {
+        emit_error(ctx, 0x0101u, InteropErrorStaleWindow, rec->window, rec->generation);
+        return HostWaylandRefused;
+    }
+    uint32_t parent_width = 0;
+    uint32_t parent_height = 0;
+    parent_logical_size(parent, rec->scale, &parent_width, &parent_height);
+    host_popup_rect_t guest;
+    guest.x = req->x;
+    guest.y = req->y;
+    guest.width = req->width;
+    guest.height = req->height;
+    host_popup_request_t request;
+    if (host_popup_positioner_request(&guest, rec->scale, parent_width, parent_height, &request) != HostPopupOk) {
+        emit_error(ctx, 0x0101u, InteropErrorMalformedFrame, rec->window, rec->generation);
+        return HostWaylandRefused;
+    }
+    /* xdg_popup.reposition exists from xdg_wm_base version 3. An older compositor cannot move the popup. */
+    if (ctx->config.wm_base_version < 3) {
+        emit_error(ctx, 0x0101u, InteropErrorVersionMismatch, rec->window, rec->generation);
+        return HostWaylandRefused;
+    }
+    struct xdg_positioner *positioner = xdg_wm_base_create_positioner(ctx->config.wm_base);
+    if (positioner == NULL) {
+        emit_error(ctx, 0x0101u, InteropErrorUnexpected, rec->window, rec->generation);
+        return HostWaylandRefused;
+    }
+    set_positioner(ctx, positioner, &request);
+    uint32_t token = rec->reposition_token + 1u;
+    if (token == 0) token = 1u;
+    xdg_popup_reposition(rec->popup, positioner, token);
+    xdg_positioner_destroy(positioner);
+    rec->guest_x = req->x;
+    rec->guest_y = req->y;
+    rec->guest_width = req->width;
+    rec->guest_height = req->height;
+    rec->request = request;
+    rec->reposition_token = token;
+    rec->reposition_pending = 1;
+    return HostWaylandOk;
+}
+
+/**
  * @brief Apply one WindowUpdate, all-or-nothing (4.3). Every refusal happens before any field or Wayland request
  * changes: the table reparent is the only step that can refuse, so it runs first, and the rectangle, title, parent
  * mirror and minimum size are applied only after it succeeds.
@@ -779,11 +841,8 @@ static host_wayland_status_t handle_update(host_wayland_t *ctx, const uint8_t *p
             emit_error(ctx, 0x0101u, host_window_map_reparent_error_code(HostWindowMapReparentRefuseRole), rec->window, rec->generation);
             return HostWaylandRefused;
         }
-        rec->guest_x = req.x;
-        rec->guest_y = req.y;
-        rec->guest_width = req.width;
-        rec->guest_height = req.height;
-        return HostWaylandOk;
+        bool rect_changes = req.x != rec->guest_x || req.y != rec->guest_y || req.width != rec->guest_width || req.height != rec->guest_height;
+        return rect_changes ? reposition_popup(ctx, rec, &req) : HostWaylandOk;
     }
     if (parent_changes) {
         host_window_ref_t child;

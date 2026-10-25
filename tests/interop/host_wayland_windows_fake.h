@@ -247,6 +247,7 @@ static void decode_args(fake_request_t *request, const char *iface, uint32_t opc
         else if (opcode == XDG_POSITIONER_SET_ANCHOR || opcode == XDG_POSITIONER_SET_GRAVITY || opcode == XDG_POSITIONER_SET_CONSTRAINT_ADJUSTMENT) ARG_UINT(0);
     } else if (!strcmp(iface, "xdg_popup")) {
         if (opcode == XDG_POPUP_GRAB) { ARG_PTR(0); ARG_UINT(1); }
+        else if (opcode == XDG_POPUP_REPOSITION) { ARG_PTR(0); ARG_UINT(1); }
     } else if (!strcmp(iface, "zxdg_decoration_manager_v1")) {
         if (opcode == ZXDG_DECORATION_MANAGER_V1_GET_TOPLEVEL_DECORATION) { SKIP_NEW_ID(); ARG_PTR(0); }
     } else if (!strcmp(iface, "zxdg_toplevel_decoration_v1")) {
