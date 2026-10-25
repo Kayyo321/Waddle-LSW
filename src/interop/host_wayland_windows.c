@@ -612,10 +612,13 @@ static void maybe_grab(host_wayland_t *ctx, host_wayland_record_t *rec, const an
     rec->grab_sequence = ++ctx->grab_counter;
 }
 
-/** @brief Logical size of a direct parent, as the positioner clamp uses it (8.44): ceil of the guest size, at least 1. */
+/**
+ * @brief Logical size of a direct parent for the positioner clamp (8.44, 4.5): the guest size divided by the scale,
+ * rounded DOWN, and at least 1. A surface's window geometry is its buffer over the scale, rounded down.
+ */
 static void parent_logical_size(const host_wayland_record_t *parent, uint32_t scale, uint32_t *width, uint32_t *height) {
-    *width = ceil_div_scale(parent->guest_width, scale);
-    *height = ceil_div_scale(parent->guest_height, scale);
+    *width = parent->guest_width / scale;
+    *height = parent->guest_height / scale;
     if (*width == 0) *width = 1;
     if (*height == 0) *height = 1;
 }

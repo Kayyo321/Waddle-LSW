@@ -1504,6 +1504,27 @@ static int check_note_mapped_reparents_children(void) {
     return 0;
 }
 
+/**
+ * @brief The positioner clamp uses the parent's logical size, which is its guest size over the scale rounded
+ * DOWN (4.5: window geometry is buffer over scale, rounded down). At width 641 and scale 2 that is 320, not 321, so
+ * an anchor at logical 320 clamps to 319 with the remainder 1 as the offset.
+ */
+static int check_parent_size_rounds_down(void) {
+    Check(begin_popup_session(5) == 0);
+    Check(host_wayland_windows_set_scale(&session_ctx, 2, 1) == HostWaylandOk);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    root.width = 641;
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    unsigned before = fake_request_count;
+    announce_spec_t menu = menu_spec(3, 1, 1, 3, 641, 12, 40, 20);
+    Check(announce_spec(&session_ctx, &menu) == HostWaylandOk);
+    int anchor = fake_find("xdg_positioner", XDG_POSITIONER_SET_ANCHOR_RECT, before);
+    Check(anchor >= 0 && fake_requests[anchor].a0 == 319);
+    int offset = fake_find("xdg_positioner", XDG_POSITIONER_SET_OFFSET, before);
+    Check(offset >= 0 && fake_requests[offset].a0 == 1);
+    return 0;
+}
+
 /** @brief Every request the module sent was accepted by the strict double. Runs last. */
 static int check_fake_protocol_clean(void) {
     Check(fake_dead_requests == 0);
@@ -1541,6 +1562,7 @@ int main(void) {
     if (check_popup_rect_update() != 0) return 1;
     if (check_press_table_rules() != 0) return 1;
     if (check_note_mapped_reparents_children() != 0) return 1;
+    if (check_parent_size_rounds_down() != 0) return 1;
     if (check_retire_order() != 0) return 1;
     if (check_retire_stale_and_invalid() != 0) return 1;
     if (check_late_events_after_retire() != 0) return 1;
