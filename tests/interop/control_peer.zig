@@ -30,6 +30,10 @@ fn init_peer(allocator: std_t.mem.Allocator, role: peer_t.role_t, token: u64, ac
     return init_peer_version(allocator, role, token, accepted_at_ms, Version);
 }
 
+fn init_peer_caps(allocator: std_t.mem.Allocator, role: peer_t.role_t, token: u64, accepted_at_ms: u64, caps: u64) !peer_t.peer_t {
+    return peer_t.peer_t.init(allocator, .{ .role = role, .connection_token = token, .accepted_at_ms = accepted_at_ms, .local_version = Version, .local_capabilities = caps });
+}
+
 fn init_pair(allocator: std_t.mem.Allocator, accepted_at_ms: u64) !pair_t {
     return .{
         .host = try init_peer(allocator, .Host, HostToken, accepted_at_ms),
@@ -1554,6 +1558,9 @@ test "valid HelloAck envelope with invalid SemVer drains as incompatible" {
 // ---------------------------------------------------------------------------
 
 /// Observable state that every refused feature admission must leave byte-identical.
+/// Observable peer state compared by rejection and allocation-failure tests. It includes the
+/// handshake drain reason, liveness timers, the best-effort terminal flag, every send record and
+/// the full request identifier namespace, so a partial mutation cannot hide behind equal counts.
 const snapshot_t = struct {
     phase: peer_t.phase_t,
     queued: usize,
@@ -1562,6 +1569,13 @@ const snapshot_t = struct {
     now_ms: u64,
     request_ids: usize,
     abort: bool,
+    handshake: std_t.meta.FieldType(peer_t.peer_t, .handshake),
+    liveness: std_t.meta.FieldType(peer_t.peer_t, .liveness),
+    terminal_send_failed: bool,
+    send_records: std_t.meta.FieldType(peer_t.peer_t, .send_records),
+    request_id_set: std_t.meta.FieldType(peer_t.peer_t, .request_ids),
+    feature_request_count: usize,
+    feature_request_ids: std_t.meta.FieldType(peer_t.peer_t, .feature_request_ids),
 };
 
 /// Data-class admission limit: peer_t.QueueCapacity minus the 8 ReservedControlSlots of stream_send_queue.zig.
@@ -1576,6 +1590,13 @@ fn snapshot(peer: *const peer_t.peer_t) snapshot_t {
         .now_ms = peer.last_now_ms,
         .request_ids = peer.request_ids.count,
         .abort = peer.must_abort_transport(),
+        .handshake = peer.handshake,
+        .liveness = peer.liveness,
+        .terminal_send_failed = peer.terminal_send_unavailable(),
+        .send_records = peer.send_records,
+        .request_id_set = peer.request_ids,
+        .feature_request_count = peer.feature_request_count,
+        .feature_request_ids = peer.feature_request_ids,
     };
 }
 
@@ -1689,7 +1710,7 @@ test "feature frames are admitted by producing role with exact bytes and no requ
     try complete_handshake(&pair, 401);
 
     var host_frame: [MaxTestFrame]u8 = undefined;
-    const host_length = try make_window_close(&host_frame, 77, 0x55, 2);
+    const host_length = try make_window_close(&host_frame, 0, 0x55, 2);
     const host_event = try pair.host.enqueue_feature(HostToken, 402, host_frame[0..host_length]);
     try std_t.testing.expectEqual(peer_t.event_kind_t.None, host_event.kind);
     try std_t.testing.expectEqual(peer_t.phase_t.Ready, host_event.phase);
@@ -1707,7 +1728,7 @@ test "feature frames are admitted by producing role with exact bytes and no requ
     const received = try pair.guest.next_event(GuestToken, 402, &output);
     try std_t.testing.expectEqual(peer_t.event_kind_t.FeatureFrame, received.event.kind);
     try std_t.testing.expectEqual(c_t.InteropMsgWindowClose, received.event.message_type);
-    try std_t.testing.expectEqual(@as(u32, 77), received.event.request_id);
+    try std_t.testing.expectEqual(@as(u32, 0), received.event.request_id);
     try std_t.testing.expectEqualSlices(u8, host_frame[0..host_length], output[0..received.event.copied_bytes]);
 
     _ = try transfer_front_fragmented(&pair.guest, GuestToken, &pair.host, HostToken, 402, &.{7});
@@ -2017,6 +2038,46 @@ test "allocation failure at feature admission preserves every observable field" 
     }
 }
 
+test "enqueue_request allocation failure and the exact Ready deadline leave no reservation" {
+    var frame: [MaxTestFrame]u8 = undefined;
+    const request = try make_launch_request(&frame, 0);
+    for ([_]bool{ false, true }) |inject| {
+        var failing = std_t.testing.FailingAllocator.init(std_t.testing.allocator, .{ .fail_index = std_t.math.maxInt(usize) });
+        var pair = pair_t{
+            .host = try peer_t.peer_t.init(failing.allocator(), .{ .role = .Host, .connection_token = HostToken, .accepted_at_ms = 400, .local_version = Version, .local_capabilities = Capabilities | c_t.InteropCapLaunch }),
+            .guest = try init_peer_caps(std_t.testing.allocator, .Guest, GuestToken, 400, Capabilities | c_t.InteropCapLaunch),
+        };
+        defer deinit_pair(&pair);
+        _ = try complete_handshake_event(&pair, 401);
+        const before = snapshot(&pair.host);
+        if (inject) {
+            failing.fail_index = failing.alloc_index;
+            try std_t.testing.expectError(error.OutOfMemory, pair.host.enqueue_request(HostToken, 402, frame[0..request]));
+            try std_t.testing.expect(failing.has_induced_failure);
+            try std_t.testing.expectEqualDeep(before, snapshot(&pair.host));
+            failing.fail_index = std_t.math.maxInt(usize);
+        } else {
+            const admitted = try pair.host.enqueue_request(HostToken, 402, frame[0..request]);
+            try std_t.testing.expectEqual(@as(u32, 1), admitted.request_id);
+            try std_t.testing.expectEqual(before.queued + 1, pair.host.queue.count);
+        }
+    }
+
+    var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+    defer deinit_pair(&pair);
+    _ = try complete_handshake_event(&pair, 401);
+    const expiry = 401 + c_t.InteropPingTimeoutMs;
+    _ = try pair.host.enqueue_request(HostToken, expiry - 1, frame[0..request]);
+    const before = snapshot(&pair.host);
+    const drained = try pair.host.enqueue_request(HostToken, expiry, frame[0..request]);
+    try std_t.testing.expectEqual(@as(u32, 0), drained.request_id);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.Draining, drained.event.kind);
+    try std_t.testing.expectEqual(peer_t.phase_t.Draining, pair.host.phase());
+    try std_t.testing.expectEqual(before.feature_request_count, pair.host.feature_request_count);
+    try std_t.testing.expectEqual(before.request_id_set.count, pair.host.request_ids.count);
+    try std_t.testing.expectEqual(before.queued, pair.host.queue.count);
+}
+
 test "negotiated facilities gate each feature family and any-of transfers" {
     var narrow = try init_pair(std_t.testing.allocator, 400);
     defer deinit_pair(&narrow);
@@ -2063,6 +2124,194 @@ test "received feature frames outside the negotiated map drain with UnsupportedT
     const reply = (try narrow.host.peek_tx(HostToken)).?;
     try std_t.testing.expectEqual(@as(u16, c_t.InteropMsgError), std_t.mem.readInt(u16, reply[6..8], .little));
     try std_t.testing.expectEqual(@as(usize, 1), narrow.host.queue.count);
+}
+
+fn make_launch_request(buffer: []u8, request_id: u32) !usize {
+    var writer = writer_for(buffer);
+    // Tags must increase: AppKey (0x0008) precedes LaunchKind (0x0036).
+    const app_key = "a-Microsoft_Windows_Explorer";
+    try std_t.testing.expectEqual(c_t.InteropErrorNone, c_t.interop_put_bytes(&writer, c_t.InteropTagAppKey, app_key, app_key.len));
+    try write_uint(&writer, c_t.InteropTagLaunchKind, c_t.InteropLaunchApp);
+    var length: usize = 0;
+    try finish(&writer, c_t.InteropMsgLaunchRequest, request_id, c_t.InteropFromHost, &length);
+    return length;
+}
+
+fn make_launch_result(buffer: []u8, request_id: u32) !usize {
+    var writer = writer_for(buffer);
+    try write_uint(&writer, c_t.InteropTagProcessId, 4242);
+    try write_uint(&writer, c_t.InteropTagStatus, c_t.InteropOk);
+    var length: usize = 0;
+    try finish(&writer, c_t.InteropMsgLaunchResult, request_id, c_t.InteropFromGuest, &length);
+    return length;
+}
+
+/// Acknowledge every queued byte in order so the Data class never limits the test sequence.
+fn ack_all(peer: *peer_t.peer_t, token: u64, now_ms: u64) !void {
+    while (try peer.peek_tx(token)) |bytes| {
+        _ = try peer.ack_tx(token, now_ms, bytes.len);
+    }
+}
+
+test "request frames stamp one reserved identifier and the response echoes it" {
+    var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+    defer deinit_pair(&pair);
+    _ = try complete_handshake_event(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    const length = try make_launch_request(&frame, 0);
+    const admitted = try pair.host.enqueue_request(HostToken, 402, frame[0..length]);
+    try std_t.testing.expectEqual(@as(u32, 1), admitted.request_id);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.None, admitted.event.kind);
+    try std_t.testing.expectEqual(@as(usize, 1), pair.host.feature_request_count);
+    try std_t.testing.expect(pair.host.request_ids.contains(1));
+    // The queued copy carries the identifier; the caller's buffer keeps its zero identifier.
+    var expected: [MaxTestFrame]u8 = undefined;
+    @memcpy(expected[0..length], frame[0..length]);
+    set_request_id(expected[0..length], 1);
+    try std_t.testing.expectEqualSlices(u8, expected[0..length], (try pair.host.peek_tx(HostToken)).?);
+    try std_t.testing.expectEqual(@as(u32, 0), std_t.mem.readInt(u32, frame[12..16], .little));
+
+    var output: [MaxTestFrame]u8 = undefined;
+    _ = try transfer_front_fragmented(&pair.host, HostToken, &pair.guest, GuestToken, 402, &.{ 4, 9 });
+    const received = try pair.guest.next_event(GuestToken, 402, &output);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.FeatureFrame, received.event.kind);
+    try std_t.testing.expectEqual(@as(u32, 1), received.event.request_id);
+
+    var result: [MaxTestFrame]u8 = undefined;
+    const result_length = try make_launch_result(&result, 1);
+    _ = try pair.guest.enqueue_feature(GuestToken, 403, result[0..result_length]);
+    _ = try transfer_front_fragmented(&pair.guest, GuestToken, &pair.host, HostToken, 403, &.{5});
+    const echoed = try pair.host.next_event(HostToken, 403, &output);
+    try std_t.testing.expectEqual(c_t.InteropMsgLaunchResult, echoed.event.message_type);
+    try std_t.testing.expectEqual(@as(u32, 1), echoed.event.request_id);
+
+    try pair.host.release_request(HostToken, 1);
+    try std_t.testing.expectEqual(@as(usize, 0), pair.host.feature_request_count);
+    try std_t.testing.expect(!pair.host.request_ids.contains(1));
+    try std_t.testing.expectError(error.UnknownRequestId, pair.host.release_request(HostToken, 1));
+    try std_t.testing.expectError(error.InvalidRequestId, pair.host.release_request(HostToken, 0));
+    try std_t.testing.expectError(error.WrongConnectionToken, pair.host.release_request(GuestToken, 1));
+}
+
+test "enqueue_feature and enqueue_request enforce the request identifier classes" {
+    var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+    defer deinit_pair(&pair);
+    _ = try complete_handshake_event(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    const request = try make_launch_request(&frame, 0);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..request], error.UnsupportedFrame);
+    const nonzero_request = try make_launch_request(&frame, 7);
+    try std_t.testing.expectError(error.InvalidFrame, pair.host.enqueue_request(HostToken, 402, frame[0..nonzero_request]));
+    try std_t.testing.expectEqual(@as(usize, 0), pair.host.feature_request_count);
+
+    const unsolicited_with_id = try make_window_close(&frame, 77, 1, 1);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..unsolicited_with_id], error.InvalidFrame);
+    const response_without_id = try make_launch_result(&frame, 0);
+    try expect_refused(&pair.guest, GuestToken, 402, frame[0..response_without_id], error.InvalidFrame);
+    const response = try make_launch_result(&frame, 9);
+    _ = try pair.guest.enqueue_feature(GuestToken, 402, frame[0..response]);
+    try std_t.testing.expectEqual(@as(usize, 1), pair.guest.queue.count);
+    try std_t.testing.expectEqual(@as(usize, 0), pair.guest.feature_request_count);
+    try std_t.testing.expect(!pair.guest.request_ids.contains(9));
+
+    const result_as_request = try make_launch_result(&frame, 0);
+    try std_t.testing.expectError(error.UnsupportedFrame, pair.guest.enqueue_request(GuestToken, 402, frame[0..result_as_request]));
+}
+
+test "release_request refuses liveness identifiers and transport loss retires feature identifiers" {
+    var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+    defer deinit_pair(&pair);
+    _ = try complete_handshake_event(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    const request = try make_launch_request(&frame, 0);
+    const feature = try pair.host.enqueue_request(HostToken, 402, frame[0..request]);
+    try std_t.testing.expectEqual(@as(u32, 1), feature.request_id);
+
+    const ping_time = 401 + c_t.InteropPingIntervalMs;
+    _ = try pair.host.tick(HostToken, ping_time);
+    const ping_id = pair.host.request_ids.next_candidate - 1;
+    try std_t.testing.expect(pair.host.request_ids.contains(ping_id));
+    try std_t.testing.expect(ping_id != 1);
+    try std_t.testing.expectError(error.UnknownRequestId, pair.host.release_request(HostToken, ping_id));
+    try std_t.testing.expect(pair.host.request_ids.contains(ping_id));
+    try std_t.testing.expectEqual(@as(usize, 1), pair.host.feature_request_count);
+
+    _ = try pair.host.transport_lost(HostToken);
+    try std_t.testing.expectEqual(@as(usize, 0), pair.host.request_ids.count);
+    try std_t.testing.expectEqual(@as(usize, 0), pair.host.feature_request_count);
+    try std_t.testing.expectError(error.RequestIdRetired, pair.host.release_request(HostToken, 1));
+    try std_t.testing.expectError(error.WrongPhase, pair.host.enqueue_request(HostToken, ping_time, frame[0..request]));
+}
+
+test "feature identifiers wrap past UINT32_MAX and stop at the 4032 feature cap with liveness still free" {
+    var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+    defer deinit_pair(&pair);
+    _ = try complete_handshake_event(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    const request = try make_launch_request(&frame, 0);
+    pair.host.request_ids.next_candidate = std_t.math.maxInt(u32);
+    const first = try pair.host.enqueue_request(HostToken, 402, frame[0..request]);
+    try std_t.testing.expectEqual(std_t.math.maxInt(u32), first.request_id);
+    try ack_all(&pair.host, HostToken, 402);
+    const second = try pair.host.enqueue_request(HostToken, 402, frame[0..request]);
+    try std_t.testing.expectEqual(@as(u32, 1), second.request_id);
+    try ack_all(&pair.host, HostToken, 402);
+    try pair.host.release_request(HostToken, std_t.math.maxInt(u32));
+    try pair.host.release_request(HostToken, 1);
+
+    var live: usize = 0;
+    while (live < peer_t.FeatureRequestCapacity) : (live += 1) {
+        _ = try pair.host.enqueue_request(HostToken, 402, frame[0..request]);
+        try ack_all(&pair.host, HostToken, 402);
+    }
+    try std_t.testing.expectEqual(peer_t.FeatureRequestCapacity, pair.host.feature_request_count);
+    const full_ids = pair.host.request_ids;
+    const full_cursor = pair.host.request_ids.next_candidate;
+    try std_t.testing.expectError(error.RequestIdsFull, pair.host.enqueue_request(HostToken, 402, frame[0..request]));
+    try std_t.testing.expectEqualDeep(full_ids, pair.host.request_ids);
+    try std_t.testing.expectEqual(full_cursor, pair.host.request_ids.next_candidate);
+    try std_t.testing.expectEqual(peer_t.FeatureRequestCapacity, pair.host.feature_request_count);
+
+    // Exactly 64 identifiers remain for liveness: a Ping still reserves one.
+    const later = 401 + c_t.InteropPingIntervalMs;
+    _ = try pair.host.tick(HostToken, later);
+    try std_t.testing.expectEqual(peer_t.FeatureRequestCapacity + 1, pair.host.request_ids.count);
+
+    // Releasing one feature identifier frees exactly one feature slot.
+    try pair.host.release_request(HostToken, pair.host.feature_request_ids[0]);
+    try std_t.testing.expectEqual(peer_t.FeatureRequestCapacity - 1, pair.host.feature_request_count);
+    _ = try pair.host.enqueue_request(HostToken, later, frame[0..request]);
+    try std_t.testing.expectEqual(peer_t.FeatureRequestCapacity, pair.host.feature_request_count);
+}
+
+test "request admission at a full data queue leaves identifier state and the cursor unchanged" {
+    var pair = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapLaunch);
+    defer deinit_pair(&pair);
+    _ = try complete_handshake_event(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    var filled: usize = 0;
+    while (pair.host.queue.count < DataCapacity) : (filled += 1) {
+        const length = try make_window_close(&frame, 0, filled + 1, 1);
+        _ = try pair.host.enqueue_feature(HostToken, 402, frame[0..length]);
+    }
+    const request = try make_launch_request(&frame, 0);
+    const before_ids = pair.host.request_ids;
+    const before_count = pair.host.feature_request_count;
+    const before_sends = pair.host.send_count;
+    try std_t.testing.expectError(error.QueueFull, pair.host.enqueue_request(HostToken, 402, frame[0..request]));
+    try std_t.testing.expectEqualDeep(before_ids, pair.host.request_ids);
+    try std_t.testing.expectEqual(before_count, pair.host.feature_request_count);
+    try std_t.testing.expectEqual(before_sends, pair.host.send_count);
+    try std_t.testing.expectEqual(@as(u32, 1), pair.host.request_ids.next_candidate);
+
+    try ack_all(&pair.host, HostToken, 402);
+    const admitted = try pair.host.enqueue_request(HostToken, 402, frame[0..request]);
+    try std_t.testing.expectEqual(@as(u32, 1), admitted.request_id);
 }
 
 // Deterministic random sequence of admissions, partial acknowledgements, Ping ticks and

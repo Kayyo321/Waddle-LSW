@@ -12,6 +12,9 @@ const agent_version_t = @import("agent_version.zig");
 
 /// Maximum original frame bytes stored in internal completion metadata.
 pub const QueueCapacity: usize = queue_mod_t.QueueCapacity;
+/// Maximum live feature-owned request identifiers. The remaining 64 identifiers of the 4096-entry
+/// request_ids namespace stay available for Ping and the handshake identifier (IMPL_DESC 8.45).
+pub const FeatureRequestCapacity: usize = 4032;
 /// Maximum configured full agent-version bytes copied by init.
 pub const MaxVersionBytes: usize = 32;
 /// Public endpoint role alias from the frozen handshake helper.
@@ -143,6 +146,29 @@ pub const control_peer_error_t = error{
     InternalState,
 };
 
+/// Result of enqueue_request: the reserved identifier (zero when the frame was not queued) and the event.
+/// @ownership Scalar copy only.
+pub const request_admission_t = struct {
+    /// Request identifier stamped into the queued header; zero when the Ready deadline drained the peer.
+    request_id: u32,
+    /// None after queueing, or Draining when the Ready deadline expired at now_ms.
+    event: event_t,
+};
+
+/// Errors returned by release_request. RequestIdRetired is the benign result after transport loss
+/// retired every identifier; every other error leaves the peer state unchanged.
+/// @ownership Compile-time error set; no runtime storage.
+pub const request_release_error_t = error{
+    /// The identifier is zero, which no request ever carries.
+    InvalidRequestId,
+    /// The identifier is not a live feature-owned reservation (liveness, Hello, released or unknown).
+    UnknownRequestId,
+    /// transport_lost retired all identifiers; nothing remains to release.
+    RequestIdRetired,
+    /// Internal bookkeeping disagreed; the owner must abort the connection.
+    InternalState,
+};
+
 /// Errors returned by outbound feature admission. Each error leaves peer, queue and caller
 /// state unchanged. Ready-deadline expiry is not an error: it is reported as a Draining event.
 /// @ownership Compile-time error set; no runtime storage.
@@ -162,6 +188,23 @@ pub const feature_send_error_t = error{
     /// The owned copy of the frame could not be allocated.
     OutOfMemory,
 };
+
+/// Outbound admission class of a feature type (IMPL_DESC 8.45 request identifiers).
+pub const feature_class_t = enum { Unsolicited, Request, Response };
+
+/// Return the request-identifier class of a feature type. Request types allocate an identifier
+/// through enqueue_request; Response types echo a nonzero identifier; all others carry zero.
+/// Transfer frames carry zero here and use their own transfer identifiers in the payload.
+/// @param[in] message_type Frozen feature type from a validated header.
+/// @return Class of the type; unknown types are Unsolicited and rejected by the facility table.
+/// @ownership Pure function.
+pub fn feature_class(message_type: u16) feature_class_t {
+    return switch (message_type) {
+        c_t.InteropMsgLaunchRequest, c_t.InteropMsgPrinterSync, c_t.InteropMsgDisplayConfig, c_t.InteropMsgDndDrop => .Request,
+        c_t.InteropMsgLaunchResult, c_t.InteropMsgPrinterResult, c_t.InteropMsgDisplayApplied, c_t.InteropMsgDndResult => .Response,
+        else => .Unsolicited,
+    };
+}
 
 const send_kind_t = enum { None, Hello, HelloAck, Ping, Pong, Error, Goodbye, Feature };
 const send_record_t = struct {
@@ -207,6 +250,11 @@ pub const peer_t = struct {
     send_count: usize = 0,
     /// Guest-owned Hello ID or Host peer-Hello ID retained for control correlation.
     pending_hello_id: u32 = 0,
+    /// Feature-owned request identifiers currently occupying request_ids; the only identifiers
+    /// release_request accepts. Liveness and Hello identifiers are never recorded here.
+    feature_request_ids: [FeatureRequestCapacity]u32 = [_]u32{0} ** FeatureRequestCapacity,
+    /// Number of live entries at the front of feature_request_ids, always at most FeatureRequestCapacity.
+    feature_request_count: usize = 0,
     /// Last committed monotonic callback timestamp.
     last_now_ms: u64,
     /// Authoritative phase latch; terminal values never reopen.
@@ -268,6 +316,7 @@ pub const peer_t = struct {
         if (!self.live) return;
         self.queue.deinit();
         self.request_ids.retire_all();
+        self.feature_request_count = 0;
         self.allocator.free(self.local_version);
         self.local_version = &.{};
         self.send_records = [_]send_record_t{.{}} ** QueueCapacity;
@@ -640,7 +689,7 @@ pub const peer_t = struct {
         try self.check_live_token(connection_token);
         try self.check_time(now_ms);
         if (self.connection_phase != .Ready) return error.WrongPhase;
-        const header = try self.validate_feature_frame(frame);
+        const header = try self.validate_feature_frame(frame, .Feature);
         if (self.deadline_expired(now_ms)) {
             self.enter_draining_at(now_ms, .TransportLost);
             return self.event(.Draining);
@@ -651,6 +700,77 @@ pub const peer_t = struct {
         self.send_count += 1;
         self.last_now_ms = now_ms;
         return self.event(.None);
+    }
+
+    /// Atomically reserve a feature request identifier, stamp it into the frame and admit the frame.
+    /// The frame must be a Request type (LaunchRequest, PrinterSync, DisplayConfig, DndDrop) whose
+    /// header request_id is zero. The reservation, the copy with bytes 12..16 stamped, the Data-class
+    /// enqueue and the feature-owned record are one step: any failure restores request_ids and the
+    /// tracking array exactly, so the identifier cursor does not advance either.
+    /// @param[in,out] self Live Ready peer; changed only on admission or deadline drain.
+    /// @param[in] connection_token Captured token identifying this connection instance.
+    /// @param[in] now_ms Monotonic admission time; committed only on success.
+    /// @param[in] frame Borrowed complete request frame with header request_id zero; never mutated.
+    /// @return Admission record: the identifier the frame carries (zero when not queued) and the event
+    /// (None after queueing, Draining when the Ready deadline expired at now_ms, frame not queued).
+    /// @errors WrongConnectionToken, InvalidConnectionToken, PeerClosed, TimeWentBackwards and WrongPhase
+    /// as for enqueue_feature; InvalidFrame for a nonzero header request_id or a malformed frame;
+    /// UnsupportedFrame for a non-request type; FeatureNotNegotiated; RequestIdsFull when 4032
+    /// feature identifiers are live or the namespace is full; QueueFull; OutOfMemory.
+    /// @ownership The queue owns one stamped copy. The identifier stays reserved until release_request.
+    /// @thread_safety Caller serializes with every other peer method.
+    pub fn enqueue_request(self: *peer_t, connection_token: u64, now_ms: u64, frame: []const u8) (control_peer_error_t || feature_send_error_t)!request_admission_t {
+        try self.check_live_token(connection_token);
+        try self.check_time(now_ms);
+        if (self.connection_phase != .Ready) return error.WrongPhase;
+        _ = try self.validate_feature_frame(frame, .Request);
+        if (self.deadline_expired(now_ms)) {
+            self.enter_draining_at(now_ms, .TransportLost);
+            return .{ .event = self.event(.Draining), .request_id = 0 };
+        }
+        if (self.feature_request_count == FeatureRequestCapacity) return error.RequestIdsFull;
+        const saved_ids = self.request_ids;
+        const request_id = self.request_ids.reserve() catch return error.RequestIdsFull;
+        var stamped: [queue_mod_t.MaxFrameBytes]u8 = undefined;
+        @memcpy(stamped[0..frame.len], frame);
+        std_t.mem.writeInt(u32, stamped[12..16], request_id, .little);
+        self.queue.enqueue(stamped[0..frame.len], .Data) catch |err| {
+            self.request_ids = saved_ids;
+            return map_admission_error(err);
+        };
+        self.feature_request_ids[self.feature_request_count] = request_id;
+        self.feature_request_count += 1;
+        const index = (self.send_head + self.send_count) % QueueCapacity;
+        self.send_records[index] = .{ .kind = .Feature, .request_id = request_id, .total_bytes = frame.len, .remaining_bytes = frame.len };
+        self.send_count += 1;
+        self.last_now_ms = now_ms;
+        return .{ .event = self.event(.None), .request_id = request_id };
+    }
+
+    /// Release one feature-owned request identifier after its response arrived or the request was abandoned.
+    /// Only identifiers returned by enqueue_request are accepted. Liveness identifiers and the Hello
+    /// identifier are not in the feature set, so they report UnknownRequestId and stay reserved.
+    /// @param[in,out] self Peer whose feature tracking and request_ids change only on success.
+    /// @param[in] connection_token Captured token identifying this connection instance.
+    /// @param[in] request_id Identifier previously returned by enqueue_request.
+    /// @errors InvalidRequestId for zero; UnknownRequestId for any identifier that is not a live
+    /// feature reservation; RequestIdRetired after transport_lost retired every identifier (benign);
+    /// WrongConnectionToken, InvalidConnectionToken or PeerClosed from the token check.
+    /// @ownership Frees no queue storage; only the identifier namespace changes.
+    /// @thread_safety Caller serializes with every other peer method.
+    pub fn release_request(self: *peer_t, connection_token: u64, request_id: u32) (control_peer_error_t || request_release_error_t)!void {
+        try self.check_live_token(connection_token);
+        if (request_id == 0) return error.InvalidRequestId;
+        if (self.connection_phase == .Closed) return error.RequestIdRetired;
+        var index: usize = 0;
+        while (index < self.feature_request_count) : (index += 1) {
+            if (self.feature_request_ids[index] == request_id) break;
+        }
+        if (index == self.feature_request_count) return error.UnknownRequestId;
+        self.request_ids.release(request_id) catch return error.InternalState;
+        self.feature_request_count -= 1;
+        self.feature_request_ids[index] = self.feature_request_ids[self.feature_request_count];
+        self.feature_request_ids[self.feature_request_count] = 0;
     }
 
     /// Begin local orderly protocol drain and best-effort queue Goodbye(status Cancelled, ID zero).
@@ -692,6 +812,8 @@ pub const peer_t = struct {
         try self.check_live_token(connection_token);
         if (self.connection_phase == .Closed) return self.event(.Draining);
         self.request_ids.retire_all();
+        self.feature_request_ids = [_]u32{0} ** FeatureRequestCapacity;
+        self.feature_request_count = 0;
         self.connection_phase = .Closed;
         return self.event(.Draining);
     }
@@ -1025,7 +1147,7 @@ pub const peer_t = struct {
     /// @errors InvalidFrame, UnsupportedFrame or FeatureNotNegotiated in the order documented on enqueue_feature.
     /// @ownership No allocation; the returned header is a scalar copy.
     /// @thread_safety Serialized with every other peer method.
-    fn validate_feature_frame(self: *const peer_t, frame: []const u8) feature_send_error_t!c_t.interop_header_t {
+    fn validate_feature_frame(self: *const peer_t, frame: []const u8, entry: feature_entry_t) feature_send_error_t!c_t.interop_header_t {
         if (frame.len < c_t.InteropHeaderBytes or frame.len > queue_mod_t.MaxFrameBytes) return error.InvalidFrame;
         var header: c_t.interop_header_t = undefined;
         if (c_t.interop_header_decode(frame.ptr, c_t.InteropHeaderBytes, &header) != c_t.InteropErrorNone) return error.InvalidFrame;
@@ -1039,6 +1161,18 @@ pub const peer_t = struct {
             else => return error.InvalidFrame,
         }
         try check_facility(header.type, self.outgoing_direction(), payload, self.handshake.negotiated_capabilities);
+        // IMPL_DESC 8.45 request-identifier classes. The entry point decides who may allocate.
+        switch (entry) {
+            .Feature => switch (feature_class(header.type)) {
+                .Request => return error.UnsupportedFrame,
+                .Response => if (header.request_id == 0) return error.InvalidFrame,
+                .Unsolicited => if (header.request_id != 0) return error.InvalidFrame,
+            },
+            .Request => {
+                if (feature_class(header.type) != .Request) return error.UnsupportedFrame;
+                if (header.request_id != 0) return error.InvalidFrame;
+            },
+        }
         return header;
     }
 
@@ -1089,6 +1223,9 @@ pub fn check_facility(message_type: u16, producer: c_t.interop_direction_t, payl
 fn ranges_overlap(left_start: usize, left_end: usize, right_start: usize, right_end: usize) bool {
     return left_start < right_end and right_start < left_end;
 }
+
+/// Outbound entry point selecting the request-identifier rules of validate_feature_frame.
+const feature_entry_t = enum { Feature, Request };
 
 fn is_control_type(message_type: u16) bool {
     return message_type >= c_t.InteropMsgHello and message_type <= c_t.InteropMsgError;
