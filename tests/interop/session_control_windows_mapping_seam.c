@@ -16,6 +16,7 @@
 #include "interop_mapping_windows.h"
 
 static PVOID volatile native_mapping_base;
+static PVOID native_mapping_reservation;
 
 static HDEVINFO native_map_get_class_devs(const GUID *class_guid, const WCHAR *enumerator,
     HWND parent, DWORD flags) {
@@ -68,9 +69,14 @@ static BOOL native_map_device_io(HANDLE device, DWORD code, LPVOID input, DWORD 
             InterlockedCompareExchangePointer(&native_mapping_base, NULL, NULL) != NULL) {
             SetLastError(ERROR_INVALID_PARAMETER); return FALSE;
         }
-        PVOID mapping_base = VirtualAlloc(NULL, (SIZE_T)UINT64_C(0x80000000),
+        /* VirtualAlloc guarantees only allocation-granularity alignment. Reserve
+         * an extra layout page and expose a real 2 MiB-aligned subrange; retain
+         * the original allocation base for exact VirtualFree ownership. */
+        PVOID reservation = VirtualAlloc(NULL, (SIZE_T)UINT64_C(0x80200000),
             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-        if (mapping_base == NULL) { SetLastError(ERROR_NOT_ENOUGH_MEMORY); return FALSE; }
+        PVOID mapping_base = (PVOID)(((uintptr_t)reservation + UINT64_C(0x1fffff)) & ~UINT64_C(0x1fffff));
+        if (reservation == NULL) { SetLastError(ERROR_NOT_ENOUGH_MEMORY); return FALSE; }
+        native_mapping_reservation = reservation;
         InterlockedExchangePointer(&native_mapping_base, mapping_base);
         IVSHMEM_MMAP *mapping = (IVSHMEM_MMAP *)output;
         memset(mapping, 0, sizeof(*mapping));
@@ -83,10 +89,11 @@ static BOOL native_map_device_io(HANDLE device, DWORD code, LPVOID input, DWORD 
     }
     if (code == IOCTL_IVSHMEM_RELEASE_MMAP) {
         PVOID mapping_base = InterlockedCompareExchangePointer(&native_mapping_base, NULL, NULL);
-        if (mapping_base == NULL || !VirtualFree(mapping_base, 0, MEM_RELEASE)) {
+        if (mapping_base == NULL || !VirtualFree(native_mapping_reservation, 0, MEM_RELEASE)) {
             SetLastError(ERROR_INVALID_ADDRESS); return FALSE;
         }
         InterlockedExchangePointer(&native_mapping_base, NULL);
+        native_mapping_reservation = NULL;
         *returned = 0;
         return TRUE;
     }

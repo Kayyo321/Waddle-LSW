@@ -1438,9 +1438,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     99.33% lines/90.25% taken arcs and leak-enabled sanitizers pass. Correct
     diagnostic fields to the real public state ABI; strict Windows fixture links.
 
-- **Commit `HEAD`**: `test(interop): correct monochrome inversion fixture storage row`
+- **Commit `7f5775e`**: `test(interop): correct monochrome inversion fixture storage row`
   - **Task Impact**: +0% to TODO #27/#34 pending actual Windows execution.
   - **Summary**: Use the bottom-up XOR storage row paired with the corrected
     logical AND row; retain independent transparent/opaque and inversion
     assertions. Root strict native gcov fixture compilation/link passes. No
     extraction credit from a cross-build or a failed native run.
+
+- **Commit `HEAD`**: `test(interop): align native composition mapping without relaxing lease checks`
+  - **Task Impact**: +0% to TODO #6/#34; native rerun required.
+  - **Summary**: Exact7f5775e Windows run40218079268 failed mapping before
+    Hello. VirtualAlloc guarantees64KiB, while production requires2MiB.
+    Fixture now exposes an aligned2GiB subrange of a real allocation and
+    retains its original allocation base for exact VirtualFree. Keep all
+    production alignment and proof-gated cleanup checks. Strict SDK/link pass.
