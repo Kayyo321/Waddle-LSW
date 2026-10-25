@@ -1281,10 +1281,18 @@ its uncompiled draft earns no credit until current acceptance passes.
     receipts retained. Use bounded Enter input and assert its exact QMP qcode;
     all17 supervisor tests pass. No preserved VM or legacy credential use.
 
-- **Commit `HEAD`**: `fix(interop): bound specialize bootstrap to Windows Setup schema`
+- **Commit `743891b`**: `fix(interop): bound specialize bootstrap to Windows Setup schema`
   - **Task Impact**: +0% to TODO #34; failed native attempt retained.
   - **Summary**: Actual isolated installation reached specialize, exposing a
     341-character Path rejected by the259-character schema bound. Compact CD-only
     bootstrap is239 characters with runtime/test bounds;16 preparation tests pass.
     Exact VM/TPM/probe cleanup receipts retained. All three workflows at1efa382
     are green; no native acceptance or readiness credit.
+
+- **Commit `HEAD`**: `feat(interop): own bounded WinSock control transport and close quarantine`
+  - **Task Impact**: +0% to TODO #6; guest listener/mapping loop remains open.
+  - **Summary**: Reviewed connected Windows byte owner preserves partial I/O,
+    bounded work, owner thread/cookies, mapping gate and exact native close
+    ownership. Root normal build,96.45% lines/90.22% taken arcs and leak-enabled
+    ASan/LSan/UBSan pass. Native SDK build/link pass; Windows CI loopback run is
+    now wired separately. No VSOCK/installed-session or guest runtime credit.

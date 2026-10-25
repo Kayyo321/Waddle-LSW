@@ -3648,3 +3648,18 @@ logic remains on the private answer medium. Existing account/secret ownership
 and isolation rules apply. The failed real installation and bounded cleanup are
 recorded in native_install_evidence_2026_10_25/specialize_path_attempt. No native
 feature acceptance follows from a successful preparation or setup boot.
+
+### 8.32 Windows connected byte transport (2026-10-25)
+
+windows_socket_owner_contract.md is the normative bounded implementation
+contract for the connected WinSock owner API, budgets, native SOCKET/thread
+identity, actual send acknowledgements, deferred notification and explicit
+close retry/quarantine. Only successful native close produces TransportClosed.
+WSAEWOULDBLOCK retains a documented live socket for explicit retry; all other
+close failures retain indeterminate ownership, never blind close/reuse. Repeat
+abort returns the existing pending/indeterminate classification without I/O.
+Quarantine transfers unresolved native identity to a caller-owned zeroed record
+only after synchronous users stop; it establishes no detach or epoch proof.
+The exact source/fixture qualification is windows_socket_owner_evidence_2026_10_25.
+The native loopback fixture is executed by Windows CI separately from Linux
+double/sanitizer coverage. Guest listener/mapping/agent lifecycle is separate.

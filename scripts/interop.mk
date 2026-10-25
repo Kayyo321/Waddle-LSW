@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
+interop-test: interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -24,6 +24,7 @@ interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test 
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test interop-control-peer-abi-test interop-linux-socket-test interop-linux-session-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o build/interop_layout_abi.o build/daemon_wire.o build/device_storage.o build/daemon_config.o build/path_rules.o
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/windows_socket_owner_coverage.py
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_host_coverage.py
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/mapping_linux_coverage.py
 	python3 tests/av/coverage.py interop_codec
@@ -306,7 +307,25 @@ build/interop_host_session_test: $(InteropHostSessionFixtures) $(InteropHostSess
 interop-host-session-test: build/interop_host_session.o build/interop_host_session_test
 	./build/interop_host_session_test
 interop-host-session-coverage: $(InteropHostSessionObjects)
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/windows_socket_owner_coverage.py
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_host_coverage.py
 interop-host-session-sanitizers:
 	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 $(MAKE) -W tests/interop/session_host.c interop-host-session-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+
+
+# Connected WinSock byte ownership: Linux syscall double and native SDK loopback.
+InteropWindowsSocketFixtures = tests/interop/windows_socket_owner.c tests/interop/windows_socket_owner_private.c tests/interop/windows_socket_owner_guards.c tests/interop/windows_socket_owner_api_double.c
+InteropWindowsSocketDependencies = src/interop/windows_socket_owner.c src/interop/windows_socket_owner.h tests/interop/windows_socket_owner_api_double.h
+InteropWindowsSocketWrapFlags = -Wl,--wrap=calloc -Wl,--wrap=close -Wl,--wrap=fcntl -Wl,--wrap=getsockopt -Wl,--wrap=interop_peer_ack_tx -Wl,--wrap=interop_peer_begin_drain -Wl,--wrap=interop_peer_copy_tx -Wl,--wrap=interop_peer_create -Wl,--wrap=interop_peer_destroy -Wl,--wrap=interop_peer_feed -Wl,--wrap=interop_peer_get_state -Wl,--wrap=interop_peer_mapping_result -Wl,--wrap=interop_peer_next_event -Wl,--wrap=interop_peer_pending_bytes -Wl,--wrap=interop_peer_tick -Wl,--wrap=interop_peer_transport_lost -Wl,--wrap=interop_peer_tx_bytes -Wl,--wrap=recv -Wl,--wrap=send -Wl,--wrap=shutdown
+build/interop_windows_socket_test: $(InteropWindowsSocketFixtures) $(InteropWindowsSocketDependencies) build/interop_control_peer_abi.o build/interop_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DInteropWindowsSocketTestApi -UNDEBUG -Itests/interop -Isrc/interop $(InteropWindowsSocketFixtures) build/interop_control_peer_abi.o build/interop_codec.o $(LDFLAGS) $(InteropWindowsSocketWrapFlags) -pthread -o $@
+build/interop_windows_socket_sdk.o: src/interop/windows_socket_owner.c src/interop/windows_socket_owner.h include/waddle/interop_peer.h | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Isrc/interop -c $< -o $@
+build/interop_windows_socket_native_test.exe: tests/interop/windows_socket_owner_windows.c build/interop_windows_socket_sdk.o build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Isrc/interop $< build/interop_windows_socket_sdk.o build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib -lws2_32 -o $@
+.PHONY: interop-windows-socket-test interop-windows-socket-coverage
+interop-windows-socket-test: build/interop_windows_socket_test
+	./build/interop_windows_socket_test
+interop-windows-socket-coverage: build/interop_control_peer_abi.o build/interop_codec.o
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/windows_socket_owner_coverage.py
 
