@@ -3246,7 +3246,7 @@ fn first_component(path: []const u8, component: []const u8) bool {
 }
 /// Accept exactly `<size>/apps/<leaf>` after an icon theme prefix: a nonempty size
 /// component, the literal `apps`, and one nonempty leaf with no further components.
-fn icon_tail_allowed(tail: []const u8) bool {
+noinline fn icon_tail_allowed(tail: []const u8) bool {
     var parts = std.mem.splitScalar(u8, tail, '/');
     const size = parts.next() orelse return false;
     if (size.len == 0 or !std.mem.eql(u8, parts.next() orelse return false, "apps")) return false;
@@ -3256,7 +3256,7 @@ fn icon_tail_allowed(tail: []const u8) bool {
 
 /// Icon artifacts written by new commits: `icons/hicolor/<size>/apps/<leaf>`
 /// relative to the XDG data root, the form desktop_artifacts.zig emits.
-fn icon_path_allowed(path: []const u8) bool {
+noinline fn icon_path_allowed(path: []const u8) bool {
     const prefix = "icons/hicolor/";
     return std.mem.startsWith(u8, path, prefix) and icon_tail_allowed(path[prefix.len..]);
 }
@@ -3265,7 +3265,7 @@ fn icon_path_allowed(path: []const u8) bool {
 /// `hicolor/<size>/apps/<leaf>`. Accepted only for records already present in a
 /// manifest and for recovery of their journals, so they can be inspected, removed,
 /// and recovered; a new commit or replacement never produces this form.
-fn legacy_icon_path_allowed(path: []const u8) bool {
+noinline fn legacy_icon_path_allowed(path: []const u8) bool {
     const prefix = "hicolor/";
     return std.mem.startsWith(u8, path, prefix) and icon_tail_allowed(path[prefix.len..]);
 }
