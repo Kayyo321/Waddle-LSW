@@ -1571,10 +1571,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     profile link passes. Catalog smoke/deep-tree now pass; provider coverage
     87.09%lines/62.21%arcs and icon71.51%lines/55.31%arcs remain unaccepted.
 
-- **Commit `HEAD`**: `test(interop): exercise native icon failures with genuine retained handles`
+- **Commit `5017452`**: `test(interop): exercise native icon failures with genuine retained handles`
   - **Task Impact**: +0% to TODO #27/#34 pending whole-source native90% gates.
   - **Summary**: Add bounded native API/metadata failure cases and private guard
     coverage using authentic GDI/Shell resources. Fail restore before consuming
     SelectObject so cleanup must close the real DC before its selected bitmap.
     Keep one production source-size guard; standalone production and instrumented
     fixture strict Windows SDK builds/link pass. Native execution pending.
+
+- **Commit `HEAD`**: `test(interop): profile native catalog allocation and COM failure ownership`
+  - **Task Impact**: +0% to TODO #27/#34 pending whole-source native90% gates.
+  - **Summary**: Include the production provider exactly once with private
+    fail-before-consumption SDK/CRT wrappers. Exercise real temporary shortcuts,
+    bounded allocation sweeps, COM property paths and retained-close retries.
+    Refresh each attempt deadline and report static failure stage/index only.
+    Link real Automation APIs and hash the exact fixture in CI provenance.
+    Root strict fixture link and standalone provider compile pass; execution pending.

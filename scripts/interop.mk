@@ -423,14 +423,14 @@ interop-app-catalog-test: build/interop_app_catalog_test
 	./build/interop_app_catalog_test
 build/interop_app_catalog_validation_windows.lib: src/interop/app_catalog_validation.zig src/interop/app_catalog_validation.h | build
 	$(ZIG) build-lib $< -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
-build/native_components/catalog_adapter.o: src/interop/app_catalog_windows.c src/interop/app_catalog_windows_private.h src/interop/app_catalog.h | build/native_components
+build/native_components/catalog_adapter.o: tests/interop/app_catalog_windows_faults.c src/interop/app_catalog_windows.c src/interop/app_catalog_windows_private.h src/interop/app_catalog.h | build/native_components
 	$(WindowsComponentCC) $(WindowsComponentFlags) --coverage -fprofile-update=atomic -fprofile-abs-path -Iinclude -c $< -o $@
 build/native_components/catalog_core.o: src/interop/app_catalog.c src/interop/app_catalog.h src/interop/app_catalog_validation.h | build/native_components
 	$(WindowsComponentCC) $(WindowsComponentFlags) -Iinclude -c $< -o $@
 build/native_components/catalog_fixture.o: tests/interop/app_catalog_windows.c src/interop/app_catalog.h src/interop/app_catalog_windows_private.h | build/native_components
 	$(WindowsComponentCC) $(WindowsComponentFlags) -Iinclude -c $< -o $@
 build/native_components/app_catalog_windows_profile.exe: build/native_components/catalog_adapter.o build/native_components/catalog_core.o build/native_components/catalog_fixture.o build/interop_app_catalog_validation_windows.lib build/interop_codec_windows.lib
-	$(WindowsComponentCC) -static --coverage $^ -lshell32 -lole32 -luuid -lpropsys -lntdll -o $@
+	$(WindowsComponentCC) -static --coverage $^ -lshell32 -lole32 -luuid -lpropsys -loleaut32 -lntdll -o $@
 
 .PHONY: interop-mimeapps-test
 interop-mimeapps-test:

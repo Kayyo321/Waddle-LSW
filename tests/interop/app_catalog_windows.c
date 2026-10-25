@@ -223,6 +223,7 @@ int main(void) {
     bool desktop_link_exists = false;
     bool stale_link_exists = false;
 
+    Require(app_catalog_windows_fault_fixture_run() == 0);
     HRESULT initialized = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     Require(SUCCEEDED(initialized));
     com_initialized = true;

@@ -48,4 +48,14 @@ app_catalog_status_t app_catalog_windows_enumerate_fixture_roots(
     const app_catalog_windows_source_roots_t *roots,
     app_catalog_snapshot_t *output);
 
+/** @brief Run native provider fault cases on private temporary shortcut roots.
+ * @return Zero when every injected failure preserves outputs and native
+ * ownership; nonzero on the first failed assertion.
+ * @note Test-only entrypoint implemented by the native fixture profile TU.
+ * It creates and removes only files and directories under a unique temporary
+ * directory, and uses real Win32 handles with fail-before-consumption wrappers.
+ * It does not alter the production provider or public catalog ABI.
+ */
+int app_catalog_windows_fault_fixture_run(void);
+
 #endif
