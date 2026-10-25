@@ -112,6 +112,7 @@ typedef struct session_windows_handler_t {
         uint64_t generation;
         waddle_window_state_handle_t *handle;
         uint8_t used;
+        uint8_t popup; /**< Nonzero for a popup role (menu, tooltip, IME): its host actions need no compositor request. */
     } reducers[SessionWindowsMaxReducers]; /**< One reducer per realized window, found by window pair. */
     struct {
         uint8_t bytes[SessionWindowsFrameBytes];

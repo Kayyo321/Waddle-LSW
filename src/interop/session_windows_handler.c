@@ -228,7 +228,7 @@ static void reducer_drop(session_windows_handler_t *handler, uint32_t index) {
 }
 
 /** @brief Create the reducer of a window pair. Returns the slot, or -1 when the pair exists or the state is refused. */
-static int reducer_create(session_windows_handler_t *handler, uint64_t window, uint64_t generation, uint32_t state) {
+static int reducer_create(session_windows_handler_t *handler, uint64_t window, uint64_t generation, uint32_t state, uint8_t popup) {
     if (reducer_find(handler, window, generation) >= 0) return -1;
     for (uint32_t index = 0; index < SessionWindowsMaxReducers; ++index) {
         if (handler->reducers[index].used) continue;
@@ -238,6 +238,7 @@ static int reducer_create(session_windows_handler_t *handler, uint64_t window, u
         handler->reducers[index].window = window;
         handler->reducers[index].generation = generation;
         handler->reducers[index].handle = handle;
+        handler->reducers[index].popup = popup;
         return (int)index;
     }
     return -1;
@@ -254,9 +255,17 @@ static waddle_window_state_status_t reducer_complete(session_windows_handler_t *
 /**
  * @brief Execute the host actions of a plan in order (4.5). Guest actions are the guest's to perform and count as
  * completed. Returns zero when every action succeeded; otherwise the completed prefix is in *completed.
+ *
+ * A popup has no maximized, minimized or fullscreen state (xdg_popup has no such requests), so for a popup role every
+ * host action is satisfied without a request. Before this rule the windows layer refused each one, which was counted as
+ * a failed host request and left the popup's reducer unsynchronized.
  */
-static int apply_actions(session_windows_handler_t *handler, uint64_t window, uint64_t generation, const waddle_window_state_plan_t *plan, uint64_t *completed) {
+static int apply_actions(session_windows_handler_t *handler, uint64_t window, uint64_t generation, uint8_t popup, const waddle_window_state_plan_t *plan, uint64_t *completed) {
     *completed = 0;
+    if (popup) {
+        *completed = plan->action_count;
+        return 0;
+    }
     for (uint64_t index = 0; index < plan->action_count && index < WaddleWindowStateMaxActions; ++index) {
         const waddle_window_state_action_t *action = &plan->actions[index];
         host_wayland_status_t status = HostWaylandOk;
@@ -284,7 +293,7 @@ static int run_input(session_windows_handler_t *handler, uint32_t index, const w
     waddle_window_state_plan_t plan;
     if (reducer_plan(handler, index, input, &plan) != WaddleWindowStateOk) return 1;
     uint64_t completed = 0;
-    int failed = apply_actions(handler, handler->reducers[index].window, handler->reducers[index].generation, &plan, &completed);
+    int failed = apply_actions(handler, handler->reducers[index].window, handler->reducers[index].generation, handler->reducers[index].popup, &plan, &completed);
     if (failed) ++handler->counters.host_actions_failed;
     if (reducer_complete(handler, index, &plan, failed ? 0u : 1u, completed) != WaddleWindowStateOk) return 1;
     return 0;
@@ -393,13 +402,20 @@ static int core_has_seat(const session_windows_handler_t *handler, const struct 
     return 0;
 }
 
+/** @brief Popup roles (xdg_popup): menu, tooltip and the IME preedit window. Toplevel roles are the other three. */
+static uint8_t role_is_popup(uint32_t role) {
+    return role == InteropRoleMenu || role == InteropRoleTooltip || role == InteropRoleImePreedit;
+}
+
 static void on_announce(session_windows_handler_t *handler, const uint8_t *frame, size_t length) {
     uint64_t window = 0;
     uint64_t generation = 0;
     const uint8_t *payload = NULL;
     size_t payload_length = 0;
     uint32_t state = 0;
-    if (!read_identity(frame, length, &window, &generation) || !frame_payload(frame, length, &payload, &payload_length) || !read_u32(payload, payload_length, InteropTagState, &state)) {
+    uint32_t role = 0;
+    if (!read_identity(frame, length, &window, &generation) || !frame_payload(frame, length, &payload, &payload_length) ||
+        !read_u32(payload, payload_length, InteropTagState, &state) || !read_u8(payload, payload_length, InteropTagRole, &role)) {
         ++handler->counters.frame_fields_refused;
         return;
     }
@@ -407,7 +423,7 @@ static void on_announce(session_windows_handler_t *handler, const uint8_t *frame
         ++handler->counters.announces_refused;
         return;
     }
-    int index = reducer_create(handler, window, generation, state);
+    int index = reducer_create(handler, window, generation, state, role_is_popup(role));
     if (index < 0) {
         ++handler->counters.announces_refused;
         return;

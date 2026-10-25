@@ -2001,6 +2001,43 @@ static int test_pending_frames_of_retired_windows(void) {
     return 0;
 }
 
+/**
+ * @brief A menu is a popup: the reducer's host requests (unset maximized, unset fullscreen) do not apply to it. Its
+ * observations must complete without counting a failed host request, and its reducer must stay synchronized.
+ */
+static int test_popup_observation(void) {
+    Check(start_session(1, 1) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_mapped(&root) == 0);
+    session_windows_counters_t before = counters_now();
+    announce_spec_t menu = child_spec(3, 1, InteropRoleMenu, 1, 1, 30, 12, 40, 20);
+    Check(send_announce(&menu) == 0);
+    Check(counters_now().host_actions_failed == before.host_actions_failed);
+    Check(reducer_synced(3, 1, NULL) == 1);
+    update_spec_t moved = {3, 1, 36, 14, 40, 20, false, 0, 0, NULL, false, 0, 0, 0};
+    Check(send_update(&moved) == 0);
+    Check(counters_now().host_actions_failed == before.host_actions_failed);
+    Check(reducer_synced(3, 1, NULL) == 1);
+
+    /* An announce whose frame has no role field is counted and creates nothing (the frame is a StateRequest shape
+     * sent as an announce, because the writer refuses the short announce). */
+    uint8_t short_frame[InteropMaxFrameBytes];
+    interop_writer_t writer;
+    interop_writer_init(&writer, short_frame, sizeof short_frame);
+    interop_put_uint(&writer, InteropTagWindow, 7);
+    interop_put_uint(&writer, InteropTagGeneration, 1);
+    interop_put_uint(&writer, InteropTagState, 0);
+    size_t length = 0;
+    Check(interop_writer_finish(&writer, InteropMsgWindowStateRequest, 0, InteropFromGuest, &length) == InteropErrorNone);
+    unsigned refused = handler.counters.frame_fields_refused;
+    Check(send_frame(InteropMsgWindowAnnounce, short_frame, length) == 0);
+    Check(handler.counters.frame_fields_refused == refused + 1);
+    Check(!host_wayland_windows_contains(&handler.windows, 7, 1));
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
 /* ---- runner ---------------------------------------------------------------------------------------- */
 
 typedef int (*test_fn)(void);
@@ -2043,6 +2080,7 @@ int main(void) {
     run_test("API edges", test_api_edges);
     run_test("randomized sequences", test_random_sequences);
     run_test("bug: pending frames of retired windows", test_pending_frames_of_retired_windows);
+    run_test("bug: popup observation", test_popup_observation);
     printf("session windows handler tests: %u run, %u failed\n", tests_run, tests_failed);
     return tests_failed ? 1 : 0;
 }
