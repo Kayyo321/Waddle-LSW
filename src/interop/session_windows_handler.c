@@ -783,4 +783,11 @@ void session_windows_set_seat_listener(session_windows_handler_t *handler, host_
     if (handler == NULL) return;
     handler->seat_listener = listener;
     handler->seat_user = user;
+    if (listener == NULL || !handler->wayland_ready) return;
+    /* A listener set after startup must know the seats that exist already, as the core's own listener does (see
+     * host_wayland_core_set_seat_listener): the recorded seats are reported as added, in slot order. */
+    for (uint32_t index = 0; index < HostWaylandCoreMaxSeats; ++index) {
+        struct wl_seat *seat = host_wayland_core_seat_at(&handler->core, index);
+        if (seat != NULL) listener(user, seat, true);
+    }
 }

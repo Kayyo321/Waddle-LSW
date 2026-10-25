@@ -1582,9 +1582,10 @@ static int test_api_edges(void) {
     /* Seat listener: removal is forwarded after the handler forgets the seat. */
     seat_adds = seat_removes = 0;
     session_windows_set_seat_listener(&handler, count_seat, NULL);
+    Check(seat_adds == 1);
     fake_queue_remove(5);
     Check(pump() == 0);
-    Check(seat_removes == 1 && seat_adds == 0);
+    Check(seat_removes == 1 && seat_adds == 1);
     session_windows_set_seat_listener(&handler, NULL, NULL);
 
     /* A deadline exists only while frames are pending. */
@@ -2038,6 +2039,29 @@ static int test_popup_observation(void) {
     return 0;
 }
 
+static unsigned replayed_seat_adds;
+
+static void count_seat_adds(void *user, struct wl_seat *seat, bool added) {
+    (void)user;
+    (void)seat;
+    if (added) ++replayed_seat_adds;
+}
+
+/**
+ * @brief A listener registered after startup must learn the seats that already exist (the core's guarantee of
+ * host_wayland_core.h, which the handler's listener is part of).
+ */
+static int test_seat_listener_replay(void) {
+    Check(start_session(1, 1) == 0);
+    Check(host_wayland_core_seat_count(&handler.core) == 1);
+    replayed_seat_adds = 0;
+    session_windows_set_seat_listener(&handler, count_seat_adds, NULL);
+    Check(replayed_seat_adds == 1);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
 /* ---- runner ---------------------------------------------------------------------------------------- */
 
 typedef int (*test_fn)(void);
@@ -2081,6 +2105,7 @@ int main(void) {
     run_test("randomized sequences", test_random_sequences);
     run_test("bug: pending frames of retired windows", test_pending_frames_of_retired_windows);
     run_test("bug: popup observation", test_popup_observation);
+    run_test("bug: seat listener replay", test_seat_listener_replay);
     printf("session windows handler tests: %u run, %u failed\n", tests_run, tests_failed);
     return tests_failed ? 1 : 0;
 }
