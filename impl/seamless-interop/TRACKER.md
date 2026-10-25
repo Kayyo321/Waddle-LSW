@@ -1258,10 +1258,18 @@ its uncompiled draft earns no credit until current acceptance passes.
     joined the bounded probe; forced shutdown is recorded. Add opt-in finite
     boot input for a new blank disk, disabled by default;17 supervisor tests pass.
 
-- **Commit `HEAD`**: `feat(interop): own Linux layout mapping and retryable local teardown`
+- **Commit `5bbf596`**: `feat(interop): own Linux layout mapping and retryable local teardown`
   - **Task Impact**: +0% to TODO #5/#7; actual runtime integration remains open.
   - **Summary**: Reviewed fd/mmap owner validates live immutable-header snapshots
     through Zig and preserves failed unmap ownership. Close errors never retry
     a reused Linux fd. Normal build, real sparse2GiB/fault/thread tests, exact
     97.69% lines/93.62% taken arcs and fail-fast ASan/LSan/UBSan all pass.
     Coverage and sanitizer evidence is retained and wired into CI.
+
+- **Commit `HEAD`**: `feat(interop): compose bounded daemon and one-shot session admission`
+  - **Task Impact**: +0% to TODO #7; actual product entry remains a separate gate.
+  - **Summary**: Connect reviewed singleton/readiness/VSOCK components with
+    cancellable partial I/O, one absolute deadline, selected-device validation
+    and explicit recoverable cleanup ownership. Normal make, leak-enabled
+    ASan/LSan/UBSan and exact359/362lines,341/374taken-arcs pass. CI now runs
+    the production-object guard/real-socket fixture and coverage gate.

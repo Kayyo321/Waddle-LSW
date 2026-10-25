@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
+interop-test: interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -23,7 +23,8 @@ interop-codec-test: build/interop_codec_abi_test
 interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test interop-control-peer-abi-test interop-linux-socket-test interop-linux-session-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
-interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o build/interop_layout_abi.o
+interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o build/interop_layout_abi.o build/daemon_wire.o build/device_storage.o build/daemon_config.o build/path_rules.o
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_host_coverage.py
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/mapping_linux_coverage.py
 	python3 tests/av/coverage.py interop_codec
 	python3 tests/av/coverage.py interop_layout
@@ -291,3 +292,21 @@ interop-mapping-linux-coverage: build/interop_layout_abi.o
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/mapping_linux_coverage.py
 interop-mapping-linux-sanitizers:
 	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 $(MAKE) -W tests/interop/mapping_linux.c interop-mapping-linux-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+
+# Production daemon readiness + singleton + one-attempt VSOCK orchestration.
+InteropHostSessionObjects = build/interop_control_peer_abi.o build/interop_codec.o build/daemon_wire.o build/device_storage.o build/daemon_config.o build/path_rules.o
+InteropHostSessionDependencies = src/interop/session_host.c src/interop/session_host.h src/interop/linux_session_owner.c src/interop/linux_session_owner.h src/interop/linux_socket_owner.c src/daemon/daemon_device.c src/daemon/daemon_wire.h include/waddle/daemon_protocol.h
+InteropHostSessionFixtures = tests/interop/session_host.c tests/interop/session_host_private.c
+InteropHostSessionWrapFlags = -Wl,--wrap=daemon_wire_decode_status_response,--wrap=daemon_wire_decode_ready_response,--wrap=interop_linux_session_acquire,--wrap=interop_linux_session_release,--wrap=socket,--wrap=connect,--wrap=getsockopt,--wrap=getpeername,--wrap=send,--wrap=recv,--wrap=poll,--wrap=clock_gettime,--wrap=interop_linux_session_connect_peer,--wrap=interop_linux_session_destroy_peer
+build/interop_host_session.o: src/interop/session_host.c src/interop/session_host.h src/interop/linux_session_owner.h src/daemon/daemon_wire.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -pthread -c $< -o $@
+build/interop_host_session_test: $(InteropHostSessionFixtures) $(InteropHostSessionDependencies) $(InteropHostSessionObjects) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG -ffunction-sections -fdata-sections $(InteropHostSessionFixtures) src/interop/linux_session_owner.c src/interop/linux_socket_owner.c src/daemon/daemon_device.c $(InteropHostSessionObjects) $(LDFLAGS) $(InteropHostSessionWrapFlags) -Wl,--gc-sections -pthread -o $@
+.PHONY: interop-host-session-test interop-host-session-coverage interop-host-session-sanitizers
+interop-host-session-test: build/interop_host_session.o build/interop_host_session_test
+	./build/interop_host_session_test
+interop-host-session-coverage: $(InteropHostSessionObjects)
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_host_coverage.py
+interop-host-session-sanitizers:
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 $(MAKE) -W tests/interop/session_host.c interop-host-session-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+

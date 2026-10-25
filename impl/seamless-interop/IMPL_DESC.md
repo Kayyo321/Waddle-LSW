@@ -3616,3 +3616,23 @@ production169/173lines,176/188taken arcs pass with no source exclusions;
 ASan/LSan/UBSan fail-fast with detect_leaks=1 pass outside the restricted tracer.
 Evidence is in mapping_linux_evidence_2026_10_25. The raw adapter is a prerequisite;
 live session integration and native KVMFR/Windows acceptance remain separate.
+
+### 8.30 Bounded host admission orchestration (2026-10-25)
+
+[session_host_contract.md](session_host_contract.md) freezes the additive C
+admission API. It composes the existing singleton/AV lease owner, authenticated
+same-euid AF_UNIX control channel, one bounded correlated Status/GuestReady
+exchange and exactly one interop VSOCK attempt. Guest-exec port remains the
+selected profile's configured port; interop stays5002. A shared absolute
+CLOCK_MONOTONIC deadline and borrowed cancellation fd cover every partial
+nonblocking transfer, poll, decoder boundary and post-connect publication.
+All untrusted responses use Zig decoders. Incomplete/invalid transactions flag
+the borrowed control stream unsafe for reuse. A late failure tears down its
+real connected peer; unexpected cleanup failure publishes the authentic owner
+with CleanupRequired rather than losing ownership. Caller closes only its own
+control/cancel fds, and later native/mapping teardown remains separate. No
+session restart, epoch reset, mapping proof or Wayland ownership is inferred.
+Public/private pure-guard and real socket fixtures, fail-fast leak-enabled
+sanitizers and exact99.17%lines/91.18%taken-arcs pass. The source is CI-gated;
+actual entry/mapping/Hello integration is the next milestone, earning no
+premature runtime credit from this component.

@@ -1,0 +1,18 @@
+{
+  "coverage": {
+    "line": [
+      359,
+      362
+    ],
+    "taken_branch_arcs": [
+      341,
+      374
+    ],
+    "source_exclusions": []
+  },
+  "normal": "make interop-host-session-test; exit0",
+  "sanitizers": "make interop-host-session-sanitizers; exit0; address,leak,undefined; detect_leaks=1; halt_on_error=1",
+  "native_transport": "real AF_UNIX; VSOCK connect seam only",
+  "product_entry_or_native_acceptance": false,
+  "contract_sha256": "b846d59ceace279f62d020e0e62a777810855c4b6d848d05a5fd177599168a85"
+}
