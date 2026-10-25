@@ -77,6 +77,19 @@ pub const usage_text =
     "Scope: per-user. --system requires euid 0 (not implemented in this build).\n" ++
     "Exit codes: 0 success or drift reported, 1 blocked or failed, 2 usage, 125 resources.\n";
 
+/// Stable subcommand word used in JSON output.
+fn operation_name(operation: Operation) []const u8 {
+    return switch (operation) {
+        .Install => "install",
+        .Remove => "remove",
+        .Repair => "repair",
+        .Status => "status",
+        .Migrate => "migrate",
+        .Guest => "guest",
+        .Shortcut => "shortcut",
+    };
+}
+
 /// Parse the operands after `waddle integration`. The first operand names the
 /// subcommand; flags may appear in any order. Duplicate flags, unknown options,
 /// `--all` with `--device`, `--force` outside repair, and `--all` outside remove
@@ -84,6 +97,7 @@ pub const usage_text =
 /// Errors: Usage.
 pub fn parse(args: []const []const u8) !options_t {
     if (args.len == 0) return error.Usage;
+    if (std.mem.eql(u8, args[0], "--help") or std.mem.eql(u8, args[0], "-h")) return options_t{ .operation = .Status, .help = true };
     var options = options_t{ .operation = undefined };
     options.operation = if (std.mem.eql(u8, args[0], "install")) .Install else if (std.mem.eql(u8, args[0], "remove")) .Remove else if (std.mem.eql(u8, args[0], "repair")) .Repair else if (std.mem.eql(u8, args[0], "status")) .Status else if (std.mem.eql(u8, args[0], "migrate")) .Migrate else if (std.mem.eql(u8, args[0], "shortcut")) .Shortcut else return error.Usage;
     var index: usize = 1;
@@ -514,7 +528,7 @@ fn render(allocator: std.mem.Allocator, options: options_t, rows: *std.ArrayList
         const document = .{
             .schema_version = @as(u32, 1),
             .command = "integration",
-            .operation = @tagName(options.operation),
+            .operation = operation_name(options.operation),
             .ok = status == ExitOk,
             .results = rows.items,
             .@"error" = error_value,
@@ -553,6 +567,7 @@ test "parser accepts every subcommand and rejects misuse with usage errors" {
     try testing.expectEqualStrings("alpha", (try parse(&.{ "status", "--device", "alpha" })).device.?);
     try testing.expect((try parse(&.{ "status", "--system", "--guest" })).guest);
     try testing.expectError(error.Usage, parse(&.{}));
+    try testing.expect((try parse(&.{"--help"})).help);
     try testing.expectError(error.Usage, parse(&.{"bogus"}));
     try testing.expectError(error.Usage, parse(&.{ "install", "--json", "--json" }));
     try testing.expectError(error.Usage, parse(&.{ "remove", "--all", "--device", "alpha" }));
@@ -840,7 +855,7 @@ test "json output uses the stable schema version 1 envelope and typed result row
     const root = parsed.value.object;
     try testing.expectEqual(@as(i64, 1), root.get("schema_version").?.integer);
     try testing.expectEqualStrings("integration", root.get("command").?.string);
-    try testing.expectEqualStrings("Install", root.get("operation").?.string);
+    try testing.expectEqualStrings("install", root.get("operation").?.string);
     try testing.expect(root.get("ok").?.bool);
     try testing.expect(root.get("error").? == .null);
     const rows = root.get("results").?.array.items;

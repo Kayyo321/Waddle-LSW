@@ -82,11 +82,14 @@ build/device_storage.o: src/daemon/device_storage.zig src/daemon/daemon_device.h
 build/device_commands.o: src/cli/device_commands.zig src/cli/device_commands.h src/daemon/daemon_device.h | build
 	$(ZIG) build-obj $< -Iinclude -Isrc/daemon -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
+build/integration_entry.o: src/cli/integration_entry.zig src/cli/integration_commands.zig src/cli/integration_commands.h src/interop/integration_producers.zig src/interop/manifest_store.zig src/interop/manifest.zig src/daemon/daemon_device.h src/daemon/daemon_config.h | build
+	$(ZIG) build-obj --dep integration_commands -Mroot=src/cli/integration_entry.zig --dep manifest_store --dep integration_producers -Mintegration_commands=src/cli/integration_commands.zig -Mmanifest_store=src/interop/manifest_store.zig --dep manifest_store -Mintegration_producers=src/interop/integration_producers.zig -Iinclude -Isrc/daemon -O ReleaseSafe -fPIC -lc -femit-bin=$@
+
 build/av_commands.o: src/cli/av_commands.zig src/cli/av_commands.h | build
 	$(ZIG) build-obj $< -Isrc/cli -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
-build/waddle: src/av/av_deploy.c src/av/av_deploy.h build/av_commands.o src/cli/av_managed.inc build/device_commands.o src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o src/cli/session.h src/cli/terminal.h src/daemon/daemon_client.h src/daemon/daemon_device.h $(COMMON) include/waddle/cli_protocol.h include/waddle/daemon_protocol.h src/common/common.h src/common/path_rules.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/av/av_deploy.c src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o build/device_commands.o build/av_commands.o $(COMMON) $(LDFLAGS) -o $@
+build/waddle: src/av/av_deploy.c src/av/av_deploy.h build/av_commands.o src/cli/av_managed.inc build/device_commands.o build/integration_entry.o src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o src/cli/session.h src/cli/terminal.h src/daemon/daemon_client.h src/daemon/daemon_device.h $(COMMON) include/waddle/cli_protocol.h include/waddle/daemon_protocol.h src/common/common.h src/common/path_rules.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/av/av_deploy.c src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o build/device_commands.o build/integration_entry.o build/av_commands.o $(COMMON) $(LDFLAGS) -o $@
 
 build/waddle-mock-guest: src/mock/mock_guest.c src/mock/mock_process.c src/mock/mock_process.h $(COMMON) include/waddle/cli_protocol.h src/common/common.h src/common/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/mock/mock_guest.c src/mock/mock_process.c $(COMMON) $(LDFLAGS) -lutil -o $@
