@@ -1557,6 +1557,8 @@ typedef struct feature_probe_t {
     bool send_on_closing;
     bool tick_writes_pipe;
     uint32_t fds_mode;
+    uint32_t poll_fail_after;
+    uint32_t poll_calls;
     int ready_status;
     int tick_status;
     int frame_status;
@@ -1691,6 +1693,7 @@ static int probe_on_tick(void *context, uint64_t now_ms, interop_host_feature_se
 static int probe_poll_fds(void *context, struct pollfd *fds, size_t capacity, size_t *count)
 {
     feature_probe_t *probe = context;
+    if (probe->poll_fail_after != 0 && ++probe->poll_calls > probe->poll_fail_after) return 1;
     if (probe->fds_mode == 1) return 1;
     if (probe->fds_mode == 2) {
         *count = capacity + 1;
@@ -1768,7 +1771,8 @@ static interop_host_control_result_t run_feature_case(feature_probe_t *probe,
     ops.on_ready = probe->skip_ready ? NULL : probe_on_ready;
     ops.on_frame = probe->skip_frame ? NULL : probe_on_frame;
     ops.on_tick = probe->skip_tick ? NULL : probe_on_tick;
-    ops.poll_fds = probe->use_pipe || probe->fds_mode != 0 ? probe_poll_fds : NULL;
+    ops.poll_fds = probe->use_pipe || probe->fds_mode != 0 || probe->poll_fail_after != 0
+        ? probe_poll_fds : NULL;
     ops.on_fds = probe->use_pipe || probe->fds_mode != 0 ? probe_on_fds : NULL;
     ops.next_deadline_ms = probe->use_deadline ? probe_next_deadline : NULL;
     ops.on_closing = probe_on_closing;
@@ -1910,6 +1914,16 @@ __attribute__((unused)) static void session_control_host_feature_tests(void)
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.closing_calls == 1);
+    /* 7b. A poll_fds failure after successful cycles still sends Goodbye and closes once. */
+    memset(&probe, 0, sizeof(probe));
+    probe.use_pipe = true;
+    probe.poll_fail_after = 2;
+    reset_probe_pipe(&probe);
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
+    assert(probe.closing_calls == 1);
+    assert(peer_saw_goodbye == 1);
+    close_probe_pipe(&probe);
     memset(&probe, 0, sizeof(probe));
     probe.fds_mode = 2;
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);

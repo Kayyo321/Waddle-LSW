@@ -609,9 +609,11 @@ interop_host_control_result_t interop_host_control_run_detailed(
             int fds_status = feature_ops->poll_fds(feature_ops->context,
                 &descriptors[descriptor_count], InteropHostFeatureFdCapacity, &supplied);
             if (fds_status != 0 || supplied > InteropHostFeatureFdCapacity) {
+                /* Starting the drain here invalidates the poll cookie taken above. */
                 if (!host_control_fail_and_drain(&outcome, HostControlFeatureFailed,
                         socket_owner, token, now_ms, &draining))
                     break;
+                snapshot_invalidated = true;
             } else {
                 feature_base = descriptor_count;
                 feature_count = supplied;
