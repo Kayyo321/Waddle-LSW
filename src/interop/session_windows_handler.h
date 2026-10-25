@@ -186,7 +186,8 @@ void session_windows_release_press(session_windows_handler_t *handler, uint32_t 
  *
  * A listener set on a ready handler is first told every seat the core records, as added, in slot order. Afterwards it
  * receives each seat the core adds or removes; a removed seat is forgotten by the windows layer before the listener sees
- * it. The seat pointer is valid during the call only for a removal.
+ * it. An added seat stays valid until its removal; a removed seat is valid during the call and destroyed right after it
+ * returns (host_wayland_core.h).
  *
  * @param handler In/out. Initialized handler.
  * @param listener In. May be NULL to remove it.
