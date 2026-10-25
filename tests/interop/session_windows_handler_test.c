@@ -22,6 +22,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #define Check(condition) do { \
         if (!(condition)) { \
@@ -2062,6 +2063,406 @@ static int test_seat_listener_replay(void) {
     return 0;
 }
 
+
+/* ---- coverage closure: frames the writer cannot build, and the failure paths of each callback ---------- */
+
+typedef struct raw_field_t {
+    uint16_t tag; /* base tag */
+    int critical;
+    const uint8_t *value;
+    uint16_t length;
+} raw_field_t;
+
+static void put_le(uint8_t *bytes, uint64_t value, unsigned width) {
+    for (unsigned byte = 0; byte < width; ++byte) bytes[byte] = (uint8_t)(value >> (8 * byte));
+}
+
+/**
+ * @brief Build a frame from raw fields, without the codec writer's validation. The header is the protocol header (magic,
+ * version, type, payload length, request id zero); each field is its wire tag (critical bit set when `critical`), its
+ * length and its value padded to four bytes. Used for frames the writer refuses by construction: a missing field, a
+ * field of the wrong width, an out-of-range value. The handler validates nothing itself, so the frame reaches it as is.
+ */
+static size_t raw_frame(uint8_t *frame, size_t capacity, uint16_t type, const raw_field_t *fields, unsigned count) {
+    uint8_t payload[256];
+    size_t length = 0;
+    for (unsigned index = 0; index < count; ++index) {
+        uint16_t wire = fields[index].tag | (fields[index].critical ? InteropCriticalTag : 0u);
+        size_t padded = (fields[index].length + 3u) & ~3u;
+        if (length + 4 + padded > sizeof payload) return 0;
+        put_le(payload + length, wire, 2);
+        put_le(payload + length + 2, fields[index].length, 2);
+        memcpy(payload + length + 4, fields[index].value, fields[index].length);
+        memset(payload + length + 4 + fields[index].length, 0, padded - fields[index].length);
+        length += 4 + padded;
+    }
+    if (InteropHeaderBytes + length > capacity) return 0;
+    put_le(frame, InteropMagic, 4);
+    put_le(frame + 4, InteropVersion, 2);
+    put_le(frame + 6, type, 2);
+    put_le(frame + 8, length, 4);
+    put_le(frame + 12, 0, 4);
+    memcpy(frame + InteropHeaderBytes, payload, length);
+    return InteropHeaderBytes + length;
+}
+
+/** @brief Field values of the widths the handler reads: little endian. */
+static raw_field_t raw_u64_field(uint16_t tag, const uint8_t *bytes) {
+    raw_field_t field = {tag, 1, bytes, 8};
+    return field;
+}
+
+static raw_field_t raw_u32_field(uint16_t tag, const uint8_t *bytes) {
+    raw_field_t field = {tag, 1, bytes, 4};
+    return field;
+}
+
+/**
+ * @brief Every subset of the fields of one message that the handler reads, omitted in turn. Each frame must be refused
+ * (counted once, nothing sent, no request). The complete frame is the valid case and is covered by the other tests.
+ */
+static int check_omitted_fields(uint16_t type, const raw_field_t *fields, unsigned count, unsigned keep) {
+    for (unsigned omit = 1; omit < (1u << count); ++omit) {
+        if (omit & keep) continue;
+        raw_field_t kept[8];
+        unsigned kept_count = 0;
+        for (unsigned index = 0; index < count; ++index) {
+            if (omit & (1u << index)) continue;
+            kept[kept_count++] = fields[index];
+        }
+        uint8_t frame[InteropMaxFrameBytes];
+        size_t length = raw_frame(frame, sizeof frame, type, kept, kept_count);
+        Check(length != 0);
+        unsigned refused = handler.counters.frame_fields_refused;
+        unsigned mark = fake_request_count;
+        unsigned sent = fake_frame_count;
+        Check(send_frame(type, frame, length) == 0);
+        if (handler.counters.frame_fields_refused != refused + 1) {
+            fprintf(stderr, "type 0x%x omitting field mask 0x%x was not refused as a field error\n", type, omit);
+            return 1;
+        }
+        Check(fake_request_count == mark && fake_frame_count == sent);
+    }
+    return 0;
+}
+
+static int test_malformed_fields(void) {
+    Check(start_session(1, 1) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_mapped(&root) == 0);
+    uint8_t window[8], generation[8], state[4], role[1], serial[4], edge[1], slot[4], sequence[8];
+    put_le(window, 1, 8);
+    put_le(generation, 1, 8);
+    put_le(state, 0x30, 4);
+    role[0] = InteropRoleToplevel;
+    put_le(serial, 5, 4);
+    edge[0] = InteropEdgeBottomRight;
+    put_le(slot, 1, 4);
+    put_le(sequence, 9, 8);
+    uint8_t rect[16];
+    memset(rect, 0, sizeof rect);
+    raw_field_t announce[] = {
+        raw_u64_field(InteropTagWindow, window), raw_u64_field(InteropTagGeneration, generation),
+        {InteropTagRole, 1, role, 1}, raw_u32_field(InteropTagState, state),
+        {InteropTagRect, 1, rect, 16},
+    };
+    /* The rectangle is kept in every frame: an announce without it would be refused by the window layer, which the
+     * handler does not count as a field error. The four fields the handler reads are omitted in turn. */
+    Check(check_omitted_fields(InteropMsgWindowAnnounce, announce, 5, 1u << 4) == 0);
+    raw_field_t update_fields[] = {raw_u64_field(InteropTagWindow, window), raw_u64_field(InteropTagGeneration, generation), raw_u32_field(InteropTagState, state)};
+    Check(check_omitted_fields(InteropMsgWindowUpdate, update_fields, 3, 0) == 0);
+    raw_field_t move_fields[] = {raw_u64_field(InteropTagWindow, window), raw_u64_field(InteropTagGeneration, generation), raw_u32_field(InteropTagSerial, serial)};
+    Check(check_omitted_fields(InteropMsgWindowMoveRequest, move_fields, 3, 0) == 0);
+    raw_field_t resize_fields[] = {raw_u64_field(InteropTagWindow, window), raw_u64_field(InteropTagGeneration, generation), raw_u32_field(InteropTagSerial, serial), {InteropTagEdge, 1, edge, 1}};
+    Check(check_omitted_fields(InteropMsgWindowResizeRequest, resize_fields, 4, 0) == 0);
+    raw_field_t state_fields[] = {raw_u64_field(InteropTagWindow, window), raw_u64_field(InteropTagGeneration, generation), raw_u32_field(InteropTagState, state)};
+    Check(check_omitted_fields(InteropMsgWindowStateRequest, state_fields, 3, 0) == 0);
+    raw_field_t frame_fields[] = {raw_u64_field(InteropTagWindow, window), raw_u64_field(InteropTagGeneration, generation), raw_u32_field(InteropTagSlot, slot), {InteropTagFrameSequence, 1, sequence, 8}};
+    Check(check_omitted_fields(InteropMsgFrameReady, frame_fields, 4, 0) == 0);
+
+    /* A serial of the wrong width is a field error too. */
+    uint8_t serial8[8];
+    put_le(serial8, 5, 8);
+    raw_field_t wide_serial[] = {raw_u64_field(InteropTagWindow, window), raw_u64_field(InteropTagGeneration, generation), {InteropTagSerial, 1, serial8, 8}};
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = raw_frame(frame, sizeof frame, InteropMsgWindowMoveRequest, wide_serial, 3);
+    Check(length != 0);
+    unsigned refused = handler.counters.frame_fields_refused;
+    Check(send_frame(InteropMsgWindowMoveRequest, frame, length) == 0);
+    Check(handler.counters.frame_fields_refused == refused + 1);
+
+    /* A frame shorter than its header says is refused; so is a frame shorter than a header, and a NULL frame. */
+    length = raw_frame(frame, sizeof frame, InteropMsgWindowMoveRequest, move_fields, 3);
+    Check(length != 0);
+    refused = handler.counters.frame_fields_refused;
+    Check(send_frame(InteropMsgWindowMoveRequest, frame, length - 4) == 0);
+    Check(send_frame(InteropMsgWindowMoveRequest, frame, 10) == 0);
+    Check(table.on_frame(table.context, InteropMsgWindowMoveRequest, 0, NULL, 0, FakeSender) == 0);
+    Check(handler.counters.frame_fields_refused == refused + 3);
+    Check(fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_MOVE) == 0);
+
+    /* A frame with a field the handler reads whose value the codec would refuse: the handler does not check values,
+     * so a FrameReady whose slot cannot be encoded fails the run instead of sending a broken release. */
+    uint8_t big_slot[4];
+    put_le(big_slot, 0xFFFFFFFFu, 4);
+    raw_field_t wild_release[] = {raw_u64_field(InteropTagWindow, window), raw_u64_field(InteropTagGeneration, generation), raw_u32_field(InteropTagSlot, big_slot), {InteropTagFrameSequence, 1, sequence, 8}};
+    length = raw_frame(frame, sizeof frame, InteropMsgFrameReady, wild_release, 4);
+    Check(length != 0);
+    unsigned sent = fake_frame_count;
+    Check(send_frame(InteropMsgFrameReady, frame, length) == 1);
+    Check(handler.failed == 1 && fake_frame_count == sent);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
+static int test_popup_roles_and_capacity(void) {
+    Check(start_session(1, 1) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_mapped(&root) == 0);
+    announce_spec_t tooltip = child_spec(2, 1, InteropRoleTooltip, 1, 1, 40, 40, 30, 20);
+    Check(send_announce(&tooltip) == 0);
+    Check(record_of(2, 1) != NULL && record_of(2, 1)->popup != NULL);
+    announce_spec_t ime = child_spec(3, 1, InteropRoleImePreedit, 1, 1, 50, 50, 30, 20);
+    Check(send_announce(&ime) == 0);
+    Check(record_of(3, 1) != NULL && record_of(3, 1)->popup != NULL);
+    Check(reducer_synced(2, 1, NULL) == 1 && reducer_synced(3, 1, NULL) == 1);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+
+    /* Sixty-four realized windows fill the reducer table; the sixty-fifth announce finds no slot and is refused. */
+    Check(start_session(1, 1) == 0);
+    for (uint64_t window = 1; window <= HostWaylandMaxWindows; ++window) {
+        announce_spec_t spec = toplevel_spec(window, 1, "a-many");
+        Check(send_announce(&spec) == 0);
+    }
+    Check(host_wayland_windows_window_count(&handler.windows) == HostWaylandMaxWindows);
+    unsigned refused = handler.counters.announces_refused;
+    announce_spec_t extra = toplevel_spec(100, 1, "a-extra");
+    Check(send_announce(&extra) == 0);
+    Check(handler.counters.announces_refused == refused + 1);
+    Check(!host_wayland_windows_contains(&handler.windows, 100, 1));
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
+static int test_real_clock_session(void) {
+    /* A session with no injected clock reads CLOCK_MONOTONIC: a press recorded with the real clock is found at once. */
+    fake_begin();
+    memset(&handler, 0, sizeof handler);
+    display = (struct wl_display *)fake_object(fake_new("wl_display", 1));
+    session_windows_config_t config;
+    memset(&config, 0, sizeof config);
+    config.device = "dev0";
+    config.display = display;
+    Check(session_windows_handler_init(&handler, &config) == 0);
+    table = session_windows_handler_descriptor(&handler);
+    fake_queue_announce(1, "wl_compositor", 6);
+    fake_queue_announce(2, "xdg_wm_base", 5);
+    fake_queue_announce(3, "wl_shm", 1);
+    fake_queue_announce(5, "wl_seat", 7);
+    Check(table.on_ready(table.context, InteropCapWindows, FakeSender) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(send_announce(&root) == 0);
+    struct timespec now;
+    Check(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+    uint64_t now_ms = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
+    Check(press(60, 950, session_seat(), 1, 1, SessionWindowsButtonLeft, 0, now_ms) == HostWaylandOk);
+    Check(send_move(1, 1, 60) == 0);
+    Check(handler.counters.moves_applied == 1);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
+static int test_coalescing_across_windows(void) {
+    Check(start_session(1, 1) == 0);
+    announce_spec_t first = toplevel_spec(1, 1, "a-one");
+    Check(announce_mapped(&first) == 0);
+    announce_spec_t second = toplevel_spec(2, 1, "a-two");
+    Check(announce_mapped(&second) == 0);
+    unsigned one = index_of(record_of(1, 1)->toplevel);
+    unsigned one_surface = index_of(record_of(1, 1)->xdg_surface);
+    unsigned two = index_of(record_of(2, 1)->toplevel);
+    unsigned two_surface = index_of(record_of(2, 1)->xdg_surface);
+    fake_clear_recording();
+
+    /* Pending: configure of window 1, then configure of window 2 (the search passes window 1), then a second
+     * configure of window 1 which replaces the first in place. */
+    fake_send_mode = FakeSendFull;
+    fake_queue_toplevel_configure(one, 100, 100, NULL, 0);
+    fake_queue_surface_configure(one_surface, 1);
+    Check(pump() == 0);
+    Check(handler.pending_count == 1);
+    fake_queue_toplevel_configure(two, 200, 200, NULL, 0);
+    fake_queue_surface_configure(two_surface, 2);
+    Check(pump() == 0);
+    Check(handler.pending_count == 2);
+    fake_queue_toplevel_configure(one, 150, 150, NULL, 0);
+    fake_queue_surface_configure(one_surface, 3);
+    Check(pump() == 0);
+    Check(handler.pending_count == 2 && handler.counters.configures_coalesced == 1);
+    fake_send_mode = FakeSendAccept;
+    Check(tick() == 0);
+    Check(fake_frame_count == 2);
+    outbound_t out;
+    Check(outbound_at(0, &out) == 0 && out.window == 1 && out.has_rect && out.rect[2] == 150);
+    Check(outbound_at(1, &out) == 0 && out.window == 2 && out.has_rect && out.rect[2] == 200);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
+/** @brief A sender that fails with a result the handler must treat as fatal fails the run at each callback that sends. */
+static int test_send_failures(void) {
+    Check(start_session(1, 1) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_mapped(&root) == 0);
+    announce_spec_t menu = child_spec(2, 1, InteropRoleMenu, 1, 1, 30, 12, 40, 20);
+    Check(send_announce(&menu) == 0);
+    unsigned toplevel = index_of(record_of(1, 1)->toplevel);
+    unsigned surface = index_of(record_of(1, 1)->xdg_surface);
+    unsigned popup = index_of(record_of(2, 1)->popup);
+
+    fake_send_mode = FakeSendFail;
+    fake_queue_toplevel_configure(toplevel, 100, 100, NULL, 0);
+    fake_queue_surface_configure(surface, 1);
+    Check(pump() == 1);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+
+    Check(start_session(1, 1) == 0);
+    Check(announce_mapped(&root) == 0);
+    toplevel = index_of(record_of(1, 1)->toplevel);
+    fake_send_mode = FakeSendFail;
+    fake_queue_toplevel_close(toplevel);
+    Check(pump() == 1);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+
+    Check(start_session(1, 1) == 0);
+    Check(announce_mapped(&root) == 0);
+    Check(send_announce(&menu) == 0);
+    popup = index_of(record_of(2, 1)->popup);
+    fake_send_mode = FakeSendFail;
+    fake_queue_popup_configure(popup, 15, 6, 40, 20);
+    Check(pump() == 1);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+
+    Check(start_session(1, 1) == 0);
+    Check(announce_mapped(&root) == 0);
+    Check(send_announce(&menu) == 0);
+    popup = index_of(record_of(2, 1)->popup);
+    fake_send_mode = FakeSendFail;
+    fake_queue_popup_done(popup);
+    Check(pump() == 1);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+
+    /* A pending list that cannot be flushed fails the callback that tries to flush it, on entry and on the tick. */
+    Check(start_session(1, 1) == 0);
+    fake_send_mode = FakeSendFull;
+    Check(send_frame_ready(1, 1, 0, 1) == 0);
+    Check(handler.pending_count == 1);
+    fake_send_mode = FakeSendFail;
+    Check(send_frame_ready(1, 1, 0, 2) == 1);
+    Check(tick() == 1);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+
+    Check(start_session(1, 1) == 0);
+    fake_send_mode = FakeSendFull;
+    Check(send_frame_ready(1, 1, 0, 1) == 0);
+    fake_send_mode = FakeSendFail;
+    Check(tick() == 1);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
+static int test_dispatch_would_block_and_empty(void) {
+    Check(start_session(1, 1) == 0);
+    struct pollfd fds[1];
+    fds[0].fd = FakeFd;
+    fds[0].events = POLLIN;
+    fds[0].revents = POLLIN;
+    /* No descriptor reported: nothing is dispatched. */
+    unsigned dispatches = fake_dispatch_calls;
+    Check(table.on_fds(table.context, fds, 0, test_now, FakeSender) == 0);
+    Check(fake_dispatch_calls == dispatches);
+    /* A flush that would block during dispatch is not an error. */
+    fake_flush_mode = FakeEagain;
+    Check(pump() == 0);
+    Check(table.on_fds(table.context, fds, 1, test_now, FakeSender) == 0);
+    fake_flush_mode = FakeOk;
+    Check(tick() == 0);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
+/** @brief An update that changes geometry but not the reducer's observation, and an observation that is refused. */
+static int test_update_paths(void) {
+    Check(start_session(1, 1) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_mapped(&root) == 0);
+    session_windows_counters_t before = counters_now();
+
+    /* Activated is a host-to-guest bit: the window accepts the update, the reducer refuses the observation. */
+    update_spec_t active = {1, 1, 10, 20, 700, 500, false, 0, 0, NULL, false, 0, 0, WaddleWindowStateActivated};
+    Check(send_update(&active) == 0);
+    Check(counters_now().updates_applied == before.updates_applied + 1);
+    Check(counters_now().guest_observations_applied == before.guest_observations_applied);
+    Check(reducer_synced(1, 1, NULL) == 1);
+
+    /* An update whose window lost its reducer still applies to the window; there is no observation to make. */
+    host_wayland_record_t *rec = record_of(1, 1);
+    Check(rec != NULL);
+    for (uint32_t slot = 0; slot < SessionWindowsMaxReducers; ++slot) {
+        if (handler.reducers[slot].used && handler.reducers[slot].window == 1) {
+            Check(waddle_window_state_destroy(&handler.reducers[slot].handle) == WaddleWindowStateOk);
+            handler.reducers[slot].used = 0;
+        }
+    }
+    update_spec_t moved = {1, 1, 12, 22, 640, 480, false, 0, 0, NULL, false, 0, 0, 0};
+    Check(send_update(&moved) == 0);
+    Check(counters_now().updates_applied == before.updates_applied + 2);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
+/**
+ * @brief The window layer no longer realizes a window the reducer still holds (a white-box split). A state request for it
+ * plans a host request that the windows layer refuses: the failure is counted and the reducer is left unsynchronized.
+ */
+static int test_window_layer_divergence(void) {
+    Check(start_session(1, 1) == 0);
+    announce_spec_t capable = toplevel_spec(1, 1, "a-cap");
+    capable.state = WaddleWindowStateMaximizable;
+    Check(announce_mapped(&capable) == 0);
+    uint8_t frame[InteropMaxFrameBytes];
+    interop_writer_t writer;
+    interop_writer_init(&writer, frame, sizeof frame);
+    interop_put_uint(&writer, InteropTagWindow, 1);
+    interop_put_uint(&writer, InteropTagGeneration, 1);
+    size_t length = 0;
+    Check(interop_writer_finish(&writer, InteropMsgWindowRetire, 0, InteropFromGuest, &length) == InteropErrorNone);
+    Check(host_wayland_windows_handle_frame(&handler.windows, frame, length, test_now) == HostWaylandOk);
+    Check(!host_wayland_windows_contains(&handler.windows, 1, 1));
+    Check(reducer_synced(1, 1, NULL) == 1);
+
+    session_windows_counters_t before = counters_now();
+    Check(send_state_request(1, 1, WaddleWindowStateMaximized) == 0);
+    Check(counters_now().host_actions_failed == before.host_actions_failed + 1);
+    Check(reducer_synced(1, 1, NULL) == 0);
+    Check(end_session() == 0);
+    Check(check_double_clean() == 0);
+    return 0;
+}
+
 /* ---- runner ---------------------------------------------------------------------------------------- */
 
 typedef int (*test_fn)(void);
@@ -2106,6 +2507,14 @@ int main(void) {
     run_test("bug: pending frames of retired windows", test_pending_frames_of_retired_windows);
     run_test("bug: popup observation", test_popup_observation);
     run_test("bug: seat listener replay", test_seat_listener_replay);
+    run_test("coverage: frames with omitted fields", test_malformed_fields);
+    run_test("coverage: popup roles and reducer capacity", test_popup_roles_and_capacity);
+    run_test("coverage: real clock", test_real_clock_session);
+    run_test("coverage: coalescing across windows", test_coalescing_across_windows);
+    run_test("coverage: send failures", test_send_failures);
+    run_test("coverage: dispatch would block and empty", test_dispatch_would_block_and_empty);
+    run_test("coverage: update paths", test_update_paths);
+    run_test("coverage: window layer divergence", test_window_layer_divergence);
     printf("session windows handler tests: %u run, %u failed\n", tests_run, tests_failed);
     return tests_failed ? 1 : 0;
 }
