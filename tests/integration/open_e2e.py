@@ -7,9 +7,18 @@ LocalLaunch with its own TLV reader, and answers with frames encoded by the prod
 (build/open_frame_dump). Cold-start cases use a fake waddle-session and a fake notify-send
 placed first on PATH. The 120 s deadline case is slow and runs only with
 WADDLE_OPEN_E2E_SLOW=1; it uses the real deadline, not a shortened one.
+
+Harness mode: WADDLE_TEST_SESSION_HARNESS=PATH (build/interop_session_local_harness) replaces
+the fake server with the real session command handler inside the production control runtime.
+The harness answers each forwarded launch from its fake guest, so the built `waddle open` talks
+to the real handler. Cases that need a server which misbehaves on purpose (a silent or partial
+reply, an EOF) are the client's own rules and run only against the fake; the harness mode skips
+them. Frame assertions read the guest's LaunchRequest frames, so request ids are guest ids and
+every entry reports connection 1.
 """
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -27,6 +36,11 @@ ROOT_BUILD = Path.cwd()
 WADDLE = Path(os.environ.get("WADDLE_TEST_EXECUTABLE", ROOT_BUILD / "build" / "waddle")).resolve()
 DUMP = Path(os.environ.get("WADDLE_TEST_FRAME_DUMP", ROOT_BUILD / "build" / "open_frame_dump")).resolve()
 SLOW = os.environ.get("WADDLE_OPEN_E2E_SLOW") == "1"
+HARNESS_ENV = os.environ.get("WADDLE_TEST_SESSION_HARNESS")
+HARNESS = Path(HARNESS_ENV).resolve() if HARNESS_ENV else None
+# Cases whose server behaviour cannot be produced by the real handler (see the module docstring).
+FAKE_ONLY_CASES = ("grace_handover",)
+LAUNCH_REQUEST = 0x0700  # guest-bound LaunchRequest, as recorded by the harness
 OUTSIDE_TEXT = ("'{file}' is outside the folders shared with Windows (alpha). "
                 "Add a share with: waddle device config set filesystem.<name> <dir>:<drive>:\"")
 
@@ -81,12 +95,16 @@ class Lab:
 
     def write_session_wrapper(self, scenario, delay, record):
         script = self.bin / "waddle-session"
+        exec_options = ""
+        if HARNESS is not None:
+            exec_options = (" --exec %s --exec-device \"$2\" --exec-reply %s --exec-record %s"
+                            % (str(HARNESS), shlex.quote(scenario.get("reply", "ok")), str(record)))
         script.write_text(
             "#!/bin/sh\n"
             "exec python3 %s --socket \"$XDG_RUNTIME_DIR/waddle/$2/session.sock\" --dump %s"
-            " --spawn-log %s --record %s --delay %s --idle-exit 20 --scenario %s\n"
+            " --spawn-log %s --record %s --delay %s --idle-exit 20 --scenario %s%s\n"
             % (str(HERE / "open_fake_session.py"), str(DUMP), str(self.spawn_log), str(record),
-               delay, "'" + json.dumps(scenario) + "'"))
+               delay, "'" + json.dumps(scenario) + "'", exec_options))
         script.chmod(0o755)
 
     def write_silent_session_wrapper(self):
@@ -110,6 +128,53 @@ class Lab:
         if not self.notify_log.exists():
             return []
         return [json.loads(line) for line in self.notify_log.read_text().splitlines()]
+
+
+class HarnessServer:
+    """Runs the real session command handler harness for one scenario (harness mode).
+
+    The harness writes each guest LaunchRequest as one JSON line; launches() decodes them with
+    the Python TLV reader. stop() sends SIGTERM, which the harness turns into a graceful local
+    stop, and checks that it exited cleanly.
+    """
+
+    def __init__(self, lab, scenario):
+        self.record = lab.root / ("harness-%d.jsonl" % time.monotonic_ns())
+        self.ready = Path(str(self.record) + ".ready")
+        self.process = subprocess.Popen(
+            [str(HARNESS), "--runtime-dir", str(lab.runtime), "--device", "alpha",
+             "--reply", scenario.get("reply", "ok"), "--record", str(self.record)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        deadline = time.monotonic() + 15.0
+        while not self.ready.exists():
+            if self.process.poll() is not None:
+                raise AssertionError(("harness exited before ready", self.process.stdout.read()))
+            if time.monotonic() > deadline:
+                self.process.kill()
+                raise AssertionError("harness did not bind the socket")
+            time.sleep(0.01)
+
+    def launches(self):
+        if not self.record.exists():
+            return []
+        entries = []
+        for line in self.record.read_text().splitlines():
+            frame = fake.decode_frame(bytes.fromhex(json.loads(line)["frame"]))
+            entries.append({"connection": 1, "type": frame["type"], "request_id": frame["request_id"],
+                            "fields": frame["by_name"], "critical": frame["critical"]})
+        return [entry for entry in entries if entry["type"] == LAUNCH_REQUEST]
+
+    def close(self):
+        self.process.terminate()
+        output, _ = self.process.communicate(timeout=20)
+        check(self.process.returncode == 0, ("harness stop", self.process.returncode, output))
+
+
+def make_server(lab, scenario):
+    """The server for one case: the fake, or the real harness in harness mode."""
+    if HARNESS is not None:
+        return HarnessServer(lab, scenario)
+    return Server(lab, scenario)
 
 
 class Server:
@@ -139,7 +204,7 @@ def check(condition, message):
 
 def warm_path(lab):
     target = lab.make_file("notes.txt")
-    server = Server(lab, {"reply": "ok"})
+    server = make_server(lab, {"reply": "ok"})
     try:
         result = lab.run("open", "--wait", str(target), extra={"XDG_ACTIVATION_TOKEN": "tok-1"})
         check(result.returncode == 0, ("ok reply", result.returncode, result.stderr))
@@ -162,7 +227,7 @@ def statuses(lab):
     expected = {0: 0, 1: 1, 2: 1, 4: 1, 9: 1}
     for status, code in expected.items():
         target = lab.make_file("status-%d.txt" % status)
-        server = Server(lab, {"reply": "status:%d" % status})
+        server = make_server(lab, {"reply": "status:%d" % status})
         try:
             result = lab.run("open", "--wait", str(target))
             check(result.returncode == code, ("status", status, result.returncode, result.stderr))
@@ -172,21 +237,28 @@ def statuses(lab):
 
 def error_and_eof(lab):
     target = lab.make_file("err.txt")
-    server = Server(lab, {"reply": "error:not allowed"})
+    server = make_server(lab, {"reply": "error:not allowed"})
     try:
         result = lab.run("open", "--wait", str(target))
-        check(result.returncode == 1 and "launch refused: not allowed" in result.stderr,
-              ("error reply", result.returncode, result.stderr))
+        if HARNESS is not None:
+            # The guest reports GuestError with a message; the client prints it as a launch failure.
+            check(result.returncode == 1 and "not allowed" in result.stderr,
+                  ("guest error reply", result.returncode, result.stderr))
+        else:
+            check(result.returncode == 1 and "launch refused: not allowed" in result.stderr,
+                  ("error reply", result.returncode, result.stderr))
     finally:
         server.close()
+    if HARNESS is not None:
+        return
     for reply in ("partial", "eof"):
-        server = Server(lab, {"reply": reply})
+        server = make_server(lab, {"reply": reply})
         try:
             result = lab.run("open", "--wait", str(target))
             check(result.returncode == 125, (reply, result.returncode, result.stderr))
         finally:
             server.close()
-    server = Server(lab, {"reply": "eof"})
+    server = make_server(lab, {"reply": "eof"})
     try:
         result = lab.run("open", str(target))
         check(result.returncode == 0, ("eof is a handover without --wait", result.returncode))
@@ -196,7 +268,7 @@ def error_and_eof(lab):
 
 def grace_handover(lab):
     target = lab.make_file("silent.txt")
-    server = Server(lab, {"reply": "silent", "hold": 6})
+    server = make_server(lab, {"reply": "silent", "hold": 6})
     try:
         started = time.monotonic()
         result = lab.run("open", str(target))
@@ -209,7 +281,7 @@ def grace_handover(lab):
 
 def multiple_items(lab):
     paths = [lab.make_file("batch/%s.txt" % name) for name in ("a", "b", "c")]
-    server = Server(lab, {"reply": "ok"})
+    server = make_server(lab, {"reply": "ok"})
     try:
         result = lab.run("open", "--wait", *map(str, paths), extra={"XDG_ACTIVATION_TOKEN": "tok-batch"})
         check(result.returncode == 0, ("batch", result.returncode, result.stderr))
@@ -225,7 +297,7 @@ def multiple_items(lab):
 
 def outside_share(lab):
     target = "/etc/hosts"
-    server = Server(lab, {"reply": "ok"})
+    server = make_server(lab, {"reply": "ok"})
     try:
         result = lab.run("open", "--wait", target)
         check(result.returncode == 126, ("outside", result.returncode, result.stderr))
@@ -266,6 +338,19 @@ def wait_for_notices(lab, count, prefix="", timeout=5.0):
         time.sleep(0.05)
 
 
+def stop_session(lab):
+    """Stop any session a cold-start case left running (the fake or the harness)."""
+    if HARNESS is not None:
+        subprocess.run(["pkill", "-TERM", "-f", "interop_session_local_harness --runtime-dir %s" % lab.runtime],
+                       check=False)
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and lab.session_socket.exists():
+            time.sleep(0.05)
+        check(not lab.session_socket.exists(), "harness removed its socket on graceful stop")
+        return
+    subprocess.run(["pkill", "-f", "open_fake_session.py --socket %s" % lab.session_socket], check=False)
+
+
 def cold_path(lab):
     target = lab.make_file("cold.txt")
     record = lab.root / "cold-record.jsonl"
@@ -285,11 +370,11 @@ def cold_path(lab):
     check(len(notices) == 1, ("one notice", lab.notices()))
     check(notices[0]["args"][-1] == "Starting Windows\u2026", notices)
     check(notices[0]["time"] - started >= 1.4, ("notice after 1.5 s", notices[0]["time"] - started))
-    check(json.loads(record.read_text().splitlines()[0])["fields"]["launch_kind"] == 2 if record.exists()
-          else True, "record")
+    if HARNESS is None and record.exists():
+        check(json.loads(record.read_text().splitlines()[0])["fields"]["launch_kind"] == 2, "record")
     lab.spawn_log.unlink()
     lab.notify_log.unlink(missing_ok=True)
-    subprocess.run(["pkill", "-f", "open_fake_session.py --socket %s" % lab.session_socket], check=False)
+    stop_session(lab)
 
 
 def cold_path_without_notice(lab):
@@ -306,7 +391,7 @@ def cold_path_without_notice(lab):
               ("notify off sends no notice", lab.notices()))
     finally:
         lab.set_notify("true")
-        subprocess.run(["pkill", "-f", "open_fake_session.py --socket %s" % lab.session_socket], check=False)
+        stop_session(lab)
 
 
 def outside_share_notifies(lab):
@@ -358,14 +443,17 @@ def main():
              outside_share_notifies]
     if SLOW:
         cases.append(cold_path_deadline)
+    if HARNESS is not None:
+        cases = [case for case in cases if case.__name__ not in FAKE_ONLY_CASES]
     with tempfile.TemporaryDirectory(prefix="waddle-open-e2e-") as directory:
         lab = Lab(os.path.realpath(directory))
         for case in cases:
-            print("open e2e:", case.__name__, flush=True)
+            print("open e2e:", case.__name__, "(harness)" if HARNESS is not None else "", flush=True)
             case(lab)
             if lab.session_socket.parent.exists():
                 shutil.rmtree(lab.session_socket.parent)
-    print("open e2e: passed (%d cases%s)" % (len(cases), ", slow deadline included" if SLOW else ""))
+    print("open e2e: passed (%d cases%s%s)" % (len(cases), ", slow deadline included" if SLOW else "",
+                                             ", session command harness" if HARNESS is not None else ""))
     return 0
 
 

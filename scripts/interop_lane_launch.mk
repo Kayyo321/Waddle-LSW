@@ -91,3 +91,51 @@ interop-open-e2e-slow: build/waddle build/open_frame_dump
 	WADDLE_OPEN_E2E_SLOW=1 python3 tests/integration/open_e2e.py
 
 InteropLaneTests += interop-open-e2e-test
+
+# Session command socket (TODO #7 socket side, TODO #29 29c/29f): the handler is tested with its
+# source included; header decoding and payload validation are the production codec. Contract:
+# impl/seamless-interop/claude_45_percent/session_local_handler_contract.md.
+SessionLocalCFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -D_GNU_SOURCE -UNDEBUG -O1 -g -Iinclude -Isrc/interop -Isrc/daemon -Isrc/common
+SessionLocalSanitizeFlags = -fsanitize=address,leak,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
+# Fault injection for the handler suite: each wrapped libc call forwards unless the test arms it.
+SessionLocalWrapFlags = -Wl,--wrap=socket -Wl,--wrap=bind -Wl,--wrap=listen -Wl,--wrap=mkdir -Wl,--wrap=lstat -Wl,--wrap=unlink -Wl,--wrap=send -Wl,--wrap=recv -Wl,--wrap=accept4 -Wl,--wrap=getsockopt -Wl,--wrap=epoll_create1 -Wl,--wrap=epoll_ctl -Wl,--wrap=epoll_wait
+
+build/session_local_handler_test: tests/interop/session_local_handler_test.c src/interop/session_local_handler.c src/interop/session_local_handler.h build/interop_codec.o build/interop_activation_store.o | build
+	$(CC) $(SessionLocalCFlags) $< build/interop_codec.o build/interop_activation_store.o $(SessionLocalWrapFlags) $(LDFLAGS) -o $@
+
+.PHONY: interop-session-local-test
+interop-session-local-test: build/session_local_handler_test
+	./build/session_local_handler_test
+
+InteropLaneTests += interop-session-local-test
+
+# Harness (TODO #7 end to end): the production control runtime with this handler, a fake daemon, and a
+# fake guest (tests/interop/session_local_harness.c). Its vsock socket is a socketpair through --wrap.
+build/session_local_handler.o: src/interop/session_local_handler.c src/interop/session_local_handler.h | build
+	$(CC) $(SessionLocalCFlags) -c $< -o $@
+
+build/interop_session_local_harness: tests/interop/session_local_harness.c build/session_local_handler.o build/interop_activation_store.o $(InteropHostControlSources) $(InteropHostControlObjects) | build
+	$(CC) $(SessionLocalCFlags) -Isubmodules/looking_glass/module -pthread tests/interop/session_local_harness.c build/session_local_handler.o build/interop_activation_store.o $(InteropHostControlSources) $(InteropHostControlObjects) -Wl,--wrap=socket -Wl,--wrap=connect $(LDFLAGS) -o $@
+
+# The built `waddle open` against the real session command handler (harness mode of open_e2e.py).
+# Cases that need a deliberately misbehaving server stay in interop-open-e2e-test (fake server).
+.PHONY: interop-session-local-e2e-test
+interop-session-local-e2e-test: build/waddle build/open_frame_dump build/interop_session_local_harness
+	WADDLE_TEST_SESSION_HARNESS=build/interop_session_local_harness python3 tests/integration/open_e2e.py
+
+InteropLaneTests += interop-session-local-e2e-test
+
+# The handler suite under AddressSanitizer, LeakSanitizer, and UBSan (every allocation is caller-owned
+# storage, so leak detection covers the descriptors and the socket file the tests create).
+build/session_local_handler_asan: tests/interop/session_local_handler_test.c src/interop/session_local_handler.c src/interop/session_local_handler.h build/interop_codec.o build/interop_activation_store.o | build
+	$(CC) $(SessionLocalCFlags) $(SessionLocalSanitizeFlags) $< build/interop_codec.o build/interop_activation_store.o $(SessionLocalWrapFlags) $(LDFLAGS) -o $@
+
+.PHONY: interop-session-local-sanitizers interop-session-local-coverage
+interop-session-local-sanitizers: build/session_local_handler_asan
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/session_local_handler_asan
+
+interop-session-local-coverage:
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_local_coverage.py
+
+InteropLaneSanitizers += interop-session-local-sanitizers
+InteropLaneCoverage += interop-session-local-coverage
