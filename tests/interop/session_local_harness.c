@@ -467,6 +467,15 @@ int main(int argc, char **argv)
         else return usage();
     }
     if (runtime_dir == NULL || device_name == NULL || reply == NULL || record == NULL || argc % 2 == 0) return usage();
+    /* The daemon and session lease paths come from the environment; the socket from --runtime-dir.
+     * They must name the same directory or admission would lock a different session.lock. */
+    {
+        const char *environment_runtime = getenv("XDG_RUNTIME_DIR");
+        if (environment_runtime == NULL || strcmp(environment_runtime, runtime_dir) != 0) {
+            fprintf(stderr, "session-local-harness: XDG_RUNTIME_DIR must equal --runtime-dir\n");
+            return 2;
+        }
+    }
     if (strlen(record) >= sizeof(guest.record_path)) return usage();
     if (parse_reply(reply) != 0) return usage();
     memcpy(guest.record_path, record, strlen(record) + 1u);

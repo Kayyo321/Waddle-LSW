@@ -141,10 +141,13 @@ class HarnessServer:
     def __init__(self, lab, scenario):
         self.record = lab.root / ("harness-%d.jsonl" % time.monotonic_ns())
         self.ready = Path(str(self.record) + ".ready")
+        # The harness takes its runtime and state directories from the lab environment, the same
+        # ones the client uses. Inheriting the developer's XDG_RUNTIME_DIR would share session.lock
+        # with other runs and make admission fail with Busy.
         self.process = subprocess.Popen(
             [str(HARNESS), "--runtime-dir", str(lab.runtime), "--device", "alpha",
              "--reply", scenario.get("reply", "ok"), "--record", str(self.record)],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            env=lab.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         deadline = time.monotonic() + 15.0
         while not self.ready.exists():
             if self.process.poll() is not None:
