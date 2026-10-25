@@ -116,7 +116,7 @@ typedef struct wsa_double_t {
 } wsa_double_t;
 
 /** @brief Initializes the double with a 1920 by 1080 monitor, no windows and the given current thread. */
-static void wsa_double_init(wsa_double_t *d, uint32_t current_thread) {
+static inline void wsa_double_init(wsa_double_t *d, uint32_t current_thread) {
     memset(d, 0, sizeof(*d));
     d->monitor.left = 0;
     d->monitor.top = 0;
@@ -128,7 +128,7 @@ static void wsa_double_init(wsa_double_t *d, uint32_t current_thread) {
 }
 
 /** @brief Clears the call counts and the call log. Failure arming is unchanged. */
-static void wsa_double_reset(wsa_double_t *d) {
+static inline void wsa_double_reset(wsa_double_t *d) {
     memset(d->calls, 0, sizeof(d->calls));
     d->log_count = 0;
 }
@@ -138,13 +138,13 @@ static void wsa_double_reset(wsa_double_t *d) {
  *        fails too when forever is nonzero. "From now" means after the calls already counted, so the
  *        count is relative to the calls made before this arm. Other entries keep their arming.
  */
-static void wsa_double_arm(wsa_double_t *d, wsa_double_entry_t entry, uint32_t nth, uint32_t forever) {
+static inline void wsa_double_arm(wsa_double_t *d, wsa_double_entry_t entry, uint32_t nth, uint32_t forever) {
     d->fail_at[entry] = d->calls[entry] + nth;
     d->fail_forever[entry] = forever;
 }
 
 /** @brief Disarms every deterministic and random failure. */
-static void wsa_double_disarm(wsa_double_t *d) {
+static inline void wsa_double_disarm(wsa_double_t *d) {
     memset(d->fail_at, 0, sizeof(d->fail_at));
     memset(d->fail_forever, 0, sizeof(d->fail_forever));
     d->fault_per_mille = 0;
@@ -173,7 +173,7 @@ static wsa_double_window_t *wsa_double_add(wsa_double_t *d, uintptr_t window, ui
 }
 
 /** @brief Finds a record by HWND value, existing or not. */
-static wsa_double_window_t *wsa_double_find(wsa_double_t *d, uintptr_t window) {
+static inline wsa_double_window_t *wsa_double_find(wsa_double_t *d, uintptr_t window) {
     for (uint32_t index = 0; index < WsaDoubleMaxWindows; ++index) {
         if (d->windows[index].window == window && window != 0) return &d->windows[index];
     }
@@ -181,7 +181,7 @@ static wsa_double_window_t *wsa_double_find(wsa_double_t *d, uintptr_t window) {
 }
 
 /** @brief Read-only record lookup by HWND value for test assertions. */
-static const wsa_double_window_t *wsa_double_record(const wsa_double_t *d, uintptr_t window) {
+static inline const wsa_double_window_t *wsa_double_record(const wsa_double_t *d, uintptr_t window) {
     for (uint32_t index = 0; index < WsaDoubleMaxWindows; ++index) {
         if (d->windows[index].window == window && window != 0) return &d->windows[index];
     }
@@ -189,7 +189,7 @@ static const wsa_double_window_t *wsa_double_record(const wsa_double_t *d, uintp
 }
 
 /** @brief Destroys a window from outside the adapter, as the application would. */
-static void wsa_double_destroy_window(wsa_double_t *d, uintptr_t window) {
+static inline void wsa_double_destroy_window(wsa_double_t *d, uintptr_t window) {
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (record != NULL) {
         record->exists = 0;
@@ -198,7 +198,7 @@ static void wsa_double_destroy_window(wsa_double_t *d, uintptr_t window) {
 }
 
 /** @brief Reuses an HWND value for a new window with a different owner, as Windows may. */
-static void wsa_double_reuse(wsa_double_t *d, uintptr_t window, uint32_t process_id, uint32_t thread_id) {
+static inline void wsa_double_reuse(wsa_double_t *d, uintptr_t window, uint32_t process_id, uint32_t thread_id) {
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (record != NULL) {
         record->exists = 1;
@@ -208,7 +208,7 @@ static void wsa_double_reuse(wsa_double_t *d, uintptr_t window, uint32_t process
 }
 
 /** @brief Deterministic per-call draw for random faults. */
-static uint32_t wsa_double_draw(wsa_double_t *d) {
+static inline uint32_t wsa_double_draw(wsa_double_t *d) {
     uint64_t value = d->rng;
     value ^= value << 13;
     value ^= value >> 7;
@@ -221,7 +221,7 @@ static uint32_t wsa_double_draw(wsa_double_t *d) {
  * @brief Records one call and decides whether it fails. A failing call sets native_error and must
  *        have no effect.
  */
-static int wsa_double_begin(wsa_double_t *d, wsa_double_entry_t entry, int faultable) {
+static inline int wsa_double_begin(wsa_double_t *d, wsa_double_entry_t entry, int faultable) {
     int fail = 0;
     d->calls[entry] += 1u;
     if (entry != WsaDoubleCurrentThreadId && entry != WsaDoubleLastError) {
@@ -238,7 +238,7 @@ static int wsa_double_begin(wsa_double_t *d, wsa_double_entry_t entry, int fault
     return fail ? 0 : 1;
 }
 
-static int wsa_double_is_window(void *context, uintptr_t window) {
+static inline int wsa_double_is_window(void *context, uintptr_t window) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record;
     if (!wsa_double_begin(d, WsaDoubleIsWindow, 1)) return 0;
@@ -246,7 +246,7 @@ static int wsa_double_is_window(void *context, uintptr_t window) {
     return record != NULL && record->exists != 0;
 }
 
-static int wsa_double_window_thread(void *context, uintptr_t window, uint32_t *process_id, uint32_t *thread_id) {
+static inline int wsa_double_window_thread(void *context, uintptr_t window, uint32_t *process_id, uint32_t *thread_id) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleWindowThread, 1)) return 0;
@@ -256,7 +256,7 @@ static int wsa_double_window_thread(void *context, uintptr_t window, uint32_t *p
     return 1;
 }
 
-static int wsa_double_is_iconic(void *context, uintptr_t window, int *iconic) {
+static inline int wsa_double_is_iconic(void *context, uintptr_t window, int *iconic) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleIsIconic, 1)) return 0;
@@ -264,7 +264,7 @@ static int wsa_double_is_iconic(void *context, uintptr_t window, int *iconic) {
     return 1;
 }
 
-static int wsa_double_is_zoomed(void *context, uintptr_t window, int *zoomed) {
+static inline int wsa_double_is_zoomed(void *context, uintptr_t window, int *zoomed) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleIsZoomed, 1)) return 0;
@@ -272,7 +272,7 @@ static int wsa_double_is_zoomed(void *context, uintptr_t window, int *zoomed) {
     return 1;
 }
 
-static int wsa_double_get_style(void *context, uintptr_t window, int64_t *style) {
+static inline int wsa_double_get_style(void *context, uintptr_t window, int64_t *style) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleGetStyle, 1)) return 0;
@@ -281,7 +281,7 @@ static int wsa_double_get_style(void *context, uintptr_t window, int64_t *style)
     return 1;
 }
 
-static int wsa_double_set_style(void *context, uintptr_t window, int64_t style) {
+static inline int wsa_double_set_style(void *context, uintptr_t window, int64_t style) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleSetStyle, 1)) return 0;
@@ -290,7 +290,7 @@ static int wsa_double_set_style(void *context, uintptr_t window, int64_t style) 
     return 1;
 }
 
-static int wsa_double_show_window(void *context, uintptr_t window, int32_t command) {
+static inline int wsa_double_show_window(void *context, uintptr_t window, int32_t command) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleShowWindow, 1)) return 0;
@@ -332,7 +332,7 @@ static int wsa_double_set_window_pos(void *context, uintptr_t window, int32_t x,
     return 1;
 }
 
-static int wsa_double_get_placement(void *context, uintptr_t window, window_state_placement_t *placement) {
+static inline int wsa_double_get_placement(void *context, uintptr_t window, window_state_placement_t *placement) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleGetPlacement, 1)) return 0;
@@ -341,7 +341,7 @@ static int wsa_double_get_placement(void *context, uintptr_t window, window_stat
     return 1;
 }
 
-static int wsa_double_set_placement(void *context, uintptr_t window, const window_state_placement_t *placement) {
+static inline int wsa_double_set_placement(void *context, uintptr_t window, const window_state_placement_t *placement) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleSetPlacement, 1)) return 0;
@@ -353,7 +353,7 @@ static int wsa_double_set_placement(void *context, uintptr_t window, const windo
     return 1;
 }
 
-static int wsa_double_get_rect(void *context, uintptr_t window, window_state_rect_t *rect) {
+static inline int wsa_double_get_rect(void *context, uintptr_t window, window_state_rect_t *rect) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleGetRect, 1)) return 0;
@@ -362,7 +362,7 @@ static int wsa_double_get_rect(void *context, uintptr_t window, window_state_rec
     return 1;
 }
 
-static int wsa_double_monitor_rect(void *context, uintptr_t window, window_state_rect_t *rect) {
+static inline int wsa_double_monitor_rect(void *context, uintptr_t window, window_state_rect_t *rect) {
     wsa_double_t *d = (wsa_double_t *)context;
     if (!wsa_double_begin(d, WsaDoubleMonitorRect, 1)) return 0;
     if (wsa_double_find(d, window) == NULL) return 0;
@@ -370,13 +370,13 @@ static int wsa_double_monitor_rect(void *context, uintptr_t window, window_state
     return 1;
 }
 
-static uintptr_t wsa_double_foreground_window(void *context) {
+static inline uintptr_t wsa_double_foreground_window(void *context) {
     wsa_double_t *d = (wsa_double_t *)context;
     if (!wsa_double_begin(d, WsaDoubleForegroundWindow, 1)) return 0;
     return d->foreground;
 }
 
-static int wsa_double_set_foreground_window(void *context, uintptr_t window) {
+static inline int wsa_double_set_foreground_window(void *context, uintptr_t window) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleSetForegroundWindow, 1)) return 0;
@@ -389,14 +389,14 @@ static int wsa_double_set_foreground_window(void *context, uintptr_t window) {
     return 1;
 }
 
-static int wsa_double_set_active_window(void *context, uintptr_t window) {
+static inline int wsa_double_set_active_window(void *context, uintptr_t window) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     if (!wsa_double_begin(d, WsaDoubleSetActiveWindow, 1)) return 0;
     return record != NULL && record->exists != 0 ? 1 : 0;
 }
 
-static int wsa_double_attach_thread_input(void *context, uint32_t from_thread, uint32_t to_thread, int attach) {
+static inline int wsa_double_attach_thread_input(void *context, uint32_t from_thread, uint32_t to_thread, int attach) {
     wsa_double_t *d = (wsa_double_t *)context;
     if (!wsa_double_begin(d, WsaDoubleAttachThreadInput, 1)) return 0;
     if (from_thread == 0u || to_thread == 0u) return 0;
@@ -404,7 +404,7 @@ static int wsa_double_attach_thread_input(void *context, uint32_t from_thread, u
     return 1;
 }
 
-static int wsa_double_post_message(void *context, uintptr_t window, uint32_t message, uintptr_t wparam, intptr_t lparam) {
+static inline int wsa_double_post_message(void *context, uintptr_t window, uint32_t message, uintptr_t wparam, intptr_t lparam) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
     (void)wparam;
@@ -415,13 +415,13 @@ static int wsa_double_post_message(void *context, uintptr_t window, uint32_t mes
     return 1;
 }
 
-static uint32_t wsa_double_current_thread_id(void *context) {
+static inline uint32_t wsa_double_current_thread_id(void *context) {
     wsa_double_t *d = (wsa_double_t *)context;
     (void)wsa_double_begin(d, WsaDoubleCurrentThreadId, 0);
     return d->current_thread;
 }
 
-static uint32_t wsa_double_last_error(void *context) {
+static inline uint32_t wsa_double_last_error(void *context) {
     wsa_double_t *d = (wsa_double_t *)context;
     (void)wsa_double_begin(d, WsaDoubleLastError, 0);
     return d->native_error;
