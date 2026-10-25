@@ -759,7 +759,11 @@ static void mirror_parent(host_wayland_t *ctx, host_wayland_record_t *rec) {
     }
 }
 
-/** @brief Apply one WindowUpdate: title on change only, parent changes through the table, min size. */
+/**
+ * @brief Apply one WindowUpdate, all-or-nothing (4.3). Every refusal happens before any field or Wayland request
+ * changes: the table reparent is the only step that can refuse, so it runs first, and the rectangle, title, parent
+ * mirror and minimum size are applied only after it succeeds.
+ */
 static host_wayland_status_t handle_update(host_wayland_t *ctx, const uint8_t *payload, size_t length) {
     update_t req;
     if (decode_update(payload, length, &req) != 0) return HostWaylandMalformedFrame;
@@ -768,31 +772,20 @@ static host_wayland_status_t handle_update(host_wayland_t *ctx, const uint8_t *p
         emit_error(ctx, 0x0101u, InteropErrorStaleWindow, req.window, req.generation);
         return HostWaylandRefused;
     }
-    rec->guest_x = req.x;
-    rec->guest_y = req.y;
-    rec->guest_width = req.width;
-    rec->guest_height = req.height;
+    bool parent_changes = req.has_parent && (req.parent != rec->parent || req.parent_generation != rec->parent_generation);
     if (role_is_popup(rec->role)) {
-        /* A popup keeps its parent: the table refuses popup reparenting with the same codes as announce. */
-        if (req.has_parent && (req.parent != rec->parent || req.parent_generation != rec->parent_generation)) {
-            host_window_ref_t child;
-            child.window = rec->window;
-            child.generation = rec->generation;
-            host_window_ref_t new_parent;
-            new_parent.window = req.parent;
-            new_parent.generation = req.parent_generation;
-            host_window_map_reparent_status_t status = host_window_map_reparent(&ctx->map, child, new_parent);
-            emit_error(ctx, 0x0101u, host_window_map_reparent_error_code(status), rec->window, rec->generation);
+        /* A popup never changes parent. The table refuses it by role; this module refuses it first, with the same code. */
+        if (parent_changes) {
+            emit_error(ctx, 0x0101u, host_window_map_reparent_error_code(HostWindowMapReparentRefuseRole), rec->window, rec->generation);
             return HostWaylandRefused;
         }
+        rec->guest_x = req.x;
+        rec->guest_y = req.y;
+        rec->guest_width = req.width;
+        rec->guest_height = req.height;
         return HostWaylandOk;
     }
-    if (req.has_title && (strlen(req.title) != rec->title_length || memcmp(req.title, rec->title, rec->title_length) != 0)) {
-        xdg_toplevel_set_title(rec->toplevel, req.title);
-        rec->title_length = (uint16_t)strlen(req.title);
-        memcpy(rec->title, req.title, rec->title_length + 1u);
-    }
-    if (req.has_parent && (req.parent != rec->parent || req.parent_generation != rec->parent_generation)) {
+    if (parent_changes) {
         host_window_ref_t child;
         child.window = rec->window;
         child.generation = rec->generation;
@@ -806,11 +799,20 @@ static host_wayland_status_t handle_update(host_wayland_t *ctx, const uint8_t *p
         }
         rec->parent = req.parent;
         rec->parent_generation = req.parent_generation;
-        mirror_parent(ctx, rec);
     }
+    if (req.has_title && (strlen(req.title) != rec->title_length || memcmp(req.title, rec->title, rec->title_length) != 0)) {
+        xdg_toplevel_set_title(rec->toplevel, req.title);
+        rec->title_length = (uint16_t)strlen(req.title);
+        memcpy(rec->title, req.title, rec->title_length + 1u);
+    }
+    if (parent_changes) mirror_parent(ctx, rec);
     if (req.has_min_size) {
         xdg_toplevel_set_min_size(rec->toplevel, (int32_t)ceil_div_scale(req.min_width, ctx->scale), (int32_t)ceil_div_scale(req.min_height, ctx->scale));
     }
+    rec->guest_x = req.x;
+    rec->guest_y = req.y;
+    rec->guest_width = req.width;
+    rec->guest_height = req.height;
     return HostWaylandOk;
 }
 

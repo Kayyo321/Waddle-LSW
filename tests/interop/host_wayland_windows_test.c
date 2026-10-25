@@ -1079,6 +1079,36 @@ static int check_update_parent(void) {
     return 0;
 }
 
+/**
+ * @brief A WindowUpdate is all-or-nothing (4.3): a refused one applies no title, no min size, no parent and no
+ * rectangle, and sends no Wayland request. Only the table reparent can refuse a toplevel update, so it must run
+ * before any field is written.
+ */
+static int check_update_is_atomic(void) {
+    Check(build_tree() == 0);
+    host_wayland_record_t *dialog = find_record(&session_ctx, 2, 1);
+    Check(dialog != NULL);
+    update_spec_t first = {2, 1, false, 0, 0, "Before", false, 0, 0};
+    Check(update_frame(&first) == HostWaylandOk);
+    unsigned requests = fake_request_count;
+    unsigned min_before = fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_MIN_SIZE);
+    /* A title change, a minimum size and a parent that is not realized: the parent refuses, nothing else applies. */
+    update_spec_t refused = {2, 1, true, 9, 1, "After", true, 1200, 602};
+    Check(update_frame(&refused) == HostWaylandRefused);
+    Check(captured.last_error_code == InteropErrorStaleWindow && captured.last_refused_type == 0x0101);
+    Check(fake_request_count == requests);
+    Check(fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_MIN_SIZE) == min_before);
+    Check(dialog->title_length == strlen("Before") && !memcmp(dialog->title, "Before", 7));
+    host_window_entry_t entry;
+    Check(host_window_map_lookup(&session_ctx.map, (host_window_ref_t){2, 1}, &entry) && entry.parent.window == 1);
+    /* A popup refuses a parent change before anything else, and sends no request. */
+    unsigned before_popup = fake_request_count;
+    update_spec_t popup = {4, 1, true, 1, 1, "Ignored", false, 0, 0};
+    Check(update_frame(&popup) == HostWaylandRefused);
+    Check(fake_request_count == before_popup);
+    return 0;
+}
+
 static int check_retire_order(void) {
     Check(build_tree() == 0);
     unsigned root_toplevel = fake_nth("xdg_toplevel", 0);
@@ -1300,6 +1330,7 @@ int main(void) {
     if (check_popup_refusals_and_rollback() != 0) return 1;
     if (check_update_title_and_size() != 0) return 1;
     if (check_update_parent() != 0) return 1;
+    if (check_update_is_atomic() != 0) return 1;
     if (check_retire_order() != 0) return 1;
     if (check_retire_stale_and_invalid() != 0) return 1;
     if (check_late_events_after_retire() != 0) return 1;
