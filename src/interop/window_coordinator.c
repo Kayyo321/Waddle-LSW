@@ -64,6 +64,7 @@ typedef struct coord_entry_t {
     uint32_t capture_started;
     /** @brief Last frame sequence consumed for this generation (0 before the first). */
     uint32_t retire_sent; /**< 1 once WindowRetire was queued for this generation (IMPL 5.3: only after the drain). */
+    uint32_t slots_pending; /**< 1 while the window is announced without slots (heap exhausted); retried each pass (IMPL 3.3). */
     uint64_t last_sequence;
     /** @brief Per slot: the published sequence still pinned by the host, or 0. */
     uint64_t pinned[CoordSlotsPerWindow];
@@ -492,14 +493,22 @@ static int handle_announce(window_coordinator_t *coordinator, const interop_wind
         return CoordEventDone;
     }
 
-    if (waddle_slot_runtime_admit_window(coordinator->slots, coordinator->epoch, event->window, event->generation,
-                                         event->width, event->height, views) != WaddleSlotOk) {
-        /* Heap or descriptor shortage is temporary: retry; a permanent shortage faults. */
-        coordinator->stats.admission_failures = saturate_add(coordinator->stats.admission_failures);
-        memset(entry, 0, sizeof(*entry));
-        return CoordEventRetry;
+    {
+        waddle_slot_status_t slot_status = waddle_slot_runtime_admit_window(coordinator->slots, coordinator->epoch, event->window,
+                                                                            event->generation, event->width, event->height, views);
+        if (slot_status == WaddleSlotOk) {
+            slots_taken = 1;
+        } else if (slot_status == WaddleSlotHeapFull || slot_status == WaddleSlotOutOfMemory) {
+            /* IMPL 3.3: the window is exported with no frames and retried on each pass. It is never retired for heap pressure. */
+            coordinator->stats.admission_failures = saturate_add(coordinator->stats.admission_failures);
+            entry->slots_pending = 1u;
+        } else {
+            /* Other refusals may clear on a later pass (for example a quarantined duplicate): retry, bounded by the caller. */
+            coordinator->stats.admission_failures = saturate_add(coordinator->stats.admission_failures);
+            memset(entry, 0, sizeof(*entry));
+            return CoordEventRetry;
+        }
     }
-    slots_taken = 1;
     if (window_state_adapter_admit(coordinator->adapter, event->window, event->window, (uint32_t)event->generation) !=
         WindowStateAdapterOk) {
         coordinator->stats.admission_failures = saturate_add(coordinator->stats.admission_failures);
@@ -523,14 +532,16 @@ static int handle_announce(window_coordinator_t *coordinator, const interop_wind
     }
     reducer_taken = 1;
     resync_reducer(coordinator, entry);
-    if (coordinator->config.capture->start(coordinator->config.capture->context, event->window,
-                                           (uint32_t)event->generation, event->width, event->height) != 0) {
-        coordinator->stats.capture_failures = saturate_add(coordinator->stats.capture_failures);
-        undo_admission(coordinator, entry, adapter_taken, reducer_taken, slots_taken);
-        make_phantom(coordinator, entry, event);
-        return CoordEventDone;
+    if (slots_taken != 0) {
+        if (coordinator->config.capture->start(coordinator->config.capture->context, event->window,
+                                               (uint32_t)event->generation, event->width, event->height) != 0) {
+            coordinator->stats.capture_failures = saturate_add(coordinator->stats.capture_failures);
+            undo_admission(coordinator, entry, adapter_taken, reducer_taken, slots_taken);
+            make_phantom(coordinator, entry, event);
+            return CoordEventDone;
+        }
+        entry->capture_started = 1u;
     }
-    entry->capture_started = 1u;
     if (encode_announce(coordinator, entry) != 0) {
         /* Cannot happen while the FIFO had room; checked above. Treated as a fault to stay honest. */
         coordinator->state = WindowCoordinatorStateFaulted;
@@ -539,6 +550,31 @@ static int handle_announce(window_coordinator_t *coordinator, const interop_wind
     entry->kind = CoordEntryAnnounced;
     coordinator->stats.announces = saturate_add(coordinator->stats.announces);
     return CoordEventDone;
+}
+
+/**
+ * @brief Retries slot admission for announced windows that waited for heap space (IMPL 3.3). A success starts the
+ *        capture; a further heap refusal leaves the window pending. Nothing here faults the coordinator.
+ */
+static void retry_pending_slots(window_coordinator_t *coordinator) {
+    uint32_t index;
+    for (index = 0; index < InteropMaxWindows; ++index) {
+        coord_entry_t *entry = &coordinator->entries[index];
+        waddle_slot_view_t views[CoordSlotsPerWindow];
+        waddle_slot_status_t slot_status;
+        if (entry->in_use == 0u || entry->slots_pending == 0u || entry->kind != CoordEntryAnnounced) continue;
+        slot_status = waddle_slot_runtime_admit_window(coordinator->slots, coordinator->epoch, entry->window, entry->generation,
+                                                       entry->width, entry->height, views);
+        if (slot_status != WaddleSlotOk) continue;
+        if (coordinator->config.capture->start(coordinator->config.capture->context, entry->window,
+                                               (uint32_t)entry->generation, entry->width, entry->height) != 0) {
+            coordinator->stats.capture_failures = saturate_add(coordinator->stats.capture_failures);
+            (void)waddle_slot_runtime_retire_window(coordinator->slots, coordinator->epoch, entry->window, entry->generation);
+            continue;
+        }
+        entry->slots_pending = 0u;
+        entry->capture_started = 1u;
+    }
 }
 
 /** @brief Forwards an Update for an announced generation, then resynchronizes the reducer. */
@@ -602,6 +638,7 @@ static int handle_retire_intent(window_coordinator_t *coordinator, const interop
     }
     if (entry->kind != CoordEntryAnnounced) return CoordEventDone;
     capture_stop(coordinator, entry);
+    entry->slots_pending = 0u;
     slots_retire(coordinator, entry->window, entry->generation);
     if (entry->reducer != NULL) waddle_window_state_destroy(&entry->reducer);
     release_native(coordinator, entry->window, entry->generation);
@@ -1152,6 +1189,7 @@ window_coordinator_status_t window_coordinator_tick(window_coordinator_t *coordi
         process_staging(coordinator);
         if (coordinator->state == WindowCoordinatorStateRunning) receive_host_frames(coordinator);
         progress_retirements(coordinator);
+        if (coordinator->state == WindowCoordinatorStateRunning) retry_pending_slots(coordinator);
         if (coordinator->state == WindowCoordinatorStateRunning) publish_frames(coordinator);
         flush_outbound(coordinator);
         if (coordinator->state == WindowCoordinatorStateFaulted) {

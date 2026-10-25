@@ -31,6 +31,7 @@
 typedef struct coordinator_faults_t {
     uint32_t slot_create;
     uint32_t slot_admit;
+    uint32_t slot_admit_heap;
     uint32_t slot_prepare;
     uint32_t slot_writer;
     uint32_t slot_commit;
@@ -87,7 +88,8 @@ extern waddle_slot_status_t __real_waddle_slot_runtime_admit_window(waddle_slot_
 waddle_slot_status_t __wrap_waddle_slot_runtime_admit_window(waddle_slot_runtime_handle_t *handle, uint64_t session_epoch,
                                                              uint64_t window, uint64_t generation, uint32_t width,
                                                              uint32_t height, waddle_slot_view_t out_views[3]) {
-    if (fault_take(&Faults.slot_admit)) return WaddleSlotOutOfMemory;
+    if (fault_take(&Faults.slot_admit_heap)) return WaddleSlotHeapFull;
+    if (fault_take(&Faults.slot_admit)) return WaddleSlotInvalidArgument;
     return __real_waddle_slot_runtime_admit_window(handle, session_epoch, window, generation, width, height, out_views);
 }
 

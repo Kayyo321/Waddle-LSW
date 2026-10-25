@@ -1631,6 +1631,47 @@ static int test_review_retire_waits_for_fifo_room(void) {
     return 0;
 }
 
+/**
+ * @brief P5 (IMPL 3.3): heap exhaustion does not fault the coordinator. The window is announced without frames,
+ * is not retired for heap pressure, and gets its slots (and capture) when space frees.
+ */
+static int test_review_p5_heap_pressure_announces_without_frames(void) {
+    fixture_t *fp = &GlobalFixture;
+    uint64_t window;
+    uint32_t pass;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    for (window = 1; window <= 6; ++window) {
+        api_double_window_t *record;
+        add_window(fp, window * 0x1000u);
+        record = api_double_find(fp->observer, window * 0x1000u);
+        Check(record != NULL);
+        record->facts.width = 7680u;
+        record->facts.height = 4320u;
+        api_double_hint(fp->observer, 0x8000u, window * 0x1000u);
+    }
+    for (pass = 0; pass < 12u; ++pass) {
+        advance_clock(fp, 10u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning);
+    Check(count_type(&fp->wire, InteropMsgWindowAnnounce, 0x6000, 6) == 1u);
+    Check(fp->capture.started == 5u);
+    /* The sixth window was not retired and has no frames yet. */
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x6000, 6) == 0u);
+    Check(count_type(&fp->wire, InteropMsgFrameReady, 0x6000, 6) == 0u);
+    /* A window goes away: its slots return to the heap; the waiting window gets slots and capture. */
+    release_window_frames(fp, 0x1000);
+    retire_one_window(fp, 0x1000);
+    for (pass = 0; pass < 8u && fp->capture.started < 6u; ++pass) {
+        advance_clock(fp, 10u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(fp->capture.started == 6u);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2075,6 +2116,7 @@ int main(void) {
         {"desktop change pauses observation", test_desktop_change_pauses_observation},
         {"review P1: stale reply under full outbound is dropped", test_review_p1_stale_reply_under_full_outbound_drops},
         {"review: retire waits for FIFO room", test_review_retire_waits_for_fifo_room},
+        {"review P5: heap pressure announces without frames", test_review_p5_heap_pressure_announces_without_frames},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},
