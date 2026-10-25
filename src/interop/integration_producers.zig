@@ -2,7 +2,7 @@
 //! encoder. Filesystem authority stays with `manifest_store.store_t`; this module
 //! renders artifact bytes and candidate manifests and never opens a path.
 const std = @import("std");
-const manifest = @import("manifest.zig");
+const manifest = @import("manifest_store").manifest;
 
 /// Waddle version recorded as `created_by` and as the schema root `waddle_version`.
 pub const WaddleVersion: []const u8 = "0.2.0";

@@ -3,7 +3,8 @@
 //! state. Artifact callers are authorized by record kind and configured roots.
 const std = @import("std");
 const builtin = @import("builtin");
-const manifest = @import("manifest.zig");
+/// Schema codec re-exported so integration modules share one record type.
+pub const manifest = @import("manifest.zig");
 const c = @cImport({
     @cInclude("errno.h");
     @cInclude("fcntl.h");
