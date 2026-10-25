@@ -66,6 +66,7 @@ typedef struct session_catalog_handler_t {
     session_catalog_wall_fn wall;           /**< Wall clock for `updated`; NULL selects time(NULL). */
     void *clock_context;                    /**< Passed to monotonic and wall. */
     int has_pending;                        /**< 1 when one action waits for a QueueFull retry. */
+    uint64_t retry_at;                      /**< Monotonic ms before which the waiting action is not retried. */
     catalog_runtime_action_t pending;       /**< The waiting action; its key points into pending_key. */
     uint8_t pending_key[200];               /**< Copy of the waiting IconRequest app key. */
     uint64_t rejected_frames;               /**< Frames ignored by validation or dispatch. */

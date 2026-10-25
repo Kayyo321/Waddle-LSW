@@ -220,6 +220,10 @@ pub const stats_c_t = extern struct {
     transaction_open: u32,
     /// 1 when any publication work is pending.
     publication_pending: u32,
+    /// Actions dropped because the outbound ring was full.
+    dropped_actions: u32,
+    /// Actions currently queued for the owner.
+    queued_actions: u32,
 };
 
 /// Outbound action with its key borrowed from the runtime.
@@ -339,6 +343,14 @@ pub const runtime_t = struct {
     actions: [MaxActions]action_t = undefined,
     action_head: usize = 0,
     action_count: usize = 0,
+    /// Set by the owner while the feature sender refuses frames (QueueFull). While set, no new
+    /// IconRequest is issued; cancels already queued are still delivered when the sender recovers.
+    send_blocked: bool = false,
+    /// Actions discarded because the ring was full. Overflow policy: an action that finds the
+    /// ring full is dropped and counted, never asserted. Dropped cancels are safe because the
+    /// transfer was already released and the guest's own deadline clears it; dropped requests
+    /// time out and retry under backoff.
+    dropped_actions: u32 = 0,
     /// Retained icon bytes and snapshot string bytes.
     icon_bytes: usize = 0,
     snapshot_bytes: usize = 0,
@@ -621,6 +633,12 @@ pub const runtime_t = struct {
         return action;
     }
 
+    /// Tell the runtime whether the feature sender is refusing frames. While `blocked` is true
+    /// no new IconRequest is issued. Owner thread only; `blocked` is a plain value.
+    pub fn set_send_blocked(self: *runtime_t, blocked: bool) void {
+        self.send_blocked = blocked;
+    }
+
     /// Snapshot of diagnostic counters.
     pub fn stats(self: *runtime_t) stats_c_t {
         return .{
@@ -633,6 +651,8 @@ pub const runtime_t = struct {
             .sync_required = @intFromBool(self.sync_required),
             .transaction_open = @intFromBool(self.transaction_open),
             .publication_pending = @intFromBool(self.publication_pending()),
+            .dropped_actions = self.dropped_actions,
+            .queued_actions = @intCast(self.action_count),
         };
     }
 
@@ -872,8 +892,13 @@ pub const runtime_t = struct {
         self.push_action(.{ .kind = .TransferCancel, .transfer = id, .status = status });
     }
 
+    /// Queue an outbound action. A full ring drops the action and counts it; this never
+    /// asserts, because the ring is filled by guest-controlled traffic.
     fn push_action(self: *runtime_t, action: action_t) void {
-        std.debug.assert(self.action_count < MaxActions);
+        if (self.action_count == MaxActions) {
+            self.dropped_actions +|= 1;
+            return;
+        }
         self.actions[(self.action_head + self.action_count) % MaxActions] = action;
         self.action_count += 1;
     }
@@ -888,8 +913,16 @@ pub const runtime_t = struct {
         }
     }
 
+    /// Headroom kept in the ring for cancels of every open transfer.
+    const request_reserve = MaxTransfers;
+
+    fn requests_allowed(self: *runtime_t) bool {
+        return !self.transaction_open and !self.sync_required and !self.send_blocked and
+            self.action_count + request_reserve <= MaxActions;
+    }
+
     fn can_issue_request(self: *runtime_t, now: u64) bool {
-        if (self.outstanding() >= MaxOutstanding or self.transaction_open or self.sync_required) return false;
+        if (self.outstanding() >= MaxOutstanding or !self.requests_allowed()) return false;
         for (self.apps.items) |app| {
             for (app.icons) |slot| {
                 if (slot.want and !slot.requested and slot.not_before <= now) return true;
@@ -907,12 +940,12 @@ pub const runtime_t = struct {
     }
 
     fn issue_requests(self: *runtime_t, now: u64) void {
-        if (self.transaction_open or self.sync_required) return;
+        if (!self.requests_allowed()) return;
         for (self.apps.items) |*app| {
             for (&app.icons, 0..) |*slot, i| {
                 if (!slot.want or slot.requested or slot.not_before > now) continue;
                 if (app.mask & (@as(u8, 1) << @intCast(i)) == 0) continue;
-                if (self.outstanding() >= MaxOutstanding) return;
+                if (self.outstanding() >= MaxOutstanding or !self.requests_allowed()) return;
                 // Outstanding requests stay below MaxTransfers, so a free table entry exists.
                 const free_index = self.free_transfer_slot().?;
                 const id = self.next_id();
@@ -1583,6 +1616,12 @@ export fn catalog_runtime_next_action(runtime: ?*runtime_t, out: ?*action_c_t) c
 export fn catalog_runtime_next_deadline(runtime: ?*runtime_t, now_ms: u64) u64 {
     const self = runtime orelse return std.math.maxInt(u64);
     return self.next_deadline(now_ms) orelse std.math.maxInt(u64);
+}
+
+/// Mark the feature sender as refusing frames (nonzero) or accepting them again (zero).
+export fn catalog_runtime_set_send_blocked(runtime: ?*runtime_t, blocked: c_int) void {
+    const self = runtime orelse return;
+    self.set_send_blocked(blocked != 0);
 }
 
 /// Copy diagnostic counters into `out`.
@@ -3248,4 +3287,36 @@ test "two failing units in one pass report the first failure and keep the rest d
     rt.tick(1_000, UpdatedTimestamp);
     try testing.expect(rt.stats().publish_failures >= 1);
     try testing.expect(rt.publication_pending());
+}
+
+test "hostile unknown-id transfers keep the action ring bounded and never panic" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    // Nothing drains the ring: every unknown identifier queues a NotFound cancel.
+    var id: u32 = 100000;
+    while (id < 110000) : (id += 1) rt.transfer_begin(id, 4, "image/png", 0) catch {};
+    var drained: usize = 0;
+    while (rt.next_action()) |_| drained += 1;
+    try testing.expect(drained <= MaxActions);
+    try testing.expect(drained > 0);
+}
+
+test "send backpressure stops new icon requests until the sender recovers" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    const sizes = [_]u8{ 16, 0 };
+    rt.begin();
+    try rt.upsert(false, .{ .key = "a-Backpressure", .display_name = "B", .flags = 0, .icon_sizes = &sizes });
+    try rt.end();
+    rt.set_send_blocked(true);
+    rt.tick(0, UpdatedTimestamp);
+    var ids: [8]u32 = undefined;
+    try testing.expectEqual(@as(usize, 0), collect_requests(rt, &ids));
+    rt.set_send_blocked(false);
+    rt.tick(1, UpdatedTimestamp);
+    try testing.expectEqual(@as(usize, 1), collect_requests(rt, &ids));
 }

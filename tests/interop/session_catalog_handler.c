@@ -40,6 +40,7 @@ typedef struct fake_sender_t {
     uint32_t next_result_index;
     int scripted_results[4];
     uint32_t scripted_count;
+    int always_full;
 } fake_sender_t;
 
 static int fake_send(void *context, interop_host_feature_sender_t *sender, const uint8_t *frame, size_t length)
@@ -48,6 +49,7 @@ static int fake_send(void *context, interop_host_feature_sender_t *sender, const
     int result = 0;
     (void)sender;
     Check(length <= FixtureFrameBytes);
+    if (fake->always_full) return HostFeatureQueueFull;
     if (fake->next_result_index < fake->scripted_count) {
         result = fake->scripted_results[fake->next_result_index];
         fake->next_result_index += 1;
@@ -315,6 +317,39 @@ static void handler_bind(session_catalog_handler_t *handler, fake_sender_t *fake
 
 /* --- scenarios ------------------------------------------------------------------------- */
 
+/* A sender that never drains must neither abort the host nor make the pump spin. */
+static void test_never_draining_sender(const fixture_t *fixture)
+{
+    uint8_t frame[FixtureFrameBytes];
+    fake_sender_t fake;
+    fake_clock_t clock;
+    session_catalog_handler_t handler;
+    session_handler_t table;
+    catalog_runtime_action_t action;
+    size_t length;
+    uint32_t i;
+    uint32_t drained = 0;
+    memset(&fake, 0, sizeof fake);
+    fake.always_full = 1;
+    clock_set(&clock, 60000);
+    handler_bind(&handler, &fake, &clock, fixture->runtime);
+    table = session_catalog_handler_table(&handler);
+    for (i = 0; i < 10000; ++i) {
+        length = guest_transfer_begin(100000u + i, 10, "image/png", frame);
+        Check(table.on_frame(table.context, InteropMsgTransferBegin, 0, frame, length, NULL) == 0);
+        clock.monotonic_ms += 1;
+    }
+    Check(handler.rejected_frames == 0);
+    Check(handler.has_pending == 1);
+    /* The retained action is due at most one retry delay away; a refused retry moves the next
+     * deadline a full delay ahead, so the pump cannot spin on a sender that never drains. */
+    Check(table.next_deadline_ms(table.context, clock.monotonic_ms) <= clock.monotonic_ms + 100);
+    Check(table.on_tick(table.context, clock.monotonic_ms, NULL) == 0);
+    Check(table.next_deadline_ms(table.context, clock.monotonic_ms) == clock.monotonic_ms + 100);
+    while (catalog_runtime_next_action(fixture->runtime, &action) == 1) drained += 1;
+    Check(drained <= 64);
+}
+
 static void test_retention_and_header_mismatch(const fixture_t *fixture)
 {
     uint8_t frame[FixtureFrameBytes];
@@ -342,11 +377,14 @@ static void test_retention_and_header_mismatch(const fixture_t *fixture)
     Check(table.on_frame(table.context, InteropMsgTransferBegin, 0, frame, length, NULL) == 0);
     Check(fake.attempts == 1);
     Check(handler.has_pending == 1);
-    Check(table.next_deadline_ms(table.context, 40000) == 40000);
+    /* A refused send is retried after the retry delay, never immediately. */
+    Check(table.next_deadline_ms(table.context, 40000) == 40100);
     Check(table.on_tick(table.context, 40000, NULL) == 0);
+    Check(fake.attempts == 1);
+    Check(table.on_tick(table.context, 40100, NULL) == 0);
     Check(fake.attempts == 2);
     Check(handler.has_pending == 1);
-    Check(table.on_tick(table.context, 40000, NULL) == 0);
+    Check(table.on_tick(table.context, 40200, NULL) == 0);
     Check(fake.attempts == 3);
     Check(handler.has_pending == 0);
     Check(fake.lengths[0] == fake.lengths[1] && fake.lengths[1] == fake.lengths[2]);
@@ -510,8 +548,10 @@ static void test_exact_outbound_frames_and_queue_full(const fixture_t *fixture)
     /* The first attempt is refused by the sender; the request is retained and re-sent unchanged. */
     Check(table.on_tick(table.context, 5000, NULL) == 0);
     Check(fake.attempts == 1);
-    Check(table.next_deadline_ms(table.context, 5000) == 5000);
+    Check(table.next_deadline_ms(table.context, 5000) == 5100);
     Check(table.on_tick(table.context, 5001, NULL) == 0);
+    Check(fake.attempts == 1);
+    Check(table.on_tick(table.context, 5100, NULL) == 0);
     Check(fake.attempts == 2);
     Check(fake.lengths[0] == fake.lengths[1]);
     Check(memcmp(fake.frames[0], fake.frames[1], fake.lengths[0]) == 0);
@@ -722,6 +762,10 @@ int main(int argc, char **argv)
 
     make_fixture(&fixture, argv[1]);
     test_clock_defaults_closing_and_wall_failure(&fixture);
+    destroy_fixture(&fixture);
+
+    make_fixture(&fixture, argv[1]);
+    test_never_draining_sender(&fixture);
     destroy_fixture(&fixture);
 
     make_fixture(&fixture, argv[1]);

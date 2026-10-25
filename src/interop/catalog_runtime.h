@@ -131,6 +131,8 @@ typedef struct catalog_runtime_stats_t {
     uint32_t sync_required;       /**< 1 when publication waits for a clean full sync. */
     uint32_t transaction_open;    /**< 1 while a CatalogBegin transaction is open. */
     uint32_t publication_pending; /**< 1 when publication work remains. */
+    uint32_t dropped_actions;     /**< Actions dropped because the outbound ring was full. */
+    uint32_t queued_actions;      /**< Actions currently queued for the owner. */
 } catalog_runtime_stats_t;
 
 /**
@@ -286,6 +288,14 @@ int catalog_runtime_next_action(catalog_runtime_t *runtime, catalog_runtime_acti
  * @return A deadline at or after now_ms, or UINT64_MAX when nothing is scheduled.
  */
 uint64_t catalog_runtime_next_deadline(catalog_runtime_t *runtime, uint64_t now_ms);
+
+/**
+ * @brief Mark the feature sender as refusing frames. While blocked, no new IconRequest is issued.
+ * @param[in] runtime Handle; NULL is ignored.
+ * @param[in] blocked Nonzero while the sender reports QueueFull, zero once it accepts frames again.
+ * @note Owner thread only.
+ */
+void catalog_runtime_set_send_blocked(catalog_runtime_t *runtime, int blocked);
 
 /**
  * @brief Copy diagnostic counters.

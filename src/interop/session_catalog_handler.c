@@ -18,6 +18,8 @@ enum { CatalogHandlerFrameBytes = 256 };
 enum { CatalogHandlerUpdatedBytes = 20 };
 /** @brief Digest length of a content hash and of TransferEnd. */
 enum { CatalogHandlerHashBytes = 32 };
+/** @brief Delay before a refused (QueueFull) action is retried; the pump never spins on refusal. */
+enum { CatalogHandlerRetryMs = 100 };
 
 /** @brief Result of one field lookup: found, absent, or malformed. */
 enum { CatalogFieldFound = 0, CatalogFieldAbsent = 1, CatalogFieldMalformed = -1 };
@@ -78,17 +80,24 @@ static int build_action(session_catalog_handler_t *handler, const catalog_runtim
     return interop_writer_finish(&writer, InteropMsgTransferCancel, 0, InteropFromHost, length);
 }
 
-/** @brief Keep a refused action for the next callback, copying its key out of the runtime. */
-static void retain_pending(session_catalog_handler_t *handler, const catalog_runtime_action_t *action)
+/**
+ * @brief Keep a refused action for a later callback, copying its key out of the runtime. The
+ *        source may already be the retained copy (a retry that is refused again), so the copy
+ *        uses memmove, which is well defined when source and destination overlap.
+ */
+static void retain_pending(session_catalog_handler_t *handler, const catalog_runtime_action_t *action, uint64_t now)
 {
-    handler->pending = *action;
+    catalog_runtime_action_t copy = *action;
     if (action->key_length != 0) {
-        memcpy(handler->pending_key, action->key, action->key_length);
-        handler->pending.key = handler->pending_key;
+        memmove(handler->pending_key, action->key, action->key_length);
+        copy.key = handler->pending_key;
     } else {
-        handler->pending.key = NULL;
+        copy.key = NULL;
     }
+    handler->pending = copy;
     handler->has_pending = 1;
+    handler->retry_at = now + CatalogHandlerRetryMs;
+    catalog_runtime_set_send_blocked(handler->runtime, 1);
 }
 
 /**
@@ -96,29 +105,35 @@ static void retain_pending(session_catalog_handler_t *handler, const catalog_run
  *        full and the action was retained for retry.
  */
 static int emit_action(session_catalog_handler_t *handler, interop_host_feature_sender_t *sender,
-                       const catalog_runtime_action_t *action)
+                       const catalog_runtime_action_t *action, uint64_t now)
 {
     size_t length = 0;
     int result;
     if (build_action(handler, action, &length) != 0) return 1;
     result = send_frame(handler, sender, handler->frame, length);
     if (result == HostFeatureQueueFull) {
-        retain_pending(handler, action);
+        retain_pending(handler, action, now);
         return 0;
     }
+    catalog_runtime_set_send_blocked(handler->runtime, 0);
     return 1;
 }
 
-/** @brief Send queued work in order: the retained action first, then the runtime's queue. */
-static void drain_actions(session_catalog_handler_t *handler, interop_host_feature_sender_t *sender)
+/**
+ * @brief Send queued work in order: the retained action first, then the runtime's queue. Stops at
+ *        the first refusal, which keeps order and leaves the rest queued in the runtime. A retained
+ *        action is not retried before its retry time.
+ */
+static void drain_actions(session_catalog_handler_t *handler, interop_host_feature_sender_t *sender, uint64_t now)
 {
     catalog_runtime_action_t action;
     if (handler->has_pending) {
+        if (now < handler->retry_at) return;
         handler->has_pending = 0;
-        if (!emit_action(handler, sender, &handler->pending)) return;
+        if (!emit_action(handler, sender, &handler->pending, now)) return;
     }
     while (catalog_runtime_next_action(handler->runtime, &action) == 1) {
-        if (!emit_action(handler, sender, &action)) return;
+        if (!emit_action(handler, sender, &action, now)) return;
     }
 }
 
@@ -296,7 +311,7 @@ static int on_frame(void *context, uint32_t message_type, uint32_t request_id, c
         /* Unowned types are never dispatched by the peer; a direct call only drains the queue. */
         break;
     }
-    drain_actions(handler, sender);
+    drain_actions(handler, sender, now);
     return 0;
 }
 
@@ -311,15 +326,19 @@ static int on_tick(void *context, uint64_t now_ms, interop_host_feature_sender_t
         return 1;
     }
     (void)catalog_runtime_tick(handler->runtime, now_ms, (const uint8_t *)updated, CatalogHandlerUpdatedBytes);
-    drain_actions(handler, sender);
+    drain_actions(handler, sender, now_ms);
     return 0;
 }
 
 static uint64_t next_deadline(void *context, uint64_t now_ms)
 {
     session_catalog_handler_t *handler = context;
-    if (handler->has_pending) return now_ms;
-    return catalog_runtime_next_deadline(handler->runtime, now_ms);
+    uint64_t deadline = catalog_runtime_next_deadline(handler->runtime, now_ms);
+    if (handler->has_pending) {
+        uint64_t retry = handler->retry_at > now_ms ? handler->retry_at : now_ms;
+        if (retry < deadline) deadline = retry;
+    }
+    return deadline;
 }
 
 static void on_closing(void *context, uint32_t reason, interop_host_feature_sender_t *sender)
@@ -329,6 +348,7 @@ static void on_closing(void *context, uint32_t reason, interop_host_feature_send
     (void)sender;
     catalog_runtime_reset_session(handler->runtime);
     handler->has_pending = 0;
+    catalog_runtime_set_send_blocked(handler->runtime, 0);
 }
 
 /* --- public interface ------------------------------------------------------------------ */
