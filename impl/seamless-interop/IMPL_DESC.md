@@ -3900,3 +3900,66 @@ C sanitizers. The whole source has98.55%lines/90.03%taken arcs. Evidence is
 desktop_artifacts_evidence_2026_10_25. Runtime/association20%, desktop mirror10%
 and native installed-desktop/shell qualification10% remain open. The producer
 rejects uncatalogued launches, leaving that runtime path explicitly unimplemented.
+
+### 8.44 Host window mapping and popup positioner amendment (2026-10-25)
+
+This amendment fills the positioner gap recorded by the 45 percent audit. It
+changes no frozen wire format. Hosts that implemented an earlier reading of
+Section 4.3 must conform to it before TODO #11 credit.
+
+**Mapping table.** The host keeps at most 64 exported windows and at most 64
+deferred children per session epoch, keyed by `(window, generation)` with both
+nonzero. A `WindowAnnounce` whose `parent` is nonzero is realized only when the
+exact `(parent, parent_generation)` pair is currently realized; otherwise it is
+deferred and re-evaluated whenever any window is realized or retired. A
+deferred child whose parent pair is retired is discarded and an `Error` with
+`StaleWindow` is the host's reply policy; it is never realized. Retiring a
+parent retires its realized children first, in reverse announce order. Any
+message naming a pair that is not currently realized, or a generation other
+than the realized one for that window, is stale and changes nothing. Duplicate
+Announce for a realized pair is refused. The 65th realized window or 65th
+deferred child is refused with `Error{ResourceExhausted}` and no state change.
+
+**Roles.** `Toplevel` and `Dialog` map to `xdg_toplevel`; `Dialog` calls
+`set_parent` with the parent's toplevel when the parent is a realized
+toplevel/dialog and leaves the parent unset otherwise. `UacConsent` maps to
+`xdg_toplevel` with app_id `waddle.<device>.uac`. `Menu`, `Tooltip` and
+`ImePreedit` map to `xdg_popup` and require a realized parent; a popup whose
+parent is a popup is parented to the root toplevel's `xdg_surface` and its
+offset is expressed relative to that root. `app_id` is `waddle.<device>.<app_key>`,
+set exactly once before the first commit and never updated.
+
+**Positioner (pure function).** For a popup with guest rect `(x, y, w, h)`
+relative to the parent window's top-left in guest physical pixels, and the
+parent's host scale `s` (integer 1..8, fractional scale rounded up to the next
+integer for this computation), the logical request is
+`lx = floor(x / s)`, `ly = floor(y / s)`, `lw = max(1, ceil(w / s))`,
+`lh = max(1, ceil(h / s))`, using floor toward negative infinity for signed
+`x`/`y`. The positioner is built with `set_size(lw, lh)`,
+`set_anchor_rect(lx, ly, 1, 1)`, `set_anchor(top_left = 5)`,
+`set_gravity(bottom_right = 8)`, `set_offset(0, 0)` and
+`set_constraint_adjustment(slide_x | slide_y | flip_x | flip_y = 15)`, with
+`set_reactive` when the protocol version provides it. Dimensions or offsets
+whose absolute value exceeds 32768 logical units refuse the popup. The
+compositor-adjusted rectangle from `xdg_popup.configure` is reported to the
+guest as `PopupRepositioned` with `x`/`y` multiplied back by `s`; `popup_done`
+is reported as `PopupDismissed`.
+
+**Grab.** A `Menu` with an `Announce.serial` that matches a live press-table
+entry for the same seat calls `xdg_popup.grab(seat, serial)` before the first
+commit. A `Menu` with an absent, unmatched or expired serial, and every
+`Tooltip` or `ImePreedit`, is created without a grab. The host never fabricates
+a serial.
+
+**Decorations.** The decoration object exists only for `Toplevel`, `Dialog`
+and `UacConsent`. Popups never receive one.
+
+**Teardown order.** Retire destroys, in this order: decoration, `xdg_popup` or
+`xdg_toplevel`, `xdg_surface`, `wl_surface`, with children before parents. A
+compositor callback arriving after retirement for a destroyed object is a no-op.
+
+**Session launch socket.** `waddle open` retries the `session.sock` connection
+for up to 120 s whether `session.lock` is free (no session yet; spawn one) or
+held by a session that has not yet bound its socket (session starting); only
+the deadline ends the wait. This reconciles Sections 3.9.1 and 4.2: a held lock
+with a missing socket means "starting" for `open` and "unconfirmed" for `stop`.
