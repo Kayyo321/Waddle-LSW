@@ -995,6 +995,15 @@ pub const peer_t = struct {
             result.copied_bytes = view.frame.len;
             return .{ .event = result, .required_bytes = view.frame.len };
         }
+        // IMPL_DESC 3.2.7 step 4: a frame whose facility is not negotiated is UnsupportedType.
+        // It takes the same Error-and-drain path as a codec-level UnsupportedType rejection.
+        check_facility(view.header.type, self.reader.direction, view.payload, self.handshake.negotiated_capabilities) catch {
+            self.enter_draining_at(now_ms, .WireError);
+            if (!self.enqueue_error(c_t.InteropErrorUnsupportedType, view.header.request_id, view.header.type)) self.terminal_send_failed = true;
+            try self.reader.consume();
+            self.last_now_ms = now_ms;
+            return .{ .event = self.event(.Draining) };
+        };
         @memcpy(output[0..view.frame.len], view.frame);
         try self.reader.consume();
         self.last_now_ms = now_ms;

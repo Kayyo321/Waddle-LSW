@@ -2046,6 +2046,25 @@ test "negotiated facilities gate each feature family and any-of transfers" {
     try std_t.testing.expectEqual(@as(usize, 3), wide.guest.queue.count);
 }
 
+test "received feature frames outside the negotiated map drain with UnsupportedType" {
+    var narrow = try init_pair(std_t.testing.allocator, 500);
+    defer deinit_pair(&narrow);
+    try complete_handshake(&narrow, 501);
+
+    // Guest-produced ClipboardClear without Clipboard negotiated: IMPL_DESC 3.2.7 step 4.
+    var frame: [MaxTestFrame]u8 = undefined;
+    const clipboard = try make_clipboard_clear(&frame, c_t.InteropFromGuest, 5);
+    _ = try narrow.host.feed(HostToken, frame[0..clipboard]);
+    var output: [MaxTestFrame]u8 = undefined;
+    const event = try narrow.host.next_event(HostToken, 502, &output);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.Draining, event.event.kind);
+    try std_t.testing.expectEqual(peer_t.phase_t.Draining, narrow.host.phase());
+    // The refusal is answered by one Error(UnsupportedType) frame, like codec-level rejections.
+    const reply = (try narrow.host.peek_tx(HostToken)).?;
+    try std_t.testing.expectEqual(@as(u16, c_t.InteropMsgError), std_t.mem.readInt(u16, reply[6..8], .little));
+    try std_t.testing.expectEqual(@as(usize, 1), narrow.host.queue.count);
+}
+
 // Deterministic random sequence of admissions, partial acknowledgements, Ping ticks and
 // refused frames. The model tracks FIFO window IDs for WindowClose frames and counts Pings.
 test "randomized admission and partial acknowledgement sequences preserve FIFO accounting" {

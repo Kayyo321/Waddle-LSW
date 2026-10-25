@@ -39,7 +39,7 @@ _Static_assert(offsetof(interop_peer_event_t, reserved_zero) == 44, "event.reser
 _Static_assert(offsetof(interop_peer_event_t, copied_bytes) == 48, "event.copied offset");
 
 enum { HostToken = 0x101, GuestToken = 0x202, Epoch = 0x334455, MaxFrame = 512 };
-static const uint64_t Capabilities = InteropCapWindows | InteropCapInput;
+static const uint64_t Capabilities = InteropCapWindows | InteropCapInput | InteropCapCatalog;
 static const char Version[] = "1.2.3";
 
 static void fail_at(const char *expression, int line)
