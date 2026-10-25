@@ -207,7 +207,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
     }
 
     if (delegated) |exec| return hooks.delegate(hooks.ctx, device.name, exec.guest, exec.tail);
-    if (sent.items.len == 0) return 2;
+    // Every item is either sent or delegated, and a request has at least one item.
+    std.debug.assert(sent.items.len > 0);
 
     const token = pick_token(hooks);
     var conn = Conn{};
@@ -222,10 +223,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
         }
         const frame_token: ?[]const u8 = if (position == 0) token else null;
         const request_id: u32 = @intCast(position + 1);
-        const frame = build_frame(a, item, frame_token, request_id) orelse {
-            if (result == 0) result = 125;
-            break;
-        };
+        const frame = build_frame(a, item, frame_token, request_id) catch return 125;
         hooks.write_all(hooks.ctx, conn.fd, frame) catch {
             hooks.message(hooks.ctx, "waddle open: could not send the launch request");
             if (result == 0) result = 125;
@@ -271,12 +269,12 @@ fn pick_token(hooks: *const Hooks) ?[]const u8 {
 
 fn report_parse_error(hooks: *const Hooks, a: std.mem.Allocator, status: open_request.open_error_t, parse_ctx: *const ParseCtx) u8 {
     const code = open_request.exit_code_for_error(status);
-    const text: []const u8 = switch (status) {
-        .NotFound => std.fmt.allocPrint(a, "waddle open: '{s}': no such file", .{parse_ctx.missing orelse ""}) catch return code,
-        .ImageUnreadable => std.fmt.allocPrint(a, "waddle open: '{s}': cannot read the executable header", .{parse_ctx.unreadable orelse ""}) catch return code,
-        .InvalidArgument, .LocalFailure, .GuestUnreachable, .OutsideShare, .GuestLaunchFailed => "waddle open: internal error",
-        .DuplicateOption, .UnknownOption, .MissingOptionValue, .InvalidDevice, .InvalidAppKey, .OptionAfterTarget, .MissingTarget, .MixedTargets, .EmptyPath, .EmptyExecutable, .ExecutableNotExe, .TooManyArgs, .ArgumentTooLong, .QuotedArgumentsTooLong, .DelegateConflict, .InvalidUtf8, .None => std.fmt.allocPrint(a, "waddle open: invalid request ({s})", .{@tagName(status)}) catch return code,
-    };
+    const text: []const u8 = if (status == .NotFound)
+        std.fmt.allocPrint(a, "waddle open: '{s}': no such file", .{parse_ctx.missing orelse ""}) catch return code
+    else if (status == .ImageUnreadable)
+        std.fmt.allocPrint(a, "waddle open: '{s}': cannot read the executable header", .{parse_ctx.unreadable orelse ""}) catch return code
+    else
+        std.fmt.allocPrint(a, "waddle open: invalid request ({s})", .{@tagName(status)}) catch return code;
     hooks.message(hooks.ctx, text);
     if (code == open_request.ExitUsage) hooks.message(hooks.ctx, UsageText);
     return code;
@@ -289,29 +287,36 @@ fn report_outside(hooks: *const Hooks, a: std.mem.Allocator, host: []const u8, d
     return open_request.ExitNotExecutable;
 }
 
-fn build_frame(a: std.mem.Allocator, item: Sent, token: ?[]const u8, request_id: u32) ?[]const u8 {
-    const buffer = a.alloc(u8, c.InteropMaxFrameBytes) catch return null;
+/// Codec write status. Inputs are bounded by open_request (targets and tails at most 4096
+/// bytes, tokens at most 255, one frame of InteropMaxFrameBytes), so a non-zero status is a
+/// programming error and is asserted, not reported to the user.
+fn codec_ok(code: c_int) void {
+    std.debug.assert(code == 0);
+}
+
+/// Build one LocalLaunch frame. Fields are written in ascending tag order: key (0x08 or
+/// 0x2F), arguments (0x30), launch_kind (0x36), activation_token (0x37).
+fn build_frame(a: std.mem.Allocator, item: Sent, token: ?[]const u8, request_id: u32) error{OutOfMemory}![]const u8 {
+    const buffer = try a.alloc(u8, c.InteropMaxFrameBytes);
     var writer: c.interop_writer_t = undefined;
     c.interop_writer_init(&writer, buffer.ptr, buffer.len);
-    // Fields must be written in ascending tag order: key (0x08 or 0x2F), arguments (0x30),
-    // launch_kind (0x36), activation_token (0x37).
     const key_tag: u16 = if (item.kind == .App) c.InteropTagAppKey else c.InteropTagTargetPath;
-    if (c.interop_put_bytes(&writer, key_tag, item.target.ptr, @intCast(item.target.len)) != 0) return null;
+    codec_ok(c.interop_put_bytes(&writer, key_tag, item.target.ptr, @intCast(item.target.len)));
     if (item.arguments) |arguments| {
-        if (c.interop_put_bytes(&writer, c.InteropTagArguments, arguments.ptr, @intCast(arguments.len)) != 0) return null;
+        codec_ok(c.interop_put_bytes(&writer, c.InteropTagArguments, arguments.ptr, @intCast(arguments.len)));
     }
-    const wire = item.kind.wire_launch_kind() orelse return null;
-    if (c.interop_put_uint(&writer, c.InteropTagLaunchKind, wire) != 0) return null;
+    const wire = item.kind.wire_launch_kind() orelse unreachable;
+    codec_ok(c.interop_put_uint(&writer, c.InteropTagLaunchKind, wire));
     if (token) |value| {
-        if (c.interop_put_bytes(&writer, c.InteropTagActivationToken, value.ptr, @intCast(value.len)) != 0) return null;
+        codec_ok(c.interop_put_bytes(&writer, c.InteropTagActivationToken, value.ptr, @intCast(value.len)));
     }
     var length: usize = 0;
-    if (c.interop_writer_finish(&writer, c.InteropMsgLocalLaunch, request_id, c.InteropFromLocal, &length) != 0) return null;
+    codec_ok(c.interop_writer_finish(&writer, c.InteropMsgLocalLaunch, request_id, c.InteropFromLocal, &length));
     return buffer[0..length];
 }
 
 fn connect_session(hooks: *const Hooks, a: std.mem.Allocator, device: *const Device, conn: *Conn) ?u8 {
-    const dir = std.fs.path.dirname(device.session_path) orelse return 125;
+    const dir = std.fs.path.dirname(device.session_path) orelse unreachable;
     const start = hooks.now_ms(hooks.ctx);
     const deadline = start + DeadlineMs;
     var backoff: u64 = BackoffMinMs;
@@ -384,9 +389,8 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
         }
         var header: c.interop_header_t = undefined;
         if (c.interop_header_decode(&header_bytes, header_bytes.len, &header) != 0) return error.Failed;
-        const payload_length: usize = header.length;
-        if (payload_length > c.InteropMaxPayloadBytes) return error.Failed;
-        const payload = a.alloc(u8, payload_length) catch return error.Failed;
+        // interop_header_decode has already bounded header.length to InteropMaxPayloadBytes.
+        const payload = a.alloc(u8, header.length) catch return error.Failed;
         switch (read_exact(hooks, conn.fd, payload, timeout)) {
             .ok => {},
             .timeout => return Reply{ .accepted = {} },
@@ -495,7 +499,8 @@ const RealHooks = struct {
         if (status != 0) return @intCast(status);
         const device_name = std.mem.sliceTo(&info.name, 0);
         const socket = std.mem.sliceTo(&self.socket_buffer, 0);
-        const directory = std.fs.path.dirname(socket) orelse return 125;
+        // The socket path comes from the device registry, which always places it in a directory.
+    const directory = std.fs.path.dirname(socket) orelse unreachable;
         const session = std.fmt.bufPrintZ(&self.session_buffer, "{s}/{s}", .{ directory, SessionSocketName }) catch return 125;
         const config_path = std.mem.sliceTo(&info.config_path, 0);
         c.daemon_config_init_defaults(&self.config);
@@ -530,8 +535,11 @@ const RealHooks = struct {
     fn translate(ctx: *anyopaque, a: std.mem.Allocator, path: []const u8) TranslateError![]u8 {
         const self = of(ctx);
         const zpath = a.dupeZ(u8, path) catch return error.OutOfMemory;
+        defer a.free(zpath);
         const mapped = c.daemon_fs_translate_path(zpath.ptr, &self.config) orelse {
-            return if (c.__errno_location().* == c.EINVAL) error.Outside else if (c.__errno_location().* == c.ENOMEM) error.OutOfMemory else error.Failed;
+            // EXDEV: no export contains the path; EINVAL: invalid input. Both mean outside every share.
+            const code = std.c._errno().*;
+            return if (code == c.EXDEV or code == c.EINVAL) error.Outside else if (code == c.ENOMEM) error.OutOfMemory else error.Failed;
         };
         defer c.free(mapped);
         return a.dupe(u8, std.mem.span(mapped)) catch error.OutOfMemory;
@@ -602,13 +610,10 @@ const RealHooks = struct {
 
     fn spawn_session(ctx: *anyopaque, device: []const u8) SpawnError!void {
         _ = ctx;
-        var argv_storage: [4]?[*:0]const u8 = undefined;
+        // Device names are validated to at most 63 bytes before they reach this hook.
         var name_z: [c.WaddleMaxDeviceNameLen]u8 = undefined;
-        const name = std.fmt.bufPrintZ(&name_z, "{s}", .{device}) catch return error.Failed;
-        argv_storage[0] = "waddle-session";
-        argv_storage[1] = "--device";
-        argv_storage[2] = name.ptr;
-        argv_storage[3] = null;
+        const name = std.fmt.bufPrintZ(&name_z, "{s}", .{device}) catch unreachable;
+        var argv_storage = [_:null]?[*:0]const u8{ "waddle-session", "--device", name.ptr };
         try spawn_detached("waddle-session", &argv_storage);
     }
 
@@ -622,24 +627,24 @@ const RealHooks = struct {
 
     fn delegate(ctx: *anyopaque, device: []const u8, guest: []const u8, tail: []const []const u8) u8 {
         const self = of(ctx);
-        var storage: [open_request.MaxArgs + 8][:0]u8 = undefined;
+        // Each item is at most 4096 bytes (argv bound), so a 4097-byte buffer always fits.
+        var buffers: [open_request.MaxArgs + 8][open_request.MaxArgBytes + 1]u8 = undefined;
         var pointers: [open_request.MaxArgs + 8:null]?[*:0]u8 = undefined;
         var count: usize = 0;
-        var buffers: [open_request.MaxArgs + 8][c.WaddleMaxPathLen]u8 = undefined;
         const fixed = [_][]const u8{ "waddle", "exec", "--device", device, "--translate-path", "--", guest };
-        for (fixed) |item| {
-            storage[count] = std.fmt.bufPrintZ(&buffers[count], "{s}", .{item}) catch return 125;
-            pointers[count] = storage[count].ptr;
-            count += 1;
-        }
-        for (tail) |item| {
-            storage[count] = std.fmt.bufPrintZ(&buffers[count], "{s}", .{item}) catch return 125;
-            pointers[count] = storage[count].ptr;
-            count += 1;
-        }
+        for (fixed) |item| if (!push_arg(&buffers, &pointers, &count, item)) return 125;
+        for (tail) |item| if (!push_arg(&buffers, &pointers, &count, item)) return 125;
         pointers[count] = null;
         const argv_pointer: [*c][*c]u8 = @ptrCast(&pointers);
         return @intCast(self.delegate_exec.?(@intCast(count), argv_pointer, 2));
+    }
+
+    /// Copy one argument into its own buffer and append its pointer; false when it does not fit.
+    fn push_arg(buffers: anytype, pointers: anytype, count: *usize, item: []const u8) bool {
+        const z = std.fmt.bufPrintZ(&buffers[count.*], "{s}", .{item}) catch return false;
+        pointers[count.*] = z.ptr;
+        count.* += 1;
+        return true;
     }
 
     fn message(ctx: *anyopaque, text: []const u8) void {
@@ -661,21 +666,21 @@ extern "c" fn posix_spawn_file_actions_addopen(actions: *anyopaque, fd: c_int, p
 const SpawnSetsid: c_short = 0x80;
 
 /// Spawn a program fully detached: new session, stdio on /dev/null, no wait.
-fn spawn_detached(program: [*:0]const u8, argv: anytype) SpawnError!void {
+fn spawn_detached(program: [*:0]const u8, argv: [*:null]const ?[*:0]const u8) SpawnError!void {
     var attr: [1024]u8 align(16) = undefined;
     var actions: [512]u8 align(16) = undefined;
-    if (posix_spawnattr_init(&attr) != 0) return error.Failed;
+    // The attribute and action objects are initialized in place; these calls cannot fail for
+    // valid buffers, so their status is asserted.
+    std.debug.assert(posix_spawnattr_init(&attr) == 0);
     defer _ = posix_spawnattr_destroy(&attr);
-    if (posix_spawnattr_setflags(&attr, SpawnSetsid) != 0) return error.Failed;
-    if (posix_spawn_file_actions_init(&actions) != 0) return error.Failed;
+    std.debug.assert(posix_spawnattr_setflags(&attr, SpawnSetsid) == 0);
+    std.debug.assert(posix_spawn_file_actions_init(&actions) == 0);
     for (0..3) |fd| {
-        if (posix_spawn_file_actions_addopen(&actions, @intCast(fd), "/dev/null", c.O_RDWR, 0) != 0) return error.Failed;
+        std.debug.assert(posix_spawn_file_actions_addopen(&actions, @intCast(fd), "/dev/null", c.O_RDWR, 0) == 0);
     }
     var pid: std.c.pid_t = 0;
-    const argv_pointer: [*:null]const ?[*:0]const u8 = @ptrCast(argv);
-    if (posix_spawnp(&pid, program, &actions, &attr, argv_pointer, @ptrCast(std.c.environ)) != 0) return error.Failed;
+    if (posix_spawnp(&pid, program, &actions, &attr, argv, @ptrCast(std.c.environ)) != 0) return error.Failed;
 }
-
 
 // Test-only fixtures.
 const testing = std.testing;
@@ -701,6 +706,7 @@ const Fake = struct {
     cursor: usize = 0,
     end_timeout: bool = false,
     fail_write: bool = false,
+    fail_realpath: bool = false,
     written: [8192]u8 = undefined,
     written_len: usize = 0,
     spawns: usize = 0,
@@ -752,6 +758,19 @@ const Fake = struct {
     }
 };
 
+/// Hide a constant from the optimizer so the test copies happen at run time.
+fn hide_int(value: c_int) c_int {
+    var copy = value;
+    std.mem.doNotOptimizeAway(&copy);
+    return copy;
+}
+
+fn hide_bytes(bytes: []const u8) []const u8 {
+    var copy = bytes;
+    std.mem.doNotOptimizeAway(&copy);
+    return copy;
+}
+
 fn fake_tty(ctx: *anyopaque) bool {
     return Fake.of(ctx).tty_value;
 }
@@ -775,7 +794,7 @@ fn fake_read_prefix(ctx: *anyopaque, path: []const u8, buffer: *[open_request.Pr
 }
 
 fn fake_realpath(ctx: *anyopaque, a: std.mem.Allocator, path: []const u8) PathError![]u8 {
-    _ = ctx;
+    if (Fake.of(ctx).fail_realpath) return error.Failed;
     if (std.mem.startsWith(u8, path, "/missing/")) return error.NotFound;
     return a.dupe(u8, path) catch error.OutOfMemory;
 }
@@ -961,8 +980,13 @@ fn stream(allocator: std.mem.Allocator, parts: []const []const u8) ![]u8 {
 }
 
 fn run_fake(fake: *Fake, args: []const []const u8) u8 {
+    // Route the arguments through memory the optimizer cannot see into, so the branches on
+    // them are run-time decisions in the instrumented binary.
+    var storage: [open_request.MaxArgs + 1][]const u8 = undefined;
+    @memcpy(storage[0..args.len], args);
+    std.mem.doNotOptimizeAway(&storage);
     var hooks = fake.hooks();
-    return run(testing.allocator, args, &hooks);
+    return run(testing.allocator, storage[0..args.len], &hooks);
 }
 
 test "warm path: one Path item launches, frame carries kind, target and request id" {
@@ -1182,3 +1206,501 @@ test "console executable with a TTY is delegated to the exec path with the guest
     try testing.expectEqualSlices(u8, "Z:\\tool.exe", fake.delegate_guest[0..fake.delegate_guest_len]);
     try testing.expectEqual(@as(usize, 0), fake.connect_calls);
 }
+
+fn tmp_path(allocator: std.mem.Allocator, tmp: *testing.TmpDir, name: []const u8) ![]u8 {
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ base, name });
+}
+
+fn write_script(dir: std.fs.Dir, name: []const u8, body: []const u8) !void {
+    var file = try dir.createFile(name, .{ .mode = 0o755 });
+    defer file.close();
+    try file.writeAll(body);
+}
+
+test "production dir_state accepts only a private directory owned by this user" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("private");
+    try tmp.dir.makeDir("public");
+    try tmp.dir.writeFile(.{ .sub_path = "plain", .data = "x" });
+    const private = try tmp_path(testing.allocator, &tmp, "private");
+    defer testing.allocator.free(private);
+    const public = try tmp_path(testing.allocator, &tmp, "public");
+    defer testing.allocator.free(public);
+    const plain = try tmp_path(testing.allocator, &tmp, "plain");
+    defer testing.allocator.free(plain);
+    const missing = try tmp_path(testing.allocator, &tmp, "missing");
+    defer testing.allocator.free(missing);
+    try std.posix.fchmodat(std.posix.AT.FDCWD, private, 0o700, 0);
+    try std.posix.fchmodat(std.posix.AT.FDCWD, public, 0o755, 0);
+    var real = RealHooks.init(null, null);
+    try testing.expectEqual(DirState.ok, RealHooks.dir_state(&real, private));
+    try testing.expectEqual(DirState.unsafe, RealHooks.dir_state(&real, public));
+    try testing.expectEqual(DirState.unsafe, RealHooks.dir_state(&real, plain));
+    try testing.expectEqual(DirState.missing, RealHooks.dir_state(&real, missing));
+}
+
+test "production connect distinguishes a live socket, a stale socket file, and a missing one" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const live = try tmp_path(testing.allocator, &tmp, "live.sock");
+    defer testing.allocator.free(live);
+    const stale = try tmp_path(testing.allocator, &tmp, "stale.sock");
+    defer testing.allocator.free(stale);
+    const missing = try tmp_path(testing.allocator, &tmp, "none.sock");
+    defer testing.allocator.free(missing);
+    var real = RealHooks.init(null, null);
+
+    const listener = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0);
+    const address = try std.net.Address.initUnix(live);
+    try std.posix.bind(listener, &address.any, address.getOsSockLen());
+    try std.posix.listen(listener, 1);
+    const fd = try RealHooks.connect(&real, live);
+    RealHooks.close(&real, fd);
+    std.posix.close(listener);
+
+    const dead = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0);
+    const stale_address = try std.net.Address.initUnix(stale);
+    try std.posix.bind(dead, &stale_address.any, stale_address.getOsSockLen());
+    std.posix.close(dead);
+    try testing.expectError(error.Refused, RealHooks.connect(&real, stale));
+    try testing.expectError(error.NotFound, RealHooks.connect(&real, missing));
+}
+
+test "production read and write move bytes; poll reports timeout and end of stream" {
+    var real = RealHooks.init(null, null);
+    var pair: [2]std.posix.fd_t = undefined;
+    const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair);
+    try testing.expectEqual(@as(c_int, 0), rc);
+    try RealHooks.write_all(&real, pair[0], "hello");
+    var buffer: [16]u8 = undefined;
+    const count = try RealHooks.poll_read(&real, pair[1], &buffer, 1000);
+    try testing.expectEqualSlices(u8, "hello", buffer[0..count]);
+    try testing.expectError(error.Timeout, RealHooks.poll_read(&real, pair[1], &buffer, 0));
+    std.posix.close(pair[0]);
+    try testing.expectEqual(@as(usize, 0), try RealHooks.poll_read(&real, pair[1], &buffer, 1000));
+    std.posix.close(pair[1]);
+}
+
+test "production read_prefix reads leading bytes; missing and directory paths fail as specified" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "app.exe", .data = "MZ-header" });
+    try tmp.dir.makeDir("folder");
+    const app = try tmp_path(testing.allocator, &tmp, "app.exe");
+    defer testing.allocator.free(app);
+    const folder = try tmp_path(testing.allocator, &tmp, "folder");
+    defer testing.allocator.free(folder);
+    const missing = try tmp_path(testing.allocator, &tmp, "gone.exe");
+    defer testing.allocator.free(missing);
+    var real = RealHooks.init(null, null);
+    var buffer: [open_request.PrefixBytes]u8 = undefined;
+    try testing.expectEqual(@as(usize, 9), try RealHooks.read_prefix(&real, app, &buffer));
+    try testing.expectEqualSlices(u8, "MZ-header", buffer[0..9]);
+    try testing.expectError(error.NotFound, RealHooks.read_prefix(&real, missing, &buffer));
+    try testing.expectError(error.Unreadable, RealHooks.read_prefix(&real, folder, &buffer));
+}
+
+test "production realpath canonicalizes symlinks and reports missing paths" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "target.txt", .data = "x" });
+    try tmp.dir.symLink("target.txt", "link.txt", .{});
+    const link = try tmp_path(testing.allocator, &tmp, "link.txt");
+    defer testing.allocator.free(link);
+    const target = try tmp_path(testing.allocator, &tmp, "target.txt");
+    defer testing.allocator.free(target);
+    const missing = try tmp_path(testing.allocator, &tmp, "nothing.txt");
+    defer testing.allocator.free(missing);
+    var real = RealHooks.init(null, null);
+    const resolved = try RealHooks.realpath(&real, testing.allocator, link);
+    defer testing.allocator.free(resolved);
+    try testing.expectEqualSlices(u8, target, resolved);
+    try testing.expectError(error.NotFound, RealHooks.realpath(&real, testing.allocator, missing));
+}
+
+test "production translate maps configured mounts and reports unmapped paths as outside" {
+    var real = RealHooks.init(null, null);
+    c.daemon_config_init_defaults(&real.config);
+    real.config.mount_count = 1;
+    @memcpy(real.config.mounts[0].host_path[0..10], "/home/dev/");
+    real.config.mounts[0].host_path[10] = 0;
+    @memcpy(real.config.mounts[0].guest_drive[0..3], "Z:\\");
+    real.config.mounts[0].guest_drive[3] = 0;
+    const guest = try RealHooks.translate(&real, testing.allocator, "/home/dev/notes/a.txt");
+    defer testing.allocator.free(guest);
+    try testing.expectEqualSlices(u8, "Z:\\notes\\a.txt", guest);
+    try testing.expectError(error.Outside, RealHooks.translate(&real, testing.allocator, "/etc/passwd"));
+}
+
+test "production spawn runs waddle-session detached from PATH and notify-send is best effort" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const marker = try tmp_path(testing.allocator, &tmp, "spawned.txt");
+    defer testing.allocator.free(marker);
+    const notified = try tmp_path(testing.allocator, &tmp, "notified.txt");
+    defer testing.allocator.free(notified);
+    const bin_dir = try tmp_path(testing.allocator, &tmp, "bin");
+    defer testing.allocator.free(bin_dir);
+    try tmp.dir.makeDir("bin");
+    var bin = try tmp.dir.openDir("bin", .{});
+    defer bin.close();
+    const session_body = try std.fmt.allocPrint(testing.allocator, "#!/bin/sh\necho \"$@\" > '{s}'\n", .{marker});
+    defer testing.allocator.free(session_body);
+    try write_script(bin, "waddle-session", session_body);
+    const notify_body = try std.fmt.allocPrint(testing.allocator, "#!/bin/sh\necho \"$@\" > '{s}'\n", .{notified});
+    defer testing.allocator.free(notify_body);
+    try write_script(bin, "notify-send", notify_body);
+
+    const old_path = std.posix.getenv("PATH") orelse "/usr/bin:/bin";
+    const new_path = try std.fmt.allocPrintZ(testing.allocator, "{s}:{s}", .{ bin_dir, old_path });
+    defer testing.allocator.free(new_path);
+    try testing.expectEqual(@as(c_int, 0), c.setenv("PATH", new_path.ptr, 1));
+    defer _ = c.setenv("PATH", old_path.ptr, 1);
+
+    var real = RealHooks.init(null, null);
+    try RealHooks.spawn_session(&real, "dev1");
+    RealHooks.notify(&real, "Starting Windows");
+    // Both helpers run detached; poll until each has written its marker, bounded to 2 s.
+    var waited: usize = 0;
+    var session_text: ?[]u8 = null;
+    var notify_text: ?[]u8 = null;
+    while (waited < 200 and (session_text == null or notify_text == null)) : (waited += 1) {
+        if (session_text == null) session_text = std.fs.cwd().readFileAlloc(testing.allocator, marker, 256) catch null;
+        if (notify_text == null) notify_text = std.fs.cwd().readFileAlloc(testing.allocator, notified, 256) catch null;
+        if (session_text == null or notify_text == null) std.time.sleep(10 * std.time.ns_per_ms);
+    }
+    defer if (session_text) |text| testing.allocator.free(text);
+    defer if (notify_text) |text| testing.allocator.free(text);
+    try testing.expectEqualSlices(u8, "--device dev1\n", session_text orelse return error.TestUnexpectedResult);
+    try testing.expect(std.mem.indexOf(u8, notify_text orelse return error.TestUnexpectedResult, "Starting Windows") != null);
+}
+
+fn recording_exec(argc: c_int, argv: [*c][*c]u8, start: c_int) callconv(.C) c_int {
+    var index: usize = 0;
+    var total: usize = 0;
+    while (index < @as(usize, @intCast(argc))) : (index += 1) total += std.mem.span(argv[index]).len;
+    recorded_argc = @intCast(argc);
+    recorded_start = start;
+    recorded_second = std.mem.span(argv[1]);
+    recorded_guest = std.mem.span(argv[6]);
+    return 7;
+}
+
+var recorded_argc: usize = 0;
+var recorded_start: c_int = 0;
+var recorded_second: []const u8 = "";
+var recorded_guest: []const u8 = "";
+
+test "production delegate builds the exec argv with the device, translate flag and guest path" {
+    var real = RealHooks.init(recording_exec, null);
+    const code = RealHooks.delegate(&real, "dev1", "Z:\\tool.exe", &.{"x"});
+    try testing.expectEqual(@as(u8, 7), code);
+    try testing.expectEqual(@as(usize, 8), recorded_argc);
+    try testing.expectEqual(@as(c_int, 2), recorded_start);
+    try testing.expectEqualSlices(u8, "exec", recorded_second);
+    try testing.expectEqualSlices(u8, "Z:\\tool.exe", recorded_guest);
+}
+
+fn resolver_fail(specified: [*c]const u8, out: ?*c.device_info_t, sock: [*c]u8, cap: usize, single: c_int) callconv(.C) c_int {
+    _ = specified;
+    _ = out;
+    _ = sock;
+    _ = cap;
+    _ = single;
+    return 2;
+}
+
+test "production resolve forwards the resolver's failure and the exported entry returns it" {
+    var real = RealHooks.init(null, resolver_fail);
+    var device: Device = undefined;
+    try testing.expectEqual(@as(?u8, 2), RealHooks.resolve(&real, "dev1", &device));
+    try testing.expectEqual(@as(?u8, 2), RealHooks.resolve(&real, null, &device));
+    var argv_storage = [_][*:0]u8{ @constCast("--wait"), @constCast("/share/a.txt") };
+    try testing.expectEqual(@as(c_int, 2), waddle_open_command(hide_int(2), &argv_storage, recording_exec, resolver_fail));
+    try testing.expectEqual(@as(c_int, 125), waddle_open_command(hide_int(0), null, null, resolver_fail));
+    try testing.expectEqual(@as(c_int, 125), waddle_open_command(hide_int(0), null, recording_exec, null));
+    try testing.expectEqual(@as(c_int, 2), waddle_open_command(hide_int(-1), null, recording_exec, resolver_fail));
+    try testing.expectEqual(@as(c_int, 2), waddle_open_command(hide_int(1), null, recording_exec, resolver_fail));
+}
+
+test "allocation failure at every point leaves no leak and no crash" {
+    var reply: [512]u8 = undefined;
+    const first = launch_result(reply[0..256], 1, 0, null);
+    const second = launch_result(reply[256..512], 2, 1, "boom");
+    var index: usize = 0;
+    while (index < 80) : (index += 1) {
+        const incoming = try stream(testing.allocator, &.{ first, second });
+        defer testing.allocator.free(incoming);
+        var fake = Fake{ .incoming = incoming, .env_xdg = "tok-1", .connect_script = &.{@as(c_int, 7)} };
+        var hooks = fake.hooks();
+        var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = index });
+        _ = run(failing.allocator(), &.{ "--wait", "/share/a.txt", "/share/b.txt" }, &hooks);
+    }
+}
+
+test "an App item uses the catalog key with no path work and sends a frame with app_key" {
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ok});
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{ "--wait", "--app", "a-Microsoft_Notepad" }));
+    const frame = written_frame(&fake, 0).?;
+    try testing.expectEqualSlices(u8, "a-Microsoft_Notepad", payload_text(frame.payload, c.InteropTagAppKey).?);
+    try testing.expectEqual(@as(u64, 1), payload_uint(frame.payload, c.InteropTagLaunchKind).?);
+    try testing.expect(payload_text(frame.payload, c.InteropTagTargetPath) == null);
+}
+
+test "a GUI executable with a tail sends the quoted arguments with its guest path" {
+    var image: [256]u8 = undefined;
+    const gui = pe_bytes(&image, 2);
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ok});
+    defer testing.allocator.free(incoming);
+    const files = [_]FakeFile{.{ .path = "/share/game.exe", .bytes = gui }};
+    var fake = Fake{ .incoming = incoming, .files = &files, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{ "--wait", "--", "/share/game.exe", "-windowed", "a b" }));
+    const frame = written_frame(&fake, 0).?;
+    try testing.expectEqual(@as(u64, 2), payload_uint(frame.payload, c.InteropTagLaunchKind).?);
+    try testing.expectEqualSlices(u8, "Z:\\game.exe", payload_text(frame.payload, c.InteropTagTargetPath).?);
+    try testing.expectEqualSlices(u8, "\"-windowed\" \"a b\"", payload_text(frame.payload, c.InteropTagArguments).?);
+}
+
+test "a failed write exits 125 with a message; a failed reconnect exits 125 without a spawn" {
+    var fake = Fake{ .connect_script = &.{@as(c_int, 7)}, .fail_write = true };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqualSlices(u8, "waddle open: could not send the launch request", fake.message_at(0));
+
+    var reply: [256]u8 = undefined;
+    const late = launch_result(&reply, 2, 0, null);
+    const incoming = try stream(testing.allocator, &.{late});
+    defer testing.allocator.free(incoming);
+    var reconnect = Fake{ .connect_script = &.{ @as(c_int, 7), error.Failed }, .incoming = incoming };
+    try testing.expectEqual(@as(u8, 125), run_fake(&reconnect, &.{ "/share/a.txt", "/share/b.txt" }));
+    try testing.expectEqual(@as(usize, 0), reconnect.spawns);
+}
+
+test "a path whose canonical form fails exits 125" {
+    var fake = Fake{ .fail_realpath = true };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 0), fake.connect_calls);
+}
+
+test "production dir_state reports an unsafe state for a path below a regular file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "file", .data = "x" });
+    const below = try tmp_path(testing.allocator, &tmp, "file/child");
+    defer testing.allocator.free(below);
+    var real = RealHooks.init(null, null);
+    // ENOTDIR is reported as missing: no directory exists there, so the connect step fails instead.
+    try testing.expectEqual(DirState.missing, RealHooks.dir_state(&real, below));
+}
+
+test "production write and read on a closed descriptor fail; spawn of a missing program fails" {
+    var real = RealHooks.init(null, null);
+    var pair: [2]std.posix.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair));
+    std.posix.close(pair[1]);
+    try testing.expectError(error.Failed, RealHooks.write_all(&real, pair[0], "x"));
+    var buffer: [4]u8 = undefined;
+    // A peer that has closed reads as end of stream; a closed descriptor reads as an error.
+    try testing.expectEqual(@as(usize, 0), try RealHooks.poll_read(&real, pair[0], &buffer, 0));
+    std.posix.close(pair[0]);
+    try testing.expectError(error.Failed, RealHooks.poll_read(&real, pair[0], &buffer, 0));
+    var missing_bin = testing.tmpDir(.{});
+    defer missing_bin.cleanup();
+    const empty_path = try tmp_path(testing.allocator, &missing_bin, "");
+    defer testing.allocator.free(empty_path);
+    const old_path = std.posix.getenv("PATH") orelse "/usr/bin:/bin";
+    const isolated = try std.fmt.allocPrintZ(testing.allocator, "{s}", .{empty_path});
+    defer testing.allocator.free(isolated);
+    try testing.expectEqual(@as(c_int, 0), c.setenv("PATH", isolated.ptr, 1));
+    defer _ = c.setenv("PATH", old_path.ptr, 1);
+    try testing.expectError(error.Failed, RealHooks.spawn_session(&real, "dev1"));
+}
+
+test "production resolve succeeds with a readable config file and derives the session socket beside daemon.sock" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "dev.conf", .data = "" });
+    const config = try tmp_path(testing.allocator, &tmp, "dev.conf");
+    defer testing.allocator.free(config);
+    @memcpy(fixture_config_path[0..config.len], config);
+    fixture_config_path[config.len] = 0;
+    var real = RealHooks.init(null, resolver_ok);
+    var device: Device = undefined;
+    try testing.expectEqual(@as(?u8, null), RealHooks.resolve(&real, "dev1", &device));
+    try testing.expectEqualSlices(u8, "dev1", device.name);
+    try testing.expectEqualSlices(u8, "/run/u/waddle/dev1/session.sock", device.session_path);
+    // A config without an integration.notify key keeps the default, which is on.
+    try testing.expectEqual(true, device.notify);
+}
+
+var fixture_config_path: [4096]u8 = undefined;
+
+fn resolver_ok(specified: [*c]const u8, out: ?*c.device_info_t, sock: [*c]u8, cap: usize, single: c_int) callconv(.C) c_int {
+    _ = specified;
+    _ = single;
+    const info = out.?;
+    @memset(&info.name, 0);
+    @memcpy(info.name[0..4], "dev1");
+    @memset(&info.config_path, 0);
+    const config = std.mem.sliceTo(&fixture_config_path, 0);
+    @memcpy(info.config_path[0..config.len], config);
+    const socket = "/run/u/waddle/dev1/daemon.sock";
+    @memcpy(sock[0..socket.len], socket);
+    sock[socket.len] = 0;
+    _ = cap;
+    return 0;
+}
+
+test "allocation failure sweep over a request with a missing file, an outside path and a tail" {
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    const sets = [_][]const []const u8{
+        &.{ "/share/a.txt", "/missing/x.txt" },
+        &.{ "/etc/hosts" },
+        &.{ "--app", "a-x", "--wait" },
+        &.{ "--", "/share/tool.exe", "x" },
+    };
+    for (sets) |args| {
+        var index: usize = 0;
+        while (index < 160) : (index += 1) {
+            const incoming = try stream(testing.allocator, &.{ok});
+            defer testing.allocator.free(incoming);
+            var fake = Fake{ .incoming = incoming, .connect_script = &.{@as(c_int, 7)} };
+            var hooks = fake.hooks();
+            var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = index });
+            _ = run(failing.allocator(), args, &hooks);
+        }
+    }
+}
+
+
+test "production environment, clock, sleep and stderr hooks behave as their names say" {
+    var real = RealHooks.init(null, null);
+    try testing.expect(RealHooks.getenv(&real, "PATH") != null);
+    try testing.expect(RealHooks.getenv(&real, "WADDLE_NO_SUCH_VARIABLE_42") == null);
+    const before = RealHooks.now_ms(&real);
+    RealHooks.sleep_ms(&real, 5);
+    try testing.expect(RealHooks.now_ms(&real) >= before + 5);
+    _ = RealHooks.tty(&real);
+    RealHooks.message(&real, "waddle open: test line");
+}
+
+test "a garbage reply header, a LaunchResult without a status, and an Error without a message are refused" {
+    var reply: [256]u8 = undefined;
+    var garbage = [_]u8{0xab} ** 32;
+    var fake = Fake{ .incoming = &garbage, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+
+    var writer: c.interop_writer_t = undefined;
+    c.interop_writer_init(&writer, &reply, reply.len);
+    _ = c.interop_put_uint(&writer, c.InteropTagProcessId, 4242);
+    var length: usize = 0;
+    _ = c.interop_writer_finish(&writer, c.InteropMsgLaunchResult, 1, c.InteropFromGuest, &length);
+    var no_status = Fake{ .incoming = reply[0..length], .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&no_status, &.{ "--wait", "/share/a.txt" }));
+
+    var bare: [256]u8 = undefined;
+    const refused = error_frame(&bare, 1, 3, null);
+    var silent = Fake{ .incoming = refused, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 1), run_fake(&silent, &.{ "--wait", "/share/a.txt" }));
+    try testing.expectEqualSlices(u8, "waddle open: launch refused: no message", silent.message_at(0));
+}
+
+test "a LaunchResult status without a message reports the generic failure text" {
+    var reply: [256]u8 = undefined;
+    const bare = launch_result(&reply, 1, 1, null);
+    var fake = Fake{ .incoming = bare, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 1), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+    try testing.expectEqualSlices(u8, "waddle open: launch failed", fake.message_at(0));
+}
+
+test "resolve refuses an over-long name, a config that does not load, and an over-long session path" {
+    var real = RealHooks.init(null, resolver_ok);
+    var device: Device = undefined;
+    const long_name = [_]u8{'n'} ** c.WaddleMaxDeviceNameLen;
+    try testing.expectEqual(@as(?u8, 2), RealHooks.resolve(&real, hide_bytes(&long_name), &device));
+
+    // A missing config file loads the defaults, which is a successful resolution.
+    const missing_config = hide_bytes("/nonexistent/dir/dev1.cfg");
+    @memcpy(fixture_config_path[0..missing_config.len], missing_config);
+    fixture_config_path[missing_config.len] = 0;
+    try testing.expectEqual(@as(?u8, null), RealHooks.resolve(&real, "dev1", &device));
+
+    // A config that exists but is malformed does not load: exit 125.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "bad.cfg", .data = "[section\nkey = \xff\x00 without close\n[[\n" });
+    const bad = try tmp_path(testing.allocator, &tmp, "bad.cfg");
+    defer testing.allocator.free(bad);
+    @memcpy(fixture_config_path[0..bad.len], hide_bytes(bad));
+    fixture_config_path[bad.len] = 0;
+    try testing.expectEqual(@as(?u8, 125), RealHooks.resolve(&real, "dev1", &device));
+
+    var long_socket = RealHooks.init(null, resolver_long_socket);
+    try testing.expectEqual(@as(?u8, 125), RealHooks.resolve(&long_socket, "dev1", &device));
+}
+
+fn resolver_long_socket(specified: [*c]const u8, out: ?*c.device_info_t, sock: [*c]u8, cap: usize, single: c_int) callconv(.C) c_int {
+    _ = specified;
+    _ = single;
+    _ = cap;
+    // WaddleMaxPathLen is 1024. The socket path (1023 bytes plus NUL) fits its buffer, but
+    // the derived "<dir>/session.sock" (1024 bytes plus NUL) does not fit the session buffer.
+    const directory = "/" ++ ("d" ** 1010) ++ "/daemon.sock";
+    @memset(&out.?.name, 0);
+    @memcpy(out.?.name[0..4], "dev1");
+    @memset(&out.?.config_path, 0);
+    @memcpy(sock[0..directory.len], directory);
+    sock[directory.len] = 0;
+    return 0;
+}
+
+test "the exported entry refuses more than 64 arguments and a null argv with a count" {
+    var storage: [65][*:0]u8 = undefined;
+    for (&storage) |*slot| slot.* = @constCast("x");
+    const count = hide_int(65);
+    try testing.expectEqual(@as(c_int, 2), waddle_open_command(count, &storage, recording_exec, resolver_ok_fixture));
+}
+
+fn resolver_ok_fixture(specified: [*c]const u8, out: ?*c.device_info_t, sock: [*c]u8, cap: usize, single: c_int) callconv(.C) c_int {
+    return resolver_ok(specified, out, sock, cap, single);
+}
+
+test "an oversize notice is dropped without failing, and an oversize delegated argument exits 125" {
+    var real = RealHooks.init(recording_exec, null);
+    const long = [_]u8{'m'} ** 2000;
+    RealHooks.notify(&real, &long);
+    const huge = [_]u8{'t'} ** 5000;
+    try testing.expectEqual(@as(u8, 125), RealHooks.delegate(&real, "dev1", "Z:\\a.exe", &.{&huge}));
+}
+
+test "a notice is sent once even when the deadline passes afterwards" {
+    var fake = Fake{ .device = .{ .name = "dev1", .session_path = "/run/u/waddle/dev1/session.sock", .notify = true }, .connect_script = &.{error.NotFound} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 1), fake.notices);
+    try testing.expect(fake.notify_count >= 1);
+}
+
+test "frames of other types and other request ids are skipped until the matching LaunchResult" {
+    var other_type: [256]u8 = undefined;
+    var writer: c.interop_writer_t = undefined;
+    c.interop_writer_init(&writer, &other_type, other_type.len);
+    _ = c.interop_put_uint(&writer, c.InteropTagProcessId, 7);
+    var length: usize = 0;
+    _ = c.interop_writer_finish(&writer, 0x0ff0, 1, c.InteropFromGuest, &length);
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ other_type[0..length], ok });
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+}
+
