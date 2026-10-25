@@ -8,20 +8,22 @@
  * `interop_protocol.h`) into wl_surface, xdg_surface, xdg_toplevel or xdg_popup, and optional
  * zxdg_toplevel_decoration_v1 objects. The window table is `host_window_map.h`, the popup geometry is
  * `host_popup_positioner.h`. Compositor events come back as the callbacks in
- * `host_wayland_windows_callbacks_t`.
+ * `host_wayland_callbacks_t`.
  *
  * Ownership and threading:
- *  - The caller owns the `host_wayland_windows_t` storage. It must not move while initialized, and it must
+ *  - The caller owns the `host_wayland_t` storage. It must not move while initialized, and it must
  *    be reset before its storage is released or reused. Its fields are private.
- *  - The Wayland objects in the config, the decoration manager and the wl_seat values in the press table are
- *    borrowed. They must stay valid until the window using them is retired or the context is reset.
+ *  - The Wayland objects in the config and the decoration manager are borrowed. The wl_seat values of the press
+ *    table are borrowed too, and must stay valid until `host_wayland_windows_forget_seat` names them or the
+ *    context is reset. A press keeps its seat registered until then.
  *  - Single-thread only: the Wayland dispatch thread that owns the display calls every function and every
  *    callback. Callbacks run synchronously, inside the call that caused them, on that same thread.
  *  - The module never allocates. Every object it creates is destroyed by the module on retire, on a failed
  *    realization, or on reset. Destruction order is fixed (see the contract).
  *
  * Return codes and refusals: functions return `host_wayland_status_t`. A refused Announce, Update or Retire
- * also reports `on_error` with the protocol error code, and the table is left as the table rules specify.
+ * also reports `on_error` with the protocol error code. A refused Update changes nothing and sends no request
+ * (all-or-nothing, 4.3), and a refused Announce leaves the table as the table rules specify.
  * The full contract is `impl/seamless-interop/claude_45_percent/host_wayland_windows_contract.md`.
  */
 #include <stdbool.h>
@@ -45,8 +47,33 @@ typedef enum host_wayland_status_t {
     HostWaylandRefused = 4, /**< The window table or the positioner refused the frame; `on_error` reported it. Nothing changed. */
     HostWaylandRealizeFailed = 5, /**< A Wayland object or listener could not be created; the window was rolled back and retired; `on_error` reported it. */
     HostWaylandPressTableFull = 6, /**< All 64 press entries are live; the caller must fail the session (3.6.2). Nothing changed. */
-    HostWaylandNotInitialized = 7 /**< The context was not initialized or was reset. */
+    HostWaylandNotInitialized = 7, /**< The context was not initialized or was reset. */
+    HostWaylandDuplicateSerial = 8, /**< A live press already holds this protocol serial T. Nothing changed. */
+    HostWaylandSeatTableFull = 9 /**< All `HostWaylandMaxSeats` seats are registered; the press was not recorded. */
 } host_wayland_status_t;
+
+/** @brief Seats the press table can name at once. A press on a seat beyond this is refused. */
+#define HostWaylandMaxSeats 8u
+
+/** @brief Input class of a press (3.6.2). A popup grab may follow any of them. */
+typedef enum host_wayland_press_kind_t {
+    HostWaylandPressPointer = 1, /**< Pointer button. `button` is the evdev code and must be nonzero. */
+    HostWaylandPressTouch = 2, /**< Touch down. `button` is ignored. */
+    HostWaylandPressKey = 3 /**< Keyboard key. `button` is the evdev code. */
+} host_wayland_press_kind_t;
+
+/** @brief Everything one press records. Passed by pointer; the module copies it. */
+typedef struct host_wayland_press_input_t {
+    uint32_t protocol_serial; /**< Host protocol input serial T, nonzero and unique among live entries. */
+    uint32_t wayland_serial; /**< Wayland seat serial S, used only at a compositor request. */
+    struct wl_seat *seat; /**< Borrowed seat the press came from; registered by the press and forgotten by `forget_seat`. */
+    uint64_t window; /**< Window the press landed on. */
+    uint64_t generation; /**< Generation of that window, nonzero. */
+    uint64_t lease_epoch; /**< Input lease the press belongs to. `drop_presses` keeps one epoch. */
+    uint32_t kind; /**< A `host_wayland_press_kind_t` value. */
+    uint32_t button; /**< Evdev button or key code; nonzero for a pointer press. */
+    uint64_t now_ms; /**< Monotonic clock in milliseconds; see `host_wayland_windows_record_press`. */
+} host_wayland_press_input_t;
 
 /** @brief Compositor event sinks. Any member may be NULL; the event is then dropped. */
 typedef struct host_wayland_callbacks_t {
@@ -106,7 +133,15 @@ typedef struct host_wayland_record_t {
     uint8_t role; /**< Raw `interop_window_role_t`. */
     uint8_t mapped; /**< Nonzero after the first xdg_surface.configure was acknowledged. */
     uint8_t dismissed; /**< Nonzero once a popup reported popup_done. */
-    uint8_t decoration_invalid; /**< Nonzero after an invalid decoration mode terminated delivery. */
+    uint8_t grabbed; /**< Nonzero while this popup holds an xdg_popup grab on `grab_seat` (3.6.2). */
+    struct wl_seat *grab_seat; /**< Seat of the grab; meaningful while `grabbed` is nonzero. */
+    uint64_t grab_sequence; /**< Grab order on the context; the highest live sequence of a seat is its topmost grab. */
+    uint32_t reposition_token; /**< Token of the last xdg_popup.reposition sent; zero before the first. */
+    uint8_t configure_latched; /**< Nonzero from an xdg_toplevel.configure until the acknowledging xdg_surface.configure (4.5). */
+    uint32_t latched_bits; /**< Latched `interop_window_state_t` bits. */
+    uint32_t latched_width; /**< Latched width, zero when the compositor lets the client decide. */
+    uint32_t latched_height; /**< Latched height, zero when the compositor lets the client decide. */
+    uint8_t reposition_pending; /**< Nonzero from a reposition request until its token is acknowledged. */
     uint32_t decoration_pending; /**< Staged decoration mode, zero when nothing is staged. */
     uint32_t decoration_applied; /**< Last applied decoration mode, zero before the first surface configuration. */
     int32_t guest_x; /**< Guest rectangle, most recent announce or update. */
@@ -134,6 +169,9 @@ typedef struct host_wayland_press_t {
     uint64_t window; /**< Window the press landed on. */
     uint64_t generation; /**< Generation of that window. */
     uint64_t recorded_ms; /**< Caller clock at record time, milliseconds. */
+    uint64_t lease_epoch; /**< Input lease of the press. */
+    uint32_t kind; /**< A `host_wayland_press_kind_t` value. */
+    uint32_t button; /**< Evdev code; nonzero for a pointer press. */
     uint8_t live; /**< Nonzero for a used entry. */
 } host_wayland_press_t;
 
@@ -145,100 +183,149 @@ typedef struct host_wayland_t {
     host_window_map_t map; /**< Window table; each realized window has one record at its slot. */
     host_wayland_record_t records[HostWindowMapMaxRealized]; /**< Object records, indexed by the table's slot. */
     host_wayland_press_t presses[64]; /**< Bounded press table. */
+    uint64_t grab_counter; /**< Sequence source for `grab_sequence`. */
+    uint64_t last_clock_ms; /**< Last clock value seen; a smaller one clears the press table. */
+    struct wl_seat *seats[HostWaylandMaxSeats]; /**< Registered seats; a grab needs its press seat here. */
 } host_wayland_t;
 
 /** @brief Length of the press-table validity window, milliseconds (3.6.2 "300 ms rule"). */
-#define HOST_WAYLAND_PRESS_EXPIRY_MS 300u
+#define HostWaylandPressExpiryMs 300u
 
 /** @brief Number of realized windows the table can hold (`host_window_map.h` MaxRealized). */
-#define HOST_WAYLAND_MAX_WINDOWS 64u
+#define HostWaylandMaxWindows 64u
 
 /**
- * @brief Initialize a context and bind its configuration.
+ * @brief Initialize a context and copy its configuration.
  *
- * @param ctx Caller-owned storage; NULL gives HostWaylandInvalidArgument. Overwritten.
- * @param config Non-NULL configuration. Required members must be non-NULL and the device name must be 1..64 bytes.
- * @return HostWaylandOk, or HostWaylandInvalidArgument for a bad configuration. Thread safety: owner thread.
+ * @param ctx Out. Caller-owned storage, overwritten on success. NULL gives HostWaylandInvalidArgument.
+ * @param config In. Non-NULL. The compositor, wm_base and device name are required; the device name is 1..64 bytes;
+ *               wm_base_version is at least 1; the scale fraction must give an integer scale of 1..8 (a zero pair
+ *               means 1/1).
+ * @return HostWaylandOk; HostWaylandInvalidArgument for a NULL pointer, a missing required member, a bad device
+ *         length, a zero wm_base_version, or an invalid scale fraction. Nothing is stored on failure. Thread safety:
+ *         owner thread.
  */
 host_wayland_status_t host_wayland_windows_init(host_wayland_t *ctx, const host_wayland_config_t *config);
 
 /**
- * @brief Epoch reset: destroy every realized window in teardown order and clear the press table.
+ * @brief Epoch reset: destroy every realized window in teardown order and clear the press table, seat registry and
+ * grab state.
  *
  * Teardown is the table's own reset order (children first; roots newest first). Each window's objects are
- * destroyed decoration first, then toplevel or popup, then xdg_surface, then wl_surface. A corrupt table is
- * still torn down: its records are destroyed by descending slot index, with the same per-window order.
+ * destroyed decoration first, then toplevel or popup, then xdg_surface, then wl_surface. A corrupt table is still
+ * torn down: its records are destroyed by descending slot index, with the same per-window order.
  *
- * @param ctx Initialized context; NULL or uninitialized gives HostWaylandNotInitialized. After the call the
- *            context is uninitialized until `host_wayland_windows_init` runs again.
- * @return HostWaylandOk. Thread safety: owner thread.
+ * @param ctx In/out. Initialized context. After success the context is uninitialized until
+ *            `host_wayland_windows_init` runs again.
+ * @return HostWaylandOk; HostWaylandNotInitialized for NULL or an uninitialized context. Thread safety: owner thread.
  */
 host_wayland_status_t host_wayland_windows_reset(host_wayland_t *ctx);
 
 /**
  * @brief Apply one guest frame: WindowAnnounce, WindowUpdate or WindowRetire.
  *
- * @param ctx Initialized context.
- * @param frame Borrowed frame bytes, at least a complete header plus its payload.
- * @param length Bytes available in `frame`.
- * @param now_ms Caller clock in milliseconds, used to expire press entries for popup grabs.
- * @return Status. Refusals and realization failures also invoke `on_error`.
+ * @param ctx In/out. Initialized context.
+ * @param frame In. Borrowed frame bytes: a complete header followed by its payload.
+ * @param length In. Bytes available in `frame`.
+ * @param now_ms In. Monotonic clock in milliseconds. A value below the last one seen clears the press table
+ *               (see `host_wayland_windows_record_press`).
+ * @return HostWaylandOk; HostWaylandInvalidArgument for a NULL context or frame; HostWaylandNotInitialized;
+ *         HostWaylandMalformedFrame for a bad header, payload or field; HostWaylandUnsupportedType for an unknown
+ *         type or a host-to-guest type; HostWaylandRefused when the table or the positioner refused the frame
+ *         (`on_error` reported); HostWaylandRealizeFailed when a Wayland object or listener could not be created (the
+ *         window was rolled back and `on_error` reported). A stale window pair is HostWaylandOk and reports nothing.
  */
 host_wayland_status_t host_wayland_windows_handle_frame(host_wayland_t *ctx, const uint8_t *frame, size_t length, uint64_t now_ms);
 
 /**
  * @brief Whether a realized window has been acknowledged as configured (the "mapped" state of 4.3).
  *
- * @param ctx Initialized context; NULL or uninitialized gives false.
- * @param window Protocol window handle.
- * @param generation Protocol generation.
- * @return True after the first xdg_surface.configure was acknowledged and while the window stays realized.
+ * @param ctx In. Initialized context; NULL or uninitialized gives false.
+ * @param window In. Protocol window handle.
+ * @param generation In. Protocol generation.
+ * @return True after the first xdg_surface.configure was acknowledged, while the window stays realized; false otherwise.
  */
 bool host_wayland_windows_is_mapped(const host_wayland_t *ctx, uint64_t window, uint64_t generation);
 
 /**
  * @brief Record a physical press that may justify a later popup grab (3.6.2).
  *
- * Entries older than HOST_WAYLAND_PRESS_EXPIRY_MS are removed first. A full table of live entries is never
- * evicted.
+ * Entries older than HostWaylandPressExpiryMs are removed first. A full table of live entries is never evicted.
+ * The clock is the caller's monotonic clock in milliseconds (for example CLOCK_MONOTONIC). If it ever moves
+ * backwards, every stored press is untrustworthy, so the table is cleared before the new press is recorded.
+ * The seat is registered on success; a press on a seat that was forgotten cannot be recorded until it is
+ * registered again by a new press.
  *
- * @param ctx Initialized context.
- * @param protocol_serial Host protocol input serial T of the press.
- * @param wayland_serial Wayland seat serial S of the press, used only at compositor requests.
- * @param seat Borrowed seat the press came from.
- * @param window Window the press landed on.
- * @param generation Generation of that window.
- * @param now_ms Caller clock in milliseconds.
- * @return HostWaylandOk or HostWaylandPressTableFull.
+ * @param ctx In/out. Initialized context.
+ * @param input In. The press. NULL, a zero protocol serial, a NULL seat, a zero window or generation, an unknown
+ *              kind, or a pointer press with a zero button gives HostWaylandInvalidArgument.
+ * @return HostWaylandOk; HostWaylandNotInitialized; HostWaylandInvalidArgument; HostWaylandDuplicateSerial when a
+ *         live press holds the same T; HostWaylandPressTableFull when all 64 entries are live (the caller must
+ *         fail the session, 3.6.2); or HostWaylandSeatTableFull when no seat slot is free.
  */
-host_wayland_status_t host_wayland_windows_record_press(host_wayland_t *ctx, uint32_t protocol_serial, uint32_t wayland_serial, struct wl_seat *seat, uint64_t window, uint64_t generation, uint64_t now_ms);
+host_wayland_status_t host_wayland_windows_record_press(host_wayland_t *ctx, const host_wayland_press_input_t *input);
 
 /**
  * @brief Remove the press entry for protocol serial T (release or cancel). Unknown serials are ignored.
  *
- * @param ctx Initialized context.
- * @param protocol_serial Host protocol input serial T.
+ * @param ctx In/out. Initialized context; NULL or uninitialized is a no-op.
+ * @param protocol_serial In. Host protocol input serial T.
  */
 void host_wayland_windows_release_press(host_wayland_t *ctx, uint32_t protocol_serial);
 
 /**
- * @brief Change the host integer scale for windows realized from now on.
+ * @brief Keep only the presses of one input lease. Every other press is dropped: focus loss or a lease change
+ * makes its serials invalid for a grab.
  *
- * @param ctx Initialized context.
- * @param numerator Fraction numerator; the integer scale is `ceil(numerator / denominator)`, 1..8.
- * @param denominator Fraction denominator, nonzero.
- * @return HostWaylandOk, HostWaylandInvalidArgument for a bad fraction, or HostWaylandNotInitialized.
+ * @param ctx In/out. Initialized context; NULL or uninitialized is a no-op.
+ * @param lease_epoch In. The lease epoch that stays valid.
+ */
+void host_wayland_windows_drop_presses(host_wayland_t *ctx, uint64_t lease_epoch);
+
+/**
+ * @brief Forget a seat that was destroyed. Its presses are dropped, and every popup grab on it is released so
+ * that no later popup can be granted on the destroyed seat.
+ *
+ * @param ctx In/out. Initialized context; NULL or uninitialized is a no-op.
+ * @param seat In. The destroyed seat; NULL is a no-op. The module never dereferences it.
+ */
+void host_wayland_windows_forget_seat(host_wayland_t *ctx, const struct wl_seat *seat);
+
+/**
+ * @brief Change the host integer scale for windows realized from now on. Realized windows keep the scale they were
+ * realized with.
+ *
+ * @param ctx In/out. Initialized context.
+ * @param numerator In. Fraction numerator; the integer scale is `ceil(numerator / denominator)`, 1..8.
+ * @param denominator In. Fraction denominator, nonzero.
+ * @return HostWaylandOk; HostWaylandInvalidArgument for a zero denominator or an integer scale outside 1..8;
+ *         HostWaylandNotInitialized for NULL or an uninitialized context.
  */
 host_wayland_status_t host_wayland_windows_set_scale(host_wayland_t *ctx, uint32_t numerator, uint32_t denominator);
 
 /**
+ * @brief Re-send the parent of every realized child dialog of a window that has just mapped.
+ *
+ * A dialog's xdg_toplevel.set_parent names the parent's toplevel, and the compositor only honours it once that parent
+ * has a buffer. The frames layer calls this on the window's first buffer commit, so each child dialog repeats its
+ * set_parent after the parent is visible. The initial set_parent at realization is kept.
+ *
+ * @param ctx In/out. Initialized context.
+ * @param window In. Protocol window handle of the window that mapped; zero gives HostWaylandInvalidArgument.
+ * @param generation In. Its generation; zero gives HostWaylandInvalidArgument.
+ * @return HostWaylandOk, including when the window is not realized as a toplevel (a stale call is a no-op), or
+ *         HostWaylandNotInitialized. Thread safety: owner thread, synchronous.
+ */
+host_wayland_status_t host_wayland_windows_note_mapped(host_wayland_t *ctx, uint64_t window, uint64_t generation);
+
+/**
  * @brief Number of realized windows.
  *
- * @param ctx Initialized context; NULL or uninitialized gives 0.
- * @return The table's realized count.
+ * @param ctx In. Initialized context; NULL or uninitialized gives 0.
+ * @return The table's realized count, 0 to HostWindowMapMaxRealized.
  */
 uint32_t host_wayland_windows_window_count(const host_wayland_t *ctx);
 
-_Static_assert(HOST_WAYLAND_MAX_WINDOWS == HostWindowMapMaxRealized, "record table matches the window table");
+_Static_assert(HostWaylandMaxWindows == HostWindowMapMaxRealized, "record table matches the window table");
 
 #endif
