@@ -117,9 +117,45 @@ added. The rewrite is the root metadata the codec exposes. A candidate
 byte-identical to the current manifest returns `changed = false` with no
 journal and no write.
 
+## `register_record`
+
+Request: `record_id` and `candidate_manifest`. Adds one record-only record (a
+kind with no store-managed file, currently `mime_default`). Requirements:
+
+- A manifest must exist (`FileNotFound` otherwise). The integration producer
+  always commits the handler record first, so the manifest exists before any
+  MIME registration.
+- The record kind must not be store-managed (`InvalidArgument`); the record
+  identifier must be valid (`InvalidArgument`).
+- The candidate must equal the current manifest plus exactly one record with
+  `record_id`, every existing record unchanged in schema fields. Any other
+  shape fails with `ManifestMismatch`, including an identifier that already
+  exists.
+- No artifact is opened, created, or unlinked. The `mime_default` `path` is the
+  relative name `mimeapps.list`, so it does not participate in the absolute
+  path overlap rule.
+
+Journal: operation `register`, record-only shape (root, relative path, and
+artifact fields null), with `record_id` set to the added record. The same
+PREPARED/COMMITTED transaction engine as `forget` publishes it.
+
+Recovery: a `register` journal is accepted only when the staged candidate is
+the old manifest plus exactly that record, checked before the old-record
+lookup (the record does not yet exist in the old manifest). Recovery converges
+to the old or the new manifest, and a second recovery is a no-op.
+
+Errors before PREPARED change nothing: `Closed`, `InvalidArgument`,
+`InvalidManifest`, `UnsupportedSchema`, `ManifestMismatch`, `FileNotFound`,
+`RecoveryRequired`, `OutOfMemory`, and filesystem errors.
+
+Decision recorded here: the producer orders registration before the file edit,
+so a crash between them leaves a record whose restore guard is a no-op (see
+`integration_commands_contract.md`, MIME defaults).
+
 ## Journal version 3
 
-Used by `remove` and `migrate_record`. Stored as `transactions/<txid>/journal.json`
+Used by `remove`, `migrate_record`, `forget` (the record-only branch of
+`remove`), and `register_record`. Stored as `transactions/<txid>/journal.json`
 (mode 0600) with the same directory, cleanup, and bound rules as versions 1
 and 2. Strict parsing rejects unknown and duplicate fields.
 
@@ -128,7 +164,7 @@ and 2. Strict parsing rejects unknown and duplicate fields.
 | `version` | 3 | 3 |
 | `transaction_id` | equals directory name | equals directory name |
 | `phase` | `prepared` or `committed` | `prepared` or `committed` |
-| `operation` | `remove` | `migrate` |
+| `operation` | `remove`, `forget` (record-only, no artifact fields) | `migrate` (record-only), `register` (record-only) |
 | `record_id` | required, valid | required, valid |
 | `root`, `relative_path` | required; root must be configured | must be null |
 | `old_artifact_hash`, `old_artifact_mode`, `old_artifact_device`, `old_artifact_inode` | required; mode 0644 or 0755; device and inode nonzero | must be null, mode 0 |
