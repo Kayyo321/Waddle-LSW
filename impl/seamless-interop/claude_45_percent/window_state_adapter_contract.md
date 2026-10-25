@@ -244,41 +244,57 @@ reducer as a GuestObservation plan.
 
 ## 9. Verification
 
-Linux double suites (`window_state_adapter_suite.c`), under
-`-fsanitize=address,leak,undefined` with `ASAN_OPTIONS=detect_leaks=1`:
+Double suite (`tests/interop/window_state_adapter_suite.c`, 28 tests), built plain and
+under `-fsanitize=address,leak,undefined` with `ASAN_OPTIONS=detect_leaks=1`. It runs
+on every platform against `tests/interop/window_state_adapter_double.h`, which logs every
+native call and can fail any call by count or at random:
 
-- Every action kind, with its exact native call sequence.
-- Every failure point: each entry is made to fail at each of its calls in turn,
-  for each action that uses it, and the completed count, the window state, and
-  the saved state are checked.
-- Stale handles: a destroyed window, and an HWND reused with another process or
-  thread identity. Each drops the saved state and the entry.
-- Fullscreen enter and leave round trips, including leave without saved state,
-  enter twice, and failures between the style change and the placement change.
-- Host-only and unknown kinds.
-- Capacity (64 admissions, the 65th fails), duplicate admission, release with and
-  without saved state, destroy with and without saved state.
-- Threading: a call from another thread returns `WrongThread`; a call made during
-  an entry returns `Reentrant`.
+- The NULL-member contract: each of the 19 table members, set to NULL in turn, makes
+  `create` return InvalidArgument with no output.
+- Exact native call sequence of every action, including the fullscreen enter and leave
+  sequences, the activation direct path, and the activation fallback.
+- Every failure point: for four action sequences, each call of each entry fails once
+  (with and without a fullscreen state entered beforehand). The completed count, the
+  status, and the observed Minimized, Maximized and Fullscreen bits are checked after each.
+- Stale handles: a destroyed window, an HWND reused with another process or thread
+  identity, and an identity query that fails. A stale window's saved state is never
+  applied.
+- Fullscreen: round trips, enter twice, leave without a saved state, rollback when the
+  placement call fails, rollback when the rollback also fails, and a leave that fails
+  at each call while the record is kept.
+- Host-only and unknown kinds, count and NULL-array rules, and geometry bounds.
+- Admission: capacity of 64 (the 65th refused), duplicate pairs and HWNDs, zero
+  identity components on their own, NULL adapter in every entry, release and destroy
+  while fullscreen, and destroy with a NULL slot.
+- Threading and re-entry: a call from another thread touches nothing; a call made from
+  inside a native entry (ShowWindow) returns Reentrant for observe, destroy and execute.
+- Observation bits, including capabilities read from the saved style while fullscreen,
+  and a failed observation leaving its output untouched.
+- A seeded random run: 24 rounds of 60 steps with 12 per cent native faults and
+  occasional window destruction. Every OK status completes every action, every other
+  status completes fewer, a destroyed window is reported stale and removed, and the
+  observation matches the double's flags after each step.
 
-Integration (`window_state_adapter_integration.c`), with the real reducer through
-`window_state_abi.h` and the double:
+Reducer integration (`tests/interop/window_state_adapter_integration.c`), built plain and
+under the same sanitizers and linked with `build/window_state_abi/window_state_abi.o`:
+the real reducer through `window_state.h`, the adapter, and the double. 200 rounds of 80
+steps with 15 per cent native faults. Every guest plan is executed and completed with its
+completed count; a failed completion is followed by a resynchronization from a fresh
+observation. A stale result caused by a fault is recovered by re-admitting the same
+window. The invariant, checked after every step with faults disabled: once the machine is
+synchronized, its applied guest window bits equal the adapter's observation. The run
+completes 287 guest actions, observes 183 native failures and 107 stale recoveries. The
+test found the LeaveFullscreen fault described in section 4, item 5.
 
-- Plan, execute, complete, observe, and then a GuestObservation plan that
-  converges: after any partial failure, the reducer's applied guest state equals
-  the adapter's observation.
-- Random sequences of inputs with random native faults. After each step the
-  invariant `applied guest state == observe()` holds whenever the machine is
-  synchronized, and every native fault is reported by its status.
+Coverage (`tests/interop/window_state_adapter_coverage.py`, run by
+`make interop-window-state-adapter-coverage`): gcov line and branch on the portable logic,
+driven by the double suite. Measured: line 100.00% (298 of 298), branch 100.00% (293 of
+293). The gate is 90 percent. The `_WIN32` table is outside this measure by design.
 
-Native smoke (`tests/interop/window_state_adapter_native_windows.c`), cross-built
-with mingw and executed only on Windows CI: see section 10.
-
-Coverage: `tests/interop/window_state_adapter_coverage.py` runs the double suites
-and the integration test under gcov and requires at least 90% line and at least
-90% branch coverage of `src/interop/window_state_adapter_windows.c`. The `_WIN32`
-block is preprocessed out on Linux and is not counted; the native smoke covers it
-on Windows.
+Mutation checks, not committed, each run and restored: skipping the EnterFullscreen
+rollback; leaving fullscreen without a record; dropping the activation fallback; making
+Restore leave fullscreen; ignoring the thread id in the identity check; continuing after a
+failed action. Each fails the suite.
 
 ## 10. Native smoke (Windows, executed by CI only)
 
@@ -302,12 +318,16 @@ thread, and asserts through `window_state_adapter_observe` and the real Win32 ca
 8. PostClose: the window receives `WM_CLOSE`, which the smoke observes through a
    window procedure that records it and does not call `DestroyWindow`. The smoke
    then destroys the window itself, as its owner.
-9. Stale handle: after the smoke destroys the window, `execute` on the same HWND
-   returns `StaleHandle`, and a second window created afterwards with the same
-   HWND value (if the system reuses it) also returns `StaleHandle` for the admitted
-   identity. If the system does not reuse the value, the second window is not
-   checked for reuse and the smoke reports that case as not exercised.
+9. Stale handle: the smoke destroys the window as its owner. `execute` on the old HWND
+   returns `StaleHandle` with no action completed, and `observe` on it then returns
+   `NotAdmitted`. A second window is created and admitted under the same pair.
+   `execute` with the old HWND value returns `InvalidArgument`, because the value is
+   not the admitted HWND. If the system reuses the old value for the second window,
+   that step is printed as a note and not counted; the stale identity check cannot be
+   told apart from a fresh admission within one process and thread.
 
+The smoke requires per-monitor DPI awareness v2 on its thread; without it the
+rectangles are not comparable and the smoke fails at its first step.
 The smoke writes one line per step and exits nonzero on any mismatch.
 
 ## 11. Known limits
