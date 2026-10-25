@@ -192,6 +192,20 @@ pub const feature_send_error_t = error{
 /// Outbound admission class of a feature type (IMPL_DESC 8.45 request identifiers).
 pub const feature_class_t = enum { Unsolicited, Request, Response };
 
+/// Return the response type that answers a request type, or null when the type is not a request.
+/// @param[in] message_type Frozen feature type of a request.
+/// @return The matching response type, or null.
+/// @ownership Pure function.
+pub fn response_for_request(message_type: u16) ?u16 {
+    return switch (message_type) {
+        c_t.InteropMsgLaunchRequest => c_t.InteropMsgLaunchResult,
+        c_t.InteropMsgPrinterSync => c_t.InteropMsgPrinterResult,
+        c_t.InteropMsgDisplayConfig => c_t.InteropMsgDisplayApplied,
+        c_t.InteropMsgDndDrop => c_t.InteropMsgDndResult,
+        else => null,
+    };
+}
+
 /// Return the request-identifier class of a feature type. Request types allocate an identifier
 /// through enqueue_request; Response types echo a nonzero identifier; all others carry zero.
 /// Transfer frames carry zero here and use their own transfer identifiers in the payload.
@@ -255,6 +269,9 @@ pub const peer_t = struct {
     feature_request_ids: [FeatureRequestCapacity]u32 = [_]u32{0} ** FeatureRequestCapacity,
     /// Number of live entries at the front of feature_request_ids, always at most FeatureRequestCapacity.
     feature_request_count: usize = 0,
+    /// Frozen request message type of each live feature reservation, parallel to feature_request_ids.
+    /// Inbound responses must echo a live identifier whose recorded type maps to the response type.
+    feature_request_types: [FeatureRequestCapacity]u16 = [_]u16{0} ** FeatureRequestCapacity,
     /// Last committed monotonic callback timestamp.
     last_now_ms: u64,
     /// Authoritative phase latch; terminal values never reopen.
@@ -739,6 +756,7 @@ pub const peer_t = struct {
             return map_admission_error(err);
         };
         self.feature_request_ids[self.feature_request_count] = request_id;
+        self.feature_request_types[self.feature_request_count] = std_t.mem.readInt(u16, frame[6..8], .little);
         self.feature_request_count += 1;
         const index = (self.send_head + self.send_count) % QueueCapacity;
         self.send_records[index] = .{ .kind = .Feature, .request_id = request_id, .total_bytes = frame.len, .remaining_bytes = frame.len };
@@ -771,6 +789,8 @@ pub const peer_t = struct {
         self.feature_request_count -= 1;
         self.feature_request_ids[index] = self.feature_request_ids[self.feature_request_count];
         self.feature_request_ids[self.feature_request_count] = 0;
+        self.feature_request_types[index] = self.feature_request_types[self.feature_request_count];
+        self.feature_request_types[self.feature_request_count] = 0;
     }
 
     /// Begin local orderly protocol drain and best-effort queue Goodbye(status Cancelled, ID zero).
@@ -813,6 +833,7 @@ pub const peer_t = struct {
         if (self.connection_phase == .Closed) return self.event(.Draining);
         self.request_ids.retire_all();
         self.feature_request_ids = [_]u32{0} ** FeatureRequestCapacity;
+        self.feature_request_types = [_]u16{0} ** FeatureRequestCapacity;
         self.feature_request_count = 0;
         self.connection_phase = .Closed;
         return self.event(.Draining);
@@ -1131,6 +1152,18 @@ pub const peer_t = struct {
             refused.request_id = view.header.request_id;
             return .{ .event = refused };
         };
+        if (!self.inbound_request_id_valid(view.header.type, view.header.request_id)) {
+            // IMPL_DESC 8.45: a misplaced identifier is a protocol violation, answered and drained.
+            self.enter_draining_at(now_ms, .WireError);
+            if (!self.enqueue_error(c_t.InteropErrorProtocolViolation, view.header.request_id, view.header.type)) self.terminal_send_failed = true;
+            try self.reader.consume();
+            self.last_now_ms = now_ms;
+            var violation = self.event(.Draining);
+            violation.error_code = c_t.InteropErrorProtocolViolation;
+            violation.message_type = view.header.type;
+            violation.request_id = view.header.request_id;
+            return .{ .event = violation };
+        }
         @memcpy(output[0..view.frame.len], view.frame);
         try self.reader.consume();
         self.last_now_ms = now_ms;
@@ -1139,6 +1172,33 @@ pub const peer_t = struct {
         result.request_id = view.header.request_id;
         result.copied_bytes = view.frame.len;
         return .{ .event = result, .required_bytes = view.frame.len };
+    }
+
+    /// Check the identifier class of one admitted inbound feature frame (IMPL_DESC 8.45).
+    /// Unsolicited types carry zero. Request types carry a nonzero identifier allocated by the remote
+    /// requester, which this peer does not track. Response types carry a nonzero identifier that
+    /// is a live local reservation whose recorded request type is answered by this response type.
+    /// @param[in] self Ready peer; reservation state is read only.
+    /// @param[in] message_type Frozen feature type already admitted by the facility table.
+    /// @param[in] request_id Identifier copied from the frame header.
+    /// @return False when the identifier is outside the class rules.
+    fn inbound_request_id_valid(self: *const peer_t, message_type: u16, request_id: u32) bool {
+        return switch (feature_class(message_type)) {
+            .Unsolicited => request_id == 0,
+            .Request => request_id != 0,
+            .Response => request_id != 0 and self.live_response_matches(message_type, request_id),
+        };
+    }
+
+    /// True when request_id is a live feature reservation whose request type this response answers.
+    fn live_response_matches(self: *const peer_t, response_type: u16, request_id: u32) bool {
+        var index: usize = 0;
+        while (index < self.feature_request_count) : (index += 1) {
+            if (self.feature_request_ids[index] != request_id) continue;
+            const answered = response_for_request(self.feature_request_types[index]) orelse return false;
+            return answered == response_type;
+        }
+        return false;
     }
 
     fn apply_released_ids(self: *peer_t, released: []const u32) request_ids_mod_t.request_ids_error_t!void {
