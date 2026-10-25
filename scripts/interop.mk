@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
+interop-test: interop-windows-session-unit-test interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -25,6 +25,7 @@ interop-sanitizers: interop-manifest-store-test interop-layout-test interop-heap
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o build/interop_layout_abi.o build/daemon_wire.o build/device_storage.o build/daemon_config.o build/path_rules.o
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/windows_socket_owner_coverage.py
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_control_windows_coverage.py
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/session_host_coverage.py
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/mapping_linux_coverage.py
 	python3 tests/av/coverage.py interop_codec
@@ -336,3 +337,19 @@ interop-windows-socket-coverage: build/interop_control_peer_abi.o build/interop_
 interop-manifest-store-test:
 	$(ZIG) test src/interop/manifest_store.zig -lc
 	$(ZIG) test -lc --dep manifest_store -Mroot=tests/interop/manifest_store.zig -Mmanifest_store=src/interop/manifest_store.zig
+
+
+# Production Windows controller; trusted freshness/detach provider remains external.
+InteropGuestControlDependencies = src/interop/session_control_windows.c src/interop/session_control_windows.h src/interop/windows_socket_owner.h src/interop/interop_mapping_windows.h src/interop/interop_layout.h src/interop/interop_mapping_init.h src/interop/interop_native_atomic.h
+InteropGuestControlUnitSources = tests/interop/session_control_windows_private.c tests/interop/session_control_windows_api_double.c src/interop/session_control_windows.c src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c
+build/interop_guest_session_unit_test: $(InteropGuestControlUnitSources) $(InteropGuestControlDependencies) tests/interop/session_control_windows_api_double.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG -DInteropGuestSessionTestApi -DInteropWindowsSocketTestApi -Itests/interop -Isrc/interop $(InteropGuestControlUnitSources) $(LDFLAGS) -o $@
+.PHONY: interop-windows-session-unit-test
+interop-windows-session-unit-test: build/interop_guest_session_unit_test
+	./build/interop_guest_session_unit_test
+build/interop_guest_session_sdk.o: src/interop/session_control_windows.c $(InteropGuestControlDependencies) | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/interop -c $< -o $@
+build/interop_guest_session_integration_test.exe: tests/interop/session_control_windows_integration.c tests/interop/session_control_windows_mapping_seam.c $(InteropGuestControlDependencies) src/interop/windows_socket_owner.c src/interop/interop_mapping_windows.c src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib build/interop_layout_abi_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Isrc/interop -Isubmodules/looking_glass/module -Isubmodules/looking_glass/vendor/ivshmem tests/interop/session_control_windows_integration.c tests/interop/session_control_windows_mapping_seam.c src/interop/windows_socket_owner.c src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib build/interop_layout_abi_windows.lib -lws2_32 -lsetupapi -lbcrypt -o $@
+build/waddle-session-guest.exe: src/interop/session_guest_main.c $(InteropGuestControlDependencies) build/interop_guest_session_sdk.o build/interop_windows_socket_sdk.o build/interop_mapping_windows_sdk.o src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib build/interop_layout_abi_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/interop $< build/interop_guest_session_sdk.o build/interop_windows_socket_sdk.o build/interop_mapping_windows_sdk.o src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib build/interop_layout_abi_windows.lib -lws2_32 -lsetupapi -lbcrypt -o $@

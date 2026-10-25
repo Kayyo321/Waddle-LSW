@@ -1342,10 +1342,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     socket fixture, all exit0. Retain hash-bound outputs and clean ACPI/reap
     receipts. No capture/coordinator, native interop driver or #34 credit.
 
-- **Commit `HEAD`**: `feat(interop): journal rooted absent artifact publication and recovery`
+- **Commit `e6ab6e1`**: `feat(interop): journal rooted absent artifact publication and recovery`
   - **Task Impact**: +25% to TODO #33 (+0.75% overall; total20.55%).
   - **Summary**: Accept absent-add journal15% and ownership API10% with strict
     root binding, staged inode/hash proofs, no-clobber publication, reverse
     PREPARED rollback, COMMITTED cleanup, retained conflicts and bounded fault/
     OOM tests. Root43 tests,99.77% lines/90.03% taken arcs and public smoke pass.
     CI runs the suite and coverage. Replacement/backup/restore remain open.
+
+- **Commit `HEAD`**: `feat(interop): compose bounded Windows guest control session`
+  - **Task Impact**: +0% to TODO #6/#5 pending native composition execution.
+  - **Summary**: Real listener/socket/map lifecycle with explicit trusted
+    freshness, cap-zero Hello/Ready, heartbeat, bounded stop/drain and retained
+    proof-gated cleanup/quarantine. Root unit/sanitizer gate reaches99.33%
+    lines/90.46% taken arcs; real Windows SDK/link passes. Add native positive
+    composition and pre-Ready failure fixtures to Windows CI; driver and
+    deployment acceptance remain separate. Standalone entry fails closed.

@@ -3698,3 +3698,24 @@ before cleanup. Unknown, foreign or malformed state remains untouched with
 RecoveryRequired. Bounded journal and cleanup-marker recovery, syscall faults
 and allocation failures are qualified in manifest_store_evidence_2026_10_25.
 Replacement/backup/restore and command/producer integration remain separate.
+
+### 8.36 Windows control-session composition milestone (2026-10-25)
+
+[session_control_windows_contract.md](session_control_windows_contract.md)
+specifies the synchronous one-peer Viosock listener, CID2 policy, real connected
+socket/mapping owners, fresh cryptographic epoch, layout metadata initialization,
+Ready-gated heartbeat and bounded drain. A trusted caller must independently
+supply fresh-exclusive authorization; the standalone executable fails closed
+because no production authority provider exists. No command-line option
+manufactures freshness or host detach. Published map ownership is retained until
+independent detach assertion; indeterminate sockets and exact Winsock reference
+can transfer to a caller-owned quarantine, never silently forgotten.
+
+Linux negative/unit doubles qualify controller paths separately. A Windows
+composition fixture uses actual WinSock sockets, pure peer ABI, opaque map
+owner, layout initializer/validator and native atomics with a real2GiB allocation.
+Only Viosock address/discovery and IVSHMEM driver discovery/IOCTL are substituted.
+It verifies Hello/header validation/Ack/Ready/heartbeat and pre-Ready EOF/timeout,
+then joins all map readers before explicit fixture-detach cleanup. Windows
+execution is a distinct CI gate; neither cross-link nor Linux doubles earn it.
+Driver-native, signing/deployment, UIAccess and installed runtime remain open.

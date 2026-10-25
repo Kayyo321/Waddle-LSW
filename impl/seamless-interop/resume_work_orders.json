@@ -6,9 +6,9 @@
     {
       "agent": "luna_manifest_engine",
       "owns": [
-        "src/interop/manifest_store.zig",
-        "tests/interop/manifest_store*",
-        "impl/seamless-interop/manifest_store_contract.md"
+        "src/interop/app_catalog*",
+        "tests/interop/app_catalog*",
+        "impl/seamless-interop/app_catalog_contract.md"
       ]
     },
     {
@@ -25,12 +25,10 @@
     {
       "agent": "luna_fresh_guest",
       "owns": [
-        "src/interop/session_control_windows.c",
-        "src/interop/session_control_windows.h",
-        "src/interop/session_guest_main.c",
-        "tests/interop/session_control_windows*",
-        "tests/interop/session_guest_main*",
-        "impl/seamless-interop/session_control_windows_contract.md"
+        "src/interop/manifest_store.zig",
+        "tests/interop/manifest_store*",
+        "tests/interop/manifest_replace*",
+        "impl/seamless-interop/manifest_replace_contract.md"
       ]
     }
   ],
