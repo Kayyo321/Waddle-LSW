@@ -35,7 +35,7 @@
 #define WsaApiMembers(X) X(is_window) X(window_thread) X(is_iconic) X(is_zoomed) X(get_style) X(set_style) \
     X(show_window) X(set_window_pos) X(get_placement) X(set_placement) X(get_rect) X(monitor_rect) \
     X(foreground_window) X(set_foreground_window) X(set_active_window) X(attach_thread_input) \
-    X(post_message) X(current_thread_id) X(last_error)
+    X(post_message) X(current_thread_id) X(last_error) X(extended_frame_bounds)
 
 static waddle_window_state_action_t action_of(uint32_t kind);
 
@@ -348,6 +348,10 @@ static int test_restore_does_not_leave_fullscreen(void) {
     return 0;
 }
 
+/* SetWindowPos flags as Win32 defines them, for checking the flags the adapter passes. */
+#define TestSwpNoZOrder 0x0004u
+#define TestSwpNoActivate 0x0010u
+
 static int test_geometry_and_close(void) {
     fixture_t f;
     uint64_t completed = 0;
@@ -356,7 +360,8 @@ static int test_geometry_and_close(void) {
     waddle_window_state_action_t zero_height = geometry_of(0, 0, 240, 0);
     waddle_window_state_action_t too_wide = geometry_of(0, 0, WaddleWindowStateAdapterMaxExtent + 1, 240);
     waddle_window_state_action_t close = action_of(WaddleWindowStateActionGuestPostClose);
-    const wsa_double_entry_t geometry_expected[] = {WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleSetWindowPos};
+    const wsa_double_entry_t geometry_expected[] = {
+        WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleGetRect, WsaDoubleExtendedFrameBounds, WsaDoubleSetWindowPos};
     const wsa_double_entry_t close_expected[] = {WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoublePostMessage};
 
     Check(fixture_open(&f) == 0);
@@ -367,10 +372,11 @@ static int test_geometry_and_close(void) {
     Check(run(&f, &too_wide, 1, &completed) == WindowStateAdapterInvalidGeometry);
     Check(f.d.log_count == 0);
 
+    /* The origin x=10, y=20 is ignored (SWP_NOMOVE): the window keeps its position and takes the size. */
     Check(run(&f, &geometry, 1, &completed) == WindowStateAdapterOk);
-    Check(log_matches(&f.d, geometry_expected, 3));
-    Check(f.d.windows[0].rect.left == 10 && f.d.windows[0].rect.top == 20);
-    Check(f.d.windows[0].rect.right == 330 && f.d.windows[0].rect.bottom == 260);
+    Check(log_matches(&f.d, geometry_expected, 5));
+    Check(f.d.windows[0].rect.left == MainRect.left && f.d.windows[0].rect.top == MainRect.top);
+    Check(f.d.windows[0].rect.right == MainRect.left + 320 && f.d.windows[0].rect.bottom == MainRect.top + 240);
 
     wsa_double_reset(&f.d);
     Check(run(&f, &close, 1, &completed) == WindowStateAdapterOk);
@@ -415,6 +421,70 @@ static int test_host_and_unknown_kinds_and_counts(void) {
     Check(window_state_adapter_execute(f.a, HwndOther, IdMain, GenMain, &minimize, 1, &completed) ==
           WindowStateAdapterInvalidArgument);
     Check(completed == 0);
+    fixture_close(&f);
+    return 0;
+}
+
+/**
+ * @brief SetGeometry keeps the window origin (SWP_NOMOVE), applies the DWM frame adjustment of av_windows.c,
+ *        and refuses an adjusted extent that is out of range or whose frame query fails.
+ */
+static int test_geometry_keeps_origin_and_adds_frame(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t configure = geometry_of(0, 0, 1024, 768);
+    waddle_window_state_action_t moved = geometry_of(300, 200, 640, 480);
+    waddle_window_state_action_t small = geometry_of(0, 0, 1, 1);
+    waddle_window_state_action_t largest = geometry_of(0, 0, WaddleWindowStateAdapterMaxExtent, 10);
+    int32_t visible_width;
+    int32_t visible_height;
+
+    /* Probe P2: a window at 100,100 with configure rect(0,0,1024,768) stays at 100,100 and becomes 1024 by 768. */
+    Check(fixture_open(&f) == 0);
+    wsa_double_reset(&f.d);
+    Check(run(&f, &configure, 1, &completed) == WindowStateAdapterOk);
+    Check(completed == 1);
+    Check(f.d.windows[0].rect.left == 100 && f.d.windows[0].rect.top == 100);
+    Check(f.d.windows[0].rect.right - f.d.windows[0].rect.left == 1024);
+    Check(f.d.windows[0].rect.bottom - f.d.windows[0].rect.top == 768);
+    Check(f.d.set_window_pos_count == 1);
+    Check((f.d.set_window_pos_flags[0] & WsaDoubleSwpNoMove) != 0);
+    Check((f.d.set_window_pos_flags[0] & (TestSwpNoZOrder | TestSwpNoActivate)) == (TestSwpNoZOrder | TestSwpNoActivate));
+
+    /* A nonzero origin from the caller is also ignored. */
+    Check(run(&f, &moved, 1, &completed) == WindowStateAdapterOk);
+    Check(f.d.windows[0].rect.left == 100 && f.d.windows[0].rect.top == 100);
+    Check(f.d.windows[0].rect.right - f.d.windows[0].rect.left == 640);
+
+    /* An invisible 8-pixel border per side: the outer rectangle grows by 16 and the visible frame is the request. */
+    f.d.windows[0].frame_inset = 8;
+    Check(run(&f, &configure, 1, &completed) == WindowStateAdapterOk);
+    Check(f.d.windows[0].rect.right - f.d.windows[0].rect.left == 1024 + 16);
+    Check(f.d.windows[0].rect.bottom - f.d.windows[0].rect.top == 768 + 16);
+    visible_width = (f.d.windows[0].rect.right - 8) - (f.d.windows[0].rect.left + 8);
+    visible_height = (f.d.windows[0].rect.bottom - 8) - (f.d.windows[0].rect.top + 8);
+    Check(visible_width == 1024 && visible_height == 768);
+
+    /* An adjusted extent of zero or below is refused (a negative border makes the visible frame larger). */
+    f.d.windows[0].frame_inset = -1;
+    wsa_double_reset(&f.d);
+    Check(run(&f, &small, 1, &completed) == WindowStateAdapterInvalidGeometry);
+    Check(completed == 0);
+    Check(f.d.set_window_pos_count == 0);
+
+    /* An adjusted extent above the maximum is refused: 16384 plus the border of 2 pixels per side. */
+    f.d.windows[0].frame_inset = 1;
+    Check(run(&f, &largest, 1, &completed) == WindowStateAdapterInvalidGeometry);
+    Check(f.d.set_window_pos_count == 0);
+
+    /* A failing frame query is a native failure with no window change. */
+    f.d.windows[0].frame_inset = 0;
+    wsa_double_reset(&f.d);
+    wsa_double_arm(&f.d, WsaDoubleExtendedFrameBounds, 1, 0);
+    Check(run(&f, &configure, 1, &completed) == WindowStateAdapterNativeFailure);
+    Check(completed == 0);
+    Check(f.d.set_window_pos_count == 0);
+    wsa_double_disarm(&f.d);
     fixture_close(&f);
     return 0;
 }
@@ -1148,6 +1218,7 @@ int main(void) {
     failures += run_test("fullscreen round trip", test_fullscreen_round_trip);
     failures += run_test("restore does not leave fullscreen", test_restore_does_not_leave_fullscreen);
     failures += run_test("geometry and close", test_geometry_and_close);
+    failures += run_test("geometry keeps origin and adds frame", test_geometry_keeps_origin_and_adds_frame);
     failures += run_test("host, unknown and count rules", test_host_and_unknown_kinds_and_counts);
     failures += run_test("activate direct and fallback", test_activate_direct_and_fallback);
     failures += run_test("activate failures", test_activate_failures);

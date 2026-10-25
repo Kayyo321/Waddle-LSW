@@ -151,6 +151,12 @@ typedef struct window_state_native_api_t {
     uint32_t (*current_thread_id)(void *context);
     /** @brief GetLastError. Read after a failed entry. */
     uint32_t (*last_error)(void *context);
+    /**
+     * @brief DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS): the visible frame rectangle, which excludes
+     *        the invisible resize border that GetWindowRect includes.
+     * @param[out] rect Non-NULL; receives the extended frame bounds on success.
+     */
+    int (*extended_frame_bounds)(void *context, uintptr_t window, window_state_rect_t *rect);
 } window_state_native_api_t;
 
 /**

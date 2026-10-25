@@ -63,7 +63,7 @@ by itself, except where the operation documents otherwise (for example
 | `get_style` | `GetWindowLongPtrW(GWL_STYLE)` | Last error cleared before the call; 0 with a set error means failure. |
 | `set_style` | `SetWindowLongPtrW(GWL_STYLE)` | |
 | `show_window` | `ShowWindow` (synchronous) | Command is `SW_MINIMIZE`, `SW_RESTORE` or `SW_MAXIMIZE`. |
-| `set_window_pos` | `SetWindowPos` | Flags are passed through. |
+| `set_window_pos` | `SetWindowPos` | Flags are passed through. SetGeometry passes `SWP_NOMOVE \| SWP_NOZORDER \| SWP_NOACTIVATE`; fullscreen passes `SWP_FRAMECHANGED \| SWP_NOZORDER \| SWP_NOACTIVATE`. |
 | `get_placement` | `GetWindowPlacement` | |
 | `set_placement` | `SetWindowPlacement` | |
 | `get_rect` | `GetWindowRect` | Window rectangle in screen coordinates. |
@@ -75,6 +75,7 @@ by itself, except where the operation documents otherwise (for example
 | `post_message` | `PostMessageW` | The adapter uses it only with `WM_CLOSE`. |
 | `current_thread_id` | `GetCurrentThreadId` | Read at create to define the owner thread, and on every entry to check the caller. The only entry any thread may call. |
 | `last_error` | `GetLastError` | Read after a failed entry. |
+| `extended_frame_bounds` | `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` | The visible frame, without the invisible resize border. A failing HRESULT is stored as the last error with `SetLastError`, so `last_error` reports the HRESULT. |
 
 `ShowWindowAsync` is not in the table. Asynchronous show returns before the state
 change is applied, so a completed count would not mean that the change happened.
@@ -179,10 +180,21 @@ are `InvalidAction` at their index; they are never executed by the guest.
      is the result; a detach failure after success is `NativeFailure` too.
 7. **SetGeometry** (kind 12, `GuestSetGeometry`): width and height must each be
    in `1..16384`, otherwise `InvalidGeometry` with no native call (the reducer
-   already omits zero geometry). Then `set_window_pos(x, y, width, height,
-   SWP_NOZORDER | SWP_NOACTIVATE)`. The `maximized` field is accepted and does not
-   change the call. The rectangle is caller-prepared, as the reducer contract
-   states; the adapter does not compute maximized placement.
+   already omits zero geometry). Then the adapter applies the visible-frame size
+   with the DWM border adjustment of `av_windows.c` (lines 516 to 527):
+   - `get_rect(window)` gives the outer rectangle, and `extended_frame_bounds(window)`
+     the visible frame. Either failing is `NativeFailure` with no change.
+   - `outer_width = width + (outer.right - outer.left) - (visible.right - visible.left)`,
+     and the same for height. The result must lie in `1..16384`; otherwise
+     `InvalidGeometry`, with no `set_window_pos` call.
+   - `set_window_pos(0, 0, outer_width, outer_height, SWP_NOMOVE | SWP_NOZORDER |
+     SWP_NOACTIVATE)`. The `x` and `y` of the action are not applied: the host
+     sends them as zero (IMPL 4.5, WindowConfigure rect(0,0,w,h)), so the window keeps
+     its origin. Failure is `NativeFailure`.
+   The `maximized` field is accepted and does not change the call. The work-area
+   origin for a maximized configure is not applied (IMPL 4.5 places a maximized
+   window at the work-area origin). That needs the monitor work rectangle, which the
+   table does not supply; section 11 lists it as an open item.
 8. **PostClose** (kind 13, `GuestPostClose`): `post_message(window, WM_CLOSE, 0, 0)`.
    Failure is `NativeFailure`. Nothing else is called.
 

@@ -104,7 +104,7 @@ interop-window-state-adapter-coverage:
 # Cross-built Windows smoke. Compiled with mingw, linked against user32; executed only by Windows CI.
 build/interop_window_state_adapter_native_test.exe: $(WsaAdapterNative) $(WsaAdapterSrc) $(WsaAdapterHdr) src/interop/window_state.h
 	mkdir -p build
-	$(WsaMingwCC) $(WsaAdapterCFlags) $(WsaAdapterWinDefs) $(WsaAdapterNative) $(WsaAdapterSrc) -luser32 -o $@
+	$(WsaMingwCC) $(WsaAdapterCFlags) $(WsaAdapterWinDefs) $(WsaAdapterNative) $(WsaAdapterSrc) -luser32 -ldwmapi -o $@
 
 # Window coordinator (TODO #10 C1-C3, TODO #13 guest half, impl/seamless-interop/claude_45_percent).
 #   make interop-window-coordinator-test         suite plain (random long sequences included)

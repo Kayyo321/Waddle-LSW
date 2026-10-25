@@ -40,6 +40,7 @@ typedef enum wsa_double_entry_t {
     WsaDoublePostMessage,
     WsaDoubleCurrentThreadId,
     WsaDoubleLastError,
+    WsaDoubleExtendedFrameBounds,
     WsaDoubleEntryCount
 } wsa_double_entry_t;
 
@@ -50,6 +51,10 @@ typedef enum wsa_double_entry_t {
 #define WsaFrameMaskThickFrame 0x00040000LL
 #define WsaFrameMaskMaximizeBox 0x00010000LL
 #define WsaFrameMaskMinimizeBox 0x00020000LL
+/** @brief SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER and SWP_NOACTIVATE, as the double reads them. */
+#define WsaDoubleSwpNoSize 0x0001u
+#define WsaDoubleSwpNoMove 0x0002u
+#define WsaDoubleSwpNoActivate 0x0010u
 /** @brief Number of double windows. */
 #define WsaDoubleMaxWindows 256
 /** @brief Capacity of the call log. */
@@ -79,6 +84,8 @@ typedef struct wsa_double_window_t {
     int restore_to_maximized;
     /** @brief WM_CLOSE posts received. */
     uint32_t close_posts;
+    /** @brief Invisible frame border per side that DWM reports outside the extended frame bounds. */
+    int32_t frame_inset;
 } wsa_double_window_t;
 
 /** @brief Complete double state. Initialize with wsa_double_init. */
@@ -113,6 +120,15 @@ typedef struct wsa_double_t {
     wsa_double_entry_t log[WsaDoubleLogCapacity];
     /** @brief Number of recorded calls. */
     uint32_t log_count;
+    /** @brief The uFlags argument of every SetWindowPos call since the last reset, failed or not. */
+    uint32_t set_window_pos_flags[WsaDoubleLogCapacity];
+    /** @brief Number of recorded SetWindowPos flag values. */
+    uint32_t set_window_pos_count;
+    /**
+     * @brief Activations the real Windows would perform: a successful SetWindowPos without SWP_NOACTIVATE,
+     *        or a successful SetWindowPlacement, makes the window the foreground window.
+     */
+    uint32_t focus_steals;
 } wsa_double_t;
 
 /** @brief Initializes the double with a 1920 by 1080 monitor, no windows and the given current thread. */
@@ -127,10 +143,12 @@ static inline void wsa_double_init(wsa_double_t *d, uint32_t current_thread) {
     d->rng = UINT64_C(0x9e3779b97f4a7c15);
 }
 
-/** @brief Clears the call counts and the call log. Failure arming is unchanged. */
+/** @brief Clears the call counts, the call log, the SetWindowPos flag record and the focus count. Failure arming is unchanged. */
 static inline void wsa_double_reset(wsa_double_t *d) {
     memset(d->calls, 0, sizeof(d->calls));
     d->log_count = 0;
+    d->set_window_pos_count = 0;
+    d->focus_steals = 0;
 }
 
 /**
@@ -319,15 +337,26 @@ static int wsa_double_set_window_pos(void *context, uintptr_t window, int32_t x,
                                      int32_t height, uint32_t flags) {
     wsa_double_t *d = (wsa_double_t *)context;
     wsa_double_window_t *record = wsa_double_find(d, window);
+    int32_t left;
+    int32_t top;
+    int32_t extent_width;
+    int32_t extent_height;
+    if (d->set_window_pos_count < WsaDoubleLogCapacity) d->set_window_pos_flags[d->set_window_pos_count++] = flags;
     if (!wsa_double_begin(d, WsaDoubleSetWindowPos, 1)) return 0;
     if (record == NULL) return 0;
-    if ((flags & 0x0002u) == 0u) { /* not SWP_NOMOVE */
-        record->rect.left = x;
-        record->rect.top = y;
-    }
-    if ((flags & 0x0001u) == 0u) { /* not SWP_NOSIZE */
-        record->rect.right = x + width;
-        record->rect.bottom = y + height;
+    /* Win32: with SWP_NOMOVE the x and y arguments are ignored; with SWP_NOSIZE the current size is kept. */
+    left = (flags & WsaDoubleSwpNoMove) != 0u ? record->rect.left : x;
+    top = (flags & WsaDoubleSwpNoMove) != 0u ? record->rect.top : y;
+    extent_width = (flags & WsaDoubleSwpNoSize) != 0u ? record->rect.right - record->rect.left : width;
+    extent_height = (flags & WsaDoubleSwpNoSize) != 0u ? record->rect.bottom - record->rect.top : height;
+    record->rect.left = left;
+    record->rect.top = top;
+    record->rect.right = left + extent_width;
+    record->rect.bottom = top + extent_height;
+    if (record->placement.show_command == 1u) record->placement.normal = record->rect;
+    if ((flags & WsaDoubleSwpNoActivate) == 0u) {
+        d->foreground = window;
+        d->focus_steals += 1u;
     }
     return 1;
 }
@@ -350,6 +379,9 @@ static inline int wsa_double_set_placement(void *context, uintptr_t window, cons
     record->iconic = placement->show_command == 2u ? 1 : 0;
     record->zoomed = placement->show_command == 3u ? 1 : 0;
     if (placement->show_command == 1u) record->rect = placement->normal;
+    /* SetWindowPlacement activates the window for its show commands (ShowWindow semantics). */
+    d->foreground = window;
+    d->focus_steals += 1u;
     return 1;
 }
 
@@ -415,6 +447,19 @@ static inline int wsa_double_post_message(void *context, uintptr_t window, uint3
     return 1;
 }
 
+/** @brief DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS): the window rectangle minus frame_inset per side. */
+static inline int wsa_double_extended_frame_bounds(void *context, uintptr_t window, window_state_rect_t *rect) {
+    wsa_double_t *d = (wsa_double_t *)context;
+    wsa_double_window_t *record = wsa_double_find(d, window);
+    if (!wsa_double_begin(d, WsaDoubleExtendedFrameBounds, 1)) return 0;
+    if (record == NULL) return 0;
+    rect->left = record->rect.left + record->frame_inset;
+    rect->top = record->rect.top + record->frame_inset;
+    rect->right = record->rect.right - record->frame_inset;
+    rect->bottom = record->rect.bottom - record->frame_inset;
+    return 1;
+}
+
 static inline uint32_t wsa_double_current_thread_id(void *context) {
     wsa_double_t *d = (wsa_double_t *)context;
     (void)wsa_double_begin(d, WsaDoubleCurrentThreadId, 0);
@@ -448,6 +493,7 @@ static const window_state_native_api_t WsaDoubleApi = {
     .post_message = wsa_double_post_message,
     .current_thread_id = wsa_double_current_thread_id,
     .last_error = wsa_double_last_error,
+    .extended_frame_bounds = wsa_double_extended_frame_bounds,
 };
 
 /** @brief Returns the double's table. */

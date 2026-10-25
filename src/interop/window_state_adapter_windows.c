@@ -27,6 +27,7 @@ enum {
     WsaShowMaximized = 3,
     WsaSwpNoSize = 0x0001,
     WsaSwpNoMove = 0x0002,
+    WsaDwmwaExtendedFrameBounds = 9,
     WsaSwpNoZOrder = 0x0004,
     WsaSwpNoActivate = 0x0010,
     WsaSwpFrameChanged = 0x0020,
@@ -96,6 +97,7 @@ static int api_complete(const window_state_native_api_t *api) {
     if (api->post_message == NULL) return 0;
     if (api->current_thread_id == NULL) return 0;
     if (api->last_error == NULL) return 0;
+    if (api->extended_frame_bounds == NULL) return 0;
     return 1;
 }
 
@@ -317,20 +319,40 @@ static window_state_adapter_status_t activate(window_state_adapter_t *adapter,
     return failed != 0 ? status : WindowStateAdapterOk;
 }
 
-/** @brief SetGeometry: caller-prepared rectangle, no activation and no z-order change. */
+/**
+ * @brief SetGeometry: the requested size applied to the visible frame, at the window's current origin.
+ *
+ * The host sends x and y as zero, so the origin is not part of the request: the call carries SWP_NOMOVE
+ * and the window keeps its position. The size is the visible frame size. GetWindowRect includes the
+ * invisible resize border that DWM does not draw, so the outer size is the request plus the difference
+ * between the two rectangles, as in av_windows.c (the border adjustment there). The adjusted extent
+ * must lie in 1..WaddleWindowStateAdapterMaxExtent, or the result is InvalidGeometry after the two
+ * queries. Activation and z-order are unchanged (SWP_NOZORDER and SWP_NOACTIVATE).
+ */
 static window_state_adapter_status_t set_geometry(window_state_adapter_t *adapter,
                                                   window_state_adapter_entry_t *entry,
                                                   const waddle_window_state_action_t *action) {
     window_state_adapter_status_t status;
+    window_state_rect_t outer;
+    window_state_rect_t visible;
+    int64_t width;
+    int64_t height;
     if (action->width == 0 || action->height == 0 || action->width > WaddleWindowStateAdapterMaxExtent ||
         action->height > WaddleWindowStateAdapterMaxExtent) {
         return WindowStateAdapterInvalidGeometry;
     }
     status = check_identity(adapter, entry);
     if (status != WindowStateAdapterOk) return status;
-    if (!adapter->api.set_window_pos(adapter->context, entry->window, action->x, action->y,
-                                     (int32_t)action->width, (int32_t)action->height,
-                                     WsaSwpNoZOrder | WsaSwpNoActivate)) {
+    if (!adapter->api.get_rect(adapter->context, entry->window, &outer)) return native_fail(adapter);
+    if (!adapter->api.extended_frame_bounds(adapter->context, entry->window, &visible)) return native_fail(adapter);
+    width = (int64_t)action->width + ((int64_t)outer.right - outer.left) - ((int64_t)visible.right - visible.left);
+    height = (int64_t)action->height + ((int64_t)outer.bottom - outer.top) - ((int64_t)visible.bottom - visible.top);
+    if (width <= 0 || height <= 0 || width > WaddleWindowStateAdapterMaxExtent ||
+        height > WaddleWindowStateAdapterMaxExtent) {
+        return WindowStateAdapterInvalidGeometry;
+    }
+    if (!adapter->api.set_window_pos(adapter->context, entry->window, 0, 0, (int32_t)width, (int32_t)height,
+                                     WsaSwpNoMove | WsaSwpNoZOrder | WsaSwpNoActivate)) {
         return native_fail(adapter);
     }
     return WindowStateAdapterOk;
@@ -558,6 +580,7 @@ uint32_t window_state_adapter_last_error(const window_state_adapter_t *adapter) 
 
 #ifdef _WIN32
 #include <windows.h>
+#include <dwmapi.h>
 
 _Static_assert(WsaStyleCaption == WS_CAPTION, "WS_CAPTION value");
 _Static_assert(WsaStyleThickFrame == WS_THICKFRAME, "WS_THICKFRAME value");
@@ -575,6 +598,7 @@ _Static_assert(WsaSwpNoZOrder == SWP_NOZORDER, "SWP_NOZORDER value");
 _Static_assert(WsaSwpNoActivate == SWP_NOACTIVATE, "SWP_NOACTIVATE value");
 _Static_assert(WsaSwpFrameChanged == SWP_FRAMECHANGED, "SWP_FRAMECHANGED value");
 _Static_assert(WsaWmClose == WM_CLOSE, "WM_CLOSE value");
+_Static_assert((int)WsaDwmwaExtendedFrameBounds == (int)DWMWA_EXTENDED_FRAME_BOUNDS, "DWMWA_EXTENDED_FRAME_BOUNDS value");
 
 static int nat_is_window(void *context, uintptr_t window) {
     (void)context;
@@ -735,6 +759,26 @@ static uint32_t nat_last_error(void *context) {
     return (uint32_t)GetLastError();
 }
 
+/*
+ * DwmGetWindowAttribute returns an HRESULT, not a Win32 error. A failure is stored as the last error
+ * unchanged, so window_state_adapter_last_error reports the HRESULT value.
+ */
+static int nat_extended_frame_bounds(void *context, uintptr_t window, window_state_rect_t *rect) {
+    RECT value;
+    HRESULT result;
+    (void)context;
+    result = DwmGetWindowAttribute((HWND)window, DWMWA_EXTENDED_FRAME_BOUNDS, &value, sizeof(value));
+    if (result != S_OK) {
+        SetLastError((DWORD)result);
+        return 0;
+    }
+    rect->left = value.left;
+    rect->top = value.top;
+    rect->right = value.right;
+    rect->bottom = value.bottom;
+    return 1;
+}
+
 static const window_state_native_api_t NativeWindowStateApi = {
     .is_window = nat_is_window,
     .window_thread = nat_window_thread,
@@ -755,6 +799,7 @@ static const window_state_native_api_t NativeWindowStateApi = {
     .post_message = nat_post_message,
     .current_thread_id = nat_current_thread_id,
     .last_error = nat_last_error,
+    .extended_frame_bounds = nat_extended_frame_bounds,
 };
 
 const window_state_native_api_t *window_state_native_api(void) {

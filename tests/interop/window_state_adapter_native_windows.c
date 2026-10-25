@@ -12,6 +12,7 @@
 #include "window_state.h"
 
 #include <windows.h>
+#include <dwmapi.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -173,21 +174,25 @@ int main(void) {
     state = observe_state(adapter, window, &status);
     step("leave fullscreen observed without Fullscreen", status == WindowStateAdapterOk && (state & WaddleWindowStateFullscreen) == 0);
 
-    /* Geometry. */
-    memset(&action, 0, sizeof(action));
-    action.kind = WaddleWindowStateActionGuestSetGeometry;
-    action.x = 120;
-    action.y = 140;
-    action.width = 320;
-    action.height = 240;
-    status = run_one(adapter, window, &action, &completed);
-    step("set geometry completes", status == WindowStateAdapterOk && completed == 1);
+    /* Geometry: the origin is kept (the host sends x and y as zero), and the visible frame takes the size. */
     {
+        RECT origin_before;
         RECT current;
+        RECT visible;
+        GetWindowRect(window, &origin_before);
+        memset(&action, 0, sizeof(action));
+        action.kind = WaddleWindowStateActionGuestSetGeometry;
+        action.x = 0;
+        action.y = 0;
+        action.width = 320;
+        action.height = 240;
+        status = run_one(adapter, window, &action, &completed);
+        step("set geometry completes", status == WindowStateAdapterOk && completed == 1);
         GetWindowRect(window, &current);
-        step("set geometry matches the requested rectangle",
-             current.left == 120 && current.top == 140 && current.right - current.left == 320 &&
-             current.bottom - current.top == 240);
+        DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &visible, sizeof(visible));
+        step("set geometry keeps the window origin", current.left == origin_before.left && current.top == origin_before.top);
+        step("set geometry sets the visible frame size",
+             visible.right - visible.left == 320 && visible.bottom - visible.top == 240);
     }
 
     /* Activation. */
