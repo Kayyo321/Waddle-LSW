@@ -43,7 +43,7 @@ pub const ReadError = error{ NotFound, Unreadable };
 /// Failure to canonicalize a host path.
 pub const PathError = error{ NotFound, Failed, OutOfMemory };
 /// Failure to translate a canonical host path into a guest path.
-pub const TranslateError = error{ Outside, Failed, OutOfMemory };
+pub const TranslateError = error{ Outside, Unrepresentable, Failed, OutOfMemory };
 /// Failure to connect to session.sock.
 pub const ConnectError = local.ConnectError;
 /// Failure of a socket read or write.
@@ -136,6 +136,8 @@ const Conn = struct {
     child_retry_spent: bool = false,
     /// True from connect until the first frame is written on this connection.
     fresh: bool = false,
+    /// integration.notify of the device: guest errors are also sent as desktop notifications.
+    notify: bool = false,
 };
 
 /// Outcome of waiting for the reply to one frame.
@@ -279,8 +281,20 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
         };
         const guest = hooks.translate(hooks.ctx, a, canonical) catch |err| switch (err) {
             error.Outside => return report_outside(hooks, a, host, &device),
+            error.Unrepresentable => return report_refused(hooks, a, host, &device, "the name contains characters that cannot be represented in a Windows path"),
             error.Failed, error.OutOfMemory => return 125,
         };
+        if (reserved_component(guest)) |component| {
+            var text = Message{};
+            text.add("waddle open: '");
+            text.add(host);
+            text.add("': '");
+            text.add(component);
+            text.add("' is a reserved Windows device name");
+            hooks.message(hooks.ctx, text.slice());
+            if (device.notify) hooks.notify(hooks.ctx, text.slice());
+            return open_request.ExitNotExecutable;
+        }
         const tail = args[item.argument_first..][0..item.argument_count];
         if (item.kind == .DelegateExec) {
             delegated = .{ .guest = guest, .tail = tail };
@@ -296,7 +310,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
 
     const token = pick_token(hooks);
     const wait = request.wait != 0;
-    var conn = Conn{};
+    var conn = Conn{ .notify = device.notify };
     var pacing = Pacing{ .deadline = hooks.now_ms(hooks.ctx) + DeadlineMs };
     var result: u8 = 0;
     var position: usize = 0;
@@ -435,6 +449,40 @@ fn report_parse_error(hooks: *const Hooks, a: std.mem.Allocator, status: open_re
     return code;
 }
 
+/// Report a path the client refuses for a reason other than being outside the shares (exit 126).
+fn report_refused(hooks: *const Hooks, a: std.mem.Allocator, host: []const u8, device: *const Device, reason: []const u8) u8 {
+    const text = std.fmt.allocPrint(a, "waddle open: '{s}': {s}", .{ host, reason }) catch return 126;
+    hooks.message(hooks.ctx, text);
+    if (device.notify) hooks.notify(hooks.ctx, text);
+    return open_request.ExitNotExecutable;
+}
+
+/// True when name is a Windows reserved device name, with or without an extension: CON, PRN, AUX, NUL,
+/// COM1-9, LPT1-9, compared case-insensitively on the part before the first dot (so NUL.txt is reserved).
+pub fn reserved_name(name: []const u8) bool {
+    const stem = name[0 .. std.mem.indexOfScalar(u8, name, '.') orelse name.len];
+    if (stem.len == 0 or stem.len > 4) return false;
+    var upper: [4]u8 = undefined;
+    for (stem, 0..) |byte, index| upper[index] = std.ascii.toUpper(byte);
+    const text = upper[0..stem.len];
+    if (std.mem.eql(u8, text, "CON") or std.mem.eql(u8, text, "PRN") or std.mem.eql(u8, text, "AUX") or std.mem.eql(u8, text, "NUL")) return true;
+    if (stem.len == 4 and (std.mem.startsWith(u8, text, "COM") or std.mem.startsWith(u8, text, "LPT"))) {
+        return text[3] >= '1' and text[3] <= '9';
+    }
+    return false;
+}
+
+/// The first component of a guest path that is a Windows reserved device name, or null. Both separators
+/// split components; the drive prefix (for example "Z:") is never a device name.
+pub fn reserved_component(guest: []const u8) ?[]const u8 {
+    var parts = std.mem.tokenizeAny(u8, guest, "/\\");
+    while (parts.next()) |component| {
+        if (std.mem.indexOfScalar(u8, component, ':') != null) continue;
+        if (reserved_name(component)) return component;
+    }
+    return null;
+}
+
 fn report_outside(hooks: *const Hooks, a: std.mem.Allocator, host: []const u8, device: *const Device) u8 {
     const text = std.fmt.allocPrint(a, "'{s}' is outside the folders shared with Windows ({s}). Add a share with: waddle device config set filesystem.<name> <dir>:<drive>:\"", .{ host, device.name }) catch return 126;
     hooks.message(hooks.ctx, text);
@@ -563,6 +611,7 @@ fn connect_session(hooks: *const Hooks, device: *const Device, conn: *Conn) ?u8 
             message.add(device.name);
             message.add(") did not start");
             hooks.message(hooks.ctx, message.slice());
+            if (device.notify) hooks.notify(hooks.ctx, message.slice());
             return 125;
         }
         hooks.sleep_ms(hooks.ctx, backoff);
@@ -607,7 +656,9 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
             if (c.interop_field_get(payload.ptr, payload.len, c.InteropTagMessage, 0, &value, &value_length) == 0) {
                 message = printable(a, value.?[0..value_length]) catch "message unavailable";
             }
-            hooks.message(hooks.ctx, std.fmt.allocPrint(a, "waddle open: launch refused: {s}", .{message orelse "no message"}) catch "waddle open: launch refused");
+            const text = std.fmt.allocPrint(a, "waddle open: launch refused: {s}", .{message orelse "no message"}) catch "waddle open: launch refused";
+            hooks.message(hooks.ctx, text);
+            if (conn.notify) hooks.notify(hooks.ctx, text);
             return Reply{ .exit = 1 };
         }
         if (header.type != c.InteropMsgLaunchResult) continue;
@@ -621,7 +672,9 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
         var value_length: u16 = 0;
         const raw: []const u8 = if (c.interop_field_get(payload.ptr, payload.len, c.InteropTagMessage, 0, &value, &value_length) == 0) value.?[0..value_length] else "launch failed";
         const message = printable(a, raw) catch "launch failed";
-        hooks.message(hooks.ctx, std.fmt.allocPrint(a, "waddle open: {s}", .{message}) catch "waddle open: launch failed");
+        const text = std.fmt.allocPrint(a, "waddle open: {s}", .{message}) catch "waddle open: launch failed";
+        hooks.message(hooks.ctx, text);
+        if (conn.notify) hooks.notify(hooks.ctx, text);
         return Reply{ .exit = open_request.exit_code_for_launch_status(@intCast(status)) };
     }
 }
@@ -748,9 +801,10 @@ const RealHooks = struct {
         const zpath = a.dupeZ(u8, path) catch return error.OutOfMemory;
         defer a.free(zpath);
         const mapped = c.daemon_fs_translate_path(zpath.ptr, &self.config) orelse {
-            // EXDEV: no export contains the path; EINVAL: invalid input. Both mean outside every share.
+            // EXDEV: no export contains the path. EINVAL: the name cannot be represented in a guest path
+            // (for example a backslash inside a component); that is not the same as being outside.
             const code = std.c._errno().*;
-            return if (code == c.EXDEV or code == c.EINVAL) error.Outside else if (code == c.ENOMEM) error.OutOfMemory else error.Failed;
+            return if (code == c.EXDEV) error.Outside else if (code == c.EINVAL) error.Unrepresentable else if (code == c.ENOMEM) error.OutOfMemory else error.Failed;
         };
         defer c.free(mapped);
         return a.dupe(u8, std.mem.span(mapped)) catch error.OutOfMemory;
@@ -925,6 +979,8 @@ const Fake = struct {
     fail_write: bool = false,
     fail_realpath: bool = false,
     written: [8192]u8 = undefined,
+    /// Every translation fails as an unrepresentable name (EINVAL in production).
+    unrepresentable: bool = false,
     /// Writes attempted; bytes beyond the written buffer are counted but not kept.
     writes: usize = 0,
     /// Connections (counted from 1) that end at once without a reply, as a session that accepts and drops.
@@ -1026,6 +1082,7 @@ fn fake_realpath(ctx: *anyopaque, a: std.mem.Allocator, path: []const u8) PathEr
 
 fn fake_translate(ctx: *anyopaque, a: std.mem.Allocator, path: []const u8) TranslateError![]u8 {
     const f = Fake.of(ctx);
+    if (f.unrepresentable) return error.Unrepresentable;
     if (!std.mem.startsWith(u8, path, f.share_prefix)) return error.Outside;
     const rest = path[f.share_prefix.len..];
     const guest = std.fmt.allocPrint(a, "Z:\\{s}", .{rest}) catch return error.OutOfMemory;
@@ -1459,6 +1516,80 @@ test "a connection that ends before any reply is retried on a new connection whe
     try testing.expectEqual(@as(usize, 0), fake.message_count);
 }
 
+test "a name that cannot be represented exits 126 and is not reported as outside the shares" {
+    var fake = Fake{ .unrepresentable = true, .connect_script = &.{@as(c_int, 7)}, .device = .{ .name = "dev1", .session_path = "/run/u/waddle/dev1/session.sock", .notify = true } };
+    try testing.expectEqual(open_request.ExitNotExecutable, run_fake(&fake, &.{"/share/a\\b.txt"}));
+    const text = fake.message_at(0);
+    try testing.expect(std.mem.indexOf(u8, text, "cannot be represented") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "outside") == null);
+    try testing.expectEqual(@as(usize, 0), fake.connect_calls);
+    try testing.expectEqualSlices(u8, text, fake.notify_text[0..fake.notify_len]);
+}
+
+test "Windows reserved device names are recognised with or without an extension, and only as whole components" {
+    try testing.expect(reserved_name("CON"));
+    try testing.expect(reserved_name("nul.txt"));
+    try testing.expect(reserved_name("Aux.log"));
+    try testing.expect(reserved_name("PRN"));
+    try testing.expect(reserved_name("COM1"));
+    try testing.expect(reserved_name("lpt9.dat"));
+    try testing.expect(!reserved_name("COM10"));
+    try testing.expect(!reserved_name("LPT0"));
+    try testing.expect(!reserved_name("console.txt"));
+    try testing.expect(!reserved_name("nu"));
+    try testing.expect(!reserved_name(""));
+    try testing.expectEqualSlices(u8, "aux.log", reserved_component("Z:\\dir\\aux.log").?);
+    try testing.expectEqualSlices(u8, "NUL", reserved_component("Z:/x/NUL").?);
+    try testing.expect(reserved_component("Z:\\dir\\file.txt") == null);
+}
+
+test "a reserved device name in a translated path exits 126 before any connect" {
+    var fake = Fake{ .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(open_request.ExitNotExecutable, run_fake(&fake, &.{"/share/dir/LPT9.log"}));
+    try testing.expect(std.mem.indexOf(u8, fake.message_at(0), "reserved Windows device name") != null);
+    try testing.expectEqual(@as(usize, 0), fake.connect_calls);
+}
+
+test "the cold-start deadline and a guest error are notified when integration.notify is on" {
+    var deadline = Fake{ .device = .{ .name = "dev1", .session_path = "/run/u/waddle/dev1/session.sock", .notify = true }, .connect_script = &.{error.Refused} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&deadline, &.{"/share/a.txt"}));
+    try testing.expectEqualSlices(u8, "waddle: Windows (dev1) did not start", deadline.notify_text[0..deadline.notify_len]);
+
+    var reply: [256]u8 = undefined;
+    const refused = launch_result(&reply, 1, 2, "bad path");
+    var guest = Fake{ .device = .{ .name = "dev1", .session_path = "/run/u/waddle/dev1/session.sock", .notify = true }, .incoming = refused, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 1), run_fake(&guest, &.{ "--wait", "/share/a.txt" }));
+    try testing.expectEqualSlices(u8, "waddle open: bad path", guest.notify_text[0..guest.notify_len]);
+}
+
+test "a frame of another type for this request is ignored, and the LaunchResult after it still counts" {
+    var other: [c.InteropHeaderBytes]u8 = undefined;
+    var writer: c.interop_writer_t = undefined;
+    c.interop_writer_init(&writer, &other, other.len);
+    var other_length: usize = 0;
+    codec_ok(c.interop_writer_finish(&writer, c.InteropMsgLocalStop, 1, c.InteropFromLocal, &other_length));
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ other[0..other_length], ok });
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+}
+
+test "a LaunchResult whose payload does not validate is a protocol failure (exit 125)" {
+    // A header-only frame patched to LaunchResult with a four-byte payload whose field claims eight bytes.
+    var reply: [32]u8 = undefined;
+    var writer: c.interop_writer_t = undefined;
+    c.interop_writer_init(&writer, &reply, reply.len);
+    var length: usize = 0;
+    codec_ok(c.interop_writer_finish(&writer, c.InteropMsgLocalStop, 1, c.InteropFromLocal, &length));
+    std.mem.writeInt(u16, reply[6..8], c.InteropMsgLaunchResult, .little);
+    std.mem.writeInt(u32, reply[8..12], 4, .little);
+    reply[16..20].* = .{ 1, 0, 8, 0 };
+    var fake = Fake{ .incoming = reply[0..20], .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+}
+
 test "a Busy LaunchResult is retried on a new connection, not reported as a guest failure" {
     var busy_reply: [256]u8 = undefined;
     var ok_reply: [256]u8 = undefined;
@@ -1486,13 +1617,15 @@ test "an unsolicited Error with request id 0 means busy and is retried" {
 
 test "guest text reaches the terminal with control bytes and escape sequences replaced" {
     var reply: [256]u8 = undefined;
-    const hostile = "\x1b[2Jcleared\x7f\xc2\x9b31m done";
+    const hostile = "\x1b[2Jcleared\x7f\xc2\x9b31m done \xc3\xa9";
     const frame = launch_result(&reply, 1, 3, hostile);
     var fake = Fake{ .incoming = frame, .connect_script = &.{@as(c_int, 7)} };
     try testing.expectEqual(open_request.ExitGuestFailure, run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
     const text = fake.message_at(0);
     for (text) |byte| try testing.expect(byte >= 0x20 and byte != 0x7f);
     try testing.expect(std.mem.indexOf(u8, text, "cleared") != null);
+    // Ordinary UTF-8 (a two-byte sequence that is not a C1 control) passes through unchanged.
+    try testing.expect(std.mem.endsWith(u8, text, "\xc3\xa9"));
 }
 
 test "a frame that cannot be built closes its connection before the run ends" {
