@@ -274,7 +274,7 @@ fn report_parse_error(hooks: *const Hooks, a: std.mem.Allocator, status: open_re
     else if (status == .ImageUnreadable)
         std.fmt.allocPrint(a, "waddle open: '{s}': cannot read the executable header", .{parse_ctx.unreadable orelse ""}) catch return code
     else
-        std.fmt.allocPrint(a, "waddle open: invalid request ({s})", .{@tagName(status)}) catch return code;
+        std.fmt.allocPrint(a, "waddle open: invalid request (code {d})", .{@intFromEnum(status)}) catch return code;
     hooks.message(hooks.ctx, text);
     if (code == open_request.ExitUsage) hooks.message(hooks.ctx, UsageText);
     return code;
@@ -1702,5 +1702,17 @@ test "frames of other types and other request ids are skipped until the matching
     defer testing.allocator.free(incoming);
     var fake = Fake{ .incoming = incoming, .connect_script = &.{@as(c_int, 7)} };
     try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+}
+
+test "a LaunchResult sent in the wrong direction fails payload validation and exits 125" {
+    var writer: c.interop_writer_t = undefined;
+    var reply: [256]u8 = undefined;
+    c.interop_writer_init(&writer, &reply, reply.len);
+    _ = c.interop_put_uint(&writer, c.InteropTagProcessId, 4242);
+    _ = c.interop_put_uint(&writer, c.InteropTagStatus, 0);
+    var length: usize = 0;
+    _ = c.interop_writer_finish(&writer, c.InteropMsgLaunchResult, 1, c.InteropFromLocal, &length);
+    var fake = Fake{ .incoming = reply[0..length], .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
 }
 
