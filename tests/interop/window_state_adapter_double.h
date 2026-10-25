@@ -51,7 +51,7 @@ typedef enum wsa_double_entry_t {
 #define WsaFrameMaskMaximizeBox 0x00010000LL
 #define WsaFrameMaskMinimizeBox 0x00020000LL
 /** @brief Number of double windows. */
-#define WsaDoubleMaxWindows 72
+#define WsaDoubleMaxWindows 256
 /** @brief Capacity of the call log. */
 #define WsaDoubleLogCapacity 1024
 
