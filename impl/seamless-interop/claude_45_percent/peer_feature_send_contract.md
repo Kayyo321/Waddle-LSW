@@ -195,18 +195,19 @@ validate request identifier classes; the dispatcher owns that check.
 
 ## 12. Verification
 
-- `make interop-control-peer-test` (Zig, named-module root): 65 tests, all passing.
-  Covers the complete 0..65535 table sweep with the CursorConstraint payload, facility
-  gating on both directions, the request class rules, identifier stamping and echo,
-  the 4032 cap with liveness still reserving, wraparound past UINT32_MAX, the data-queue
-  boundary, an allocation failure with a full snapshot comparison, the exact Ready
-  deadline, and the 3000-step random admission sequence.
-- `make interop-control-peer-abi-test` (85 Zig tests plus the C client): pointer, alias,
-  token and time guards; every mapped result including RequestIdsFull, UnknownRequestId
-  and RequestRetired; the exact Ready deadline boundary; release and stamping through
-  the ABI.
-- Coverage: see the lead's gate list in the lane report (`tests/av/coverage.py control_peer`
-  and `control_peer_abi`).
+- `make interop-control-peer-test` (Zig named-module root): 65 tests, all passing. Covers the
+  0..65535 table sweep (each type probed with an empty payload; only CursorConstraint, which
+  needs its pressed field, reports MalformedField), the CursorConstraint pressed rule, facility
+  gating on both directions, the request class rules, identifier stamping and echo, the 4032 cap
+  with liveness still reserving, wraparound past UINT32_MAX, the data-queue boundary, an
+  allocation failure with a full snapshot comparison, the exact Ready deadline, and the
+  3000-step random admission sequence.
+- `make interop-control-peer-abi-test` (85 Zig tests plus the C client): pointer, alias, token
+  and time guards; every mapped result including RequestIdsFull, UnknownRequestId and
+  RequestRetired; the exact Ready deadline boundary; release and stamping through the ABI.
+- Coverage (`python3 tests/av/coverage.py <mode>`): `control_peer` branch 90.41% (396/438), line
+  96.86% (587/606), 135 panic guards excluded; `control_peer_abi` branch 92.93% (171/184), line
+  97.50% (234/240), 24 panic guards excluded.
 
 ## 13. Open items
 

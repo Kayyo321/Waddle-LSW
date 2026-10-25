@@ -170,11 +170,13 @@ before this contract, except that a refused unnegotiated frame now yields
 
 ## 10. Verification
 
-Tests in `tests/interop/session_control_host.c` cover: exact type, request identifier and
-bytes for both directions; FeatureFailed and on_closing exactly once; an unnegotiated
+Tests in `tests/interop/session_control_host.c` cover: exact type, request identifier and bytes in
+both directions; every sender refusal; FeatureFailed and on_closing exactly once; an unnegotiated
 inbound frame; extra descriptor readiness through on_fds; deadline and tick firing;
-`run_for_ms == 0` with ops and the NULL-ops rejection; send after closing; cancellation;
-guest disconnect mid-run; the re-entrancy guard; configuration rejections; and a stress run of
-2000 frames in each direction interleaved with heartbeats. The runtime coverage gate is
-`tests/interop/session_control_host_coverage.py` (90% lines and branches), run under ASan,
-LSan and UBSan.
+`run_for_ms == 0` with ops and its rejection without ops; a send from on_closing; cancellation; a
+guest disconnect mid-run; the re-entrancy guard; and a 2000-frame stress run each way with
+heartbeats. `tests/interop/session_control_host_private.c` covers the invalid-sender arms, the
+drain helpers and the configuration rejections. A remote Error in Ready starts the drain. The
+runtime coverage gate (`tests/interop/session_control_host_coverage.py`) reports 96.42% line
+(458/475) and 90.20% branch (460/510); the CLI scope reports 96.64% line and 92.61% branch. The
+ASan/LSan/UBSan integration passed for both scopes.
