@@ -257,6 +257,8 @@ device-stress: build/waddle
 
 include scripts/av.mk
 include scripts/interop.mk
+-include $(sort $(wildcard scripts/interop_lane_*.mk))
+include scripts/interop_lanes.mk
 
 include scripts/mesa_cpu_cache.mk
 include scripts/vgpu.mk
