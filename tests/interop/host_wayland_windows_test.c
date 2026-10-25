@@ -911,6 +911,255 @@ static int check_popup_refusals_and_rollback(void) {
     return 0;
 }
 
+/* ---- update, retire and reset (3.2.8, 4.3, 4.7, 8.44) ------------------------------------------------ */
+
+typedef struct update_spec_t {
+    uint64_t window;
+    uint64_t generation;
+    bool has_parent;
+    uint64_t parent;
+    uint64_t parent_generation;
+    const char *title;
+    bool has_min_size;
+    uint32_t min_width;
+    uint32_t min_height;
+} update_spec_t;
+
+static size_t build_update(uint8_t *frame, size_t capacity, const update_spec_t *spec) {
+    interop_writer_t writer;
+    interop_writer_init(&writer, frame, capacity);
+    interop_put_uint(&writer, InteropTagWindow, spec->window);
+    interop_put_uint(&writer, InteropTagGeneration, spec->generation);
+    if (spec->has_parent) {
+        interop_put_uint(&writer, InteropTagParent, spec->parent);
+        interop_put_uint(&writer, InteropTagParentGeneration, spec->parent_generation);
+    }
+    interop_put_rect(&writer, InteropTagRect, 10, 20, 640, 480);
+    if (spec->title) interop_put_bytes(&writer, InteropTagTitle, spec->title, (uint16_t)strlen(spec->title));
+    interop_put_uint(&writer, InteropTagState, 0);
+    interop_put_uint(&writer, InteropTagDpi, 96);
+    if (spec->has_min_size) {
+        uint8_t minimum[8];
+        for (unsigned byte = 0; byte < 4; ++byte) {
+            minimum[byte] = (uint8_t)(spec->min_width >> (8 * byte));
+            minimum[4 + byte] = (uint8_t)(spec->min_height >> (8 * byte));
+        }
+        interop_put_bytes(&writer, InteropTagMinSize, minimum, sizeof minimum);
+    }
+    size_t length = 0;
+    if (interop_writer_finish(&writer, InteropMsgWindowUpdate, 0, InteropFromGuest, &length) != InteropErrorNone) return 0;
+    return length;
+}
+
+static size_t build_retire(uint8_t *frame, size_t capacity, uint64_t window, uint64_t generation) {
+    interop_writer_t writer;
+    interop_writer_init(&writer, frame, capacity);
+    interop_put_uint(&writer, InteropTagWindow, window);
+    interop_put_uint(&writer, InteropTagGeneration, generation);
+    size_t length = 0;
+    if (interop_writer_finish(&writer, InteropMsgWindowRetire, 0, InteropFromGuest, &length) != InteropErrorNone) return 0;
+    return length;
+}
+
+static host_wayland_status_t update_frame(const update_spec_t *spec) {
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = build_update(frame, sizeof frame, spec);
+    if (length == 0) return HostWaylandMalformedFrame;
+    return host_wayland_windows_handle_frame(&session_ctx, frame, length, 1000);
+}
+
+static host_wayland_status_t retire_frame(uint64_t window, uint64_t generation) {
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = build_retire(frame, sizeof frame, window, generation);
+    if (length == 0) return HostWaylandMalformedFrame;
+    return host_wayland_windows_handle_frame(&session_ctx, frame, length, 1000);
+}
+
+/** @brief Borrowed fixture proxies (compositor, wm_base, decoration manager) that the module never destroys. */
+static bool is_fixture_proxy(unsigned index) {
+    const char *iface = fake_proxies[index].iface;
+    return iface && (!strcmp(iface, "wl_compositor") || !strcmp(iface, "xdg_wm_base") || !strcmp(iface, "zxdg_decoration_manager_v1"));
+}
+
+/** @brief Index of the destroy request sent on `proxy`, or -1. */
+static int destroy_index_of(unsigned proxy) {
+    for (unsigned index = 0; index < fake_request_count; ++index) {
+        if (fake_requests[index].destroy && fake_requests[index].proxy == proxy) return (int)index;
+    }
+    return -1;
+}
+
+/** @brief Toplevel 1 with a dialog 2, a menu 3 under it, a tooltip 4 under the menu, and an unrelated toplevel 5. */
+static int build_tree(void) {
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    announce_spec_t dialog = toplevel_spec(2, 1, "a-child");
+    dialog.role = 2;
+    dialog.has_parent = true;
+    dialog.parent = 1;
+    dialog.parent_generation = 1;
+    Check(announce_spec(&session_ctx, &dialog) == HostWaylandOk);
+    announce_spec_t menu = menu_spec(3, 1, 1, 3, 40, 40, 300, 200);
+    Check(announce_spec(&session_ctx, &menu) == HostWaylandOk);
+    announce_spec_t tooltip = menu_spec(4, 3, 1, 4, 40, 150, 40, 40);
+    Check(announce_spec(&session_ctx, &tooltip) == HostWaylandOk);
+    announce_spec_t other = toplevel_spec(5, 1, "a-other");
+    Check(announce_spec(&session_ctx, &other) == HostWaylandOk);
+    return 0;
+}
+
+static int check_update_title_and_size(void) {
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t spec = toplevel_spec(1, 1, "a-root");
+    spec.title = "One";
+    Check(announce_spec(&session_ctx, &spec) == HostWaylandOk);
+    unsigned titles = fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_TITLE);
+    update_spec_t same = {1, 1, false, 0, 0, "One", false, 0, 0};
+    Check(update_frame(&same) == HostWaylandOk);
+    /* A title equal to the stored one is not sent again. */
+    Check(fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_TITLE) == titles);
+    update_spec_t changed = {1, 1, false, 0, 0, "Two", false, 0, 0};
+    Check(update_frame(&changed) == HostWaylandOk);
+    int title = fake_find("xdg_toplevel", XDG_TOPLEVEL_SET_TITLE, fake_request_count - 1);
+    Check(title >= 0 && !strcmp(fake_requests[title].text, "Two"));
+    update_spec_t minimum = {1, 1, false, 0, 0, NULL, true, 1200, 602};
+    Check(update_frame(&minimum) == HostWaylandOk);
+    int minimum_request = fake_find("xdg_toplevel", XDG_TOPLEVEL_SET_MIN_SIZE, 0);
+    Check(minimum_request >= 0 && fake_requests[minimum_request].a0 == 1200 && fake_requests[minimum_request].a1 == 602);
+    /* An update for a window that was never realized is stale and refused. */
+    update_spec_t stale = {9, 1, false, 0, 0, "x", false, 0, 0};
+    Check(update_frame(&stale) == HostWaylandRefused);
+    Check(captured.last_refused_type == 0x0101 && captured.last_error_code == InteropErrorStaleWindow);
+    return 0;
+}
+
+static int check_update_parent(void) {
+    Check(build_tree() == 0);
+    /* A Dialog moves to another realized toplevel: the table accepts it and set_parent follows. */
+    announce_spec_t other_root = toplevel_spec(6, 1, "a-second");
+    Check(announce_spec(&session_ctx, &other_root) == HostWaylandOk);
+    unsigned before = fake_request_count;
+    update_spec_t move = {2, 1, true, 6, 1, NULL, false, 0, 0};
+    Check(update_frame(&move) == HostWaylandOk);
+    int parent = fake_find("xdg_toplevel", XDG_TOPLEVEL_SET_PARENT, before);
+    unsigned second = fake_nth("xdg_toplevel", 3);
+    Check(parent >= 0 && fake_requests[parent].proxy == fake_nth("xdg_toplevel", 1) && fake_requests[parent].a0 == (long long)second);
+    host_window_entry_t entry;
+    Check(host_window_map_lookup(&session_ctx.map, (host_window_ref_t){2, 1}, &entry) && entry.parent.window == 6);
+
+    /* A parent that is not realized is refused, and the dialog keeps its parent. */
+    update_spec_t missing = {2, 1, true, 9, 1, NULL, false, 0, 0};
+    Check(update_frame(&missing) == HostWaylandRefused);
+    Check(captured.last_error_code == InteropErrorStaleWindow);
+    Check(host_window_map_lookup(&session_ctx.map, (host_window_ref_t){2, 1}, &entry) && entry.parent.window == 6);
+
+    /* A toplevel never changes parent; a popup keeps the parent it was realized with. */
+    update_spec_t toplevel = {5, 1, true, 1, 1, NULL, false, 0, 0};
+    Check(update_frame(&toplevel) == HostWaylandRefused);
+    Check(captured.last_error_code == InteropErrorProtocolViolation);
+    update_spec_t popup = {4, 1, true, 1, 1, NULL, false, 0, 0};
+    Check(update_frame(&popup) == HostWaylandRefused);
+    Check(captured.last_error_code == InteropErrorProtocolViolation);
+    Check(host_window_map_lookup(&session_ctx.map, (host_window_ref_t){4, 1}, &entry) && entry.parent.window == 3);
+    return 0;
+}
+
+static int check_retire_order(void) {
+    Check(build_tree() == 0);
+    unsigned root_toplevel = fake_nth("xdg_toplevel", 0);
+    unsigned dialog_toplevel = fake_nth("xdg_toplevel", 1);
+    unsigned menu = fake_nth("xdg_popup", 0);
+    unsigned tooltip = fake_nth("xdg_popup", 1);
+    unsigned other_toplevel = fake_nth("xdg_toplevel", 2);
+    unsigned root_decoration = fake_nth("zxdg_toplevel_decoration_v1", 0);
+    unsigned root_surface = fake_nth("xdg_surface", 0);
+    unsigned root_wl_surface = fake_nth("wl_surface", 0);
+    Check(retire_frame(1, 1) == HostWaylandOk);
+
+    /* Every window of the subtree is destroyed child first: tooltip, menu, dialog, root. */
+    int tooltip_destroy = destroy_index_of(tooltip), menu_destroy = destroy_index_of(menu);
+    int dialog_destroy = destroy_index_of(dialog_toplevel), root_destroy = destroy_index_of(root_toplevel);
+    Check(tooltip_destroy >= 0 && menu_destroy > tooltip_destroy);
+    Check(dialog_destroy >= 0 && root_destroy > dialog_destroy && root_destroy > menu_destroy);
+    /* Within a window: decoration before its toplevel or popup, then xdg_surface, then wl_surface. */
+    int decoration_destroy = destroy_index_of(root_decoration);
+    Check(decoration_destroy >= 0 && decoration_destroy < root_destroy);
+    Check(destroy_index_of(root_surface) > root_destroy);
+    Check(destroy_index_of(root_wl_surface) > destroy_index_of(root_surface));
+    /* The unrelated toplevel and its objects are untouched. */
+    Check(destroy_index_of(other_toplevel) < 0);
+    Check(host_wayland_windows_window_count(&session_ctx) == 1);
+    Check(host_wayland_windows_is_mapped(&session_ctx, 5, 1) == false);
+    return 0;
+}
+
+static int check_retire_stale_and_invalid(void) {
+    Check(build_tree() == 0);
+    unsigned before = fake_request_count;
+    Check(retire_frame(9, 1) == HostWaylandOk);
+    Check(retire_frame(1, 2) == HostWaylandOk);
+    Check(fake_request_count == before);
+    Check(retire_frame(0, 1) == HostWaylandMalformedFrame);
+    Check(host_wayland_windows_window_count(&session_ctx) == 5);
+    return 0;
+}
+
+static int check_late_events_after_retire(void) {
+    Check(build_tree() == 0);
+    unsigned root_toplevel = fake_nth("xdg_toplevel", 0);
+    unsigned root_surface = fake_nth("xdg_surface", 0);
+    unsigned menu = fake_nth("xdg_popup", 0);
+    Check(retire_frame(1, 1) == HostWaylandOk);
+    unsigned acks = fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE);
+    deliver_surface_configure(root_surface, 3);
+    deliver_toplevel_configure(root_toplevel, 100, 100, NULL, 0);
+    deliver_toplevel_close(root_toplevel);
+    deliver_popup_configure(menu, 1, 2, 3, 4);
+    deliver_popup_done(menu);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == acks);
+    Check(captured.configures == 0 && captured.closes == 0 && captured.repositioned == 0 && captured.dismissed == 0);
+    return 0;
+}
+
+static int check_retire_releases_press(void) {
+    Check(build_tree() == 0);
+    Check(host_wayland_windows_record_press(&session_ctx, 300, 40, (struct wl_seat *)fake_object(fake_new("wl_seat")), 2, 1, 1000) == HostWaylandOk);
+    Check(press_find(&session_ctx, 300, 1000) != NULL);
+    Check(retire_frame(2, 1) == HostWaylandOk);
+    Check(press_find(&session_ctx, 300, 1000) == NULL);
+    return 0;
+}
+
+static int check_reset(void) {
+    Check(build_tree() == 0);
+    unsigned creates = fake_creates, destroys = fake_destroys;
+    Check(host_wayland_windows_reset(&session_ctx) == HostWaylandOk);
+    Check(!session_ctx.initialized && host_wayland_windows_window_count(&session_ctx) == 0);
+    Check(host_wayland_windows_reset(&session_ctx) == HostWaylandNotInitialized);
+    /* Reset destroys exactly the objects that were alive: created minus destroyed minus the borrowed fixtures. */
+    Check(fake_destroys - destroys == creates - destroys - fixture_creates);
+    Check(fake_creates - fixture_creates == fake_destroys && fake_double_destroys == 0);
+    for (unsigned index = 0; index < fake_proxy_count; ++index) {
+        if (is_fixture_proxy(index)) continue;
+        Check(!fake_proxies[index].live);
+    }
+    /* Teardown is children first across the whole tree. */
+    Check(destroy_index_of(fake_nth("xdg_popup", 1)) < destroy_index_of(fake_nth("xdg_popup", 0)));
+    Check(destroy_index_of(fake_nth("xdg_popup", 0)) < destroy_index_of(fake_nth("xdg_toplevel", 0)));
+    Check(destroy_index_of(fake_nth("xdg_toplevel", 1)) < destroy_index_of(fake_nth("xdg_toplevel", 0)));
+
+    /* A corrupt table cannot give an order, but every record still goes: none may leak. */
+    Check(build_tree() == 0);
+    session_ctx.map.realized_count = 99;
+    creates = fake_creates;
+    destroys = fake_destroys;
+    Check(host_wayland_windows_reset(&session_ctx) == HostWaylandOk);
+    Check((fake_destroys - destroys) > 0 && fake_double_destroys == 0);
+    Check(fake_creates - fixture_creates == fake_destroys);
+    return 0;
+}
+
 int main(void) {
     if (check_init() != 0) return 1;
     if (check_scale() != 0) return 1;
@@ -933,6 +1182,13 @@ int main(void) {
     if (check_nested_popup() != 0) return 1;
     if (check_popup_reposition_and_dismiss() != 0) return 1;
     if (check_popup_refusals_and_rollback() != 0) return 1;
+    if (check_update_title_and_size() != 0) return 1;
+    if (check_update_parent() != 0) return 1;
+    if (check_retire_order() != 0) return 1;
+    if (check_retire_stale_and_invalid() != 0) return 1;
+    if (check_late_events_after_retire() != 0) return 1;
+    if (check_retire_releases_press() != 0) return 1;
+    if (check_reset() != 0) return 1;
     puts("host_wayland_windows_test: all checks passed");
     return 0;
 }

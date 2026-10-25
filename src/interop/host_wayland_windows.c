@@ -652,6 +652,195 @@ static host_wayland_status_t handle_announce(host_wayland_t *ctx, const uint8_t 
     return HostWaylandOk;
 }
 
+/* ---- update and retire (4.3, 8.44, 3.2.8) ---------------------------------------------------------- */
+
+/** @brief Decoded WindowUpdate. Optional members are present only when their field was sent. */
+typedef struct update_t {
+    uint64_t window;
+    uint64_t generation;
+    int32_t x;
+    int32_t y;
+    uint32_t width;
+    uint32_t height;
+    bool has_title;
+    char title[InteropMaxTitleBytes + 1];
+    bool has_parent;
+    uint64_t parent;
+    uint64_t parent_generation;
+    bool has_min_size;
+    uint32_t min_width;
+    uint32_t min_height;
+} update_t;
+
+static int decode_update(const uint8_t *payload, size_t length, update_t *out) {
+    memset(out, 0, sizeof *out);
+    if (field_u64(payload, length, InteropTagWindow, &out->window) != 0) return -1;
+    if (field_u64(payload, length, InteropTagGeneration, &out->generation) != 0) return -1;
+    const uint8_t *rect = NULL;
+    uint16_t rect_length = 0;
+    if (interop_field_get(payload, length, InteropTagRect, 0u, &rect, &rect_length) != 0 || rect_length != 16u) return -1;
+    out->x = (int32_t)read_u32le(rect);
+    out->y = (int32_t)read_u32le(rect + 4);
+    out->width = read_u32le(rect + 8);
+    out->height = read_u32le(rect + 12);
+    bool present = false;
+    if (field_string(payload, length, InteropTagTitle, out->title, sizeof out->title, &present) != 0) return -1;
+    out->has_title = present;
+    int parent_result = field_u64(payload, length, InteropTagParent, &out->parent);
+    int parent_generation_result = field_u64(payload, length, InteropTagParentGeneration, &out->parent_generation);
+    if (parent_result < 0 || parent_generation_result < 0) return -1;
+    /* A parent is sent as a pair; a parent field without its generation, or the reverse, is malformed. */
+    if ((parent_result == 0) != (parent_generation_result == 0)) return -1;
+    out->has_parent = parent_result == 0;
+    const uint8_t *min_size = NULL;
+    uint16_t min_length = 0;
+    int min_result = interop_field_get(payload, length, InteropTagMinSize, 0u, &min_size, &min_length);
+    if (min_result < 0 || (min_result == 0 && min_length != 8u)) return -1;
+    if (min_result == 0) {
+        out->has_min_size = true;
+        out->min_width = read_u32le(min_size);
+        out->min_height = read_u32le(min_size + 4);
+    }
+    return 0;
+}
+
+/** @brief Record of a window that is realized exactly, or NULL. */
+static host_wayland_record_t *exact_record(host_wayland_t *ctx, uint64_t window, uint64_t generation) {
+    return find_record(ctx, window, generation);
+}
+
+/** @brief Mirror the record's parent onto the xdg_toplevel: set_parent for a toplevel or dialog parent, else unset. */
+static void mirror_parent(host_wayland_t *ctx, host_wayland_record_t *rec) {
+    host_wayland_record_t *target = find_record(ctx, rec->parent, rec->parent_generation);
+    if (target != NULL && (target->role == ROLE_TOPLEVEL || target->role == ROLE_DIALOG) && target->toplevel != NULL) {
+        xdg_toplevel_set_parent(rec->toplevel, target->toplevel);
+    } else {
+        xdg_toplevel_set_parent(rec->toplevel, NULL);
+    }
+}
+
+/** @brief Apply one WindowUpdate: title on change only, parent changes through the table, min size. */
+static host_wayland_status_t handle_update(host_wayland_t *ctx, const uint8_t *payload, size_t length) {
+    update_t req;
+    if (decode_update(payload, length, &req) != 0) return HostWaylandMalformedFrame;
+    host_wayland_record_t *rec = exact_record(ctx, req.window, req.generation);
+    if (rec == NULL) {
+        emit_error(ctx, 0x0101u, InteropErrorStaleWindow, req.window, req.generation);
+        return HostWaylandRefused;
+    }
+    rec->guest_x = req.x;
+    rec->guest_y = req.y;
+    rec->guest_width = req.width;
+    rec->guest_height = req.height;
+    if (role_is_popup(rec->role)) {
+        /* A popup keeps its parent: the table refuses popup reparenting with the same codes as announce. */
+        if (req.has_parent && (req.parent != rec->parent || req.parent_generation != rec->parent_generation)) {
+            host_window_ref_t child;
+            child.window = rec->window;
+            child.generation = rec->generation;
+            host_window_ref_t new_parent;
+            new_parent.window = req.parent;
+            new_parent.generation = req.parent_generation;
+            host_window_map_reparent_status_t status = host_window_map_reparent(&ctx->map, child, new_parent);
+            emit_error(ctx, 0x0101u, host_window_map_reparent_error_code(status), rec->window, rec->generation);
+            return HostWaylandRefused;
+        }
+        return HostWaylandOk;
+    }
+    if (req.has_title && (strlen(req.title) != rec->title_length || memcmp(req.title, rec->title, rec->title_length) != 0)) {
+        xdg_toplevel_set_title(rec->toplevel, req.title);
+        rec->title_length = (uint16_t)strlen(req.title);
+        memcpy(rec->title, req.title, rec->title_length + 1u);
+    }
+    if (req.has_parent && (req.parent != rec->parent || req.parent_generation != rec->parent_generation)) {
+        host_window_ref_t child;
+        child.window = rec->window;
+        child.generation = rec->generation;
+        host_window_ref_t new_parent;
+        new_parent.window = req.parent;
+        new_parent.generation = req.parent_generation;
+        host_window_map_reparent_status_t status = host_window_map_reparent(&ctx->map, child, new_parent);
+        if (status != HostWindowMapReparented) {
+            emit_error(ctx, 0x0101u, host_window_map_reparent_error_code(status), rec->window, rec->generation);
+            return HostWaylandRefused;
+        }
+        rec->parent = req.parent;
+        rec->parent_generation = req.parent_generation;
+        mirror_parent(ctx, rec);
+    }
+    if (req.has_min_size) {
+        xdg_toplevel_set_min_size(rec->toplevel, (int32_t)ceil_div_scale(req.min_width, ctx->scale), (int32_t)ceil_div_scale(req.min_height, ctx->scale));
+    }
+    return HostWaylandOk;
+}
+
+/** @brief Drop press entries whose trigger window is retired (3.6.2). */
+static void press_drop_window(host_wayland_t *ctx, uint64_t window, uint64_t generation) {
+    for (size_t index = 0; index < PRESS_COUNT; ++index) {
+        host_wayland_press_t *press = &ctx->presses[index];
+        if (press->live && press->window == window && press->generation == generation) press->live = 0;
+    }
+}
+
+/** @brief Destroy one window's objects and drop its press entries. */
+static void destroy_window(host_wayland_t *ctx, host_wayland_record_t *rec) {
+    uint64_t window = rec->window;
+    uint64_t generation = rec->generation;
+    destroy_record_objects(rec);
+    press_drop_window(ctx, window, generation);
+}
+
+/** @brief Retire a window and its subtree: the table gives the children-first order; each window goes in order. */
+static host_wayland_status_t retire_window(host_wayland_t *ctx, uint64_t window, uint64_t generation) {
+    host_window_ref_t id;
+    id.window = window;
+    id.generation = generation;
+    host_window_ref_t removed[HostWindowMapMaxOutput];
+    uint32_t count = 0;
+    host_window_map_retire_status_t status = host_window_map_retire(&ctx->map, id, removed, HostWindowMapMaxOutput, &count);
+    if (status == HostWindowMapStale) return HostWaylandOk;
+    if (status != HostWindowMapRetired) return HostWaylandMalformedFrame;
+    for (uint32_t index = 0; index < count; ++index) {
+        host_wayland_record_t *rec = find_record(ctx, removed[index].window, removed[index].generation);
+        if (rec != NULL) destroy_window(ctx, rec);
+    }
+    return HostWaylandOk;
+}
+
+static host_wayland_status_t handle_retire(host_wayland_t *ctx, const uint8_t *payload, size_t length) {
+    uint64_t window = 0;
+    uint64_t generation = 0;
+    if (field_u64(payload, length, InteropTagWindow, &window) != 0) return HostWaylandMalformedFrame;
+    if (field_u64(payload, length, InteropTagGeneration, &generation) != 0) return HostWaylandMalformedFrame;
+    return retire_window(ctx, window, generation);
+}
+
+/* ---- reset --------------------------------------------------------------------------------------- */
+
+host_wayland_status_t host_wayland_windows_reset(host_wayland_t *ctx) {
+    if (!context_ready(ctx)) return HostWaylandNotInitialized;
+    host_window_ref_t removed[HostWindowMapMaxOutput];
+    uint32_t count = 0;
+    if (host_window_map_reset(&ctx->map, removed, HostWindowMapMaxOutput, &count) == HostWindowMapReset) {
+        /* The table's teardown order: children before parents, roots newest first. */
+        for (uint32_t index = 0; index < count; ++index) {
+            host_wayland_record_t *rec = find_record(ctx, removed[index].window, removed[index].generation);
+            if (rec != NULL) destroy_record_objects(rec);
+        }
+    } else {
+        /* A corrupt table cannot give an order. Its records are still the objects to destroy: slot order, newest first. */
+        for (size_t index = HostWindowMapMaxRealized; index > 0; --index) {
+            host_wayland_record_t *rec = &ctx->records[index - 1];
+            if (rec->generation != 0) destroy_record_objects(rec);
+        }
+    }
+    memset(&ctx->map, 0, sizeof ctx->map);
+    memset(ctx->presses, 0, sizeof ctx->presses);
+    memset(ctx->records, 0, sizeof ctx->records);
+    ctx->initialized = 0;
+    return HostWaylandOk;
+}
+
 /* ---- frames ------------------------------------------------------------------------------------ */
 
 host_wayland_status_t host_wayland_windows_handle_frame(host_wayland_t *ctx, const uint8_t *frame, size_t length, uint64_t now_ms) {
@@ -665,6 +854,10 @@ host_wayland_status_t host_wayland_windows_handle_frame(host_wayland_t *ctx, con
     switch (header.type) {
     case InteropMsgWindowAnnounce:
         return handle_announce(ctx, payload, header.length, now_ms);
+    case InteropMsgWindowUpdate:
+        return handle_update(ctx, payload, header.length);
+    case InteropMsgWindowRetire:
+        return handle_retire(ctx, payload, header.length);
     default:
         return HostWaylandUnsupportedType;
     }
