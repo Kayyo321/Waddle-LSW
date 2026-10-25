@@ -287,16 +287,24 @@ static int apply_actions(session_windows_handler_t *handler, uint64_t window, ui
 /**
  * @brief Plan one input on a reducer, execute its host actions and complete it. A failed action completes the
  * prefix that succeeded, which makes the reducer resynchronize on the next observation (window_state contract).
- * Returns nonzero when the plan itself was refused; the refusal is counted by the caller.
+ * Returns RunInputApplied (0) when every host action succeeded, RunInputActionFailed (2) when the reducer took the
+ * completion of a prefix (the host state did not change as requested), and RunInputRefused (1) when the plan or the
+ * completion was refused, in which case nothing changed.
  */
+enum {
+    RunInputApplied = 0,
+    RunInputRefused = 1,
+    RunInputActionFailed = 2
+};
+
 static int run_input(session_windows_handler_t *handler, uint32_t index, const waddle_window_state_input_t *input) {
     waddle_window_state_plan_t plan;
-    if (reducer_plan(handler, index, input, &plan) != WaddleWindowStateOk) return 1;
+    if (reducer_plan(handler, index, input, &plan) != WaddleWindowStateOk) return RunInputRefused;
     uint64_t completed = 0;
     int failed = apply_actions(handler, handler->reducers[index].window, handler->reducers[index].generation, handler->reducers[index].popup, &plan, &completed);
     if (failed) ++handler->counters.host_actions_failed;
-    if (reducer_complete(handler, index, &plan, failed ? 0u : 1u, completed) != WaddleWindowStateOk) return 1;
-    return 0;
+    if (reducer_complete(handler, index, &plan, failed ? 0u : 1u, completed) != WaddleWindowStateOk) return RunInputRefused;
+    return failed ? RunInputActionFailed : RunInputApplied;
 }
 
 static void observe_guest(session_windows_handler_t *handler, uint32_t index, uint32_t state) {
@@ -304,7 +312,8 @@ static void observe_guest(session_windows_handler_t *handler, uint32_t index, ui
     memset(&input, 0, sizeof input);
     input.kind = WaddleWindowStateInputGuestObservation;
     input.state = state;
-    if (run_input(handler, index, &input) == 0) ++handler->counters.guest_observations_applied;
+    /* The reducer took the observation even when a host action failed: that is a completed observation. */
+    if (run_input(handler, index, &input) != RunInputRefused) ++handler->counters.guest_observations_applied;
 }
 
 /* ---- compositor events -------------------------------------------------------------------------------- */
@@ -574,7 +583,7 @@ static void on_state_request(session_windows_handler_t *handler, const uint8_t *
     memset(&input, 0, sizeof input);
     input.kind = WaddleWindowStateInputHostStateRequest;
     input.maximize = (state & WaddleWindowStateMaximized) != 0 ? 1u : 0u;
-    if (run_input(handler, (uint32_t)index, &input) == 0) ++handler->counters.state_requests_applied;
+    if (run_input(handler, (uint32_t)index, &input) == RunInputApplied) ++handler->counters.state_requests_applied;
     else ++handler->counters.state_requests_ignored;
 }
 

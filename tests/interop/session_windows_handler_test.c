@@ -2458,6 +2458,10 @@ static int test_window_layer_divergence(void) {
     Check(send_state_request(1, 1, WaddleWindowStateMaximized) == 0);
     Check(counters_now().host_actions_failed == before.host_actions_failed + 1);
     Check(reducer_synced(1, 1, NULL) == 0);
+    /* The host state did not change, so the request is not counted as applied (state_requests_applied documents "changed
+     * the host maximize state"). It is refused by the window layer. */
+    Check(counters_now().state_requests_applied == before.state_requests_applied);
+    Check(counters_now().state_requests_ignored == before.state_requests_ignored + 1);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
     return 0;
