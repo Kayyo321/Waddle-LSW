@@ -131,12 +131,24 @@ traffic. `next_deadline_ms` reports it while Barrier or AwaitReady.
 ## 9. Decisions that differ from the wording of the tranche brief (for lead review)
 
 1. Revoke does not send `InputRelease`. The brief asked for "release-all on
-   revoke/leave/disconnect". The frozen spec clears routes on revoke and leaves guest
-   release to the guest, which already releases its holds when it leaves the active pair
-   (`input-lease-recovery` section 5: "Release all holds"). Old-epoch frames are ignored
-   by the guest after serial validation, so a release sent after revoke has no effect. The
-   handler therefore drops pending and held input on revoke without a frame. Leave still
-   sends release-all, and so does the overflow path.
+   revoke/leave/disconnect". Re-verified against the spec text (tranche 5 review):
+   - `impl/input-lease-recovery/IMPL_DESC.md` section 5, transition table row
+     "Active or anchored UnfocusedReady + unexpected eligible exported foreground
+     transition": "Suspend authorization, release all holds, recheck candidate, reserve
+     next epoch, queue Revoked". The guest releases its own holds before it sends Revoked.
+   - `impl/input-lease-recovery/IMPL_DESC.md` section 4 item 3: "Old epoch is an ordered
+     no-op: no target, activation, release, emission or request-triggered reconciliation."
+     A host release for the revoked epoch therefore has no guest effect, and a release
+     sent with the new epoch targets a pair that is not active (the same no-op rule).
+   - `impl/input-lease-recovery/IMPL_DESC.md` section 6, host Barrier: "On valid Revoked
+     disable forwarding first, clear requested keyboard/pointer routes, preserve physical
+     suppression". The spec names no host release on revoke.
+   - `impl/seamless-interop/IMPL_DESC.md` 6.3 first bullet ("On focus loss, lease
+     revocation, window retirement, disconnect and agent exit, every held key ... is
+     released") is satisfied by the guest release above, not by a host frame.
+   The handler therefore drops pending and held input on revoke without a frame. Leave
+   still sends release-all, and so does the overflow path. Disconnect is covered by the
+   guest's release on disconnect (6.3).
 2. Disconnect (`on_closing`) sends nothing and clears local state. Nothing can be sent
    after `Draining`, and the connection loss releases guest input.
 3. A stale epoch is handled as the frozen spec states, not as "ignored" in every frame
