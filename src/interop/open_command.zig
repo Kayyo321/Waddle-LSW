@@ -152,15 +152,75 @@ fn read_adapter(context: ?*anyopaque, path: [*]const u8, path_length: usize, buf
     return open_request.ReadStatusOk;
 }
 
+/// Allocator that forwards each allocation to the backing allocator and remembers the live
+/// blocks, so deinit frees whatever the run did not release. Every temporary is therefore a
+/// separate allocation point: an allocation-failure sweep reaches each one.
+const Tracking = struct {
+    const Block = struct { buffer: []u8, alignment: u8 };
+    backing: std.mem.Allocator,
+    live: std.ArrayListUnmanaged(Block) = .{},
+
+    fn init(backing: std.mem.Allocator) Tracking {
+        return .{ .backing = backing };
+    }
+
+    fn deinit(self: *Tracking) void {
+        for (self.live.items) |block| self.backing.rawFree(block.buffer, block.alignment, @returnAddress());
+        self.live.deinit(self.backing);
+    }
+
+    fn allocator(self: *Tracking) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    const vtable = std.mem.Allocator.VTable{ .alloc = alloc, .resize = resize, .free = free };
+
+    fn find(self: *Tracking, buffer: []u8) ?usize {
+        for (self.live.items, 0..) |block, index| {
+            if (block.buffer.ptr == buffer.ptr) return index;
+        }
+        return null;
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: u8, return_address: usize) ?[*]u8 {
+        const self: *Tracking = @ptrCast(@alignCast(ctx));
+        const pointer = self.backing.rawAlloc(len, alignment, return_address) orelse return null;
+        self.live.append(self.backing, .{ .buffer = pointer[0..len], .alignment = alignment }) catch {
+            self.backing.rawFree(pointer[0..len], alignment, return_address);
+            return null;
+        };
+        return pointer;
+    }
+
+    /// In-place resizing is refused, so callers reallocate and copy; every block then passes
+    /// through alloc and free, which keeps the live list exact.
+    fn resize(ctx: *anyopaque, buffer: []u8, alignment: u8, new_len: usize, return_address: usize) bool {
+        _ = ctx;
+        _ = buffer;
+        _ = alignment;
+        _ = new_len;
+        _ = return_address;
+        return false;
+    }
+
+    /// Only blocks returned by alloc reach free, so the lookup always succeeds.
+    fn free(ctx: *anyopaque, buffer: []u8, alignment: u8, return_address: usize) void {
+        const self: *Tracking = @ptrCast(@alignCast(ctx));
+        const index = self.find(buffer) orelse unreachable;
+        _ = self.live.swapRemove(index);
+        self.backing.rawFree(buffer, alignment, return_address);
+    }
+};
+
 /// Run the open command. Returns the process exit code; every allocation is released.
 /// @param allocator Source of temporary memory; freed before return.
 /// @param args Arguments after the `open` word.
 /// @param hooks Effects; see Hooks.
 /// @return Exit code per open_request_contract.md section 5.
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const Hooks) u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    var tracking = Tracking.init(allocator);
+    defer tracking.deinit();
+    const a = tracking.allocator();
 
     var parse_ctx = ParseCtx{ .hooks = hooks };
     var options = open_request.options_t{
@@ -211,6 +271,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
     std.debug.assert(sent.items.len > 0);
 
     const token = pick_token(hooks);
+    const wait = request.wait != 0;
     var conn = Conn{};
     if (connect_session(hooks, a, &device, &conn)) |code| return code;
     var result: u8 = 0;
@@ -229,7 +290,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
             if (result == 0) result = 125;
             break;
         };
-        const reply = await_reply(hooks, a, &conn, request_id, wait_mode(args)) catch {
+        const reply = await_reply(hooks, a, &conn, request_id, wait) catch {
             if (result == 0) result = 125;
             break;
         };
@@ -248,18 +309,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
     return result;
 }
 
-/// True when --wait appears among the flags before the target.
-fn wait_mode(args: []const []const u8) bool {
-    for (args) |arg| {
-        if (std.mem.eql(u8, arg, "--wait")) return true;
-        if (std.mem.eql(u8, arg, "--")) return false;
-    }
-    return false;
-}
-
 fn quote(a: std.mem.Allocator, tail: []const []const u8) ?[]const u8 {
     var buffer = a.alloc(u8, open_request.MaxQuotedBytes) catch return null;
-    const length = open_request.quote_into(tail, buffer) catch return null;
+    // parse has already limited the quoted tail to MaxQuotedBytes, so the quote cannot overflow.
+    const length = open_request.quote_into(tail, buffer) catch unreachable;
     return buffer[0..length];
 }
 
@@ -410,7 +463,8 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
         if (header.type != c.InteropMsgLaunchResult) continue;
         if (c.interop_payload_validate(header.type, c.InteropFromGuest, payload.ptr, payload.len) != 0) return error.Failed;
         var status: u64 = 0;
-        if (c.interop_field_uint(payload.ptr, payload.len, c.InteropTagStatus, 4, &status) != 0) return error.Failed;
+        // interop_payload_validate has already required a 4-byte status field.
+        std.debug.assert(c.interop_field_uint(payload.ptr, payload.len, c.InteropTagStatus, 4, &status) == 0);
         if (status == 0) return Reply{ .accepted = {} };
         var value: ?[*]const u8 = null;
         var value_length: u16 = 0;
@@ -446,6 +500,8 @@ const RealHooks = struct {
     config: c.daemon_config_t = undefined,
     config_loaded: bool = false,
     name_buffer: [c.WaddleMaxDeviceNameLen]u8 = undefined,
+    /// Owned copy of the resolved device name; Device.name must not point into a stack record.
+    device_buffer: [c.WaddleMaxDeviceNameLen]u8 = undefined,
     session_buffer: [c.WaddleMaxPathLen]u8 = undefined,
     socket_buffer: [c.WaddleMaxPathLen]u8 = undefined,
 
@@ -497,7 +553,9 @@ const RealHooks = struct {
         var info: c.device_info_t = undefined;
         const status = self.resolver.?(specified, &info, &self.socket_buffer, self.socket_buffer.len, 1);
         if (status != 0) return @intCast(status);
-        const device_name = std.mem.sliceTo(&info.name, 0);
+        const resolved_name = std.mem.sliceTo(&info.name, 0);
+        @memcpy(self.device_buffer[0..resolved_name.len], resolved_name);
+        const device_name = self.device_buffer[0..resolved_name.len];
         const socket = std.mem.sliceTo(&self.socket_buffer, 0);
         // The socket path comes from the device registry, which always places it in a directory.
     const directory = std.fs.path.dirname(socket) orelse unreachable;
@@ -1572,10 +1630,18 @@ fn resolver_ok(specified: [*c]const u8, out: ?*c.device_info_t, sock: [*c]u8, ca
 test "allocation failure sweep over a request with a missing file, an outside path and a tail" {
     var reply: [256]u8 = undefined;
     const ok = launch_result(&reply, 1, 0, null);
+    var gui_image: [256]u8 = undefined;
+    var cui_image: [256]u8 = undefined;
+    const files = [_]FakeFile{
+        .{ .path = "/share/game.exe", .bytes = pe_bytes(&gui_image, 2) },
+        .{ .path = "/share/tool.exe", .bytes = pe_bytes(&cui_image, 3) },
+    };
     const sets = [_][]const []const u8{
         &.{ "/share/a.txt", "/missing/x.txt" },
-        &.{ "/etc/hosts" },
-        &.{ "--app", "a-x", "--wait" },
+        &.{"/etc/hosts"},
+        &.{"/share/gone.exe"},
+        &.{ "--wait", "--app", "a-x" },
+        &.{ "--wait", "--", "/share/game.exe", "-w", "a b" },
         &.{ "--", "/share/tool.exe", "x" },
     };
     for (sets) |args| {
@@ -1583,7 +1649,7 @@ test "allocation failure sweep over a request with a missing file, an outside pa
         while (index < 160) : (index += 1) {
             const incoming = try stream(testing.allocator, &.{ok});
             defer testing.allocator.free(incoming);
-            var fake = Fake{ .incoming = incoming, .connect_script = &.{@as(c_int, 7)} };
+            var fake = Fake{ .incoming = incoming, .files = &files, .connect_script = &.{@as(c_int, 7)} };
             var hooks = fake.hooks();
             var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = index });
             _ = run(failing.allocator(), args, &hooks);
@@ -1726,3 +1792,29 @@ test "a LaunchResult sent in the wrong direction fails payload validation and ex
     try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
 }
 
+
+extern "c" fn openpty(master: *c_int, slave: *c_int, name: ?[*]u8, termp: ?*anyopaque, winp: ?*anyopaque) c_int;
+
+test "production tty requires both stdin and stdout to be terminals" {
+    var master: c_int = -1;
+    var slave: c_int = -1;
+    if (openpty(&master, &slave, null, null, null) != 0) return error.SkipZigTest;
+    defer std.posix.close(master);
+    defer std.posix.close(slave);
+    const saved_in = try std.posix.dup(0);
+    defer std.posix.close(saved_in);
+    const saved_out = try std.posix.dup(1);
+    defer std.posix.close(saved_out);
+    const null_fd = try std.posix.open("/dev/null", .{ .ACCMODE = .RDWR }, 0);
+    defer std.posix.close(null_fd);
+    var real = RealHooks.init(null, null);
+    // stdin terminal, stdout not: false.
+    try std.posix.dup2(slave, 0);
+    try std.posix.dup2(null_fd, 1);
+    try testing.expect(!RealHooks.tty(&real));
+    // Both terminals: true.
+    try std.posix.dup2(slave, 1);
+    try testing.expect(RealHooks.tty(&real));
+    try std.posix.dup2(saved_in, 0);
+    try std.posix.dup2(saved_out, 1);
+}
