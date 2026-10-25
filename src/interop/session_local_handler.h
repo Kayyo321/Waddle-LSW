@@ -40,7 +40,7 @@ enum {
     SessionLocalStopFlushMs = 1000 /**< Bounded wait for the LocalStopResult flush. */
 };
 
-/** @brief Interpretation of the local frame scanner result. Values match local_stream_abi.zig. */
+/** @brief Result of the local frame scan (session_local_frame_scan in the implementation). */
 enum {
     InteropLocalScanNeedMore = 0, /**< Fewer bytes than the frame needs; nothing consumed. */
     InteropLocalScanReady = 1, /**< A complete frame of frame_length bytes starts the buffer. */
@@ -245,17 +245,6 @@ session_local_peer_decision_t session_local_peer_decision(uint32_t peer_uid, uin
  */
 session_local_send_outcome_t session_local_send_outcome(int send_result);
 
-/**
- * @brief Classify the first local frame in a receive buffer (implemented in local_stream_abi.zig).
- * @param[in] bytes Borrowed receive bytes; may be NULL only when length is zero.
- * @param[in] length Bytes available from the start of the frame.
- * @param[out] header Non-NULL output; written only for InteropLocalScanReady.
- * @param[out] frame_length Non-NULL output; set to the frame size only for InteropLocalScanReady,
- *             otherwise zero.
- * @return One of the InteropLocalScan values.
- * @note Pure; no allocation. The payload is not validated here; callers use interop_payload_validate.
- */
-int interop_local_frame_scan(const uint8_t *bytes, size_t length, interop_header_t *header, size_t *frame_length);
 
 #ifdef __cplusplus
 }

@@ -25,6 +25,27 @@ enum { SessionLocalRuntimeDirMax = 4096 };
 enum { SessionLocalCallbackFailure = 2 };
 _Static_assert((int)SessionLocalCallbackFailure != (int)SessionHandlerRequestStop, "failure must not equal the graceful stop value");
 
+/**
+ * @brief Classify the first local frame of a receive buffer (contract section 6).
+ * @param[in] bytes Receive bytes, readable for length bytes.
+ * @param[in] length Bytes available from the start of the buffer.
+ * @param[out] header Written only for InteropLocalScanReady.
+ * @param[out] frame_length Frame size for InteropLocalScanReady, otherwise zero.
+ * @return One of the InteropLocalScan values. The header is decoded by the production codec.
+ */
+static int session_local_frame_scan(const uint8_t *bytes, size_t length, interop_header_t *header, size_t *frame_length)
+{
+    size_t frame_size;
+    *frame_length = 0;
+    if (length < InteropHeaderBytes) return InteropLocalScanNeedMore;
+    if (interop_header_decode(bytes, length, header) != InteropErrorNone) return InteropLocalScanMalformed;
+    frame_size = InteropHeaderBytes + (size_t)header->length;
+    if (frame_size > SessionLocalRxBytes) return InteropLocalScanTooLarge;
+    if (length < frame_size) return InteropLocalScanNeedMore;
+    *frame_length = frame_size;
+    return InteropLocalScanReady;
+}
+
 /** @brief Device name grammar: one or more of [A-Za-z0-9_-], at most SessionLocalDeviceNameMax bytes. */
 static int device_name_valid(const char *name)
 {
@@ -32,12 +53,24 @@ static int device_name_valid(const char *name)
     if (name == NULL) return 0;
     for (; name[length] != '\0'; ++length) {
         char byte = name[length];
-        int alpha = (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z');
-        int digit = byte >= '0' && byte <= '9';
-        if (!alpha && !digit && byte != '_' && byte != '-') return 0;
-        if (length >= SessionLocalDeviceNameMax) return 0;
+        int name_byte = (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+            (byte >= '0' && byte <= '9') || byte == '_' || byte == '-';
+        if (!name_byte || length >= SessionLocalDeviceNameMax) return 0;
     }
     return length != 0;
+}
+
+/**
+ * @brief Append text to a bounded path buffer; fails without writing past the capacity.
+ * @return 1 on success, 0 when the result (with its NUL) would not fit.
+ */
+static int append_text(char *out, size_t capacity, size_t *length, const char *text)
+{
+    size_t text_length = strlen(text);
+    if (text_length >= capacity - *length) return 0;
+    memcpy(out + *length, text, text_length + 1u);
+    *length += text_length;
+    return 1;
 }
 
 int session_local_handler_init(session_local_handler_t *handler, const session_local_config_t *config)
@@ -45,10 +78,10 @@ int session_local_handler_init(session_local_handler_t *handler, const session_l
     char parent[SessionLocalSocketPathBytes];
     char directory[SessionLocalSocketPathBytes];
     char socket[SessionLocalSocketPathBytes];
+    size_t parent_length = 0;
+    size_t directory_length = 0;
+    size_t socket_length = 0;
     size_t runtime_length = 0;
-    int written_parent;
-    int written_directory;
-    int written_socket;
 
     if (handler == NULL || config == NULL) return SessionLocalInvalidArgument;
     if (config->reserved_zero != 0) return SessionLocalRefused;
@@ -59,25 +92,28 @@ int session_local_handler_init(session_local_handler_t *handler, const session_l
     if (!device_name_valid(config->device_name)) return SessionLocalInvalidArgument;
 
     /* Paths are composed before any handler byte is written, so failure leaves the handler unchanged. */
-    written_parent = snprintf(parent, sizeof(parent), "%s/waddle", config->runtime_dir);
-    if (written_parent < 0 || (size_t)written_parent >= sizeof(parent)) return SessionLocalInvalidArgument;
-    written_directory = snprintf(directory, sizeof(directory), "%s/waddle/%s",
-        config->runtime_dir, config->device_name);
-    if (written_directory < 0 || (size_t)written_directory >= sizeof(directory)) return SessionLocalInvalidArgument;
-    written_socket = snprintf(socket, sizeof(socket), "%s/session.sock", directory);
-    if (written_socket < 0 || (size_t)written_socket >= sizeof(socket)) return SessionLocalInvalidArgument;
+    parent[0] = '\0';
+    directory[0] = '\0';
+    socket[0] = '\0';
+    if (!append_text(parent, sizeof(parent), &parent_length, config->runtime_dir) ||
+        !append_text(parent, sizeof(parent), &parent_length, "/waddle")) return SessionLocalInvalidArgument;
+    if (!append_text(directory, sizeof(directory), &directory_length, parent) ||
+        !append_text(directory, sizeof(directory), &directory_length, "/") ||
+        !append_text(directory, sizeof(directory), &directory_length, config->device_name)) return SessionLocalInvalidArgument;
+    if (!append_text(socket, sizeof(socket), &socket_length, directory) ||
+        !append_text(socket, sizeof(socket), &socket_length, "/session.sock")) return SessionLocalInvalidArgument;
 
     memset(handler, 0, sizeof(*handler));
-    memcpy(handler->parent_path, parent, (size_t)written_parent + 1u);
-    memcpy(handler->directory_path, directory, (size_t)written_directory + 1u);
-    memcpy(handler->socket_path, socket, (size_t)written_socket + 1u);
+    memcpy(handler->parent_path, parent, parent_length + 1u);
+    memcpy(handler->directory_path, directory, directory_length + 1u);
+    memcpy(handler->socket_path, socket, socket_length + 1u);
     handler->lock_held_proof = config->lock_held_proof;
     handler->expected_uid = (uint32_t)geteuid();
     handler->listen_fd = -1;
     handler->epoll_fd = -1;
     handler->next_serial = 1;
     for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) handler->clients[index].fd = -1;
-    if (interop_activation_store_init(&handler->tokens) != 0) return SessionLocalInvalidArgument;
+    (void)interop_activation_store_init(&handler->tokens);
     return SessionLocalSuccess;
 }
 
@@ -221,8 +257,7 @@ static void client_close(session_local_handler_t *handler, uint32_t client_index
  * @brief Commit a reply built into client space, or close the client when building failed.
  * @return Nonzero when the frame was appended.
  */
-static int reply_commit(session_local_handler_t *handler, uint32_t client_index, uint64_t serial,
-    int built, size_t length)
+static int reply_commit(session_local_handler_t *handler, uint32_t client_index, int built, size_t length)
 {
     session_local_client_t *client = &handler->clients[client_index];
     if (!built) {
@@ -231,7 +266,6 @@ static int reply_commit(session_local_handler_t *handler, uint32_t client_index,
         client_close(handler, client_index);
         return 0;
     }
-    if (client->serial != serial) return 0;
     client->tx_length += length;
     return 1;
 }
@@ -251,7 +285,7 @@ static int reply_launch_result(session_local_handler_t *handler, uint32_t client
         interop_put_uint(&writer, InteropTagStatus, status) == InteropErrorNone &&
         (message == NULL || interop_put_bytes(&writer, InteropTagMessage, message, message_length) == InteropErrorNone) &&
         interop_writer_finish(&writer, InteropMsgLaunchResult, request_id, InteropFromGuest, &length) == InteropErrorNone;
-    return reply_commit(handler, client_index, serial, built, length);
+    return reply_commit(handler, client_index, built, length);
 }
 
 /** @brief Queue Error (host direction) with a message to a client. */
@@ -265,10 +299,10 @@ static int reply_error(session_local_handler_t *handler, uint32_t client_index, 
     int built;
     if (!reply_target(handler, client_index, serial, &frame, &room)) return 0;
     interop_writer_init(&writer, frame, room);
-    built = (message == NULL || interop_put_bytes(&writer, InteropTagMessage, message, (uint16_t)strlen(message)) == InteropErrorNone) &&
+    built = interop_put_bytes(&writer, InteropTagMessage, message, (uint16_t)strlen(message)) == InteropErrorNone &&
         interop_put_uint(&writer, InteropTagErrorCode, error_code) == InteropErrorNone &&
         interop_writer_finish(&writer, InteropMsgError, request_id, InteropFromHost, &length) == InteropErrorNone;
-    return reply_commit(handler, client_index, serial, built, length);
+    return reply_commit(handler, client_index, built, length);
 }
 
 /** @brief Queue LocalStopResult with status Ok (local direction) and the echoed request id. */
@@ -283,7 +317,7 @@ static int reply_stop_ok(session_local_handler_t *handler, uint32_t client_index
     interop_writer_init(&writer, frame, room);
     built = interop_put_uint(&writer, InteropTagStatus, InteropOk) == InteropErrorNone &&
         interop_writer_finish(&writer, InteropMsgLocalStopResult, request_id, InteropFromLocal, &length) == InteropErrorNone;
-    return reply_commit(handler, client_index, serial, built, length);
+    return reply_commit(handler, client_index, built, length);
 }
 
 /* ---- Launch forwarding and correlation ----------------------------------------------------- */
@@ -705,7 +739,7 @@ static int process_frames(session_local_handler_t *handler, uint32_t client_inde
         interop_header_t header;
         size_t frame_length = 0;
         const uint8_t *payload;
-        int scan = interop_local_frame_scan(client->rx, client->rx_length, &header, &frame_length);
+        int scan = session_local_frame_scan(client->rx, client->rx_length, &header, &frame_length);
         if (scan == InteropLocalScanNeedMore) break;
         if (scan == InteropLocalScanTooLarge) {
             handler->stats.closed_oversize++;
