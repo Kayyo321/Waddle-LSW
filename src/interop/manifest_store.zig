@@ -493,6 +493,16 @@ pub const remove_outcome_t = enum {
     RecordRemovedNonFile,
 };
 
+/// Journaled addition of one record-only record. The candidate must be the
+/// current manifest plus exactly that record, and the record kind must have no
+/// store-managed file (for example `mime_default`).
+pub const register_request_t = struct {
+    /// Identifier of the record to add, borrowed for the call.
+    record_id: []const u8,
+    /// Complete candidate manifest bytes, borrowed for the call.
+    candidate_manifest: []const u8,
+};
+
 /// Explicit metadata migration request for one recorded artifact.
 pub const migrate_request_t = struct {
     /// Existing record identifier; borrowed for this call.
@@ -1147,6 +1157,38 @@ pub const store_t = struct {
         return .{ .outcome = .Removed, .record_found = true, .prior = prior, .artifact = transaction.artifact };
     }
 
+    /// Publish the addition of one record-only record in a version-3 `register`
+    /// transaction. Requires an existing manifest; the candidate must add exactly
+    /// the requested record and leave every other record byte-identical in meaning.
+    /// Errors: Closed, InvalidArgument (store-managed kind or invalid identifier),
+    /// InvalidManifest, ManifestMismatch, FileNotFound (no manifest), RecoveryRequired,
+    /// OutOfMemory, or a filesystem error. Errors before PREPARED change nothing.
+    /// Thread safety: serialized owner-thread use only; do not call concurrently.
+    pub fn register_record(self: *store_t, request: register_request_t) !void {
+        if (!self.live) return error.Closed;
+        try self.recover_locked();
+        if (!valid_record_id(request.record_id) or request.candidate_manifest.len == 0 or
+            request.candidate_manifest.len > manifest.MaxManifestBytes) return error.InvalidArgument;
+        var candidate = try manifest.parse(self.allocator, request.candidate_manifest);
+        defer candidate.deinit();
+        try validate_global_paths(candidate.records);
+        const added = find_record(candidate.records, request.record_id) orelse return error.ManifestMismatch;
+        if (store_managed_kind(added.kind)) return error.InvalidArgument;
+        const snapshot = try self.read_manifest_snapshot();
+        defer self.allocator.free(snapshot.bytes);
+        var parsed = try manifest.parse(self.allocator, snapshot.bytes);
+        defer parsed.deinit();
+        try validate_global_paths(parsed.records);
+        try validate_addition(parsed.records, candidate.records, request.record_id);
+        _ = try self.run_manifest_transaction(.{
+            .operation = "register",
+            .record_id = request.record_id,
+            .old_manifest = snapshot.bytes,
+            .old_info = snapshot.info,
+            .candidate = request.candidate_manifest,
+        });
+    }
+
     /// Rewrite the manifest-level schema metadata for one recorded artifact
     /// through the journaled engine. The artifact file is never opened for
     /// writing, renamed, or unlinked, and its state is not a precondition.
@@ -1597,6 +1639,10 @@ pub const store_t = struct {
         defer candidate.deinit();
         validate_global_paths(old.records) catch return error.RecoveryRequired;
         validate_global_paths(candidate.records) catch return error.RecoveryRequired;
+        if (std.mem.eql(u8, journal.operation, "register")) {
+            validate_addition(old.records, candidate.records, journal.record_id) catch return error.RecoveryRequired;
+            return;
+        }
         const old_record = find_record(old.records, journal.record_id) orelse return error.RecoveryRequired;
         if (v3_is_recreate(journal)) {
             try self.validate_recreate_evidence(journal, old.records, candidate.records);
@@ -2858,7 +2904,7 @@ fn validate_journal_v3(journal: journal_v3_t, entry_name: []const u8) !void {
             (journal.new_artifact_mode != 0o644 and journal.new_artifact_mode != 0o755) or
             artifact_device == 0 or artifact_inode == 0 or journal.old_artifact_hash != null or
             journal.old_artifact_mode != 0 or journal.old_artifact_device != null or journal.old_artifact_inode != null) return error.RecoveryRequired;
-    } else if (std.mem.eql(u8, journal.operation, "migrate") or std.mem.eql(u8, journal.operation, "forget")) {
+    } else if (std.mem.eql(u8, journal.operation, "migrate") or std.mem.eql(u8, journal.operation, "forget") or std.mem.eql(u8, journal.operation, "register")) {
         if (journal.root != null or journal.relative_path != null or journal.old_artifact_hash != null or
             journal.old_artifact_mode != 0 or journal.old_artifact_device != null or journal.old_artifact_inode != null or
             journal.new_artifact_hash != null or journal.new_artifact_mode != 0 or journal.new_artifact_device != null or journal.new_artifact_inode != null)
@@ -2936,6 +2982,17 @@ fn validate_metadata_only(old_records: []const manifest.record_t, new_records: [
 /// Verify that `new_records` equals `old_records` minus the single target record
 /// with every other record byte-for-byte equal by its schema fields. The target
 /// must be present in `old_records`; the caller checks that before calling.
+/// Accept only the manifest that adds exactly `target_id` to the old records; every
+/// old record must survive unchanged in meaning.
+fn validate_addition(old_records: []const manifest.record_t, new_records: []const manifest.record_t, target_id: []const u8) !void {
+    if (find_record(old_records, target_id) != null or new_records.len != old_records.len + 1) return error.ManifestMismatch;
+    _ = find_record(new_records, target_id) orelse return error.ManifestMismatch;
+    for (old_records) |old| {
+        const candidate = find_record(new_records, old.id) orelse return error.ManifestMismatch;
+        if (!same_record(old, candidate.*)) return error.ManifestMismatch;
+    }
+}
+
 fn validate_removal(old_records: []const manifest.record_t, new_records: []const manifest.record_t, target_id: []const u8) !void {
     if (find_record(new_records, target_id) != null or new_records.len + 1 != old_records.len) return error.ManifestMismatch;
     for (old_records) |old| {
@@ -9558,6 +9615,76 @@ test "forget recovers at every injected checkpoint and a second recovery is a no
         if (completed) break;
     }
     try std.testing.expect(completed);
+}
+
+test "register recovers at every injected checkpoint and a second recovery is a no-op" {
+    var completed = false;
+    for (1..40) |step| {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const scratch = arena.allocator();
+        const binfmt_digest = hash_hex("binfmt bytes");
+        const binfmt = test_spec_t{ .id = "binfmt:system", .kind = "binfmt", .path = "/etc/binfmt.d/waddle.conf", .sha256 = &binfmt_digest };
+        const mime_digest = hash_hex("waddle-open.desktop");
+        const mime = test_spec_t{ .id = "mime:x-msi", .kind = "mime_default", .path = "mimeapps.list", .sha256 = &mime_digest, .extra = "\"mime\":\"application/x-msi\",", .prior = "\"old.desktop\"" };
+        const original = test_document(scratch, 1, &[_]test_spec_t{binfmt});
+        const candidate = test_document(scratch, 1, &[_]test_spec_t{ binfmt, mime });
+        try write_test_file(fixture.state.fd, "manifest.json", original, 0o600);
+        const roots = fixture.roots();
+        var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+        defer store.deinit();
+        store.fail_after.store(store.checkpoint_count.load(.monotonic) + step, .monotonic);
+        const outcome = store.register_record(.{ .record_id = "mime:x-msi", .candidate_manifest = candidate });
+        store.fail_after.store(0, .monotonic);
+        if (outcome) |_| {
+            completed = true;
+        } else |err| {
+            try std.testing.expectEqual(error.InjectedFailure, err);
+            try store.recover();
+        }
+        const on_disk = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(on_disk);
+        try std.testing.expect(std.mem.eql(u8, on_disk, original) or std.mem.eql(u8, on_disk, candidate));
+        if (completed) try std.testing.expectEqualStrings(candidate, on_disk);
+        try store.recover();
+        const again = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(again);
+        try std.testing.expectEqualStrings(on_disk, again);
+        if (completed) break;
+    }
+    try std.testing.expect(completed);
+}
+
+test "register refuses store-managed kinds, non-additions, duplicates, and a missing manifest" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const binfmt_digest = hash_hex("binfmt bytes");
+    const binfmt = test_spec_t{ .id = "binfmt:system", .kind = "binfmt", .path = "/etc/binfmt.d/waddle.conf", .sha256 = &binfmt_digest };
+    const mime_digest = hash_hex("waddle-open.desktop");
+    const mime = test_spec_t{ .id = "mime:x-msi", .kind = "mime_default", .path = "mimeapps.list", .sha256 = &mime_digest, .extra = "\"mime\":\"application/x-msi\",", .prior = "\"old.desktop\"" };
+    const desktop = test_spec_t{ .id = "desktop:new", .kind = "desktop_entry", .path = "/x/new.desktop", .sha256 = &mime_digest };
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    const addition = test_document(scratch, 1, &[_]test_spec_t{ binfmt, mime });
+    try std.testing.expectError(error.FileNotFound, store.register_record(.{ .record_id = "mime:x-msi", .candidate_manifest = addition }));
+
+    const original = test_document(scratch, 1, &[_]test_spec_t{binfmt});
+    try write_test_file(fixture.state.fd, "manifest.json", original, 0o600);
+    try std.testing.expectError(error.InvalidArgument, store.register_record(.{ .record_id = "desktop:new", .candidate_manifest = test_document(scratch, 1, &[_]test_spec_t{ binfmt, desktop }) }));
+    try std.testing.expectError(error.InvalidArgument, store.register_record(.{ .record_id = "bad\x00id", .candidate_manifest = original }));
+    try std.testing.expectError(error.ManifestMismatch, store.register_record(.{ .record_id = "mime:x-msi", .candidate_manifest = original }));
+    const changed_binfmt = test_spec_t{ .id = "binfmt:system", .kind = "binfmt", .path = "/etc/binfmt.d/other.conf", .sha256 = &binfmt_digest };
+    try std.testing.expectError(error.ManifestMismatch, store.register_record(.{ .record_id = "mime:x-msi", .candidate_manifest = test_document(scratch, 1, &[_]test_spec_t{ changed_binfmt, mime }) }));
+    try std.testing.expectError(error.ManifestMismatch, store.register_record(.{ .record_id = "other", .candidate_manifest = test_document(scratch, 1, &[_]test_spec_t{ binfmt, mime }) }));
+    const after = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(after);
+    try std.testing.expectEqualStrings(original, after);
 }
 
 test "artifact unlink moves the name aside, verifies the moved inode, and returns a changed file to its name" {
