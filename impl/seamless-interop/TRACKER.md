@@ -1665,7 +1665,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     logs. Restore only the withdrawn native extraction15%; separate catalog
     workflow coverage and runtime/integrated qualification remain open.
 
-- **Commit `HEAD`**: `test(interop): cover default catalog sources and native ownership boundaries`
+- **Commit `06aafb3`**: `test(interop): cover default catalog sources and native ownership boundaries`
   - **Task Impact**: +0% to TODO #27/#34 pending native90%catalog arcs.
   - **Summary**: Add correctly allocated known-folder outputs, an empty owned
     source root, exact failed COM reference release shapes, conversion OOM and
@@ -1673,3 +1673,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     enumerator to terminate with S_FALSE rather than malformed S_OK/fetched0.
     Real751d0e1 catalog98.55%lines/85.04%arcs remains below gate. Strict SDK
     profile build/link passes; next actual Windows run determines qualification.
+
+- **Commit `HEAD`**: `test(interop): verify catalog cleanup-owner retry boundaries`
+  - **Task Impact**: +0% to TODO #27/#34 pending exact native90%gate.
+  - **Summary**: Latest06aafb3 real provider reaches100%lines/89.42%taken arcs
+    with all Windows functional cases passing. Add null owner, excessive count,
+    missing stored handle and failed-close/retry of one authentic event. Strict
+    SDK profile compile/link passes; keep native enumeration20%unaccepted until
+    the actual whole-source taken-arc gate passes.

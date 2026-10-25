@@ -1333,6 +1333,26 @@ static bool catalog_fault_test_value_helpers(void) {
     }
     if (!cleanup_owner_empty(&owner) || full_owner.count != 1 ||
         app_catalog_cleanup_owner_retry(&full_owner) != AppCatalogStatusOk || full_owner.count != 0) ok = false;
+    if (app_catalog_cleanup_owner_retry(NULL) != AppCatalogStatusInvalidArgument) ok = false;
+    full_owner.count = AppCatalogCleanupMaxHandles + 1u;
+    if (app_catalog_cleanup_owner_retry(&full_owner) != AppCatalogStatusInvalidArgument) ok = false;
+    app_catalog_cleanup_owner_init(&full_owner);
+    full_owner.count = 1;
+    if (app_catalog_cleanup_owner_retry(&full_owner) != AppCatalogStatusInvalidArgument || full_owner.count != 1) ok = false;
+    app_catalog_cleanup_owner_init(&full_owner);
+
+    HANDLE close_retry = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (close_retry == NULL) return false;
+    full_owner.native_handles[0] = close_retry;
+    full_owner.kinds[0] = AppCatalogCleanupHandleWin32;
+    full_owner.count = 1;
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultCloseHandle, 1, 0 };
+    app_catalog_status_t retry_status = app_catalog_cleanup_owner_retry(&full_owner);
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultNone, 0, 0 };
+    if (retry_status != AppCatalogStatusNativeFailure || full_owner.count != 1 ||
+        full_owner.native_handles[0] != close_retry ||
+        app_catalog_cleanup_owner_retry(&full_owner) != AppCatalogStatusOk || full_owner.count != 0) ok = false;
+
     HANDLE untyped = CreateEventW(NULL, FALSE, FALSE, NULL);
     if (untyped == NULL) return false;
     full_owner.native_handles[0] = untyped;
