@@ -18,14 +18,17 @@
  *
  * The full rules are in `impl/seamless-interop/claude_45_percent/host_window_map_contract.md`.
  */
+#include "waddle/interop_protocol.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-/** @brief Table limit and output capacity. */
+/** @brief Table limit, output capacity and the slot index reported by a refused announce. */
 enum host_window_map_limits_t {
-    HostWindowMapMaxRealized = 64, /**< Realized windows per session epoch. */
-    HostWindowMapMaxOutput = 64 /**< Minimum output capacity for retire. */
+    HostWindowMapMaxRealized = 64, /**< Realized windows per session epoch, and the number of slots. */
+    HostWindowMapMaxOutput = 64, /**< Minimum output capacity for retire. */
+    HostWindowMapNoSlot = 64 /**< Slot value reported by a refused announce. */
 };
 
 /** @brief Frozen `interop_window_role_t` values accepted by announce. */
@@ -38,28 +41,53 @@ enum host_window_map_role_t {
     HostWindowMapRoleImePreedit = 6 /**< Non-grabbing xdg_popup; parent must be valid. */
 };
 
+/* Role values are the frozen interop_window_role_t values from include/waddle/interop_protocol.h. */
+_Static_assert((int)HostWindowMapRoleToplevel == (int)InteropRoleToplevel, "role Toplevel");
+_Static_assert((int)HostWindowMapRoleDialog == (int)InteropRoleDialog, "role Dialog");
+_Static_assert((int)HostWindowMapRoleMenu == (int)InteropRoleMenu, "role Menu");
+_Static_assert((int)HostWindowMapRoleTooltip == (int)InteropRoleTooltip, "role Tooltip");
+_Static_assert((int)HostWindowMapRoleUacConsent == (int)InteropRoleUacConsent, "role UacConsent");
+_Static_assert((int)HostWindowMapRoleImePreedit == (int)InteropRoleImePreedit, "role ImePreedit");
+
 /** @brief Exact window incarnation. Both fields zero is "none" when used as a parent. */
 typedef struct host_window_ref_t {
     uint64_t window; /**< Protocol window handle. Zero means no window. In and out. */
     uint64_t generation; /**< Protocol generation, never reused in an epoch. Zero means no generation. In and out. */
 } host_window_ref_t;
 
-/** @brief One realized window; copied out by `host_window_map_lookup`. */
+/** @brief One fixed slot. `occupied` is zero for a free slot; the other fields are then meaningless. */
+typedef struct host_window_slot_t {
+    host_window_ref_t window; /**< Realized identity. */
+    host_window_ref_t parent; /**< Requested direct parent, or none. Retire follows this field. */
+    uint64_t realize_seq; /**< Realization sequence number, unique per epoch and increasing with each realize. */
+    uint64_t user_data; /**< Adapter value for this window; zero when realized. Set with `host_window_map_set_user_data`. */
+    uint8_t role; /**< Raw `interop_window_role_t` value, 1..6. */
+    uint8_t occupied; /**< Nonzero while the slot holds a realized window. */
+    uint8_t dismissed; /**< Nonzero once the popup was marked dismissed; a dismissed popup stays realized until retired. */
+} host_window_slot_t;
+
+/** @brief Copy of an occupied slot, returned by `host_window_map_lookup`. */
 typedef struct host_window_entry_t {
     host_window_ref_t window; /**< Realized identity. */
-    host_window_ref_t parent; /**< Requested parent, or none. Retire cascades follow this field. */
-    host_window_ref_t root; /**< Popup only: positioning root (non-popup window). None for other roles. */
+    host_window_ref_t parent; /**< Requested direct parent, or none. */
+    uint64_t realize_seq; /**< Realization sequence number. */
+    uint64_t user_data; /**< Adapter value stored for this window. */
+    uint32_t slot; /**< Stable slot index of this window. */
     uint8_t role; /**< Raw `interop_window_role_t` value, 1..6. */
+    uint8_t dismissed; /**< Nonzero once the popup was marked dismissed. */
 } host_window_entry_t;
 
 /**
  * @brief Complete table state, caller-owned. Zero-filled storage equals a reset table.
  *
- * `realized_count` and `realized` are owned by the table and must not be written by the caller.
+ * `realized_count`, `next_seq` and `slots` are owned by the table and must not be written by the caller.
+ * A table whose `realized_count` is above 64 or disagrees with the occupied slots is corrupt; every call
+ * refuses it with its refusal status instead of using it.
  */
 typedef struct host_window_map_t {
-    uint32_t realized_count; /**< Initialized entries at the front of `realized`, at most 64. */
-    host_window_entry_t realized[64]; /**< Realized windows in realization order. */
+    uint32_t realized_count; /**< Number of occupied slots, at most 64. */
+    uint64_t next_seq; /**< Sequence number the next realize takes; never wraps. */
+    host_window_slot_t slots[64]; /**< Fixed slots. A slot keeps its index while its window stays realized. */
 } host_window_map_t;
 
 /** @brief Result of `host_window_map_announce`. Only `Realize` changes the table. */
@@ -72,6 +100,36 @@ typedef enum host_window_map_announce_status_t {
     HostWindowMapRefuseInvalid = 6 /**< Zero identity, bad role or parent shape, or NULL map. No change. */
 } host_window_map_announce_status_t;
 
+/** @brief Result of `host_window_map_mark_dismissed`. */
+typedef enum host_window_map_dismiss_status_t {
+    HostWindowMapDismissed = 1, /**< The popup is marked dismissed; it stays realized. Marking again changes nothing further. */
+    HostWindowMapDismissStale = 2, /**< No realized entry with that exact pair. No change. */
+    HostWindowMapDismissRefuseInvalid = 3 /**< Zero identity, corrupt table, or a window that is not a popup. No change. */
+} host_window_map_dismiss_status_t;
+
+/** @brief Result of `host_window_map_reparent`. Only `HostWindowMapReparented` changes the table. */
+typedef enum host_window_map_reparent_status_t {
+    HostWindowMapReparented = 1, /**< The Dialog's parent is now the new parent. Its slot and sequence are unchanged. */
+    HostWindowMapReparentStale = 2, /**< No realized entry with the window's exact pair. No change. */
+    HostWindowMapReparentRefuseStaleParent = 3, /**< The new parent is not realized exactly (never announced, retired, or another generation). No change. */
+    HostWindowMapReparentRefuseCycle = 4, /**< The new parent is the window itself or one of its descendants. No change. */
+    HostWindowMapReparentRefuseRole = 5, /**< The window is not a Dialog; only Dialogs change parent. No change. */
+    HostWindowMapReparentRefuseInvalid = 6 /**< Zero identity, a parent of none, a self parent, or a corrupt table. No change. */
+} host_window_map_reparent_status_t;
+
+/** @brief Result of `host_window_map_set_user_data` and `host_window_map_get_user_data`. */
+typedef enum host_window_map_user_data_status_t {
+    HostWindowMapUserDataOk = 1, /**< The value was set or read. */
+    HostWindowMapUserDataStale = 2, /**< The slot does not hold exactly this window. Nothing changed. */
+    HostWindowMapUserDataRefuseInvalid = 3 /**< Zero identity, slot out of range, NULL or overlapping output, or a corrupt table. Nothing changed. */
+} host_window_map_user_data_status_t;
+
+/** @brief Result of `host_window_map_reset`. */
+typedef enum host_window_map_reset_status_t {
+    HostWindowMapReset = 1, /**< Table torn down: the teardown list was written and the table cleared. */
+    HostWindowMapResetRefuseInvalid = 2 /**< Short capacity, NULL or overlapping argument, or a corrupt table. Nothing written; table unchanged. */
+} host_window_map_reset_status_t;
+
 /** @brief Result of `host_window_map_retire`. */
 typedef enum host_window_map_retire_status_t {
     HostWindowMapRetired = 1, /**< Subtree removed; the output list and count are valid. */
@@ -80,27 +138,67 @@ typedef enum host_window_map_retire_status_t {
 } host_window_map_retire_status_t;
 
 /**
- * @brief Clear the table to the epoch-start state.
+ * @brief Protocol error code (`interop_error_t`) for an announce status.
  *
- * @param map In/out. Table to clear. NULL is a no-op.
- * @return Nothing. Emits no output; the caller tears down its own native objects first.
+ * Realize gives `InteropErrorNone`; a duplicate gives `InteropErrorProtocolViolation`; a stale parent or a
+ * conflicting generation gives `InteropErrorStaleWindow`; a full table gives `InteropErrorQuotaExceeded`;
+ * an invalid argument gives `InteropErrorMalformedFrame`.
+ *
+ * @param status In. Status returned by `host_window_map_announce`.
+ * @return The `interop_error_t` value. Thread safety: any thread.
  */
-void host_window_map_reset(host_window_map_t *map);
+uint32_t host_window_map_announce_error_code(host_window_map_announce_status_t status);
+
+/**
+ * @brief Protocol error code (`interop_error_t`) for a retire status.
+ *
+ * Retired gives `InteropErrorNone`; a stale pair gives `InteropErrorStaleWindow`; an invalid argument gives
+ * `InteropErrorMalformedFrame`.
+ *
+ * @param status In. Status returned by `host_window_map_retire`.
+ * @return The `interop_error_t` value. Thread safety: any thread.
+ */
+uint32_t host_window_map_retire_error_code(host_window_map_retire_status_t status);
+
+/**
+ * @brief Tear down the table and write the teardown list.
+ *
+ * The list holds every realized window in teardown order: roots in descending realization order, and each
+ * root's subtree children first, so every descendant precedes its ancestor. The caller destroys each
+ * window's native objects in list order. The table is cleared only when the whole list was written. A
+ * corrupt table is refused and left as it is; zero-fill such storage to clear it.
+ *
+ * @param map In/out. Table. NULL gives `HostWindowMapResetRefuseInvalid`. Cleared on `HostWindowMapReset`.
+ * @param out Out. Teardown list of at least `out_capacity` entries. NULL gives `HostWindowMapResetRefuseInvalid`.
+ *            Written only on `HostWindowMapReset`. Must not overlap `map` or `out_count`.
+ * @param out_capacity In. Entries in `out`; below `HostWindowMapMaxOutput` gives refusal.
+ * @param out_count Out. Receives the teardown count. NULL gives `HostWindowMapResetRefuseInvalid`. Not written
+ *                  when a NULL pointer, a short capacity, an overlap or a corrupt table refuses the call. Must
+ *                  not overlap `map` or `out`.
+ * @return Reset status. Thread safety: owner thread only.
+ */
+host_window_map_reset_status_t host_window_map_reset(host_window_map_t *map, host_window_ref_t *out, uint32_t out_capacity, uint32_t *out_count);
+
+/** @brief Result of `host_window_map_announce`. `slot` is the stable slot index on Realize and `HostWindowMapNoSlot` otherwise. */
+typedef struct host_window_map_announce_result_t {
+    host_window_map_announce_status_t status; /**< Outcome of the announce. */
+    uint32_t slot; /**< Slot of the realized window, or `HostWindowMapNoSlot`. */
+} host_window_map_announce_result_t;
 
 /**
  * @brief Realize one window if its parent, when named, is exactly realized.
  *
- * A child whose parent pair is not realized is refused as a stale parent. The table never defers the
- * announcement; the guest resends it after the parent is exported.
+ * The window takes the lowest free slot. A child whose parent pair is not realized is refused as a stale
+ * parent. The table never defers the announcement; the guest resends it after the parent is exported.
  *
- * @param map In/out. Table. NULL gives `HostWindowMapRefuseInvalid`.
+ * @param map In/out. Table. NULL gives `HostWindowMapRefuseInvalid` with `HostWindowMapNoSlot`.
  * @param window In. Identity to realize; both fields nonzero.
  * @param parent In. Exact parent, or none (both fields zero). Menu, Tooltip and ImePreedit need a realized
  *               parent; Toplevel and UacConsent need none.
  * @param role In. `host_window_map_role_t` value 1..6. Other values are refused.
- * @return Announce status. Thread safety: owner thread only.
+ * @return Announce status and slot. Thread safety: owner thread only.
  */
-host_window_map_announce_status_t host_window_map_announce(host_window_map_t *map, host_window_ref_t window, host_window_ref_t parent, uint8_t role);
+host_window_map_announce_result_t host_window_map_announce(host_window_map_t *map, host_window_ref_t window, host_window_ref_t parent, uint8_t role);
 
 /**
  * @brief Retire a realized window and its realized subtree.
@@ -114,10 +212,72 @@ host_window_map_announce_status_t host_window_map_announce(host_window_map_t *ma
  *            Written only on `HostWindowMapRetired`.
  * @param out_capacity In. Entries in `out`; below `HostWindowMapMaxOutput` gives refusal.
  * @param out_count Out. Receives the removed count. NULL gives `HostWindowMapRetireRefuseInvalid`. Must not
- *                  overlap the table or `out`.
+ *                  overlap the table or `out`. Written with the removed count (0 for `HostWindowMapStale`)
+ *                  whenever the call reaches the table. It is NOT written when a NULL pointer, a short
+ *                  `out_capacity`, or an overlap refuses the call; the caller's value is then unchanged.
  * @return Retire status. Thread safety: owner thread only.
  */
 host_window_map_retire_status_t host_window_map_retire(host_window_map_t *map, host_window_ref_t window, host_window_ref_t *out, uint32_t out_capacity, uint32_t *out_count);
+
+/**
+ * @brief Change the direct parent of a realized Dialog to another realized window.
+ *
+ * The new parent must be realized under its exact generation. It must not be the window itself or a
+ * descendant of it. Only Dialogs change parent. The slot and the realization sequence are unchanged.
+ *
+ * @param map In/out. Table; NULL gives `HostWindowMapReparentRefuseInvalid`.
+ * @param window In. Identity of the Dialog; both fields nonzero.
+ * @param new_parent In. Exact identity of the new realized parent; both fields nonzero.
+ * @return Status. Thread safety: owner thread only.
+ */
+host_window_map_reparent_status_t host_window_map_reparent(host_window_map_t *map, host_window_ref_t window, host_window_ref_t new_parent);
+
+/**
+ * @brief Protocol error code (`interop_error_t`) for a reparent status.
+ *
+ * Reparented gives `InteropErrorNone`; a stale window or stale parent gives `InteropErrorStaleWindow`; a cycle or
+ * a role that may not change parent gives `InteropErrorProtocolViolation`; an invalid argument or corrupt table
+ * gives `InteropErrorMalformedFrame`.
+ *
+ * @param status In. Status returned by `host_window_map_reparent`.
+ * @return The `interop_error_t` value. Thread safety: any thread.
+ */
+uint32_t host_window_map_reparent_error_code(host_window_map_reparent_status_t status);
+
+/**
+ * @brief Mark a realized popup dismissed by the compositor (`popup_done`).
+ *
+ * The popup stays realized, with its slot and user data, until the guest retires it. Only Menu, Tooltip and
+ * ImePreedit may be dismissed.
+ *
+ * @param map In/out. Table; NULL gives `HostWindowMapDismissRefuseInvalid`.
+ * @param window In. Exact identity of the popup; both fields nonzero.
+ * @return Status. Thread safety: owner thread only.
+ */
+host_window_map_dismiss_status_t host_window_map_mark_dismissed(host_window_map_t *map, host_window_ref_t window);
+
+/**
+ * @brief Set the adapter value of the window in a slot, if that slot holds exactly `window`.
+ *
+ * @param map In/out. Table; NULL gives `HostWindowMapUserDataRefuseInvalid`.
+ * @param slot In. Slot index from the announce that realized the window; must be below 64.
+ * @param window In. Identity; both fields nonzero.
+ * @param value In. Value to store.
+ * @return Status. Thread safety: owner thread only.
+ */
+host_window_map_user_data_status_t host_window_map_set_user_data(host_window_map_t *map, uint32_t slot, host_window_ref_t window, uint64_t value);
+
+/**
+ * @brief Read the adapter value of the window in a slot, if that slot holds exactly `window`.
+ *
+ * @param map In. Table, read only; NULL gives `HostWindowMapUserDataRefuseInvalid`.
+ * @param slot In. Slot index; must be below 64.
+ * @param window In. Identity; both fields nonzero.
+ * @param value Out. Receives the stored value on `HostWindowMapUserDataOk` only. NULL gives
+ *              `HostWindowMapUserDataRefuseInvalid`. Must not overlap `map`.
+ * @return Status. Thread safety: owner thread only.
+ */
+host_window_map_user_data_status_t host_window_map_get_user_data(const host_window_map_t *map, uint32_t slot, host_window_ref_t window, uint64_t *value);
 
 /**
  * @brief Look up a realized window by exact identity.
@@ -148,7 +308,8 @@ uint32_t host_window_map_realized_count(const host_window_map_t *map);
 
 /* Layout frozen with the Zig extern structs; a change in either breaks the build. */
 _Static_assert(sizeof(host_window_ref_t) == 16, "host_window_ref_t layout");
+_Static_assert(sizeof(host_window_slot_t) == 56, "host_window_slot_t layout");
 _Static_assert(sizeof(host_window_entry_t) == 56, "host_window_entry_t layout");
-_Static_assert(sizeof(host_window_map_t) == 3592, "host_window_map_t layout");
+_Static_assert(sizeof(host_window_map_t) == 3600, "host_window_map_t layout");
 
 #endif

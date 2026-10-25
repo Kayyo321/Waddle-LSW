@@ -1,21 +1,22 @@
 //! Pure bounded mapping of guest `(window, generation)` identities to host surfaces (TODO #11a).
 //!
-//! The table holds at most 64 realized windows per session epoch. It decides whether one announced
-//! identity may be realized and which identities a retire removes, and in which order; it performs
-//! no native or Wayland call. Realized entries are kept in realization order, so every parent
-//! precedes its children. The module owns only caller storage, allocates nothing, and never wraps a
-//! counter.
+//! The table holds at most 64 realized windows per session epoch in fixed slots. A slot keeps its
+//! index for as long as its window stays realized: retiring another window never moves it, and a freed
+//! slot is reused by the next realize, lowest index first. Realization order is kept in a per-slot
+//! sequence number. The module performs no native or Wayland call, allocates nothing, and never wraps
+//! a counter.
 //!
 //! A child whose exact parent pair is not realized is refused as a stale parent, never deferred. The
-//! guest defers such an announcement until the parent is exported (IMPL_DESC section 3.2.8), so the
-//! host keeps no deferred state. The contract is
-//! `impl/seamless-interop/claude_45_percent/host_window_map_contract.md`.
+//! guest defers such an announcement until the parent is exported (IMPL_DESC section 3.2.8).
+//! The contract is `impl/seamless-interop/claude_45_percent/host_window_map_contract.md`.
 const std = @import("std");
 
-/// Maximum realized windows (exported surfaces) per session epoch.
+/// Maximum realized windows (exported surfaces) per session epoch, and the number of slots.
 pub const MaxRealized: usize = 64;
 /// Minimum caller output capacity accepted by retire.
 pub const MaxOutput: usize = 64;
+/// Slot index reported by a refused announce.
+pub const NoSlot: u32 = MaxRealized;
 
 /// Frozen `interop_window_role_t` value: Toplevel, xdg_toplevel without a parent.
 pub const RoleToplevel: u8 = 1;
@@ -30,6 +31,18 @@ pub const RoleUacConsent: u8 = 5;
 /// Frozen `interop_window_role_t` value: ImePreedit, non-grabbing xdg_popup that requires a parent.
 pub const RoleImePreedit: u8 = 6;
 
+/// Protocol `interop_error_t` values used as refusal codes. They equal `include/waddle/interop_protocol.h`,
+/// and the Zig tests and the C header check that equality.
+pub const ErrorNone: u32 = 0;
+/// `InteropErrorProtocolViolation`: a duplicate announce.
+pub const ErrorProtocolViolation: u32 = 1;
+/// `InteropErrorMalformedFrame`: a zero identity, invalid role, invalid parent shape or capacity.
+pub const ErrorMalformedFrame: u32 = 2;
+/// `InteropErrorStaleWindow`: a parent or window generation that is not realized.
+pub const ErrorStaleWindow: u32 = 5;
+/// `InteropErrorQuotaExceeded`: the 64-entry table is full.
+pub const ErrorQuotaExceeded: u32 = 6;
+
 /// Exact identity of one window incarnation. Both fields zero is "none" when used as a parent.
 pub const window_ref_t = extern struct {
     /// Protocol window handle (HWND value). Zero means no window.
@@ -38,41 +51,77 @@ pub const window_ref_t = extern struct {
     generation: u64,
 };
 
-/// One realized window, stored in realization order.
+/// One fixed slot. `occupied` is zero for a free slot, and then the other fields are meaningless.
+pub const slot_t = extern struct {
+    /// Realized identity.
+    window: window_ref_t,
+    /// Requested direct parent, or none. Retire cascades follow this field.
+    parent: window_ref_t,
+    /// Realization sequence number, unique per epoch and increasing with each realize.
+    realize_seq: u64,
+    /// Opaque value owned by the adapter for this window. Zero when realized; set with `set_user_data`.
+    user_data: u64,
+    /// Raw `interop_window_role_t` value, 1..6.
+    role: u8,
+    /// Nonzero while the slot holds a realized window.
+    occupied: u8,
+    /// Nonzero once the compositor reported the popup dismissed (`popup_done`). A dismissed popup stays
+    /// realized until the guest retires it.
+    dismissed: u8,
+};
+
+/// Copy of an occupied slot returned by `lookup`.
 pub const window_entry_t = extern struct {
     /// Realized identity.
     window: window_ref_t,
-    /// Requested parent identity, or none. Retire cascades follow this field.
+    /// Requested direct parent, or none.
     parent: window_ref_t,
-    /// Popup only: positioning root, a non-popup window. None for every other role.
-    root: window_ref_t,
+    /// Realization sequence number.
+    realize_seq: u64,
+    /// Adapter value stored for this window.
+    user_data: u64,
+    /// Stable slot index of this window.
+    slot: u32,
     /// Raw `interop_window_role_t` value, 1..6.
     role: u8,
+    /// Nonzero once the popup was marked dismissed.
+    dismissed: u8,
 };
 
 /// Complete table state. The caller owns the storage; the table holds no pointers.
 pub const host_window_map_t = extern struct {
-    /// Number of initialized entries at the front of `realized`, at most 64.
+    /// Number of occupied slots. Must equal the occupied count and be at most 64; otherwise the table is
+    /// corrupt and every call refuses with RefuseInvalid.
     realized_count: u32,
-    /// Realized windows in realization order.
-    realized: [MaxRealized]window_entry_t,
+    /// Sequence number the next realize will take. Stops at the maximum value without wrapping.
+    next_seq: u64,
+    /// Fixed slots. A slot keeps its index while its window stays realized.
+    slots: [MaxRealized]slot_t,
 };
 
 /// Result code of `announce`.
 pub const announce_status_t = enum(c_int) {
-    /// The window is realized and appended to the table.
+    /// The window is realized in `slot`.
     Realize = 1,
     /// The exact pair is already realized. No change.
     RefuseDuplicate = 2,
-    /// The parent pair is not realized: it was never announced, was retired, or its window is
-    /// realized under another generation. No change.
+    /// The parent pair is not realized: it was never announced, was retired, or its window is realized
+    /// under another generation. No change.
     RefuseStaleParent = 3,
     /// The window is realized under another generation; that generation must be retired first.
     RefuseWindowConflict = 4,
-    /// The table already holds 64 realized windows. No change.
+    /// The table holds 64 realized windows or the sequence counter is exhausted. No change.
     RefuseExhausted = 5,
-    /// Zero identity, invalid role, invalid parent shape. No change.
+    /// Zero identity, invalid role, invalid parent shape, or a corrupt table. No change.
     RefuseInvalid = 6,
+};
+
+/// Result of `announce`. `slot` is the stable slot index on Realize and NoSlot otherwise.
+pub const announce_result_t = extern struct {
+    /// Outcome of the announce.
+    status: announce_status_t,
+    /// Slot of the realized window, or NoSlot.
+    slot: u32,
 };
 
 /// Result code of `retire`.
@@ -82,7 +131,60 @@ pub const retire_status_t = enum(c_int) {
     /// No realized entry with that exact pair exists (never realized, already retired, or another
     /// generation). No change.
     Stale = 2,
-    /// Zero identity or output capacity below MaxOutput. No change.
+    /// Zero identity, output capacity below MaxOutput, or a corrupt table. No change.
+    RefuseInvalid = 3,
+};
+
+/// Result code of `reset`.
+pub const reset_status_t = enum(c_int) {
+    /// The table was torn down: the teardown list was written and the table cleared.
+    Reset = 1,
+    /// Output capacity below MaxOutput, or a corrupt table. Nothing was written and the table is unchanged.
+    RefuseInvalid = 2,
+};
+
+/// Result of `reset`. `count` is the number of entries written to the teardown list.
+pub const reset_result_t = extern struct {
+    /// Outcome of the reset.
+    status: reset_status_t,
+    /// Realized windows written to the teardown list; zero unless Reset.
+    count: u32,
+};
+
+/// Result code of `mark_dismissed`.
+pub const dismiss_status_t = enum(c_int) {
+    /// The popup is marked dismissed. Marking it again is also Marked and changes nothing further.
+    Marked = 1,
+    /// No realized entry with that exact pair. Nothing changed.
+    Stale = 2,
+    /// Zero identity, a corrupt table, or a window that is not a popup. Nothing changed.
+    RefuseInvalid = 3,
+};
+
+/// Result code of `reparent`.
+pub const reparent_status_t = enum(c_int) {
+    /// The window's direct parent is now the new parent. Its slot and sequence number are unchanged.
+    Reparented = 1,
+    /// No realized entry with the window's exact pair. Nothing changed.
+    Stale = 2,
+    /// The new parent pair is not realized: never announced, retired, or another generation. Nothing changed.
+    RefuseStaleParent = 3,
+    /// The new parent is the window itself or one of its descendants, which would close a cycle. Nothing changed.
+    RefuseCycle = 4,
+    /// The window is not a Dialog. Only Dialogs change parent; Toplevel and UacConsent carry no parent and
+    /// popups keep the parent they were realized with. Nothing changed.
+    RefuseRole = 5,
+    /// Zero identity, a parent of none, a self parent, or a corrupt table. Nothing changed.
+    RefuseInvalid = 6,
+};
+
+/// Result code of `set_user_data` and `get_user_data`.
+pub const user_data_status_t = enum(c_int) {
+    /// The value was set or read.
+    Ok = 1,
+    /// The slot does not hold exactly this window. Nothing changed.
+    Stale = 2,
+    /// Zero identity, slot index outside the table, NULL output, overlap, or a corrupt table. Nothing changed.
     RefuseInvalid = 3,
 };
 
@@ -93,6 +195,52 @@ pub const retire_result_t = extern struct {
     /// Removed windows written to the output list, target included; zero unless Retired.
     count: u32,
 };
+
+/// Protocol error code for an announce status, as sent in `Error{refused_type = WindowAnnounce}`.
+///
+/// Realize is `ErrorNone`. A full table is `ErrorQuotaExceeded`. A parent that is not realized, or a
+/// window known under another generation, is `ErrorStaleWindow`. A duplicate is `ErrorProtocolViolation`.
+/// An invalid identity, role or parent shape, or a corrupt table, is `ErrorMalformedFrame`.
+///
+/// @param status Status returned by `announce`.
+/// @return The `interop_error_t` value.
+pub fn announce_error_code(status: announce_status_t) u32 {
+    return switch (status) {
+        .Realize => ErrorNone,
+        .RefuseDuplicate => ErrorProtocolViolation,
+        .RefuseStaleParent, .RefuseWindowConflict => ErrorStaleWindow,
+        .RefuseExhausted => ErrorQuotaExceeded,
+        .RefuseInvalid => ErrorMalformedFrame,
+    };
+}
+
+/// Protocol error code for a retire status. Retired is `ErrorNone`, a stale pair is `ErrorStaleWindow`,
+/// and an invalid identity, output capacity or corrupt table is `ErrorMalformedFrame`.
+///
+/// @param status Status returned by `retire`.
+/// @return The `interop_error_t` value.
+pub fn retire_error_code(status: retire_status_t) u32 {
+    return switch (status) {
+        .Retired => ErrorNone,
+        .Stale => ErrorStaleWindow,
+        .RefuseInvalid => ErrorMalformedFrame,
+    };
+}
+
+/// Protocol error code for a reparent status. Reparented is `ErrorNone`; a stale window or a stale parent is
+/// `ErrorStaleWindow`; a cycle or a role that may not change parent is `ErrorProtocolViolation`; an invalid
+/// identity or corrupt table is `ErrorMalformedFrame`.
+///
+/// @param status Status returned by `reparent`.
+/// @return The `interop_error_t` value.
+pub fn reparent_error_code(status: reparent_status_t) u32 {
+    return switch (status) {
+        .Reparented => ErrorNone,
+        .Stale, .RefuseStaleParent => ErrorStaleWindow,
+        .RefuseCycle, .RefuseRole => ErrorProtocolViolation,
+        .RefuseInvalid => ErrorMalformedFrame,
+    };
+}
 
 /// Whether a window reference names a real identity (both fields nonzero).
 fn valid_ref(id: window_ref_t) bool {
@@ -120,36 +268,96 @@ fn same_ref(left: window_ref_t, right: window_ref_t) bool {
     return left.window == right.window and left.generation == right.generation;
 }
 
-fn realized_len(map: *const host_window_map_t) usize {
-    return map.realized_count;
-}
-
-fn find_realized(map: *const host_window_map_t, window: u64) ?usize {
-    for (map.realized[0..realized_len(map)], 0..) |entry, index| {
-        if (entry.window.window == window) return index;
+/// Index of the occupied slot holding `window`'s identifier, whatever its generation.
+fn find_window(map: *const host_window_map_t, window: u64) ?usize {
+    for (map.slots, 0..) |slot, index| {
+        if (slot.occupied != 0 and slot.window.window == window) return index;
     }
     return null;
 }
 
-/// Clear the table. Zero-filled storage is the same state. Callers must reset before first use
-/// of storage they did not zero themselves. Owner-thread only; emits no output.
-///
-/// @param map Table to clear; must not be null.
-pub fn reset(map: *host_window_map_t) void {
-    map.* = std.mem.zeroes(host_window_map_t);
+/// Index of the occupied slot holding exactly `id`.
+fn find_exact(map: *const host_window_map_t, id: window_ref_t) ?usize {
+    for (map.slots, 0..) |slot, index| {
+        if (slot.occupied != 0 and same_ref(slot.window, id)) return index;
+    }
+    return null;
 }
 
-/// Look up a realized entry by exact identity.
+/// Lowest free slot index, or null when every slot is occupied.
+fn find_free(map: *const host_window_map_t) ?usize {
+    for (map.slots, 0..) |slot, index| {
+        if (slot.occupied == 0) return index;
+    }
+    return null;
+}
+
+/// Number of occupied slots, counted from the slots themselves.
+fn occupied_count(map: *const host_window_map_t) usize {
+    var count: usize = 0;
+    for (map.slots) |slot| {
+        if (slot.occupied != 0) count += 1;
+    }
+    return count;
+}
+
+/// Whether the stored count agrees with the slots and fits the table. Every operation checks this
+/// first, so a corrupt count in caller storage is refused instead of used.
+fn is_consistent(map: *const host_window_map_t) bool {
+    return map.realized_count <= MaxRealized and occupied_count(map) == map.realized_count;
+}
+
+/// Tear down the whole table: write every realized window to `out` in teardown order, then clear it.
+///
+/// Teardown order: roots (windows with no parent) in descending realization order, and within each
+/// root the subtree children first, exactly as `retire` orders a subtree. Every descendant therefore
+/// precedes its ancestor. The table is cleared only when the whole teardown list was written. A corrupt
+/// table is refused and left as it is, so the caller can tell that its storage is not a valid table; such
+/// storage is cleared by zero-filling it.
+///
+/// @param map Table; must not be null.
+/// @param out Teardown list, length at least MaxOutput. Written only on Reset.
+/// @return Status and the teardown count.
+/// @thread_safety Owner thread only; no internal synchronization.
+pub fn reset(map: *host_window_map_t, out: []window_ref_t) reset_result_t {
+    const refused = reset_result_t{ .status = .RefuseInvalid, .count = 0 };
+    if (out.len < MaxOutput or !is_consistent(map)) return refused;
+
+    var order: [MaxRealized]u32 = undefined;
+    var count: usize = 0;
+    var bound: u64 = std.math.maxInt(u64);
+    while (true) {
+        var best: ?usize = null;
+        for (map.slots, 0..) |slot, index| {
+            if (slot.occupied == 0 or slot.parent.window != 0) continue;
+            if (slot.realize_seq >= bound) continue;
+            if (best == null or slot.realize_seq > map.slots[best.?].realize_seq) best = index;
+        }
+        const root = best orelse break;
+        if (!emit_subtree(map, root, 0, &order, &count)) return refused;
+        bound = map.slots[root].realize_seq;
+    }
+    // A parent that names no realized window, or a cycle, leaves slots unreachable from a root.
+    if (count != map.realized_count) return refused;
+
+    for (order[0..count], 0..) |index, position| {
+        out[position] = map.slots[index].window;
+    }
+    map.* = std.mem.zeroes(host_window_map_t);
+    return .{ .status = .Reset, .count = @intCast(count) };
+}
+
+/// Look up an occupied slot by exact identity.
 ///
 /// @param map Table; read only.
 /// @param window Identity to find; both fields must match.
-/// @return A copy of the realized entry, or null when `window.window` is not realized under
-///         `window.generation`.
+/// @return A copy of the slot as a window entry, or null when the pair is not realized or the table is
+///         corrupt.
 pub fn lookup(map: *const host_window_map_t, window: window_ref_t) ?window_entry_t {
-    const index = find_realized(map, window.window) orelse return null;
-    const entry = map.realized[index];
-    if (entry.window.generation != window.generation) return null;
-    return entry;
+    if (!is_consistent(map)) return null;
+    const index = find_exact(map, window) orelse return null;
+    const slot = map.slots[index];
+    return .{ .window = slot.window, .parent = slot.parent, .realize_seq = slot.realize_seq, .user_data = slot.user_data, .slot = @intCast(index), .role = slot.role, .dismissed = slot.dismissed };
 }
 
 /// Whether the exact identity is currently realized.
@@ -164,61 +372,167 @@ pub fn is_current(map: *const host_window_map_t, window: window_ref_t) bool {
 /// Number of realized windows in the table.
 ///
 /// @param map Table; read only.
-/// @return Current realized count, never above MaxRealized.
+/// @return The realized count when the table is consistent, otherwise 0.
 pub fn realized_count(map: *const host_window_map_t) u32 {
-    return map.realized_count;
+    return if (is_consistent(map)) map.realized_count else 0;
+}
+
+/// Mark a realized popup as dismissed by the compositor (`popup_done`). The popup stays realized, with
+/// its slot and user data, until the guest retires it.
+///
+/// @param map Table; must not be null.
+/// @param window Exact identity of the popup; both fields nonzero.
+/// @return `Marked`, `Stale` for an identity that is not realized, or `RefuseInvalid` for a zero identity, a
+///         corrupt table, or a window that is not a popup.
+pub fn mark_dismissed(map: *host_window_map_t, window: window_ref_t) dismiss_status_t {
+    if (!valid_ref(window) or !is_consistent(map)) return .RefuseInvalid;
+    const index = find_exact(map, window) orelse return .Stale;
+    if (!is_popup_role(map.slots[index].role)) return .RefuseInvalid;
+    map.slots[index].dismissed = 1;
+    return .Marked;
+}
+
+/// Set the adapter value of the window in `slot`, if that slot holds exactly `window`.
+///
+/// @param map Table; must not be null.
+/// @param slot Slot index from the announce or lookup that realized the window; must be below 64.
+/// @param window Identity the caller believes the slot holds; both fields nonzero.
+/// @param value Value to store.
+/// @return `Ok` when stored, `Stale` when the slot is free or holds another pair, `RefuseInvalid` for bad
+///         arguments or a corrupt table.
+pub fn set_user_data(map: *host_window_map_t, slot: u32, window: window_ref_t, value: u64) user_data_status_t {
+    const index = checked_slot(map, slot, window) orelse return .RefuseInvalid;
+    if (!same_ref(map.slots[index].window, window) or map.slots[index].occupied == 0) return .Stale;
+    map.slots[index].user_data = value;
+    return .Ok;
+}
+
+/// Read the adapter value of the window in `slot`, if that slot holds exactly `window`.
+///
+/// @param map Table, read only.
+/// @param slot Slot index; must be below 64.
+/// @param window Identity the caller believes the slot holds; both fields nonzero.
+/// @param value Out. Receives the stored value on Ok only.
+/// @return `Ok`, `Stale` or `RefuseInvalid` as for `set_user_data`.
+pub fn get_user_data(map: *const host_window_map_t, slot: u32, window: window_ref_t, value: *u64) user_data_status_t {
+    const index = checked_slot(map, slot, window) orelse return .RefuseInvalid;
+    if (!same_ref(map.slots[index].window, window) or map.slots[index].occupied == 0) return .Stale;
+    value.* = map.slots[index].user_data;
+    return .Ok;
+}
+
+/// Validate a slot index and identity for the user-data accessors. Returns the index, or null when the
+/// arguments or the table are invalid.
+fn checked_slot(map: *const host_window_map_t, slot: u32, window: window_ref_t) ?usize {
+    if (!valid_ref(window) or slot >= MaxRealized or !is_consistent(map)) return null;
+    return slot;
 }
 
 /// Realize one window if its parent, when named, is exactly realized.
 ///
-/// A parent pair that is not realized is refused as a stale parent. The table never defers.
-/// The guest announces a child only after its parent is exported (IMPL_DESC section 3.2.8).
+/// The window takes the lowest free slot and the next sequence number. A parent pair that is not
+/// realized is refused as a stale parent. The table never defers.
 ///
 /// @param map Table; must not be null.
 /// @param window Identity to realize; both fields nonzero.
 /// @param parent Exact parent identity, or none (zero in both fields). Menu, Tooltip and ImePreedit
 ///               require a realized parent. Toplevel and UacConsent require none.
 /// @param role Raw role value 1..6.
-/// @return Status. Changes state only for Realize.
+/// @return Status and the slot index on Realize (NoSlot otherwise). Changes state only for Realize.
 /// @thread_safety Owner thread only; no internal synchronization.
-pub fn announce(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_status_t {
-    if (!valid_ref(window) or !valid_optional_ref(parent) or !valid_role(role)) return .RefuseInvalid;
-    if (parent.window == window.window) return .RefuseInvalid;
-    if (forbids_parent(role) and parent.window != 0) return .RefuseInvalid;
-    if (is_popup_role(role) and parent.window == 0) return .RefuseInvalid;
+pub fn announce(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_result_t {
+    const refused = announce_result_t{ .status = .RefuseInvalid, .slot = NoSlot };
+    if (!valid_ref(window) or !valid_optional_ref(parent) or !valid_role(role)) return refused;
+    if (parent.window == window.window) return refused;
+    if (forbids_parent(role) and parent.window != 0) return refused;
+    if (is_popup_role(role) and parent.window == 0) return refused;
+    if (!is_consistent(map)) return refused;
 
-    if (find_realized(map, window.window)) |index| {
-        return if (map.realized[index].window.generation == window.generation) .RefuseDuplicate else .RefuseWindowConflict;
+    if (find_window(map, window.window)) |index| {
+        const status: announce_status_t = if (same_ref(map.slots[index].window, window)) .RefuseDuplicate else .RefuseWindowConflict;
+        return .{ .status = status, .slot = NoSlot };
     }
     if (parent.window != 0) {
-        const index = find_realized(map, parent.window) orelse return .RefuseStaleParent;
-        if (map.realized[index].window.generation != parent.generation) return .RefuseStaleParent;
+        const index = find_window(map, parent.window) orelse return .{ .status = .RefuseStaleParent, .slot = NoSlot };
+        if (!same_ref(map.slots[index].window, parent)) return .{ .status = .RefuseStaleParent, .slot = NoSlot };
     }
-    if (realized_len(map) == MaxRealized) return .RefuseExhausted;
+    if (map.realized_count == MaxRealized or map.next_seq == std.math.maxInt(u64)) {
+        return .{ .status = .RefuseExhausted, .slot = NoSlot };
+    }
 
-    append_realized(map, window, parent, role);
-    return .Realize;
-}
-
-/// Append a realized entry. A popup's parent is realized by the caller's check.
-fn append_realized(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) void {
-    const root = if (is_popup_role(role)) popup_root(map, parent) else window_ref_t{ .window = 0, .generation = 0 };
-    map.realized[realized_len(map)] = .{ .window = window, .parent = parent, .root = root, .role = role };
+    // A consistent table with fewer than MaxRealized occupied slots always has a free one.
+    const index = find_free(map) orelse unreachable;
+    map.slots[index] = .{ .window = window, .parent = parent, .realize_seq = map.next_seq, .user_data = 0, .role = role, .occupied = 1, .dismissed = 0 };
+    map.next_seq += 1;
     map.realized_count += 1;
+    return .{ .status = .Realize, .slot = @intCast(index) };
 }
 
-/// Positioning root of a popup whose parent is realized: a popup parent contributes its own root,
-/// any other parent is its own root.
-fn popup_root(map: *const host_window_map_t, parent: window_ref_t) window_ref_t {
-    const index = find_realized(map, parent.window) orelse unreachable;
-    const entry = map.realized[index];
-    return if (is_popup_role(entry.role)) entry.root else entry.window;
-}
-
-/// Remove a realized window and its realized subtree.
+/// Collect the realized subtree rooted at slot `index` into `order`, children first.
 ///
-/// The output lists the removed pairs in reverse realization order: every descendant precedes its
-/// ancestor and the target is last. The subtree follows requested parents to any depth.
+/// Children are visited in descending realization order, each child's own subtree before the child,
+/// and the root last. The recursion depth is bounded by MaxRealized and every emitted slot is counted,
+/// so a corrupt parent cycle returns false instead of looping.
+///
+/// @return False when the subtree is deeper than MaxRealized or would emit more than MaxRealized slots.
+fn emit_subtree(map: *const host_window_map_t, index: usize, depth: usize, order: *[MaxRealized]u32, count: *usize) bool {
+    if (depth > MaxRealized) return false;
+    const self_window = map.slots[index].window;
+    var bound: u64 = std.math.maxInt(u64);
+    while (true) {
+        var best: ?usize = null;
+        for (map.slots, 0..) |slot, child| {
+            if (slot.occupied == 0 or !same_ref(slot.parent, self_window)) continue;
+            if (slot.realize_seq >= bound) continue;
+            if (best == null or slot.realize_seq > map.slots[best.?].realize_seq) best = child;
+        }
+        const chosen = best orelse break;
+        if (!emit_subtree(map, chosen, depth + 1, order, count)) return false;
+        bound = map.slots[chosen].realize_seq;
+    }
+    if (count.* == MaxRealized) return false;
+    order[count.*] = @intCast(index);
+    count.* += 1;
+    return true;
+}
+
+/// Change the direct parent of a realized Dialog to another realized window.
+///
+/// The new parent must be realized under its exact generation, and it must not be the window itself or a
+/// descendant of it. Walking the new parent's ancestors is bounded by MaxRealized steps, so corrupt storage
+/// with a cycle is refused rather than followed. Only Dialogs change parent; any other role is refused.
+///
+/// @param map Table; must not be null.
+/// @param window Exact identity of the Dialog; both fields nonzero.
+/// @param new_parent Exact identity of the new realized parent; both fields nonzero.
+/// @return Status. Changes only the parent of `window` on Reparented.
+/// @thread_safety Owner thread only; no internal synchronization.
+pub fn reparent(map: *host_window_map_t, window: window_ref_t, new_parent: window_ref_t) reparent_status_t {
+    if (!valid_ref(window) or !valid_ref(new_parent) or window.window == new_parent.window or !is_consistent(map)) return .RefuseInvalid;
+    const target = find_exact(map, window) orelse return .Stale;
+    if (map.slots[target].role != RoleDialog) return .RefuseRole;
+    const parent_index = find_exact(map, new_parent) orelse return .RefuseStaleParent;
+
+    var current = new_parent;
+    var steps: usize = 0;
+    while (steps <= MaxRealized) : (steps += 1) {
+        if (current.window == window.window) return .RefuseCycle;
+        const index = find_exact(map, current) orelse break;
+        const up = map.slots[index].parent;
+        if (up.window == 0) break;
+        current = up;
+    } else {
+        return .RefuseInvalid;
+    }
+    map.slots[target].parent = map.slots[parent_index].window;
+    return .Reparented;
+}
+
+/// Remove a realized window and its realized subtree. Other slots keep their indices.
+///
+/// The output lists the removed pairs children first: every descendant precedes its ancestor, siblings
+/// are in reverse realization order, and the target is last. The subtree follows requested parents to
+/// any depth.
 ///
 /// @param map Table; must not be null and must not alias `out`.
 /// @param window Identity to retire; both fields nonzero and matching the realized generation.
@@ -226,42 +540,20 @@ fn popup_root(map: *const host_window_map_t, parent: window_ref_t) window_ref_t 
 /// @return Status and the number of removed windows. Stale and refusal results change nothing.
 /// @thread_safety Owner thread only; no internal synchronization.
 pub fn retire(map: *host_window_map_t, window: window_ref_t, out: []window_ref_t) retire_result_t {
-    if (out.len < MaxOutput or !valid_ref(window)) return .{ .status = .RefuseInvalid, .count = 0 };
-    const target = find_realized(map, window.window) orelse return .{ .status = .Stale, .count = 0 };
-    if (map.realized[target].window.generation != window.generation) return .{ .status = .Stale, .count = 0 };
+    if (out.len < MaxOutput or !valid_ref(window) or !is_consistent(map)) return .{ .status = .RefuseInvalid, .count = 0 };
+    const target = find_exact(map, window) orelse return .{ .status = .Stale, .count = 0 };
 
-    const len = realized_len(map);
-    var remove = [_]bool{false} ** MaxRealized;
-    remove[target] = true;
-    // Parents precede children in realization order, so one forward pass closes the subtree.
-    for (target + 1..len) |index| {
-        const parent = map.realized[index].parent;
-        if (find_realized(map, parent.window)) |parent_index| {
-            if (remove[parent_index] and same_ref(map.realized[parent_index].window, parent)) remove[index] = true;
-        }
-    }
-
+    var order: [MaxRealized]u32 = undefined;
     var count: usize = 0;
-    var position = len;
-    while (position > 0) {
-        position -= 1;
-        if (!remove[position]) continue;
-        out[count] = map.realized[position].window;
-        count += 1;
+    if (!emit_subtree(map, target, 0, &order, &count)) return .{ .status = .RefuseInvalid, .count = 0 };
+    for (order[0..count], 0..) |index, position| {
+        out[position] = map.slots[index].window;
     }
-    compact_realized(map, &remove);
+    for (order[0..count]) |index| {
+        map.slots[index].occupied = 0;
+    }
+    map.realized_count -= @intCast(count);
     return .{ .status = .Retired, .count = @intCast(count) };
-}
-
-/// Remove realized entries flagged in `remove`, keeping realization order.
-fn compact_realized(map: *host_window_map_t, remove: []const bool) void {
-    var write: usize = 0;
-    for (0..realized_len(map)) |read| {
-        if (remove[read]) continue;
-        if (write != read) map.realized[write] = map.realized[read];
-        write += 1;
-    }
-    map.realized_count = @intCast(write);
 }
 
 // ---- C ABI ------------------------------------------------------------------------------------
@@ -291,12 +583,25 @@ fn regions_disjoint(regions: []const region_t) bool {
     return true;
 }
 
-/// C ABI: clear the table. A NULL `map` is ignored.
+/// C ABI: tear down the table and write the teardown list. See `reset` for the order.
 ///
-/// @param map Table to clear; NULL is a no-op. In, out.
-/// @thread_safety Owner thread only.
-export fn host_window_map_reset(map: ?*host_window_map_t) callconv(.C) void {
-    reset(map orelse return);
+/// @param map In/out. Table; NULL gives RefuseInvalid. Cleared on Reset.
+/// @param out Out. Teardown list of at least `out_capacity` entries; NULL gives RefuseInvalid. Written only on
+///            Reset. Must not overlap `map` or `out_count`.
+/// @param out_capacity In. Entries in `out`; below 64 gives RefuseInvalid.
+/// @param out_count Out. Receives the teardown count; NULL gives RefuseInvalid. Not written when a NULL pointer,
+///                  a short capacity, an overlap or a corrupt table refuses the call. Must not overlap `map` or `out`.
+/// @return Reset status. Thread safety: owner thread only.
+export fn host_window_map_reset(map: ?*host_window_map_t, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) callconv(.C) reset_status_t {
+    const count_ptr = out_count orelse return .RefuseInvalid;
+    const target = map orelse return .RefuseInvalid;
+    const out_base = out orelse return .RefuseInvalid;
+    if (out_capacity < MaxOutput) return .RefuseInvalid;
+    const out_slice = out_base[0..out_capacity];
+    if (!regions_disjoint(&.{ region_of_value(target), region_of_slice(out_slice), region_of_value(count_ptr) })) return .RefuseInvalid;
+    const result = reset(target, out_slice);
+    count_ptr.* = result.count;
+    return result.status;
 }
 
 /// C ABI: realize one window. See `announce`.
@@ -305,9 +610,9 @@ export fn host_window_map_reset(map: ?*host_window_map_t) callconv(.C) void {
 /// @param window Identity by value; both fields nonzero. In.
 /// @param parent Parent identity by value; both fields zero for none. In.
 /// @param role Raw `interop_window_role_t` value 1..6. In.
-/// @return Announce status. Thread safety: owner thread only.
-export fn host_window_map_announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) callconv(.C) announce_status_t {
-    const target = map orelse return .RefuseInvalid;
+/// @return Status and the slot index. Thread safety: owner thread only.
+export fn host_window_map_announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) callconv(.C) announce_result_t {
+    const target = map orelse return .{ .status = .RefuseInvalid, .slot = NoSlot };
     return announce(target, window, parent, role);
 }
 
@@ -333,7 +638,7 @@ export fn host_window_map_retire(map: ?*host_window_map_t, window: window_ref_t,
     return result.status;
 }
 
-/// C ABI: exact-identity lookup of a realized entry.
+/// C ABI: exact-identity lookup of a realized window.
 ///
 /// @param map Table, read only; NULL gives false. In.
 /// @param window Identity by value. In.
@@ -361,16 +666,87 @@ export fn host_window_map_is_current(map: ?*const host_window_map_t, window: win
 /// C ABI: number of realized windows; NULL gives 0.
 ///
 /// @param map Table, read only. In.
-/// @return Realized count, at most 64.
+/// @return Realized count, at most 64; 0 for a corrupt table.
 /// @thread_safety Owner thread only.
 export fn host_window_map_realized_count(map: ?*const host_window_map_t) callconv(.C) u32 {
     return if (map) |target| realized_count(target) else 0;
 }
 
+/// C ABI: mark a realized popup dismissed. See `mark_dismissed`.
+///
+/// @param map In/out. Table; NULL gives RefuseInvalid.
+/// @param window In. Identity by value; both fields nonzero.
+/// @return Status. Thread safety: owner thread only.
+export fn host_window_map_mark_dismissed(map: ?*host_window_map_t, window: window_ref_t) callconv(.C) dismiss_status_t {
+    const target = map orelse return .RefuseInvalid;
+    return mark_dismissed(target, window);
+}
+
+/// C ABI: set the adapter value of the window in `slot`. See `set_user_data`.
+///
+/// @param map In/out. Table; NULL gives RefuseInvalid.
+/// @param slot In. Slot index from the announce that realized the window.
+/// @param window In. Identity by value; both fields nonzero.
+/// @param value In. Value to store.
+/// @return Status. Thread safety: owner thread only.
+export fn host_window_map_set_user_data(map: ?*host_window_map_t, slot: u32, window: window_ref_t, value: u64) callconv(.C) user_data_status_t {
+    const target = map orelse return .RefuseInvalid;
+    return set_user_data(target, slot, window, value);
+}
+
+/// C ABI: read the adapter value of the window in `slot`. See `get_user_data`.
+///
+/// @param map In. Table, read only; NULL gives RefuseInvalid.
+/// @param slot In. Slot index from the announce that realized the window.
+/// @param window In. Identity by value; both fields nonzero.
+/// @param value Out. Receives the stored value on Ok only; NULL gives RefuseInvalid. Must not overlap `map`.
+/// @return Status. Thread safety: owner thread only.
+export fn host_window_map_get_user_data(map: ?*const host_window_map_t, slot: u32, window: window_ref_t, value: ?*u64) callconv(.C) user_data_status_t {
+    const target = map orelse return .RefuseInvalid;
+    const destination = value orelse return .RefuseInvalid;
+    if (!regions_disjoint(&.{ region_of_value(target), region_of_value(destination) })) return .RefuseInvalid;
+    return get_user_data(target, slot, window, destination);
+}
+
+/// C ABI: change the parent of a realized Dialog. See `reparent`.
+///
+/// @param map In/out. Table; NULL gives RefuseInvalid.
+/// @param window In. Identity by value; both fields nonzero.
+/// @param new_parent In. New parent by value; both fields nonzero.
+/// @return Status. Thread safety: owner thread only.
+export fn host_window_map_reparent(map: ?*host_window_map_t, window: window_ref_t, new_parent: window_ref_t) callconv(.C) reparent_status_t {
+    const target = map orelse return .RefuseInvalid;
+    return reparent(target, window, new_parent);
+}
+
+/// C ABI: protocol error code for a reparent status. See `reparent_error_code`.
+///
+/// @param status In. Status returned by `host_window_map_reparent`.
+/// @return The `interop_error_t` value. Thread safety: pure; any thread.
+export fn host_window_map_reparent_error_code(status: reparent_status_t) callconv(.C) u32 {
+    return reparent_error_code(status);
+}
+
+/// C ABI: protocol error code for an announce status. See `announce_error_code`.
+///
+/// @param status In. Status returned by `host_window_map_announce`.
+/// @return The `interop_error_t` value. Thread safety: pure; any thread.
+export fn host_window_map_announce_error_code(status: announce_status_t) callconv(.C) u32 {
+    return announce_error_code(status);
+}
+
+/// C ABI: protocol error code for a retire status. See `retire_error_code`.
+///
+/// @param status In. Status returned by `host_window_map_retire`.
+/// @return The `interop_error_t` value. Thread safety: pure; any thread.
+export fn host_window_map_retire_error_code(status: retire_status_t) callconv(.C) u32 {
+    return retire_error_code(status);
+}
+
 comptime {
     // Layout frozen by src/interop/host_window_map.h (and checked there by _Static_assert).
-    if (@sizeOf(window_ref_t) != 16 or @sizeOf(window_entry_t) != 56) @compileError("host window map entry layout changed");
-    if (@sizeOf(host_window_map_t) != 3592) @compileError("host window map table layout changed");
+    if (@sizeOf(window_ref_t) != 16 or @sizeOf(slot_t) != 56 or @sizeOf(window_entry_t) != 56) @compileError("host window map slot layout changed");
+    if (@sizeOf(host_window_map_t) != 3600) @compileError("host window map table layout changed");
 }
 
 // Test-only fixtures.
@@ -395,9 +771,7 @@ fn expect_absent(map: *const host_window_map_t, window: window_ref_t) !void {
 }
 
 fn new_map() host_window_map_t {
-    var map: host_window_map_t = undefined;
-    reset(&map);
-    return map;
+    return std.mem.zeroes(host_window_map_t);
 }
 
 fn new_out() [MaxOutput]window_ref_t {
@@ -407,11 +781,11 @@ fn new_out() [MaxOutput]window_ref_t {
 /// The public functions are called through `never_inline` shims so that the optimized bodies keep
 /// their own branches. A call with constant arguments would otherwise fold refusal paths away.
 const abi_shim_t = struct {
-    fn reset(map: ?*host_window_map_t) void {
-        @call(.never_inline, host_window_map_reset, .{map});
+    fn reset(map: ?*host_window_map_t, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) reset_status_t {
+        return @call(.never_inline, host_window_map_reset, .{ map, out, out_capacity, out_count });
     }
 
-    fn announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_status_t {
+    fn announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_result_t {
         return @call(.never_inline, host_window_map_announce, .{ map, window, parent, role });
     }
 
@@ -430,24 +804,137 @@ const abi_shim_t = struct {
     fn realized(map: ?*const host_window_map_t) u32 {
         return @call(.never_inline, host_window_map_realized_count, .{map});
     }
+
+    fn announce_error_code(status: announce_status_t) u32 {
+        return @call(.never_inline, host_window_map_announce_error_code, .{status});
+    }
+
+    fn retire_error_code(status: retire_status_t) u32 {
+        return @call(.never_inline, host_window_map_retire_error_code, .{status});
+    }
+
+    fn set_user_data(map: ?*host_window_map_t, slot: u32, window: window_ref_t, value: u64) user_data_status_t {
+        return @call(.never_inline, host_window_map_set_user_data, .{ map, slot, window, value });
+    }
+
+    fn mark_dismissed(map: ?*host_window_map_t, window: window_ref_t) dismiss_status_t {
+        return @call(.never_inline, host_window_map_mark_dismissed, .{ map, window });
+    }
+
+    fn reparent(map: ?*host_window_map_t, window: window_ref_t, new_parent: window_ref_t) reparent_status_t {
+        return @call(.never_inline, host_window_map_reparent, .{ map, window, new_parent });
+    }
+
+    fn reparent_error_code(status: reparent_status_t) u32 {
+        return @call(.never_inline, host_window_map_reparent_error_code, .{status});
+    }
+
+    fn get_user_data(map: ?*const host_window_map_t, slot: u32, window: window_ref_t, value: ?*u64) user_data_status_t {
+        return @call(.never_inline, host_window_map_get_user_data, .{ map, slot, window, value });
+    }
 };
 
-test "reset produces an empty table and zero-filled storage is the same state" {
-    var map = new_map();
-    try testing.expectEqual(@as(u32, 0), realized_count(&map));
-    try expect_absent(&map, ref(1, 1));
-    var zeroed: host_window_map_t = std.mem.zeroes(host_window_map_t);
-    try testing.expectEqual(@as(u32, 0), realized_count(&zeroed));
+fn announce_slot(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_status_t {
+    return announce(map, window, parent, role).status;
 }
 
-test "announce toplevel realizes and records a rootless entry" {
+test "reset of an empty table writes nothing and leaves zero-filled storage" {
     var map = new_map();
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(10, 1), none(), RoleToplevel));
+    var out = new_out();
+    const result = reset(&map, &out);
+    try testing.expectEqual(reset_status_t.Reset, result.status);
+    try testing.expectEqual(@as(u32, 0), result.count);
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
+    try expect_absent(&map, ref(1, 1));
+}
+
+test "reset writes the teardown list children first, roots in reverse realization order" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel); // A, seq 0
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog); // B, child of A, seq 1
+    _ = announce(&map, ref(3, 1), none(), RoleToplevel); // C, seq 2
+    _ = announce(&map, ref(4, 1), ref(3, 1), RoleMenu); // D, child of C, seq 3
+    _ = announce(&map, ref(5, 1), ref(2, 1), RoleTooltip); // E, child of B, seq 4
+
+    const result = reset(&map, &out);
+    try testing.expectEqual(reset_status_t.Reset, result.status);
+    try testing.expectEqual(@as(u32, 5), result.count);
+    // Root C (newest) first: its child D, then C. Then root A: B's subtree (E, B), then A.
+    try expect_ref(ref(4, 1), out[0]);
+    try expect_ref(ref(3, 1), out[1]);
+    try expect_ref(ref(5, 1), out[2]);
+    try expect_ref(ref(2, 1), out[3]);
+    try expect_ref(ref(1, 1), out[4]);
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
+    try expect_absent(&map, ref(1, 1));
+    try testing.expectEqual(@as(u64, 0), map.next_seq);
+}
+
+test "reset refuses a short list or a corrupt table and leaves it unchanged" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
+    var short: [MaxOutput - 1]window_ref_t = undefined;
+    try testing.expectEqual(reset_status_t.RefuseInvalid, reset(&map, &short).status);
+    try testing.expectEqual(@as(u32, 2), realized_count(&map));
+
+    var out = new_out();
+    map.realized_count = 9;
+    try testing.expectEqual(reset_status_t.RefuseInvalid, reset(&map, &out).status);
+    try testing.expectEqual(@as(u32, 9), map.realized_count);
+
+    // A parent cycle leaves slots unreachable from every root, so the teardown is incomplete.
+    map.realized_count = 2;
+    map.slots[0].parent = ref(2, 1);
+    try testing.expectEqual(reset_status_t.RefuseInvalid, reset(&map, &out).status);
+    try testing.expectEqual(@as(u32, 2), realized_count(&map));
+}
+
+test "a full table can be torn down with a list of exactly 64 entries" {
+    var map = new_map();
+    for (1..MaxRealized + 1) |index| {
+        _ = announce(&map, ref(index, 1), none(), RoleToplevel);
+    }
+    var out = new_out();
+    const result = reset(&map, &out);
+    try testing.expectEqual(@as(u32, 64), result.count);
+    try expect_ref(ref(64, 1), out[0]);
+    try expect_ref(ref(1, 1), out[63]);
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
+}
+
+test "announce toplevel realizes into the lowest slot and records the none parent" {
+    var map = new_map();
+    const result = announce(&map, ref(10, 1), none(), RoleToplevel);
+    try testing.expectEqual(announce_status_t.Realize, result.status);
+    try testing.expectEqual(@as(u32, 0), result.slot);
     try testing.expect(is_current(&map, ref(10, 1)));
     const entry = lookup(&map, ref(10, 1)).?;
     try testing.expectEqual(RoleToplevel, entry.role);
+    try testing.expectEqual(@as(u32, 0), entry.slot);
+    try testing.expectEqual(@as(u64, 0), entry.realize_seq);
     try expect_ref(none(), entry.parent);
-    try expect_ref(none(), entry.root);
+}
+
+test "slots are stable: retiring another window never moves a realized window" {
+    var map = new_map();
+    var out = new_out();
+    const a = announce(&map, ref(1, 1), none(), RoleToplevel);
+    const b = announce(&map, ref(2, 1), none(), RoleToplevel);
+    const c = announce(&map, ref(3, 1), none(), RoleToplevel);
+    try testing.expectEqual(@as(u32, 0), a.slot);
+    try testing.expectEqual(@as(u32, 1), b.slot);
+    try testing.expectEqual(@as(u32, 2), c.slot);
+    _ = retire(&map, ref(1, 1), &out);
+    try testing.expectEqual(@as(u32, 2), lookup(&map, ref(3, 1)).?.slot);
+    try testing.expectEqual(@as(u32, 1), lookup(&map, ref(2, 1)).?.slot);
+    // The freed slot 0 is the lowest free index, so the next realize reuses it.
+    try testing.expectEqual(@as(u32, 0), announce(&map, ref(4, 1), none(), RoleToplevel).slot);
+    try testing.expectEqual(@as(u32, 0), lookup(&map, ref(4, 1)).?.slot);
+    // Sequence numbers keep increasing across reuse; the reused slot is the newest window.
+    try testing.expectEqual(@as(u64, 3), lookup(&map, ref(4, 1)).?.realize_seq);
+    try testing.expectEqual(@as(u64, 2), lookup(&map, ref(3, 1)).?.realize_seq);
 }
 
 test "every announce refusal reports its status and changes nothing" {
@@ -456,45 +943,57 @@ test "every announce refusal reports its status and changes nothing" {
     const before = map;
 
     // Invalid identity and parent shapes.
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(0, 1), none(), RoleToplevel));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 0), none(), RoleToplevel));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(0, 1), RoleDialog));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(1, 0), RoleDialog));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(2, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(0, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 0), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), ref(0, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), ref(1, 0), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), ref(2, 1), RoleDialog));
     // Invalid roles.
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), 0));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), 7));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), none(), 0));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), none(), 7));
     // Role parent rules.
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(1, 1), RoleToplevel));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(1, 1), RoleUacConsent));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleMenu));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleTooltip));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleImePreedit));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), ref(1, 1), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), ref(1, 1), RoleUacConsent));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), none(), RoleMenu));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), none(), RoleTooltip));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), none(), RoleImePreedit));
 
     // Duplicate and window conflict.
-    try testing.expectEqual(announce_status_t.RefuseDuplicate, announce(&map, ref(1, 1), none(), RoleToplevel));
-    try testing.expectEqual(announce_status_t.RefuseWindowConflict, announce(&map, ref(1, 2), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseDuplicate, announce_slot(&map, ref(1, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseWindowConflict, announce_slot(&map, ref(1, 2), none(), RoleToplevel));
+    const refused = announce(&map, ref(1, 1), none(), RoleToplevel);
+    try testing.expectEqual(NoSlot, refused.slot);
 
     try testing.expectEqual(before.realized_count, map.realized_count);
-    try expect_ref(before.realized[0].window, map.realized[0].window);
-    try testing.expectEqual(before.realized[0].role, map.realized[0].role);
+    try testing.expectEqual(before.next_seq, map.next_seq);
+    try expect_ref(before.slots[0].window, map.slots[0].window);
+    try testing.expectEqual(before.slots[0].role, map.slots[0].role);
+}
+
+test "a conflict is reported before a stale parent" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    // The conflict test precedes the parent test: the stale parent never gets to decide.
+    try testing.expectEqual(announce_status_t.RefuseWindowConflict, announce_slot(&map, ref(1, 2), ref(9, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseDuplicate, announce_slot(&map, ref(1, 1), ref(9, 1), RoleDialog));
+    try testing.expectEqual(@as(u32, 1), realized_count(&map));
 }
 
 test "a child whose parent was never announced is refused as a stale parent and not stored" {
     var map = new_map();
-    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(2, 1), ref(9, 1), RoleDialog));
-    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(2, 1), ref(9, 1), RoleMenu));
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce_slot(&map, ref(2, 1), ref(9, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce_slot(&map, ref(2, 1), ref(9, 1), RoleMenu));
     try expect_absent(&map, ref(2, 1));
     try testing.expectEqual(@as(u32, 0), realized_count(&map));
     // The guest resends once the parent is exported; then the same child realizes.
     _ = announce(&map, ref(9, 1), none(), RoleToplevel);
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(2, 1), ref(9, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(2, 1), ref(9, 1), RoleDialog));
 }
 
 test "a parent realized under another generation is a stale parent" {
     var map = new_map();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
-    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(2, 1), ref(1, 2), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce_slot(&map, ref(2, 1), ref(1, 2), RoleDialog));
     try testing.expectEqual(@as(u32, 1), realized_count(&map));
 }
 
@@ -503,54 +1002,55 @@ test "a child announced after its parent was retired is a stale parent" {
     var out = new_out();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     try testing.expectEqual(retire_status_t.Retired, retire(&map, ref(1, 1), &out).status);
-    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(2, 1), ref(1, 1), RoleDialog));
-    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(3, 1), ref(1, 1), RoleMenu));
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce_slot(&map, ref(2, 1), ref(1, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce_slot(&map, ref(3, 1), ref(1, 1), RoleMenu));
     try testing.expectEqual(@as(u32, 0), realized_count(&map));
 }
 
 test "dialog without a parent and uac consent are realized without a parent" {
     var map = new_map();
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(1, 1), none(), RoleDialog));
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(2, 1), none(), RoleUacConsent));
+    try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(1, 1), none(), RoleDialog));
+    try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(2, 1), none(), RoleUacConsent));
     try testing.expectEqual(RoleUacConsent, lookup(&map, ref(2, 1)).?.role);
 }
 
-test "a dialog keeps its parent and its own root stays none" {
+test "a dialog keeps its parent" {
     var map = new_map();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(2, 1), ref(1, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(2, 1), ref(1, 1), RoleDialog));
     const dialog = lookup(&map, ref(2, 1)).?;
     try expect_ref(ref(1, 1), dialog.parent);
-    try expect_ref(none(), dialog.root);
     try testing.expectEqual(RoleDialog, dialog.role);
 }
 
-test "popup of a toplevel and of a dialog records that window as its root" {
+test "a popup keeps its direct parent whether that parent is a toplevel, a dialog or a popup" {
     var map = new_map();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(3, 1), ref(1, 1), RoleMenu));
-    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.root);
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(4, 1), ref(2, 1), RoleTooltip));
-    try expect_ref(ref(2, 1), lookup(&map, ref(4, 1)).?.root);
+    try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(3, 1), ref(1, 1), RoleMenu));
+    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.parent);
+    try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(4, 1), ref(2, 1), RoleTooltip));
+    try expect_ref(ref(2, 1), lookup(&map, ref(4, 1)).?.parent);
+    try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(5, 1), ref(4, 1), RoleImePreedit));
+    try expect_ref(ref(4, 1), lookup(&map, ref(5, 1)).?.parent);
 }
 
-test "popup of a popup is re-parented to the root while keeping the requested parent" {
+test "a nested popup keeps its direct parent and retire cascades through the chain" {
     var map = new_map();
     var out = new_out();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
     _ = announce(&map, ref(3, 1), ref(2, 1), RoleTooltip);
     _ = announce(&map, ref(4, 1), ref(3, 1), RoleImePreedit);
-    const grandchild = lookup(&map, ref(4, 1)).?;
-    try expect_ref(ref(3, 1), grandchild.parent);
-    try expect_ref(ref(1, 1), grandchild.root);
-    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.root);
+    try expect_ref(ref(3, 1), lookup(&map, ref(4, 1)).?.parent);
+    try expect_ref(ref(2, 1), lookup(&map, ref(3, 1)).?.parent);
 
-    // The cascade follows the requested parent chain, so the whole popup chain goes with its root.
+    // Retire follows the direct parent chain, children first, so the whole chain goes with the toplevel.
     const result = retire(&map, ref(1, 1), &out);
     try testing.expectEqual(@as(u32, 4), result.count);
     try expect_ref(ref(4, 1), out[0]);
+    try expect_ref(ref(3, 1), out[1]);
+    try expect_ref(ref(2, 1), out[2]);
     try expect_ref(ref(1, 1), out[3]);
 }
 
@@ -597,113 +1097,254 @@ test "retire of unknown, stale, retired and invalid pairs changes nothing" {
 test "exactly 64 realized windows succeed and the 65th is refused" {
     var map = new_map();
     for (1..MaxRealized + 1) |index| {
-        try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(index, 1), none(), RoleToplevel));
+        try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(index, 1), none(), RoleToplevel));
     }
     try testing.expectEqual(@as(u32, 64), realized_count(&map));
-    try testing.expectEqual(announce_status_t.RefuseExhausted, announce(&map, ref(65, 1), none(), RoleToplevel));
-    try testing.expectEqual(announce_status_t.RefuseExhausted, announce(&map, ref(65, 1), ref(1, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseExhausted, announce_slot(&map, ref(65, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseExhausted, announce_slot(&map, ref(65, 1), ref(1, 1), RoleDialog));
     try testing.expectEqual(@as(u32, 64), realized_count(&map));
-    // Retiring one window frees a slot; the refused window then realizes.
+    // Retiring one window frees a slot; the refused window then realizes into it.
     var out = new_out();
     _ = retire(&map, ref(64, 1), &out);
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(65, 1), none(), RoleToplevel));
+    try testing.expectEqual(@as(u32, 62), lookup(&map, ref(63, 1)).?.slot);
+    try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(65, 1), none(), RoleToplevel));
+    try testing.expectEqual(@as(u32, 63), lookup(&map, ref(65, 1)).?.slot);
     try testing.expectEqual(@as(u32, 64), realized_count(&map));
+}
+
+test "the sequence counter refuses instead of wrapping" {
+    var map = new_map();
+    map.next_seq = std.math.maxInt(u64) - 1;
+    const last = announce(&map, ref(1, 1), none(), RoleToplevel);
+    try testing.expectEqual(announce_status_t.Realize, last.status);
+    try testing.expectEqual(std.math.maxInt(u64) - 1, lookup(&map, ref(1, 1)).?.realize_seq);
+    try testing.expectEqual(announce_status_t.RefuseExhausted, announce_slot(&map, ref(2, 1), none(), RoleToplevel));
+    try testing.expectEqual(std.math.maxInt(u64), map.next_seq);
+    try testing.expectEqual(@as(u32, 1), realized_count(&map));
+}
+
+test "a corrupt realized count is refused by every operation and not used" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+
+    map.realized_count = 65;
+    try testing.expectEqual(NoSlot, announce(&map, ref(2, 1), none(), RoleToplevel).slot);
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), none(), RoleToplevel));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, retire(&map, ref(1, 1), &out).status);
+    try testing.expect(lookup(&map, ref(1, 1)) == null);
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
+    try testing.expectEqual(@as(u32, 65), map.realized_count);
+
+    // A count that disagrees with the occupied slots is corrupt too.
+    map.realized_count = 3;
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce_slot(&map, ref(2, 1), none(), RoleToplevel));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, retire(&map, ref(1, 1), &out).status);
+    try testing.expect(!is_current(&map, ref(1, 1)));
 }
 
 test "epoch reset clears every realized entry" {
     var map = new_map();
+    var out = new_out();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
-    reset(&map);
+    try testing.expectEqual(reset_status_t.Reset, reset(&map, &out).status);
     try testing.expectEqual(@as(u32, 0), realized_count(&map));
     try expect_absent(&map, ref(1, 1));
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(1, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.Realize, announce_slot(&map, ref(1, 1), none(), RoleToplevel));
 }
 
-// Reference model: a deliberately simple, separately written implementation of the same contract.
-// It uses growing lists and recursion where the module uses fixed arrays and one forward pass, so
-// agreement is evidence rather than a copy of the same code.
+test "a parent cycle planted in caller storage is refused by retire instead of looping" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
+    // Corrupt storage: make window 1 a child of window 2, closing a cycle.
+    map.slots[0].parent = ref(2, 1);
+    try testing.expectEqual(retire_status_t.RefuseInvalid, retire(&map, ref(1, 1), &out).status);
+    try testing.expectEqual(@as(u32, 2), realized_count(&map));
+}
+
+// ---- reference model -------------------------------------------------------------------------
+
+/// Reference model: a deliberately simple, separately written implementation of the same contract. It
+/// uses a plain array of optional entries and recursion where the module uses slot scans and a bounded
+/// emitter, so agreement is evidence rather than a copy of the same code.
 const reference_model_t = struct {
-    realized: std.ArrayList(window_entry_t),
+    entries: [MaxRealized]?model_entry_t,
+    next_seq: u64,
+
+    const model_entry_t = struct {
+        window: window_ref_t,
+        parent: window_ref_t,
+        role: u8,
+        seq: u64,
+        user_data: u64,
+        dismissed: bool,
+    };
 
     fn model_init() reference_model_t {
-        return .{ .realized = std.ArrayList(window_entry_t).init(testing.allocator) };
+        return .{ .entries = [_]?model_entry_t{null} ** MaxRealized, .next_seq = 0 };
     }
 
-    fn model_deinit(self: *reference_model_t) void {
-        self.realized.deinit();
+    fn model_count(self: *const reference_model_t) usize {
+        var count: usize = 0;
+        for (self.entries) |entry| {
+            if (entry != null) count += 1;
+        }
+        return count;
     }
 
-    fn model_clear(self: *reference_model_t) void {
-        self.realized.clearRetainingCapacity();
-    }
-
-    fn model_find(self: *const reference_model_t, window: u64) ?usize {
-        for (self.realized.items, 0..) |entry, index| {
-            if (entry.window.window == window) return index;
+    fn model_find_window(self: *const reference_model_t, window: u64) ?usize {
+        for (self.entries, 0..) |entry, index| {
+            if (entry) |value| {
+                if (value.window.window == window) return index;
+            }
         }
         return null;
     }
 
-    fn model_root(self: *const reference_model_t, parent: window_ref_t, role: u8) window_ref_t {
-        if (!is_popup_role(role)) return none();
-        const index = self.model_find(parent.window).?;
-        const entry = self.realized.items[index];
-        return if (is_popup_role(entry.role)) entry.root else entry.window;
-    }
-
-    fn model_announce(self: *reference_model_t, window: window_ref_t, parent: window_ref_t, role: u8) !announce_status_t {
-        if (window.window == 0 or window.generation == 0) return .RefuseInvalid;
-        if ((parent.window == 0) != (parent.generation == 0)) return .RefuseInvalid;
-        if (parent.window == window.window) return .RefuseInvalid;
-        if (role < 1 or role > 6) return .RefuseInvalid;
+    fn model_announce(self: *reference_model_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_result_t {
+        const refused = announce_result_t{ .status = .RefuseInvalid, .slot = NoSlot };
+        if (window.window == 0 or window.generation == 0) return refused;
+        if ((parent.window == 0) != (parent.generation == 0)) return refused;
+        if (parent.window == window.window) return refused;
+        if (role < 1 or role > 6) return refused;
         const popup = role == 3 or role == 4 or role == 6;
-        if (popup and parent.window == 0) return .RefuseInvalid;
-        if ((role == 1 or role == 5) and parent.window != 0) return .RefuseInvalid;
-        if (self.model_find(window.window)) |index| {
-            return if (self.realized.items[index].window.generation == window.generation) .RefuseDuplicate else .RefuseWindowConflict;
+        if (popup and parent.window == 0) return refused;
+        if ((role == 1 or role == 5) and parent.window != 0) return refused;
+        if (self.model_find_window(window.window)) |index| {
+            const same = same_ref(self.entries[index].?.window, window);
+            return .{ .status = if (same) .RefuseDuplicate else .RefuseWindowConflict, .slot = NoSlot };
         }
         if (parent.window != 0) {
-            const index = self.model_find(parent.window) orelse return .RefuseStaleParent;
-            if (self.realized.items[index].window.generation != parent.generation) return .RefuseStaleParent;
+            const index = self.model_find_window(parent.window) orelse return .{ .status = .RefuseStaleParent, .slot = NoSlot };
+            if (!same_ref(self.entries[index].?.window, parent)) return .{ .status = .RefuseStaleParent, .slot = NoSlot };
         }
-        if (self.realized.items.len >= MaxRealized) return .RefuseExhausted;
-        try self.realized.append(.{ .window = window, .parent = parent, .root = self.model_root(parent, role), .role = role });
-        return .Realize;
+        if (self.model_count() == MaxRealized or self.next_seq == std.math.maxInt(u64)) return .{ .status = .RefuseExhausted, .slot = NoSlot };
+        var free: usize = 0;
+        while (self.entries[free] != null) free += 1;
+        self.entries[free] = .{ .window = window, .parent = parent, .role = role, .seq = self.next_seq, .user_data = 0, .dismissed = false };
+        self.next_seq += 1;
+        return .{ .status = .Realize, .slot = @intCast(free) };
     }
 
-    fn model_collect(self: *const reference_model_t, index: usize, into: *std.ArrayList(usize)) !void {
-        try into.append(index);
-        const pair = self.realized.items[index].window;
-        for (self.realized.items, 0..) |entry, child| {
-            if (!same_ref(entry.parent, pair)) continue;
-            try self.model_collect(child, into);
+    /// Children of `index` in descending sequence order, each followed by its own subtree, then `index`.
+    fn model_emit(self: *const reference_model_t, index: usize, out: *std.ArrayList(usize)) error{OutOfMemory}!void {
+        const pair = self.entries[index].?.window;
+        var children = std.ArrayList(usize).init(testing.allocator);
+        defer children.deinit();
+        for (self.entries, 0..) |entry, child| {
+            if (entry) |value| {
+                if (same_ref(value.parent, pair)) try children.append(child);
+            }
         }
+        std.mem.sort(usize, children.items, self, by_descending_seq);
+        for (children.items) |child| try self.model_emit(child, out);
+        try out.append(index);
+    }
+
+    fn by_descending_seq(self: *const reference_model_t, left: usize, right: usize) bool {
+        return self.entries[left].?.seq > self.entries[right].?.seq;
     }
 
     fn model_retire(self: *reference_model_t, window: window_ref_t, out: *std.ArrayList(window_ref_t)) !retire_status_t {
         out.clearRetainingCapacity();
         if (window.window == 0 or window.generation == 0) return .RefuseInvalid;
-        const target = self.model_find(window.window) orelse return .Stale;
-        if (self.realized.items[target].window.generation != window.generation) return .Stale;
-
-        var removed = std.ArrayList(usize).init(testing.allocator);
-        defer removed.deinit();
-        try self.model_collect(target, &removed);
-        std.mem.sort(usize, removed.items, {}, std.sort.desc(usize));
-        for (removed.items) |index| try out.append(self.realized.items[index].window);
-        for (removed.items) |index| _ = self.realized.orderedRemove(index);
+        var target: ?usize = null;
+        for (self.entries, 0..) |entry, index| {
+            if (entry) |value| {
+                if (same_ref(value.window, window)) target = index;
+            }
+        }
+        const index = target orelse return .Stale;
+        var order = std.ArrayList(usize).init(testing.allocator);
+        defer order.deinit();
+        try self.model_emit(index, &order);
+        for (order.items) |position| try out.append(self.entries[position].?.window);
+        for (order.items) |position| self.entries[position] = null;
         return .Retired;
+    }
+
+    /// Teardown: roots by descending sequence number, each subtree children first.
+    fn model_mark_dismissed(self: *reference_model_t, window: window_ref_t) dismiss_status_t {
+        if (window.window == 0 or window.generation == 0) return .RefuseInvalid;
+        const index = self.model_find_window(window.window) orelse return .Stale;
+        if (!same_ref(self.entries[index].?.window, window)) return .Stale;
+        const role = self.entries[index].?.role;
+        if (role != 3 and role != 4 and role != 6) return .RefuseInvalid;
+        self.entries[index].?.dismissed = true;
+        return .Marked;
+    }
+
+    fn model_reparent(self: *reference_model_t, window: window_ref_t, new_parent: window_ref_t) reparent_status_t {
+        if (window.window == 0 or window.generation == 0) return .RefuseInvalid;
+        if (new_parent.window == 0 or new_parent.generation == 0) return .RefuseInvalid;
+        if (window.window == new_parent.window) return .RefuseInvalid;
+        const target = self.model_find_window(window.window) orelse return .Stale;
+        if (!same_ref(self.entries[target].?.window, window)) return .Stale;
+        if (self.entries[target].?.role != 2) return .RefuseRole;
+        const parent_index = self.model_find_window(new_parent.window) orelse return .RefuseStaleParent;
+        if (!same_ref(self.entries[parent_index].?.window, new_parent)) return .RefuseStaleParent;
+        // Walk the ancestors of the new parent; a visit to the window is a cycle.
+        var current = new_parent;
+        var steps: usize = 0;
+        while (steps <= MaxRealized) : (steps += 1) {
+            if (current.window == window.window) return .RefuseCycle;
+            const index = self.model_find_window(current.window) orelse break;
+            if (!same_ref(self.entries[index].?.window, current)) break;
+            const up = self.entries[index].?.parent;
+            if (up.window == 0) break;
+            current = up;
+        } else {
+            return .RefuseInvalid;
+        }
+        self.entries[target].?.parent = self.entries[parent_index].?.window;
+        return .Reparented;
+    }
+
+    fn model_user_data(self: *reference_model_t, slot: u32, window: window_ref_t, set: ?u64) user_data_status_t {
+        if (window.window == 0 or window.generation == 0 or slot >= MaxRealized) return .RefuseInvalid;
+        const entry = &(self.entries[slot] orelse return .Stale);
+        if (!same_ref(entry.window, window)) return .Stale;
+        if (set) |value| entry.user_data = value;
+        return .Ok;
+    }
+
+    fn model_reset(self: *reference_model_t, out: *std.ArrayList(window_ref_t)) !reset_status_t {
+        out.clearRetainingCapacity();
+        var roots = std.ArrayList(usize).init(testing.allocator);
+        defer roots.deinit();
+        for (self.entries, 0..) |entry, index| {
+            if (entry) |value| {
+                if (value.parent.window == 0) try roots.append(index);
+            }
+        }
+        std.mem.sort(usize, roots.items, self, by_descending_seq);
+        var order = std.ArrayList(usize).init(testing.allocator);
+        defer order.deinit();
+        for (roots.items) |root| try self.model_emit(root, &order);
+        for (order.items) |position| try out.append(self.entries[position].?.window);
+        self.* = model_init();
+        return .Reset;
     }
 };
 
 fn expect_same_state(map: *const host_window_map_t, model: *const reference_model_t) !void {
-    try testing.expectEqual(model.realized.items.len, realized_count(map));
-    for (model.realized.items, 0..) |entry, index| {
-        try expect_ref(entry.window, map.realized[index].window);
-        try expect_ref(entry.parent, map.realized[index].parent);
-        try expect_ref(entry.root, map.realized[index].root);
-        try testing.expectEqual(entry.role, map.realized[index].role);
+    try testing.expectEqual(model.model_count(), realized_count(map));
+    try testing.expectEqual(model.next_seq, map.next_seq);
+    for (model.entries, 0..) |entry, index| {
+        if (entry) |value| {
+            try testing.expect(map.slots[index].occupied != 0);
+            try expect_ref(value.window, map.slots[index].window);
+            try expect_ref(value.parent, map.slots[index].parent);
+            try testing.expectEqual(value.role, map.slots[index].role);
+            try testing.expectEqual(value.seq, map.slots[index].realize_seq);
+            try testing.expectEqual(value.user_data, map.slots[index].user_data);
+            try testing.expectEqual(@intFromBool(value.dismissed), map.slots[index].dismissed);
+        } else {
+            try testing.expectEqual(@as(u8, 0), map.slots[index].occupied);
+        }
     }
 }
 
@@ -712,7 +1353,6 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
     const random = prng.random();
     var map = new_map();
     var model = reference_model_t.model_init();
-    defer model.model_deinit();
     var out = new_out();
     var out_list = std.ArrayList(window_ref_t).init(testing.allocator);
     defer out_list.deinit();
@@ -721,17 +1361,23 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
     while (step < operations) : (step += 1) {
         const choice = random.uintLessThan(u8, 100);
         if (choice < 2) {
-            reset(&map);
-            model.model_clear();
+            const got_reset = reset(&map, &out);
+            const expected_reset = try model.model_reset(&out_list);
+            try testing.expectEqual(expected_reset, got_reset.status);
+            if (got_reset.status == .Reset) {
+                try testing.expectEqual(@as(u32, @intCast(out_list.items.len)), got_reset.count);
+                for (out_list.items, 0..) |pair, index| try expect_ref(pair, out[index]);
+            }
         } else if (choice < 70) {
             // Zero and mismatched identities appear on purpose.
             const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
             const parent = if (random.uintLessThan(u8, 10) < 3) none() else ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
             const role = random.uintLessThan(u8, 9);
             const got = announce(&map, window, parent, role);
-            const expected = try model.model_announce(window, parent, role);
-            try testing.expectEqual(expected, got);
-        } else {
+            const expected = model.model_announce(window, parent, role);
+            try testing.expectEqual(expected.status, got.status);
+            try testing.expectEqual(expected.slot, got.slot);
+        } else if (choice < 85) {
             const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
             const got = retire(&map, window, &out);
             const expected = try model.model_retire(window, &out_list);
@@ -739,6 +1385,27 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
             if (got.status == .Retired) {
                 try testing.expectEqual(@as(u32, @intCast(out_list.items.len)), got.count);
                 for (out_list.items, 0..) |pair, index| try expect_ref(pair, out[index]);
+            }
+        } else {
+            // Per-slot user data and dismissal: slots past the table and mismatched windows are refused or stale.
+            const slot: u32 = random.uintLessThan(u32, MaxRealized + 2);
+            const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
+            switch (random.uintLessThan(u8, 4)) {
+                0 => {
+                    const value = random.int(u64);
+                    try testing.expectEqual(model.model_user_data(slot, window, value), set_user_data(&map, slot, window, value));
+                },
+                1 => {
+                    var got: u64 = 0xDEAD;
+                    const status = get_user_data(&map, slot, window, &got);
+                    try testing.expectEqual(model.model_user_data(slot, window, null), status);
+                    if (status == .Ok) try testing.expectEqual(model.entries[slot].?.user_data, got) else try testing.expectEqual(@as(u64, 0xDEAD), got);
+                },
+                2 => try testing.expectEqual(model.model_mark_dismissed(window), mark_dismissed(&map, window)),
+                else => {
+                    const new_parent = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
+                    try testing.expectEqual(model.model_reparent(window, new_parent), reparent(&map, window, new_parent));
+                },
             }
         }
         try expect_same_state(&map, &model);
@@ -753,16 +1420,206 @@ test "randomized sequences agree with the reference model over small and large u
     try run_random_sequence(0x9E3779B97F4A7C15, 200, 6000);
 }
 
+test "user data is stored per slot, validated by slot and window, and reset when the slot is reused" {
+    var map = new_map();
+    var out = new_out();
+    const a = announce(&map, ref(1, 1), none(), RoleToplevel);
+    const b = announce(&map, ref(2, 1), none(), RoleToplevel);
+    try testing.expectEqual(user_data_status_t.Ok, set_user_data(&map, a.slot, ref(1, 1), 0xAAAA));
+    try testing.expectEqual(user_data_status_t.Ok, set_user_data(&map, b.slot, ref(2, 1), 0xBBBB));
+    var value: u64 = 0;
+    try testing.expectEqual(user_data_status_t.Ok, get_user_data(&map, a.slot, ref(1, 1), &value));
+    try testing.expectEqual(@as(u64, 0xAAAA), value);
+    try testing.expectEqual(@as(u64, 0xAAAA), lookup(&map, ref(1, 1)).?.user_data);
+    // Retiring window 1 leaves window 2's slot and value alone.
+    _ = retire(&map, ref(1, 1), &out);
+    try testing.expectEqual(user_data_status_t.Ok, get_user_data(&map, b.slot, ref(2, 1), &value));
+    try testing.expectEqual(@as(u64, 0xBBBB), value);
+    // The freed slot is reused with user data zero.
+    const c = announce(&map, ref(3, 1), none(), RoleToplevel);
+    try testing.expectEqual(a.slot, c.slot);
+    try testing.expectEqual(user_data_status_t.Ok, get_user_data(&map, c.slot, ref(3, 1), &value));
+    try testing.expectEqual(@as(u64, 0), value);
+    // A stale generation or a free slot is Stale and leaves the value unchanged.
+    try testing.expectEqual(user_data_status_t.Stale, set_user_data(&map, c.slot, ref(3, 2), 1));
+    try testing.expectEqual(user_data_status_t.Stale, get_user_data(&map, a.slot + 60, ref(3, 1), &value));
+    try testing.expectEqual(user_data_status_t.Stale, set_user_data(&map, a.slot + 60, ref(3, 1), 1));
+    try testing.expectEqual(@as(u64, 0), lookup(&map, ref(3, 1)).?.user_data);
+}
+
+test "a dialog moves to another realized parent without changing its slot or sequence" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(3, 1), ref(1, 1), RoleDialog);
+    const before = lookup(&map, ref(3, 1)).?;
+    try testing.expectEqual(reparent_status_t.Reparented, reparent(&map, ref(3, 1), ref(2, 1)));
+    const after = lookup(&map, ref(3, 1)).?;
+    try expect_ref(ref(2, 1), after.parent);
+    try testing.expectEqual(before.slot, after.slot);
+    try testing.expectEqual(before.realize_seq, after.realize_seq);
+    // Retiring the old parent leaves the dialog; retiring the new parent takes it.
+    try testing.expectEqual(@as(u32, 1), retire(&map, ref(1, 1), &out).count);
+    try testing.expect(is_current(&map, ref(3, 1)));
+    try testing.expectEqual(@as(u32, 2), retire(&map, ref(2, 1), &out).count);
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
+}
+
+test "reparent refuses every invalid, stale, role and cycle case without changing the table" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel); // T1
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog); // D2 under T1
+    _ = announce(&map, ref(3, 1), ref(2, 1), RoleDialog); // D3 under D2
+    _ = announce(&map, ref(4, 1), none(), RoleToplevel); // T4
+    _ = announce(&map, ref(5, 1), ref(1, 1), RoleMenu); // M5 popup under T1
+    _ = announce(&map, ref(6, 1), none(), RoleUacConsent); // U6
+    const before = map;
+
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, reparent(&map, ref(0, 1), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, reparent(&map, ref(2, 1), none()));
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, reparent(&map, ref(2, 1), ref(2, 1)));
+    try testing.expectEqual(reparent_status_t.Stale, reparent(&map, ref(7, 1), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.Stale, reparent(&map, ref(2, 2), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseRole, reparent(&map, ref(5, 1), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseRole, reparent(&map, ref(4, 1), ref(2, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseRole, reparent(&map, ref(6, 1), ref(4, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseStaleParent, reparent(&map, ref(2, 1), ref(9, 1)));
+    try testing.expectEqual(reparent_status_t.RefuseStaleParent, reparent(&map, ref(2, 1), ref(4, 2)));
+    // D3 is a descendant of D2, so making D3 the parent of D2 closes the loop D2 -> D3 -> D2.
+    try testing.expectEqual(reparent_status_t.RefuseCycle, reparent(&map, ref(2, 1), ref(3, 1)));
+
+    try testing.expectEqual(before.realized_count, map.realized_count);
+    for (before.slots, 0..) |slot, index| {
+        try testing.expectEqual(slot.occupied, map.slots[index].occupied);
+        try expect_ref(slot.parent, map.slots[index].parent);
+        try testing.expectEqual(slot.realize_seq, map.slots[index].realize_seq);
+    }
+}
+
+test "a dialog may move under its former grandchild once the cycle through it is broken" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
+    _ = announce(&map, ref(3, 1), ref(2, 1), RoleDialog);
+    try testing.expectEqual(reparent_status_t.Reparented, reparent(&map, ref(3, 1), ref(1, 1)));
+    // Now D3 hangs under T1 directly, so D2 may move under D3 without a cycle.
+    try testing.expectEqual(reparent_status_t.Reparented, reparent(&map, ref(2, 1), ref(3, 1)));
+    try expect_ref(ref(3, 1), lookup(&map, ref(2, 1)).?.parent);
+}
+
+test "a reparent cycle in corrupt caller storage is refused by the step bound" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
+    _ = announce(&map, ref(3, 1), ref(1, 1), RoleDialog);
+    // Corrupt storage: window 1 is a child of window 2, so the ancestors of window 2 never reach a root.
+    map.slots[0].parent = ref(2, 1);
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, reparent(&map, ref(3, 1), ref(2, 1)));
+}
+
+test "a dismissed popup stays realized with its slot until the guest retires it" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    const menu = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
+    try testing.expectEqual(dismiss_status_t.Marked, mark_dismissed(&map, ref(2, 1)));
+    try testing.expectEqual(dismiss_status_t.Marked, mark_dismissed(&map, ref(2, 1)));
+    const entry = lookup(&map, ref(2, 1)).?;
+    try testing.expectEqual(@as(u8, 1), entry.dismissed);
+    try testing.expectEqual(menu.slot, entry.slot);
+    try testing.expect(is_current(&map, ref(2, 1)));
+    // A dismissed toplevel is refused: only popups are dismissed.
+    try testing.expectEqual(dismiss_status_t.RefuseInvalid, mark_dismissed(&map, ref(1, 1)));
+    try testing.expectEqual(@as(u8, 0), lookup(&map, ref(1, 1)).?.dismissed);
+    // Retire removes it as usual; the reused slot is not dismissed.
+    try testing.expectEqual(retire_status_t.Retired, retire(&map, ref(2, 1), &out).status);
+    const tooltip = announce(&map, ref(3, 1), ref(1, 1), RoleTooltip);
+    try testing.expectEqual(menu.slot, tooltip.slot);
+    try testing.expectEqual(@as(u8, 0), lookup(&map, ref(3, 1)).?.dismissed);
+}
+
+test "dismissing refuses zero identities, unknown or other-generation pairs and a corrupt table" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
+    try testing.expectEqual(dismiss_status_t.RefuseInvalid, mark_dismissed(&map, ref(0, 1)));
+    try testing.expectEqual(dismiss_status_t.Stale, mark_dismissed(&map, ref(9, 1)));
+    try testing.expectEqual(dismiss_status_t.Stale, mark_dismissed(&map, ref(2, 2)));
+    map.realized_count = 5;
+    try testing.expectEqual(dismiss_status_t.RefuseInvalid, mark_dismissed(&map, ref(2, 1)));
+    try testing.expectEqual(@as(u8, 0), map.slots[1].dismissed);
+}
+
+test "user data accessors refuse bad arguments and a corrupt table" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    var value: u64 = 5;
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, set_user_data(&map, MaxRealized, ref(1, 1), 1));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, set_user_data(&map, 0, ref(0, 1), 1));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, get_user_data(&map, 0, ref(1, 0), &value));
+    try testing.expectEqual(@as(u64, 5), value);
+    map.realized_count = 2;
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, set_user_data(&map, 0, ref(1, 1), 1));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, get_user_data(&map, 0, ref(1, 1), &value));
+    try testing.expectEqual(@as(u64, 5), value);
+    map.realized_count = 1;
+    try testing.expectEqual(user_data_status_t.Ok, set_user_data(&map, 0, ref(1, 1), 9));
+}
+
+test "C ABI user data accessors refuse NULL, overlapping and bad arguments without writing" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    var value: u64 = 5;
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, abi_shim_t.set_user_data(null, 0, ref(1, 1), 1));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, abi_shim_t.get_user_data(null, 0, ref(1, 1), &value));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, abi_shim_t.get_user_data(&map, 0, ref(1, 1), null));
+    // A value pointer inside the table is refused before any read or write.
+    const inside: *u64 = @ptrCast(&map.slots[0].user_data);
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, abi_shim_t.get_user_data(&map, 0, ref(1, 1), inside));
+    try testing.expectEqual(user_data_status_t.Ok, abi_shim_t.set_user_data(&map, 0, ref(1, 1), 42));
+    try testing.expectEqual(user_data_status_t.Ok, abi_shim_t.get_user_data(&map, 0, ref(1, 1), &value));
+    try testing.expectEqual(@as(u64, 42), value);
+}
+
+test "C ABI dismissal accepts NULL and reports the status" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
+    try testing.expectEqual(dismiss_status_t.RefuseInvalid, abi_shim_t.mark_dismissed(null, ref(2, 1)));
+    try testing.expectEqual(dismiss_status_t.Marked, abi_shim_t.mark_dismissed(&map, ref(2, 1)));
+}
+
+test "every reparent status maps to its protocol error code" {
+    try testing.expectEqual(ErrorNone, reparent_error_code(.Reparented));
+    try testing.expectEqual(ErrorStaleWindow, reparent_error_code(.Stale));
+    try testing.expectEqual(ErrorStaleWindow, reparent_error_code(.RefuseStaleParent));
+    try testing.expectEqual(ErrorProtocolViolation, reparent_error_code(.RefuseCycle));
+    try testing.expectEqual(ErrorProtocolViolation, reparent_error_code(.RefuseRole));
+    try testing.expectEqual(ErrorMalformedFrame, reparent_error_code(.RefuseInvalid));
+    try testing.expectEqual(ErrorProtocolViolation, abi_shim_t.reparent_error_code(.RefuseCycle));
+    try testing.expectEqual(reparent_status_t.RefuseInvalid, abi_shim_t.reparent(null, ref(1, 1), ref(2, 1)));
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(3, 1), ref(1, 1), RoleDialog);
+    try testing.expectEqual(reparent_status_t.Reparented, abi_shim_t.reparent(&map, ref(3, 1), ref(2, 1)));
+}
+
 test "C ABI counts and lookup accept NULL and report the table" {
     try testing.expectEqual(@as(u32, 0), abi_shim_t.realized(null));
     try testing.expect(!abi_shim_t.is_current(null, ref(1, 1)));
     try testing.expect(!abi_shim_t.lookup(null, ref(1, 1), null));
+    try testing.expectEqual(NoSlot, abi_shim_t.announce(null, ref(1, 1), none(), RoleToplevel).slot);
 
     var map = new_map();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
-    abi_shim_t.reset(null);
+    var out = new_out();
+    var count: u32 = 0;
+    try testing.expectEqual(reset_status_t.RefuseInvalid, abi_shim_t.reset(null, &out, MaxOutput, &count));
     try testing.expectEqual(@as(u32, 1), abi_shim_t.realized(&map));
-    abi_shim_t.reset(&map);
+    try testing.expectEqual(reset_status_t.Reset, abi_shim_t.reset(&map, &out, MaxOutput, &count));
+    try testing.expectEqual(@as(u32, 1), count);
     try testing.expectEqual(@as(u32, 0), abi_shim_t.realized(&map));
     try testing.expect(!abi_shim_t.is_current(&map, ref(1, 1)));
 }
@@ -771,11 +1628,11 @@ test "C ABI announce and retire write outputs and counts on success" {
     var map = new_map();
     var out = new_out();
     var count: u32 = 99;
-    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel));
-    try testing.expectEqual(announce_status_t.RefuseStaleParent, abi_shim_t.announce(&map, ref(2, 1), ref(9, 1), RoleDialog));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(null, ref(2, 1), none(), RoleToplevel));
-    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(9, 1), none(), RoleToplevel));
-    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(2, 1), ref(9, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel).status);
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, abi_shim_t.announce(&map, ref(2, 1), ref(9, 1), RoleDialog).status);
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(null, ref(2, 1), none(), RoleToplevel).status);
+    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(9, 1), none(), RoleToplevel).status);
+    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(2, 1), ref(9, 1), RoleDialog).status);
 
     try testing.expectEqual(retire_status_t.Retired, abi_shim_t.retire(&map, ref(9, 1), &out, MaxOutput, &count));
     try testing.expectEqual(@as(u32, 2), count);
@@ -803,16 +1660,52 @@ test "C ABI rejects NULL, short and aliased arguments without writing" {
     try testing.expectEqual(@as(u32, 77), count);
 }
 
-test "C ABI lookup returns a copy and a presence test needs no output" {
+test "C ABI lookup returns a copy with its slot and a presence test needs no output" {
     var map = new_map();
     _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
     var entry: window_entry_t = undefined;
     try testing.expect(abi_shim_t.lookup(&map, ref(2, 1), &entry));
-    try expect_ref(ref(1, 1), entry.root);
+    try expect_ref(ref(1, 1), entry.parent);
+    try testing.expectEqual(@as(u32, 1), entry.slot);
     try testing.expect(abi_shim_t.lookup(&map, ref(1, 1), null));
     try testing.expect(!abi_shim_t.lookup(&map, ref(1, 2), &entry));
     try testing.expect(abi_shim_t.is_current(&map, ref(2, 1)));
     try testing.expect(!abi_shim_t.is_current(&map, ref(3, 1)));
     try testing.expectEqual(@as(u32, 2), abi_shim_t.realized(&map));
+}
+
+test "C ABI error code helpers return the protocol values for every status" {
+    try testing.expectEqual(ErrorStaleWindow, abi_shim_t.announce_error_code(.RefuseStaleParent));
+    try testing.expectEqual(ErrorQuotaExceeded, abi_shim_t.announce_error_code(.RefuseExhausted));
+    try testing.expectEqual(ErrorStaleWindow, abi_shim_t.retire_error_code(.Stale));
+}
+
+test "every announce and retire status maps to its protocol error code" {
+    try testing.expectEqual(ErrorNone, announce_error_code(.Realize));
+    try testing.expectEqual(ErrorProtocolViolation, announce_error_code(.RefuseDuplicate));
+    try testing.expectEqual(ErrorStaleWindow, announce_error_code(.RefuseStaleParent));
+    try testing.expectEqual(ErrorStaleWindow, announce_error_code(.RefuseWindowConflict));
+    try testing.expectEqual(ErrorQuotaExceeded, announce_error_code(.RefuseExhausted));
+    try testing.expectEqual(ErrorMalformedFrame, announce_error_code(.RefuseInvalid));
+    try testing.expectEqual(ErrorNone, retire_error_code(.Retired));
+    try testing.expectEqual(ErrorStaleWindow, retire_error_code(.Stale));
+    try testing.expectEqual(ErrorMalformedFrame, retire_error_code(.RefuseInvalid));
+}
+
+test "role and error code values match the frozen protocol header" {
+    const protocol = @cImport({
+        @cInclude("waddle/interop_protocol.h");
+    });
+    try testing.expectEqual(@as(u8, protocol.InteropRoleToplevel), RoleToplevel);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleDialog), RoleDialog);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleMenu), RoleMenu);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleTooltip), RoleTooltip);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleUacConsent), RoleUacConsent);
+    try testing.expectEqual(@as(u8, protocol.InteropRoleImePreedit), RoleImePreedit);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorNone), ErrorNone);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorProtocolViolation), ErrorProtocolViolation);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorMalformedFrame), ErrorMalformedFrame);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorStaleWindow), ErrorStaleWindow);
+    try testing.expectEqual(@as(u32, protocol.InteropErrorQuotaExceeded), ErrorQuotaExceeded);
 }

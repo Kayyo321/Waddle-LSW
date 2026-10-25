@@ -13,12 +13,32 @@
 
 /** @brief Frozen positioner constants (IMPL_DESC section 8.44). */
 enum host_popup_positioner_constants_t {
-    HostPopupMaxScale = 8, /**< Largest integer host scale accepted by request and restore. */
+    HostPopupMaxScale = 8, /**< Largest integer host scale accepted by request and reposition. */
     HostPopupMaxLogicalExtent = 32768, /**< Largest absolute logical offset or dimension a request may produce. */
     HostPopupAnchorTopLeft = 5, /**< xdg_positioner anchor top_left; the adapter sets it on every request. */
     HostPopupGravityBottomRight = 8, /**< xdg_positioner gravity bottom_right; the adapter sets it on every request. */
     HostPopupConstraintSlideFlip = 15 /**< constraint_adjustment slide_x | slide_y | flip_x | flip_y. */
 };
+
+/** @brief Index of a frozen constant read through `host_popup_positioner_constant`. */
+enum host_popup_constant_t {
+    HostPopupConstantMaxScale = 0, /**< Value of HostPopupMaxScale. */
+    HostPopupConstantMaxLogicalExtent = 1, /**< Value of HostPopupMaxLogicalExtent. */
+    HostPopupConstantAnchorTopLeft = 2, /**< Value of HostPopupAnchorTopLeft. */
+    HostPopupConstantGravityBottomRight = 3, /**< Value of HostPopupGravityBottomRight. */
+    HostPopupConstantConstraintSlideFlip = 4 /**< Value of HostPopupConstraintSlideFlip. */
+};
+
+/**
+ * @brief Read a constant as compiled into the Zig object.
+ *
+ * The C test compares every header constant with this value, so a header that drifts from the
+ * implementation fails the build.
+ *
+ * @param which In. A `host_popup_constant_t` index. Any other index returns 0, which is never a valid constant.
+ * @return The constant value. Thread safety: any thread.
+ */
+uint32_t host_popup_positioner_constant(uint32_t which);
 
 /** @brief Result of every positioner function. */
 typedef enum host_popup_status_t {
@@ -26,15 +46,38 @@ typedef enum host_popup_status_t {
     HostPopupInvalidArgument = 1, /**< A required pointer was NULL. Nothing was written. */
     HostPopupInvalidScale = 2, /**< Scale outside 1..8, zero denominator, or a fraction that rounds outside 1..8. Nothing was written. */
     HostPopupOutOfRange = 3, /**< A logical offset or dimension exceeds 32768 in absolute value. Nothing was written. */
-    HostPopupOverflow = 4 /**< A scaled value does not fit its output type. Nothing was written. */
+    HostPopupOverflow = 4, /**< A scaled value does not fit its output type. Nothing was written. */
+    HostPopupInvalidParent = 5 /**< A parent width or height is zero. Nothing was written. */
 } host_popup_status_t;
+
+/**
+ * @brief Complete positioner request for one popup, ready for the xdg_positioner setters.
+ *
+ * `anchor_x`/`anchor_y` is the clamped anchor point inside the direct parent's window geometry, and
+ * `offset_x`/`offset_y` is the remainder. Their sum is the requested logical origin.
+ */
+typedef struct host_popup_request_t {
+    int32_t anchor_x; /**< set_anchor_rect x. */
+    int32_t anchor_y; /**< set_anchor_rect y. */
+    uint32_t anchor_width; /**< set_anchor_rect width; always 1. */
+    uint32_t anchor_height; /**< set_anchor_rect height; always 1. */
+    int32_t offset_x; /**< set_offset x. */
+    int32_t offset_y; /**< set_offset y. */
+    uint32_t width; /**< set_size width, at least 1. */
+    uint32_t height; /**< set_size height, at least 1. */
+    uint32_t anchor; /**< set_anchor; always HostPopupAnchorTopLeft. */
+    uint32_t gravity; /**< set_gravity; always HostPopupGravityBottomRight. */
+    uint32_t constraint_adjustment; /**< set_constraint_adjustment; always HostPopupConstraintSlideFlip. */
+} host_popup_request_t;
+
+_Static_assert(sizeof(host_popup_request_t) == 44, "host_popup_request_t layout");
 
 /**
  * @brief Rectangle in the coordinate space named by the function that uses it.
  *
- * `request` input: guest physical pixels, `x`/`y` relative to the parent's top-left.
- * `request` output: logical anchor origin in `x`/`y` and logical positioner size in `width`/`height`.
- * `restore` input: compositor-adjusted logical rectangle. `restore` output: guest physical pixels.
+ * Used as the guest rectangle in `host_popup_positioner_request` and `host_popup_positioner_reposition`,
+ * and as the guest rectangle returned by `host_popup_positioner_reposition` (PopupRepositioned). Signed
+ * `x`/`y` are relative to the direct parent's top-left in guest physical pixels.
  */
 typedef struct host_popup_rect_t {
     int32_t x; /**< Signed horizontal origin. */
@@ -57,30 +100,37 @@ _Static_assert(sizeof(host_popup_rect_t) == 16, "host_popup_rect_t layout");
 host_popup_status_t host_popup_positioner_integer_scale(uint32_t numerator, uint32_t denominator, uint32_t *out_scale);
 
 /**
- * @brief Logical popup request for a guest rectangle.
+ * @brief Logical popup request for a guest rectangle relative to its direct parent.
  *
- * Origins use floor division toward negative infinity. Each dimension uses ceiling division and is at
- * least 1. A result whose absolute offset or dimension exceeds 32768 is refused.
+ * The requested origin is `floor(x / scale)`, and each dimension is `max(1, ceil(dimension / scale))`.
+ * The anchor point is clamped into the parent window geometry and the remainder is the offset.
  *
- * @param guest In. Guest physical rectangle relative to the parent's top-left. NULL gives `HostPopupInvalidArgument`.
+ * @param guest In. Guest physical rectangle relative to the direct parent's top-left. NULL gives `HostPopupInvalidArgument`.
  * @param scale In. Integer host scale, 1..8. Other values give `HostPopupInvalidScale`.
- * @param out Out. Receives the logical request on success only. NULL gives `HostPopupInvalidArgument`.
- * @return `HostPopupOk`, `HostPopupInvalidArgument`, `HostPopupInvalidScale` or `HostPopupOutOfRange`.
- *         Thread safety: any thread.
+ * @param parent_width In. Logical width of the direct parent, 1..32768. Zero gives `HostPopupInvalidParent`; above 32768 gives `HostPopupOutOfRange`.
+ * @param parent_height In. Logical height of the direct parent, 1..32768. Same refusals as `parent_width`.
+ * @param out Out. Receives the request on success only. NULL gives `HostPopupInvalidArgument`.
+ * @return `HostPopupOk`, `HostPopupInvalidArgument`, `HostPopupInvalidScale`, `HostPopupInvalidParent` or
+ *         `HostPopupOutOfRange` (a requested origin or dimension exceeds 32768). Thread safety: any thread.
  */
-host_popup_status_t host_popup_positioner_request(const host_popup_rect_t *guest, uint32_t scale, host_popup_rect_t *out);
+host_popup_status_t host_popup_positioner_request(const host_popup_rect_t *guest, uint32_t scale, uint32_t parent_width, uint32_t parent_height, host_popup_request_t *out);
 
 /**
- * @brief Guest rectangle for a compositor-adjusted logical rectangle.
+ * @brief Guest rectangle for a compositor-adjusted popup position (PopupRepositioned).
  *
- * Every field is multiplied by `scale`. Each result is range-checked for its own type.
+ * `x' = guest.x + (adjusted_x - origin_x) * scale`, and likewise for y, where the origin is
+ * `anchor + offset` from `requested`. The guest's own width and height are returned unchanged, so an
+ * unmoved popup reports exactly its requested rectangle.
  *
- * @param logical In. Compositor-adjusted logical rectangle. NULL gives `HostPopupInvalidArgument`.
+ * @param guest In. The rectangle that was requested, in guest physical pixels. NULL gives `HostPopupInvalidArgument`.
  * @param scale In. Integer host scale, 1..8. Other values give `HostPopupInvalidScale`.
+ * @param requested In. The request produced by `host_popup_positioner_request` for `guest` and `scale`. NULL gives `HostPopupInvalidArgument`.
+ * @param adjusted_x In. Compositor top-left x in the direct parent's logical coordinates.
+ * @param adjusted_y In. Compositor top-left y in the direct parent's logical coordinates.
  * @param out Out. Receives the guest rectangle on success only. NULL gives `HostPopupInvalidArgument`.
  * @return `HostPopupOk`, `HostPopupInvalidArgument`, `HostPopupInvalidScale` or `HostPopupOverflow`.
  *         Thread safety: any thread.
  */
-host_popup_status_t host_popup_positioner_restore(const host_popup_rect_t *logical, uint32_t scale, host_popup_rect_t *out);
+host_popup_status_t host_popup_positioner_reposition(const host_popup_rect_t *guest, uint32_t scale, const host_popup_request_t *requested, int32_t adjusted_x, int32_t adjusted_y, host_popup_rect_t *out);
 
 #endif
