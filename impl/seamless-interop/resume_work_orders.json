@@ -25,10 +25,12 @@
     {
       "agent": "luna_fresh_guest",
       "owns": [
-        "src/interop/windows_socket_owner.c",
-        "src/interop/windows_socket_owner.h",
-        "tests/interop/windows_socket_owner*",
-        "impl/seamless-interop/windows_socket_owner_contract.md"
+        "src/interop/session_control_windows.c",
+        "src/interop/session_control_windows.h",
+        "src/interop/session_guest_main.c",
+        "tests/interop/session_control_windows*",
+        "tests/interop/session_guest_main*",
+        "impl/seamless-interop/session_control_windows_contract.md"
       ]
     }
   ],

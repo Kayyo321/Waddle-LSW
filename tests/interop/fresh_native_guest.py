@@ -363,36 +363,36 @@ def _guest_setup_script() -> bytes:
     script = r'''$ErrorActionPreference = 'Stop'
 $log = Join-Path $env:windir 'Temp\waddle-fresh-setup.log'
 try {
-    $answerRoot = $null
+    $answer_root = $null
     foreach ($volume in Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5') {
         $candidate = $volume.DeviceID
         if (Test-Path -LiteralPath (Join-Path $candidate 'waddle-guest-exec.exe')) {
-            $answerRoot = $candidate
+            $answer_root = $candidate
             break
         }
     }
-    if (-not $answerRoot) { throw 'private answer media was not found' }
+    if (-not $answer_root) { throw 'private answer media was not found' }
 
-    $driverRoot = $null
+    $driver_root = $null
     foreach ($volume in Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5') {
         $candidate = Join-Path $volume.DeviceID 'viosock\2k25\amd64'
-        if (Test-Path -LiteralPath $candidate) { $driverRoot = $candidate; break }
+        if (Test-Path -LiteralPath $candidate) { $driver_root = $candidate; break }
     }
-    if (-not $driverRoot) { throw 'pinned VirtIO VSOCK driver directory was not found' }
-    $driverFiles = @(Get-ChildItem -LiteralPath $driverRoot -Filter '*.inf' -File)
-    if ($driverFiles.Count -eq 0) { throw 'VirtIO VSOCK package contains no INF files' }
-    foreach ($driver in $driverFiles) {
+    if (-not $driver_root) { throw 'pinned VirtIO VSOCK driver directory was not found' }
+    $driver_files = @(Get-ChildItem -LiteralPath $driver_root -Filter '*.inf' -File)
+    if ($driver_files.Count -eq 0) { throw 'VirtIO VSOCK package contains no INF files' }
+    foreach ($driver in $driver_files) {
         & pnputil.exe /add-driver $driver.FullName /install
         if ($LASTEXITCODE -ne 0) { throw "pnputil failed with exit code $LASTEXITCODE" }
     }
 
-    $installRoot = 'C:\waddle'
-    New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $answerRoot 'waddle-guest-exec.exe') `
-        -Destination (Join-Path $installRoot 'waddle-guest-exec.exe') -Force
-    $runKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
-    New-Item -Path $runKey -Force | Out-Null
-    Set-ItemProperty -Path $runKey -Name 'WaddleGuestExec' -Type String `
+    $install_root = 'C:\waddle'
+    New-Item -ItemType Directory -Path $install_root -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $answer_root 'waddle-guest-exec.exe') `
+        -Destination (Join-Path $install_root 'waddle-guest-exec.exe') -Force
+    $run_key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+    New-Item -Path $run_key -Force | Out-Null
+    Set-ItemProperty -Path $run_key -Name 'WaddleGuestExec' -Type String `
         -Value '"C:\waddle\waddle-guest-exec.exe" --vsock-port 5242'
     'driver_installed_and_guest_exec_staged' | Set-Content -LiteralPath $log -Encoding ASCII
     exit 0

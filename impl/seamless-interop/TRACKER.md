@@ -1,6 +1,6 @@
 # Feature Tracker: Seamless Interop
 
-- **Contributors / Agents**: Claude Code (cloud session), Codex (/root), Luna implementation/review (luna_foundations, luna_integration, luna_acceptance, luna_layout, luna_mounts, luna_qemu_build)
+- **Contributors / Agents**: Claude Code (cloud session), Codex (/root), Luna implementation/review (luna_foundations, luna_integration, luna_acceptance, luna_layout, luna_mounts, luna_qemu_build, luna_host_runtime, luna_fresh_guest, luna_manifest_engine)
 - **Time Started**: 2026-10-22T00:59:49Z
 - **Time Ended**: TBD
 - **Feature Branch**: feat/seamless-interop
@@ -1314,10 +1314,16 @@ its uncompiled draft earns no credit until current acceptance passes.
     Add -J to new media and require it in all16 preparation tests. Existing
     private answer media and secrets were not inspected or rewritten.
 
-- **Commit `HEAD`**: `fix(interop): request only supported WinSock poll interests`
+- **Commit `055e8c7`**: `fix(interop): request only supported WinSock poll interests`
   - **Task Impact**: +0% to TODO #6; native Windows gate pending.
   - **Summary**: Exact6083a9f native CI exposed WSAEINVAL10022 because output-only
     error/hangup/invalid flags were requested as WSAPoll interests. Request
     normal read/write only while preserving returned error handling; fixtures
     assert the input mask. Normal build,96.45% lines/90.22% taken arcs, real
     leak-enabled ASan/LSan/UBSan and SDK link pass; native rerun required.
+
+- **Commit `HEAD`**: `refactor(interop): follow naming policy in test guest bootstrap`
+  - **Task Impact**: +0% to TODO #34; naming-only correction.
+  - **Summary**: Rename five script-owned PowerShell variables to snake_case;
+    keep system API/property names intact. All16 preparation tests pass.
+    Refresh disjoint current worker ownership; no native progress change.
