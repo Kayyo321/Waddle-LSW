@@ -266,8 +266,15 @@ static void test_shell_extraction(void)
     assert(icon_windows_extract_rgba(item, oversized_path, 32u, allocator, &image, &cleanup) ==
            IconWindowsStatusInvalidArgument);
     allocation_state.fail_allocate = true;
-    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
-           IconWindowsStatusOutOfMemory);
+    const icon_windows_status_t allocation_failure_status =
+        icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup);
+    if (allocation_failure_status != IconWindowsStatusOutOfMemory) {
+        (void)fprintf(stderr,
+                      "allocation failure returned status %u, GetLastError %lu\n",
+                      (unsigned int)allocation_failure_status,
+                      (unsigned long)GetLastError());
+    }
+    assert(allocation_failure_status == IconWindowsStatusOutOfMemory);
     assert(image.rgba == NULL && cleanup.bitmap_count == 0u && cleanup.icon_count == 0u &&
            cleanup.device_context_count == 0u);
     allocation_state.fail_allocate = false;

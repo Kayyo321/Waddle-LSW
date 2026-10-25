@@ -4,10 +4,12 @@ on:
     branches: [feat/seamless-interop]
     paths:
       - src/interop/icon_windows.*
+      - src/interop/app_catalog*
       - src/interop/png_writer.*
       - src/interop/session_control_windows.*
       - tests/interop/session_control_windows*
       - tests/interop/icon_windows.c
+      - tests/interop/app_catalog*
       - tests/interop/native_component_coverage.py
       - scripts/interop.mk
       - .github/workflows/interop-native-components.yml
@@ -37,10 +39,10 @@ jobs:
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Build real Windows SDK fixture and profile notes
         run: |
-          make build/native_components/icon_windows_profile.exe build/interop_guest_session_integration_test.exe
+          make build/native_components/icon_windows_profile.exe build/native_components/app_catalog_windows_profile.exe build/interop_guest_session_integration_test.exe
           python3 - <<'PY'
           import hashlib,json,pathlib,subprocess
-          files=['src/interop/icon_windows.c','src/interop/icon_windows.h','src/interop/png_writer.c','src/interop/png_writer.h','tests/interop/icon_windows.c','build/native_components/icon_fixture.gcno','build/native_components/icon_windows_profile.exe']
+          files=['src/interop/icon_windows.c','src/interop/icon_windows.h','src/interop/png_writer.c','src/interop/png_writer.h','tests/interop/icon_windows.c','build/native_components/icon_fixture.gcno','build/native_components/icon_windows_profile.exe','src/interop/app_catalog.c','src/interop/app_catalog.h','src/interop/app_catalog_windows.c','src/interop/app_catalog_windows_private.h','src/interop/app_catalog_validation.zig','src/interop/app_catalog_validation.h','tests/interop/app_catalog_windows.c','build/native_components/catalog_adapter.gcno','build/native_components/app_catalog_windows_profile.exe']
           record={'commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'sha256':{p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in files},'compiler':subprocess.check_output(['x86_64-w64-mingw32-gcc','--version'],text=True).splitlines()[0]}
           pathlib.Path('build/native_components/inputs.json').write_text(json.dumps(record,indent=2)+'\n')
           PY
@@ -78,6 +80,17 @@ jobs:
           $env:GCOV_PREFIX_STRIP = '99'
           & .\build\native_components\icon_windows_profile.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run real catalog and retained-close ownership fixtures
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $profile_dir = Join-Path $pwd 'coverage-data'
+          New-Item -ItemType Directory -Path $profile_dir -Force | Out-Null
+          $env:GCOV_PREFIX = $profile_dir
+          $env:GCOV_PREFIX_STRIP = '99'
+          & .\build\native_components\app_catalog_windows_profile.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -108,6 +121,9 @@ jobs:
           path: build/native_components
       - name: Require native production source line and taken-arc coverage
         run: python3 tests/interop/native_component_coverage.py icon_windows build/native_components
+      - name: Require native catalog source line and taken-arc coverage
+        if: always()
+        run: python3 tests/interop/native_component_coverage.py app_catalog_windows build/native_components
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

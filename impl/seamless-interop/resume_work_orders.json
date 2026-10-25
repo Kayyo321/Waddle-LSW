@@ -1,25 +1,24 @@
 {
   "phase_id": "resume_30_percent_2026_10_25",
-  "baseline": "d77dcb3",
+  "baseline": "7d4a01e",
   "target_overall_percent": 30,
   "active_workers": [
     {
       "agent": "luna_manifest_engine",
       "owns": [
-        "src/interop/app_catalog*",
-        "tests/interop/app_catalog*",
-        "impl/seamless-interop/app_catalog_contract.md"
+        "src/interop/desktop_artifacts.zig",
+        "tests/interop/desktop_artifacts.zig",
+        "impl/seamless-interop/desktop_artifacts_contract.md"
       ]
     },
     {
       "agent": "luna_host_runtime",
       "owns": [
-        "src/interop/session_control_host.c",
-        "src/interop/session_control_host.h",
-        "src/interop/session_main.c",
-        "tests/interop/session_control_host*",
-        "tests/interop/session_main*",
-        "impl/seamless-interop/session_control_host_contract.md"
+        "src/interop/icon_windows.c",
+        "src/interop/icon_windows.h",
+        "tests/interop/icon_windows.c",
+        "tests/interop/icon_windows_faults.inc",
+        "impl/seamless-interop/icon_pipeline_contract.md"
       ]
     },
     {
@@ -38,7 +37,11 @@
     "tracker and Git",
     "native device/runner actions",
     "critical review",
-    "daemon status codec"
+    "daemon status codec",
+    "frozen catalog files/native provider",
+    "MIME editor",
+    "PNG encoder"
   ],
-  "no_worker_may_stage_or_commit": true
+  "no_worker_may_stage_or_commit": true,
+  "reviewed_overall_percent": 23.6
 }

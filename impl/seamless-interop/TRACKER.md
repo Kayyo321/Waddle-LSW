@@ -1479,10 +1479,18 @@ its uncompiled draft earns no credit until current acceptance passes.
     pass; default tests/sanitizer allocation suite/CI coverage include it.
     No desktop defaults are written and no launch/registration credit is claimed.
 
-- **Commit `HEAD`**: `test(interop): honor optional SetupAPI detail size output in native fixture`
+- **Commit `5e77e7f`**: `test(interop): honor optional SetupAPI detail size output in native fixture`
   - **Task Impact**: +0% to TODO #6/#34; native rerun required.
   - **Summary**: bc450b9 still failed before Hello. Root found the concrete
     earlier seam defect: successful second GetDeviceInterfaceDetail may pass
     NULL RequiredSize, which the fixture wrongly rejected. Correct only that
     fixture contract; retain the separate necessary alignment correction.
     Strict SDK/link passes, and production native gates remain open.
+
+- **Commit `HEAD`**: `ci(interop): execute and measure read-only native catalog adapter`
+  - **Task Impact**: +0% to TODO #27/#34; native provider not yet accepted.
+  - **Summary**: Extend fast native job with actual catalog enumeration, owned
+    temporary shortcut fixtures and exact close-retry tests. Capture genuine
+    Windows gcda and gate the complete native provider source at90%lines/arcs.
+    Keep independent failing steps/profile upload so one fixture cannot conceal
+    another. Native icon allocator diagnostic reports actual status/error.

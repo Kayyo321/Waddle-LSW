@@ -8,9 +8,10 @@ import subprocess
 import sys
 
 Root = Path(__file__).resolve().parents[2]
-Scopes = {"icon_windows": ("icon_fixture", Root / "src/interop/icon_windows.c")}
+Scopes = {"icon_windows": ("icon_fixture", Root / "src/interop/icon_windows.c"),
+          "app_catalog_windows": ("catalog_adapter", Root / "src/interop/app_catalog_windows.c")}
 if len(sys.argv) != 3 or sys.argv[1] not in Scopes:
-    raise SystemExit("usage: native_component_coverage.py icon_windows PROFILE_DIRECTORY")
+    raise SystemExit("usage: native_component_coverage.py SCOPE PROFILE_DIRECTORY")
 name = sys.argv[1]
 directory = Path(sys.argv[2]).resolve(strict=True)
 object_name, source = Scopes[name]
