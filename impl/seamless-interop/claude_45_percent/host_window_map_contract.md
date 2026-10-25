@@ -28,9 +28,9 @@ and app ids is task 11b/11d/11e/11f and remains open.
 | `MaxDeferred` | 64 | Deferred children per session epoch. |
 | `MaxOutput` | 64 | Minimum caller output capacity for `announce` and `retire`. |
 
-A realized window, a deferred child and a realized window produced by unblocking
-all count against the 64-entry limit of their own table. A realize operation
-never leaves the realized table above 64.
+Realized windows, including windows produced by unblocking, count against the 64
+realized entries. Deferred children count against the 64 deferred entries and
+nothing else. A realize operation never leaves the realized table above 64.
 
 ## Identity and types
 
