@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """End-to-end `waddle open` against a real session.sock path and the built binary.
 
-Runs build/waddle in a temporary HOME and XDG_RUNTIME_DIR. The fake session server
+Runs a copy of build/waddle, placed in the lab's bin directory, in a temporary HOME and
+XDG_RUNTIME_DIR, so its waddle-session sibling is always the lab wrapper (the build tree's
+waddle-session is never used). Every wrapper records its own $0 and the cases check it. The fake session server
 (open_fake_session.py) listens on $XDG_RUNTIME_DIR/waddle/alpha/session.sock, decodes each
 LocalLaunch with its own TLV reader, and answers with frames encoded by the production codec
 (build/open_frame_dump). Cold-start cases use a fake waddle-session and a fake notify-send
@@ -56,6 +58,13 @@ class Lab:
         self.runtime.mkdir(mode=0o700)
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        # `waddle open` finds its waddle-session sibling through its own executable path. Running a
+        # copy from the lab's bin directory makes that sibling the lab's wrapper, never a binary
+        # from the build tree (build/waddle-session exists after a plain `make`).
+        self.waddle = self.bin / "waddle"
+        shutil.copy2(WADDLE, self.waddle)
+        self.waddle.chmod(0o755)
+        self.invocations = self.root / "session-invocations.log"
         self.notify_log = self.root / "notify.jsonl"
         self.spawn_log = self.root / "spawn.jsonl"
         self.session_socket = self.runtime / "waddle" / "alpha" / "session.sock"
@@ -76,8 +85,20 @@ class Lab:
 
     def run(self, *args, extra=None, timeout=60):
         env = self.env if not extra else {**self.env, **extra}
-        return subprocess.run([str(WADDLE), *args], env=env, capture_output=True, text=True,
+        return subprocess.run([str(self.waddle), *args], env=env, capture_output=True, text=True,
                               timeout=timeout)
+
+    def assert_sibling_is_lab_wrapper(self):
+        """Setup check: the only waddle-session the client can resolve is the lab's wrapper."""
+        check(Path(self.waddle).parent == self.bin, ("client is not the lab copy", self.waddle))
+        names = sorted(path.name for path in self.bin.iterdir() if path.name.startswith("waddle"))
+        check(names == ["waddle", "waddle-session"], ("lab bin holds other waddle binaries", names))
+
+    def spawned_wrappers(self):
+        """Paths the session wrappers recorded as their own $0, one per invocation."""
+        if not self.invocations.exists():
+            return []
+        return [line for line in self.invocations.read_text().splitlines() if line]
 
     def init_device(self):
         result = self.run("init", "alpha", "--blank-disk", "64M", timeout=300)
@@ -93,24 +114,34 @@ class Lab:
             % str(self.notify_log))
         script.chmod(0o755)
 
-    def write_session_wrapper(self, scenario, delay, record):
+    def write_wrapper(self, body):
+        """Write the lab's waddle-session wrapper; it records its own $0 before running body."""
         script = self.bin / "waddle-session"
+        script.write_text(
+            "#!/bin/sh\n"
+            "echo \"$0\" >> %s\n"
+            "%s\n" % (shlex.quote(str(self.invocations)), body))
+        script.chmod(0o755)
+        self.assert_sibling_is_lab_wrapper()
+
+    def write_session_wrapper(self, scenario, delay, record):
         exec_options = ""
         if HARNESS is not None:
             exec_options = (" --exec %s --exec-device \"$2\" --exec-reply %s --exec-record %s"
                             % (str(HARNESS), shlex.quote(scenario.get("reply", "ok")), str(record)))
-        script.write_text(
-            "#!/bin/sh\n"
+        self.write_wrapper(
             "exec python3 %s --socket \"$XDG_RUNTIME_DIR/waddle/$2/session.sock\" --dump %s"
-            " --spawn-log %s --record %s --delay %s --idle-exit 20 --scenario %s%s\n"
+            " --spawn-log %s --record %s --delay %s --idle-exit 20 --scenario %s%s"
             % (str(HERE / "open_fake_session.py"), str(DUMP), str(self.spawn_log), str(record),
                delay, "'" + json.dumps(scenario) + "'", exec_options))
-        script.chmod(0o755)
 
     def write_silent_session_wrapper(self):
-        script = self.bin / "waddle-session"
-        script.write_text("#!/bin/sh\nexit 0\n")
-        script.chmod(0o755)
+        """A session that exits 0 and never creates a socket (a handover that never completes)."""
+        self.write_wrapper("exit 0")
+
+    def write_exit_session_wrapper(self, status):
+        """A session that exits nonzero before creating any socket."""
+        self.write_wrapper("exit %d" % status)
 
     def set_notify(self, value):
         """Set integration.notify in the device file, whatever its current value is."""
@@ -364,6 +395,8 @@ def cold_path(lab):
     started = time.time()
     result = lab.run("open", "--wait", str(target), timeout=120)
     check(result.returncode == 0, ("cold", result.returncode, result.stderr))
+    check(lab.spawned_wrappers() == [str(lab.bin / "waddle-session")],
+          ("the spawn must be the lab wrapper", lab.spawned_wrappers()))
     spawns = [json.loads(line) for line in lab.spawn_log.read_text().splitlines()]
     check(len(spawns) == 1, ("exactly one spawn", spawns))
     spawn = spawns[0]
@@ -416,6 +449,26 @@ def cold_path_deadline(lab):
     check(result.returncode == 125 and "did not start" in result.stderr,
           ("deadline", result.returncode, result.stderr))
     check(120 <= elapsed <= 150, ("deadline duration", elapsed))
+    # Exit 0 is a handover, so the client kept polling the socket and spawned exactly once.
+    check(lab.spawned_wrappers() == [str(lab.bin / "waddle-session")], lab.spawned_wrappers())
+
+
+def cold_path_child_exits(lab):
+    """A waddle-session that exits 3 without a socket fails at once, naming the status."""
+    target = lab.make_file("exits.txt")
+    if lab.session_socket.parent.exists():
+        shutil.rmtree(lab.session_socket.parent)
+    lab.invocations.unlink(missing_ok=True)
+    lab.write_exit_session_wrapper(3)
+    started = time.monotonic()
+    result = lab.run("open", "--wait", str(target), timeout=120)
+    elapsed = time.monotonic() - started
+    check(result.returncode == 125, ("child exit", result.returncode, result.stderr))
+    check("waddle-session exited with status 3" in result.stderr, ("status in message", result.stderr))
+    # The client waits one extra backoff after seeing the exit, then fails; the deadline is 120 s.
+    check(elapsed < 2.0, ("failed promptly", elapsed))
+    check(lab.spawned_wrappers() == [str(lab.bin / "waddle-session")], lab.spawned_wrappers())
+    check(not lab.session_socket.exists(), "no socket was created")
 
 
 def codec_cross_check(lab):  # noqa: ARG001 - no device state needed
@@ -443,7 +496,7 @@ def codec_cross_check(lab):  # noqa: ARG001 - no device state needed
 def main():
     cases = [codec_cross_check, warm_path, statuses, error_and_eof, grace_handover, multiple_items,
              outside_share, usage_errors, wrong_mode_directory, cold_path, cold_path_without_notice,
-             outside_share_notifies]
+             outside_share_notifies, cold_path_child_exits]
     if SLOW:
         cases.append(cold_path_deadline)
     if HARNESS is not None:
