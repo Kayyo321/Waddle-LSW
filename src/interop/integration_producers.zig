@@ -76,13 +76,19 @@ pub fn exec_quote(allocator: std.mem.Allocator, arg: []const u8) ![]u8 {
 pub fn desktop_value(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
     var out = std.ArrayList(u8).init(allocator);
     errdefer out.deinit();
-    for (value) |byte| switch (byte) {
-        '\\' => try out.appendSlice("\\\\"),
-        '\n' => try out.appendSlice("\\n"),
-        '\t' => try out.appendSlice("\\t"),
-        '\r' => try out.appendSlice("\\r"),
-        else => try out.append(byte),
-    };
+    for (value) |byte| {
+        if (byte == '\\') {
+            try out.appendSlice("\\\\");
+        } else if (byte == '\n') {
+            try out.appendSlice("\\n");
+        } else if (byte == '\t') {
+            try out.appendSlice("\\t");
+        } else if (byte == '\r') {
+            try out.appendSlice("\\r");
+        } else {
+            try out.append(byte);
+        }
+    }
     return out.toOwnedSlice();
 }
 
@@ -144,58 +150,57 @@ pub fn kind_wire(kind: manifest.record_kind_t) []const u8 {
     };
 }
 
-/// Write one JSON string with the standard escapes.
-fn write_json_string(writer: anytype, text: []const u8) !void {
-    try std.json.stringify(text, .{}, writer);
+/// JSON shape of one record. Field order is the canonical member order of the schema.
+/// Null optional members are omitted; `prior` is always present as null, a string, or
+/// an integer, so `null` must stay a value rather than an omitted optional.
+const json_record_t = struct {
+    id: []const u8,
+    kind: []const u8,
+    path: []const u8,
+    sha256: []const u8,
+    device: ?[]const u8,
+    app_key: ?[]const u8,
+    created_by: []const u8,
+    prior: std.json.Value,
+    mime: ?[]const u8,
+};
+
+/// JSON shape of one document: schema 1 followed by the root fields and records.
+const json_document_t = struct {
+    schema: u32,
+    waddle_version: []const u8,
+    updated: []const u8,
+    records: []const json_record_t,
+};
+
+/// Map a record prior to its JSON value: absent is null, text a string, DWORD an integer.
+fn prior_value(prior: manifest.prior_value_t) std.json.Value {
+    return switch (prior) {
+        .None => .null,
+        .Text => |text| .{ .string = text },
+        .U32Value => |value| .{ .integer = value },
+    };
 }
 
-/// Serialize a complete schema-1 document in canonical member order. Optional
-/// members are emitted only when present, `prior` is null, a string, or an integer.
-/// Returns owned bytes that `manifest.parse` accepts when the records are valid.
+/// Serialize a complete schema-1 document in canonical member order. Returns owned bytes
+/// that `manifest.parse` accepts when the records are valid.
+/// Errors: InvalidDocument when more records than the codec accepts; OutOfMemory.
 pub fn encode_document(allocator: std.mem.Allocator, root: root_fields_t, records: []const manifest.record_t) ![]u8 {
     if (records.len > manifest.MaxManifestRecords) return error.InvalidDocument;
-    var out = std.ArrayList(u8).init(allocator);
-    errdefer out.deinit();
-    const writer = out.writer();
-    try writer.writeAll("{\"schema\":1,\"waddle_version\":");
-    try write_json_string(writer, root.waddle_version);
-    try writer.writeAll(",\"updated\":");
-    try write_json_string(writer, root.updated);
-    try writer.writeAll(",\"records\":[");
-    for (records, 0..) |record, index| {
-        if (index != 0) try writer.writeByte(',');
-        try writer.writeAll("{\"id\":");
-        try write_json_string(writer, record.id);
-        try writer.writeAll(",\"kind\":");
-        try write_json_string(writer, kind_wire(record.kind));
-        try writer.writeAll(",\"path\":");
-        try write_json_string(writer, record.path);
-        try writer.writeAll(",\"sha256\":");
-        try write_json_string(writer, record.sha256);
-        if (record.device) |device| {
-            try writer.writeAll(",\"device\":");
-            try write_json_string(writer, device);
-        }
-        if (record.app_key) |app_key| {
-            try writer.writeAll(",\"app_key\":");
-            try write_json_string(writer, app_key);
-        }
-        try writer.writeAll(",\"created_by\":");
-        try write_json_string(writer, record.created_by);
-        try writer.writeAll(",\"prior\":");
-        switch (record.prior) {
-            .None => try writer.writeAll("null"),
-            .Text => |text| try write_json_string(writer, text),
-            .U32Value => |value| try writer.print("{d}", .{value}),
-        }
-        if (record.mime) |mime| {
-            try writer.writeAll(",\"mime\":");
-            try write_json_string(writer, mime);
-        }
-        try writer.writeByte('}');
-    }
-    try writer.writeAll("]}");
-    return out.toOwnedSlice();
+    const json_records = try allocator.alloc(json_record_t, records.len);
+    defer allocator.free(json_records);
+    for (records, json_records) |record, *out| out.* = .{
+        .id = record.id,
+        .kind = kind_wire(record.kind),
+        .path = record.path,
+        .sha256 = record.sha256,
+        .device = record.device,
+        .app_key = record.app_key,
+        .created_by = record.created_by,
+        .prior = prior_value(record.prior),
+        .mime = record.mime,
+    };
+    return std.json.stringifyAlloc(allocator, json_document_t{ .schema = 1, .waddle_version = root.waddle_version, .updated = root.updated, .records = json_records }, .{ .emit_null_optional_fields = false });
 }
 
 /// Build the candidate document that differs from `records` only by one record:
@@ -333,6 +338,139 @@ test "candidate documents change exactly one record and append when absent" {
 
 fn manifest_handler_id() []const u8 {
     return HandlerRecordId;
+}
+
+test "encoder writes every optional member and every prior shape in order" {
+    const allocator = std.testing.allocator;
+    const records = [_]manifest.record_t{
+        .{ .id = "one", .kind = .DesktopEntry, .path = "/p/one", .sha256 = "aa" ** 32, .device = "alpha", .app_key = "app", .created_by = "0.2.0", .prior = .None, .mime = null },
+        .{ .id = "two", .kind = .MimeDefault, .path = "/p/mime", .sha256 = "bb" ** 32, .device = null, .app_key = null, .created_by = "0.2.0", .prior = .{ .Text = "old.desktop" }, .mime = "application/x-msi" },
+        .{ .id = "three", .kind = .GuestPolicy, .path = "HKLM-x", .sha256 = "cc" ** 32, .device = "default", .app_key = null, .created_by = "0.2.0", .prior = .{ .U32Value = 4 }, .mime = null },
+    };
+    const bytes = try encode_document(allocator, .{ .waddle_version = WaddleVersion, .updated = "2026-10-25T00:00:00Z" }, &records);
+    defer allocator.free(bytes);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\"device\":\"alpha\",\"app_key\":\"app\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\"prior\":\"old.desktop\",\"mime\":\"application/x-msi\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\"prior\":4}") != null);
+    var parsed = try manifest.parse(allocator, bytes);
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(u32, 4), parsed.records[2].prior.U32Value);
+}
+
+test "encoder refuses more records than the codec accepts" {
+    const allocator = std.testing.allocator;
+    const record = manifest.record_t{ .id = "r", .kind = .DesktopEntry, .path = "/p", .sha256 = "aa" ** 32, .device = null, .app_key = null, .created_by = "0.2.0", .prior = .None, .mime = null };
+    const many = try allocator.alloc(manifest.record_t, manifest.MaxManifestRecords + 1);
+    defer allocator.free(many);
+    @memset(many, record);
+    try std.testing.expectError(error.InvalidDocument, encode_document(allocator, .{ .waddle_version = WaddleVersion, .updated = "2026-10-25T00:00:00Z" }, many));
+}
+
+test "candidate documents replace in place, delete, and append without changing other records" {
+    const allocator = std.testing.allocator;
+    const records = sample_records();
+    const root = root_fields_t{ .waddle_version = WaddleVersion, .updated = "2026-10-25T00:00:00Z" };
+    const replacement = handler_record("/d/applications/waddle-open.desktop", "ee" ** 32, null);
+    const replaced = try candidate_document(allocator, root, &records, "mime:exe", replacement);
+    defer allocator.free(replaced);
+    var parsed = try manifest.parse(allocator, replaced);
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), parsed.records.len);
+    try std.testing.expectEqualStrings(HandlerRecordId, parsed.records[1].id);
+}
+
+test "launcher, device, and quoting checks accept and reject their boundary characters" {
+    const allocator = std.testing.allocator;
+    try std.testing.expect(launcher_valid("/a/b"));
+    try std.testing.expect(!launcher_valid("/a\x7f"));
+    try std.testing.expect(!launcher_valid("/a\tb"));
+    try std.testing.expect(device_valid("a-b_9"));
+    try std.testing.expect(!device_valid("a.b"));
+    try std.testing.expect(!device_valid("x" ** 64));
+    const quoted = try exec_quote(allocator, "plain");
+    defer allocator.free(quoted);
+    try std.testing.expectEqualStrings("\"plain\"", quoted);
+    const with_percent = try handler_desktop(allocator, "/opt/a%b/waddle", "dev1");
+    defer allocator.free(with_percent);
+    try std.testing.expect(std.mem.indexOf(u8, with_percent, "Exec=\"/opt/a%%b/waddle\" open --device dev1 %F") != null);
+}
+
+test "desktop value escaping covers backslash, newline, tab, and carriage return" {
+    const allocator = std.testing.allocator;
+    const escaped = try desktop_value(allocator, "a\\b\nc\td\re");
+    defer allocator.free(escaped);
+    try std.testing.expectEqualStrings("a\\\\b\\nc\\td\\re", escaped);
+}
+
+test "exec quoting and desktop escaping return every allocation failure without leaks" {
+    var index: usize = 0;
+    while (index < 16) : (index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = index });
+        if (exec_quote(failing.allocator(), "/a%b\"c\\d")) |quoted| {
+            failing.allocator().free(quoted);
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+        if (desktop_value(failing.allocator(), "a\\b\nc")) |escaped| {
+            failing.allocator().free(escaped);
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+}
+
+test "every growth point of long quoting and escaping inputs is an allocation failure" {
+    const special = "\\\n\t\r%\"`$";
+    var long: [special.len * 24]u8 = undefined;
+    for (0..24) |repeat| @memcpy(long[repeat * special.len ..][0..special.len], special);
+    var index: usize = 0;
+    var failures: usize = 0;
+    while (index < 256) : (index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = index });
+        if (exec_quote(failing.allocator(), &long)) |quoted| {
+            failing.allocator().free(quoted);
+        } else |err| {
+            failures += 1;
+            try std.testing.expectEqual(error.OutOfMemory, err);
+        }
+        if (desktop_value(failing.allocator(), &long)) |escaped| {
+            failing.allocator().free(escaped);
+        } else |err| {
+            failures += 1;
+            try std.testing.expectEqual(error.OutOfMemory, err);
+        }
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+    try std.testing.expect(failures > 8);
+}
+
+test "candidate document sweep covers replacement, deletion, and append under allocation failure" {
+    const records = sample_records();
+    const root = root_fields_t{ .waddle_version = WaddleVersion, .updated = "2026-10-25T00:00:00Z" };
+    const replacement = handler_record("/d/applications/waddle-open.desktop", "ee" ** 32, null);
+    var index: usize = 0;
+    while (index < 256) : (index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = index });
+        const allocator = failing.allocator();
+        if (candidate_document(allocator, root, &records, "mime:exe", replacement)) |bytes| {
+            allocator.free(bytes);
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+        if (candidate_document(allocator, root, &records, "absent", null)) |bytes| {
+            allocator.free(bytes);
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+        if (candidate_document(allocator, root, &records, "desktop:alpha", null)) |bytes| {
+            allocator.free(bytes);
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+}
+
+test "candidate documents for an absent target with no replacement keep the records unchanged" {
+    const allocator = std.testing.allocator;
+    const records = sample_records();
+    const root = root_fields_t{ .waddle_version = WaddleVersion, .updated = "2026-10-25T00:00:00Z" };
+    const unchanged = try candidate_document(allocator, root, &records, "absent:id", null);
+    defer allocator.free(unchanged);
+    var parsed = try manifest.parse(allocator, unchanged);
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), parsed.records.len);
 }
 
 test "allocation failures in producers leave no leaked allocations" {
