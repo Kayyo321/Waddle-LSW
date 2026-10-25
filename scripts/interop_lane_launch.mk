@@ -17,7 +17,12 @@ build/path_filesystem.o: src/common/path_filesystem.c src/common/path_rules.h | 
 build/arguments.o: src/common/arguments.c src/common/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-.PHONY: interop-open-command-test interop-open-command-coverage interop-open-request-test interop-open-request-abi-test interop-open-request-sanitizers interop-open-request-coverage interop-activation-store-test interop-activation-store-abi-test interop-activation-store-sanitizers interop-activation-store-coverage
+# End-to-end `waddle open` against the built binary and a fake session.sock. Frames for the
+# fake server are encoded by the production codec through open_frame_dump.
+build/open_frame_dump: tests/interop/open_frame_dump.c build/interop_codec.o | build
+	$(CC) -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $< build/interop_codec.o -lc -o $@
+
+.PHONY: interop-open-e2e-test interop-open-e2e-slow interop-open-command-test interop-open-command-coverage interop-open-request-test interop-open-request-abi-test interop-open-request-sanitizers interop-open-request-coverage interop-activation-store-test interop-activation-store-abi-test interop-activation-store-sanitizers interop-activation-store-coverage
 
 build/interop_open_request.o: src/interop/open_request.zig src/interop/open_request.h src/interop/pe_header.zig src/interop/pe_header.h | build
 	$(ZIG) build-obj $< -Iinclude -Isrc/interop -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
@@ -76,3 +81,13 @@ interop-open-command-coverage: $(OpenCommandObjects)
 InteropLaneTests += interop-open-request-test interop-activation-store-test interop-open-command-test
 InteropLaneSanitizers += interop-open-request-sanitizers interop-activation-store-sanitizers
 InteropLaneCoverage += interop-open-request-coverage interop-activation-store-coverage interop-open-command-coverage
+
+# Hardware-free; the cold-start and 120 s cases use temporary directories and fake helpers.
+interop-open-e2e-test: build/waddle build/open_frame_dump
+	python3 tests/integration/open_e2e.py
+
+# Same suite plus the real 120 s cold-start deadline (about four minutes).
+interop-open-e2e-slow: build/waddle build/open_frame_dump
+	WADDLE_OPEN_E2E_SLOW=1 python3 tests/integration/open_e2e.py
+
+InteropLaneTests += interop-open-e2e-test
