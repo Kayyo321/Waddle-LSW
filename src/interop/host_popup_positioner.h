@@ -26,8 +26,31 @@ typedef enum host_popup_status_t {
     HostPopupInvalidArgument = 1, /**< A required pointer was NULL. Nothing was written. */
     HostPopupInvalidScale = 2, /**< Scale outside 1..8, zero denominator, or a fraction that rounds outside 1..8. Nothing was written. */
     HostPopupOutOfRange = 3, /**< A logical offset or dimension exceeds 32768 in absolute value. Nothing was written. */
-    HostPopupOverflow = 4 /**< A scaled value does not fit its output type. Nothing was written. */
+    HostPopupOverflow = 4, /**< A scaled value does not fit its output type. Nothing was written. */
+    HostPopupInvalidParent = 5 /**< A parent width or height is zero. Nothing was written. */
 } host_popup_status_t;
+
+/**
+ * @brief Complete positioner request for one popup, ready for the xdg_positioner setters.
+ *
+ * `anchor_x`/`anchor_y` is the clamped anchor point inside the direct parent's window geometry, and
+ * `offset_x`/`offset_y` is the remainder. Their sum is the requested logical origin.
+ */
+typedef struct host_popup_request_t {
+    int32_t anchor_x; /**< set_anchor_rect x. */
+    int32_t anchor_y; /**< set_anchor_rect y. */
+    uint32_t anchor_width; /**< set_anchor_rect width; always 1. */
+    uint32_t anchor_height; /**< set_anchor_rect height; always 1. */
+    int32_t offset_x; /**< set_offset x. */
+    int32_t offset_y; /**< set_offset y. */
+    uint32_t width; /**< set_size width, at least 1. */
+    uint32_t height; /**< set_size height, at least 1. */
+    uint32_t anchor; /**< set_anchor; always HostPopupAnchorTopLeft. */
+    uint32_t gravity; /**< set_gravity; always HostPopupGravityBottomRight. */
+    uint32_t constraint_adjustment; /**< set_constraint_adjustment; always HostPopupConstraintSlideFlip. */
+} host_popup_request_t;
+
+_Static_assert(sizeof(host_popup_request_t) == 44, "host_popup_request_t layout");
 
 /**
  * @brief Rectangle in the coordinate space named by the function that uses it.
@@ -57,18 +80,20 @@ _Static_assert(sizeof(host_popup_rect_t) == 16, "host_popup_rect_t layout");
 host_popup_status_t host_popup_positioner_integer_scale(uint32_t numerator, uint32_t denominator, uint32_t *out_scale);
 
 /**
- * @brief Logical popup request for a guest rectangle.
+ * @brief Logical popup request for a guest rectangle relative to its direct parent.
  *
- * Origins use floor division toward negative infinity. Each dimension uses ceiling division and is at
- * least 1. A result whose absolute offset or dimension exceeds 32768 is refused.
+ * The requested origin is `floor(x / scale)`, and each dimension is `max(1, ceil(dimension / scale))`.
+ * The anchor point is clamped into the parent window geometry and the remainder is the offset.
  *
- * @param guest In. Guest physical rectangle relative to the parent's top-left. NULL gives `HostPopupInvalidArgument`.
+ * @param guest In. Guest physical rectangle relative to the direct parent's top-left. NULL gives `HostPopupInvalidArgument`.
  * @param scale In. Integer host scale, 1..8. Other values give `HostPopupInvalidScale`.
- * @param out Out. Receives the logical request on success only. NULL gives `HostPopupInvalidArgument`.
- * @return `HostPopupOk`, `HostPopupInvalidArgument`, `HostPopupInvalidScale` or `HostPopupOutOfRange`.
- *         Thread safety: any thread.
+ * @param parent_width In. Logical width of the direct parent, 1..32768. Zero gives `HostPopupInvalidParent`; above 32768 gives `HostPopupOutOfRange`.
+ * @param parent_height In. Logical height of the direct parent, 1..32768. Same refusals as `parent_width`.
+ * @param out Out. Receives the request on success only. NULL gives `HostPopupInvalidArgument`.
+ * @return `HostPopupOk`, `HostPopupInvalidArgument`, `HostPopupInvalidScale`, `HostPopupInvalidParent` or
+ *         `HostPopupOutOfRange` (a requested origin or dimension exceeds 32768). Thread safety: any thread.
  */
-host_popup_status_t host_popup_positioner_request(const host_popup_rect_t *guest, uint32_t scale, host_popup_rect_t *out);
+host_popup_status_t host_popup_positioner_request(const host_popup_rect_t *guest, uint32_t scale, uint32_t parent_width, uint32_t parent_height, host_popup_request_t *out);
 
 /**
  * @brief Guest rectangle for a compositor-adjusted logical rectangle.
