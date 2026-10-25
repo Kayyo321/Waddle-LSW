@@ -28,6 +28,9 @@ static bool context_ready(const host_wayland_t *ctx) {
     return ctx != NULL && ctx->initialized != 0;
 }
 
+/* Declared here because the popup event handlers use it before its definition below. */
+static void grab_pop_from(host_wayland_t *ctx, const host_wayland_record_t *rec);
+
 host_wayland_status_t host_wayland_windows_init(host_wayland_t *ctx, const host_wayland_config_t *config) {
     if (ctx == NULL || config == NULL) return HostWaylandInvalidArgument;
     if (config->compositor == NULL || config->wm_base == NULL || config->device == NULL) return HostWaylandInvalidArgument;
@@ -317,6 +320,7 @@ static void on_popup_done(void *data, struct xdg_popup *popup) {
     id.generation = rec->generation;
     if (host_window_map_mark_dismissed(&ctx->map, id) != HostWindowMapDismissed) return;
     rec->dismissed = 1;
+    grab_pop_from(ctx, rec);
     if (ctx->config.callbacks.on_popup_dismissed) ctx->config.callbacks.on_popup_dismissed(ctx->config.callbacks.user, rec->window, rec->generation);
 }
 
@@ -356,6 +360,7 @@ static void destroy_record_objects(host_wayland_record_t *rec) {
     rec->surface = NULL;
     rec->generation = 0;
     rec->mapped = 0;
+    rec->grabbed = 0;
     if (decoration) zxdg_toplevel_decoration_v1_destroy(decoration);
     if (toplevel) xdg_toplevel_destroy(toplevel);
     if (popup) xdg_popup_destroy(popup);
@@ -486,9 +491,34 @@ static host_window_ref_t root_of(const host_wayland_t *ctx, host_window_ref_t id
     return id;
 }
 
+/** @brief Topmost grabbing popup of a seat: the live grabbed record with the highest grab sequence, or NULL. */
+static host_wayland_record_t *seat_top_grab(host_wayland_t *ctx, const struct wl_seat *seat) {
+    host_wayland_record_t *top = NULL;
+    for (size_t index = 0; index < HostWindowMapMaxRealized; ++index) {
+        host_wayland_record_t *rec = &ctx->records[index];
+        if (rec->generation == 0 || !rec->grabbed || rec->grab_seat != seat) continue;
+        if (top == NULL || rec->grab_sequence > top->grab_sequence) top = rec;
+    }
+    return top;
+}
+
 /**
- * @brief Grab for a Menu whose trigger press is live (3.6.2): same root family, not expired, and the protocol
- * serial T matches. Other popups, and every stale, expired or unmatched trigger, are created ungrabbed.
+ * @brief Drop the grab of `rec` and every grab stacked above it on the same seat (dismiss and retire, 3.6.2).
+ * A popup above a dismissed one loses its eligibility to grab, and the parent below it becomes topmost again.
+ */
+static void grab_pop_from(host_wayland_t *ctx, const host_wayland_record_t *rec) {
+    if (!rec->grabbed) return;
+    for (size_t index = 0; index < HostWindowMapMaxRealized; ++index) {
+        host_wayland_record_t *other = &ctx->records[index];
+        if (other->grabbed && other->grab_seat == rec->grab_seat && other->grab_sequence >= rec->grab_sequence) other->grabbed = 0;
+    }
+}
+
+/**
+ * @brief Grab for a Menu whose trigger press is live (3.6.2): same root family, not expired, serial T matches, and the
+ * seat is grab-eligible. A popup on a toplevel grabs only while no grab is active on its seat. A popup on a popup
+ * grabs only when its parent is the topmost grabbing popup of that seat; any other case is created ungrabbed,
+ * because the compositor treats a grab from a non-topmost parent as invalid_grab.
  */
 static void maybe_grab(host_wayland_t *ctx, host_wayland_record_t *rec, const announce_t *req, uint64_t now_ms) {
     if (rec->role != ROLE_MENU || !req->has_serial) return;
@@ -497,7 +527,17 @@ static void maybe_grab(host_wayland_t *ctx, host_wayland_record_t *rec, const an
     host_window_ref_t trigger_root = root_of(ctx, (host_window_ref_t){press->window, press->generation});
     host_window_ref_t popup_root = root_of(ctx, (host_window_ref_t){req->parent, req->parent_generation});
     if (trigger_root.window != popup_root.window || trigger_root.generation != popup_root.generation) return;
+    host_wayland_record_t *parent = find_record(ctx, req->parent, req->parent_generation);
+    if (parent == NULL) return;
+    if (role_is_popup(parent->role)) {
+        if (!parent->grabbed || parent->dismissed || seat_top_grab(ctx, press->seat) != parent) return;
+    } else if (seat_top_grab(ctx, press->seat) != NULL) {
+        return;
+    }
     xdg_popup_grab(rec->popup, press->seat, press->wayland_serial);
+    rec->grabbed = 1;
+    rec->grab_seat = press->seat;
+    rec->grab_sequence = ++ctx->grab_counter;
 }
 
 /**
@@ -786,6 +826,7 @@ static void press_drop_window(host_wayland_t *ctx, uint64_t window, uint64_t gen
 static void destroy_window(host_wayland_t *ctx, host_wayland_record_t *rec) {
     uint64_t window = rec->window;
     uint64_t generation = rec->generation;
+    grab_pop_from(ctx, rec);
     destroy_record_objects(rec);
     press_drop_window(ctx, window, generation);
 }

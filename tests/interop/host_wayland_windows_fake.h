@@ -76,6 +76,12 @@ static unsigned fake_order_violations; /* destroys that left a live dependent be
 static unsigned fake_protocol_errors; /* every rejection listed in the file comment; never reset */
 static unsigned fake_dead_requests; /* requests on destroyed or unknown objects */
 static unsigned fake_invalid_serials; /* acks of serials that were not outstanding */
+static unsigned fake_invalid_grabs; /* grabs the compositor model refuses with invalid_grab; never reset */
+static unsigned fake_grants; /* grabs the compositor model accepted since the last fake_begin */
+/* Grabbing popups in grant order. A seat's grab stack is the entries carrying that seat, last one on top. */
+static unsigned fake_grab_popup[FAKE_PROXIES];
+static long long fake_grab_seat[FAKE_PROXIES];
+static unsigned fake_grab_depth;
 static fake_request_t fake_requests[FAKE_REQUESTS];
 static unsigned fake_request_count;
 static const char *fake_fail_create; /* interface whose creation returns NULL */
@@ -133,10 +139,66 @@ static int fake_has_live_dependent(unsigned index) {
     return 0;
 }
 
+/** @brief Stack position of a grabbing popup, or -1. */
+static int fake_grab_at(unsigned popup) {
+    for (unsigned at = 0; at < fake_grab_depth; ++at) {
+        if (fake_grab_popup[at] == popup) return (int)at;
+    }
+    return -1;
+}
+
+/** @brief Topmost grabbing popup on `seat`, or FAKE_NONE. */
+static unsigned fake_seat_top(long long seat) {
+    for (unsigned at = fake_grab_depth; at > 0; --at) {
+        if (fake_grab_seat[at - 1] == seat) return fake_grab_popup[at - 1];
+    }
+    return FAKE_NONE;
+}
+
+/** @brief Popup whose own xdg_surface is `surface`, or FAKE_NONE. Only a live popup counts. */
+static unsigned fake_popup_of_surface(unsigned surface) {
+    for (unsigned index = 0; index < fake_proxy_count; ++index) {
+        if (fake_proxies[index].live && fake_proxies[index].iface && !strcmp(fake_proxies[index].iface, "xdg_popup") && fake_proxies[index].aux == surface) return index;
+    }
+    return FAKE_NONE;
+}
+
+/**
+ * @brief Compositor rule for xdg_popup.grab: a popup on a toplevel may grab only when the seat has no active
+ * grab; a popup on a popup may grab only when its parent is the topmost grabbing popup of that seat. Anything
+ * else is invalid_grab.
+ */
+static int fake_grab_allowed(unsigned popup, long long seat) {
+    unsigned parent = fake_proxies[popup].aux2;
+    if (parent == FAKE_NONE || fake_grab_at(popup) >= 0) return 0;
+    if (fake_proxies[parent].role == FAKE_ROLE_TOPLEVEL) return fake_seat_top(seat) == FAKE_NONE;
+    if (fake_proxies[parent].role == FAKE_ROLE_POPUP) {
+        unsigned parent_popup = fake_popup_of_surface(parent);
+        return parent_popup != FAKE_NONE && fake_seat_top(seat) == parent_popup;
+    }
+    return 0;
+}
+
+/** @brief Remove a grabbing popup and every grab stacked above it on the same seat (dismiss or destroy). */
+static void fake_grab_pop(unsigned popup) {
+    int at = fake_grab_at(popup);
+    if (at < 0) return;
+    long long seat = fake_grab_seat[at];
+    unsigned out = (unsigned)at;
+    for (unsigned from = (unsigned)at; from < fake_grab_depth; ++from) {
+        if (fake_grab_seat[from] == seat) continue;
+        fake_grab_popup[out] = fake_grab_popup[from];
+        fake_grab_seat[out] = fake_grab_seat[from];
+        ++out;
+    }
+    fake_grab_depth = out;
+}
+
 static void fake_destroy_index(unsigned index) {
     if (index == FAKE_NONE) return;
     if (!fake_proxies[index].live) { ++fake_double_destroys; return; }
     if (fake_has_live_dependent(index)) ++fake_order_violations;
+    if (fake_proxies[index].iface && !strcmp(fake_proxies[index].iface, "xdg_popup")) fake_grab_pop(index);
     fake_proxies[index].live = 0;
     fake_free_slots[fake_free_count++] = fake_proxies[index].address;
     ++fake_destroys;
@@ -157,6 +219,8 @@ static void fake_begin(void) {
     fake_fail_create_skip = 0;
     fake_fail_listener = NULL;
     fake_version = 5;
+    fake_grants = 0;
+    fake_grab_depth = 0;
 }
 
 /* Arguments are decoded per interface and opcode into the recorded slots. A constructor request passes a
@@ -246,6 +310,17 @@ struct wl_proxy *__wrap_wl_proxy_marshal_flags(struct wl_proxy *proxy, uint32_t 
     if (!dead && iface && !strcmp(iface, "xdg_surface") && opcode == XDG_SURFACE_ACK_CONFIGURE && !fake_take_serial(index, (uint32_t)request->a0)) {
         ++fake_protocol_errors;
         ++fake_invalid_serials;
+    }
+    if (!dead && iface && !strcmp(iface, "xdg_popup") && opcode == XDG_POPUP_GRAB) {
+        if (fake_grab_allowed(index, request->a0)) {
+            fake_grab_popup[fake_grab_depth] = index;
+            fake_grab_seat[fake_grab_depth] = request->a0;
+            ++fake_grab_depth;
+            ++fake_grants;
+        } else {
+            ++fake_protocol_errors;
+            ++fake_invalid_grabs;
+        }
     }
     if (destroying) fake_destroy_index(index);
     if (interface == NULL) return NULL;
@@ -353,6 +428,7 @@ static void deliver_popup_repositioned(unsigned index, uint32_t token) {
 
 static void deliver_popup_done(unsigned index) {
     if (fake_proxies[index].listener == NULL || !fake_proxies[index].live) return;
+    fake_grab_pop(index);
     const struct xdg_popup_listener *listener = fake_proxies[index].listener;
     listener->popup_done(fake_proxies[index].data, (struct xdg_popup *)fake_object(index));
 }

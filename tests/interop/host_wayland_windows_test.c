@@ -1203,6 +1203,70 @@ static int check_stale_binding_generation(void) {
     return 0;
 }
 
+/** @brief Menu under any parent. A serial is sent only when `has_serial` is set; `now_ms` drives press expiry. */
+static host_wayland_status_t menu_under(uint64_t window, uint64_t parent, uint64_t parent_generation, bool has_serial, uint32_t serial, uint64_t now_ms) {
+    announce_spec_t menu = menu_spec(window, parent, parent_generation, 3, 30, 12, 40, 20);
+    menu.has_serial = has_serial;
+    menu.serial = serial;
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = build_announce(frame, sizeof frame, &menu);
+    if (length == 0) return HostWaylandMalformedFrame;
+    return host_wayland_windows_handle_frame(&session_ctx, frame, length, now_ms);
+}
+
+/**
+ * @brief xdg_popup.grab rules (3.6.2, 8.44): a popup on a toplevel grabs only when no grab is active on its seat;
+ * a popup on a popup grabs only when the parent is the topmost grabbing popup. Each scenario is checked against
+ * the strict double, where a violating grab is a protocol error.
+ */
+static int check_grab_topmost_rules(void) {
+    /* A menu announced without a live press is ungrabbed, so its submenu cannot grab on a live press. */
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    struct wl_seat *seat = (struct wl_seat *)fake_object(fake_new("wl_seat"));
+    Check(menu_under(3, 1, 1, false, 0, 1100) == HostWaylandOk);
+    Check(fake_grants == 0);
+    Check(host_wayland_windows_record_press(&session_ctx, 20, 600, seat, 3, 1, 1100) == HostWaylandOk);
+    Check(menu_under(4, 3, 1, true, 20, 1100) == HostWaylandOk);
+    Check(fake_grants == 0 && fake_invalid_grabs == 0);
+
+    /* Two sibling menus under one toplevel, each with a live press: only the first grabs. */
+    Check(begin_popup_session(5) == 0);
+    root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    seat = (struct wl_seat *)fake_object(fake_new("wl_seat"));
+    Check(host_wayland_windows_record_press(&session_ctx, 30, 600, seat, 1, 1, 1100) == HostWaylandOk);
+    Check(host_wayland_windows_record_press(&session_ctx, 31, 601, seat, 1, 1, 1100) == HostWaylandOk);
+    Check(menu_under(5, 1, 1, true, 30, 1100) == HostWaylandOk);
+    Check(menu_under(6, 1, 1, true, 31, 1100) == HostWaylandOk);
+    Check(fake_grants == 1 && fake_invalid_grabs == 0);
+    Check(fake_count_requests("xdg_popup", XDG_POPUP_GRAB) == 1);
+    Check(fake_proxy_of_first("xdg_popup", XDG_POPUP_GRAB, 0) == fake_nth("xdg_popup", 0));
+
+    /* A chain A -> B -> C grabs at each level, then dismissing B ends C's eligibility. */
+    Check(begin_popup_session(5) == 0);
+    root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    seat = (struct wl_seat *)fake_object(fake_new("wl_seat"));
+    Check(host_wayland_windows_record_press(&session_ctx, 40, 600, seat, 1, 1, 1100) == HostWaylandOk);
+    Check(menu_under(3, 1, 1, true, 40, 1100) == HostWaylandOk);
+    Check(host_wayland_windows_record_press(&session_ctx, 41, 601, seat, 3, 1, 1100) == HostWaylandOk);
+    Check(menu_under(4, 3, 1, true, 41, 1100) == HostWaylandOk);
+    Check(host_wayland_windows_record_press(&session_ctx, 42, 602, seat, 4, 1, 1100) == HostWaylandOk);
+    Check(menu_under(5, 4, 1, true, 42, 1100) == HostWaylandOk);
+    Check(fake_grants == 3 && fake_invalid_grabs == 0);
+    deliver_popup_done(fake_nth("xdg_popup", 1));
+    Check(host_wayland_windows_record_press(&session_ctx, 43, 603, seat, 5, 1, 1100) == HostWaylandOk);
+    Check(menu_under(6, 5, 1, true, 43, 1100) == HostWaylandOk);
+    Check(fake_count_requests("xdg_popup", XDG_POPUP_GRAB) == 3 && fake_grants == 3 && fake_invalid_grabs == 0);
+    /* A's own children are eligible again: A is still the topmost grabbing popup of the seat. */
+    Check(host_wayland_windows_record_press(&session_ctx, 44, 604, seat, 3, 1, 1100) == HostWaylandOk);
+    Check(menu_under(7, 3, 1, true, 44, 1100) == HostWaylandOk);
+    Check(fake_grants == 4 && fake_invalid_grabs == 0);
+    return 0;
+}
+
 /** @brief Every request the module sent was accepted by the strict double. Runs last. */
 static int check_fake_protocol_clean(void) {
     Check(fake_dead_requests == 0);
@@ -1230,6 +1294,7 @@ int main(void) {
     if (check_popup_realization() != 0) return 1;
     if (check_popup_positioner_versions() != 0) return 1;
     if (check_popup_grab() != 0) return 1;
+    if (check_grab_topmost_rules() != 0) return 1;
     if (check_nested_popup() != 0) return 1;
     if (check_popup_reposition_and_dismiss() != 0) return 1;
     if (check_popup_refusals_and_rollback() != 0) return 1;
