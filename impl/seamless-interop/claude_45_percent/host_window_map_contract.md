@@ -155,6 +155,17 @@ for each discarded pair, and it never realizes them.
 
 Retire never realizes anything, so it never unblocks deferred children.
 
+**Reachability of discards.** Through the public operations, the discard list is
+always empty. A deferred entry is created only when its parent pair is not
+realized, and realizing a pair unblocks every deferred child that names it. A
+retire removes only realized pairs, so no deferred entry can name a removed pair.
+The discard pass is kept so the reporting contract stays exact for any state the
+table could be given by other means; the white-box test in
+`host_window_map.zig` exercises it directly. Section 8.44 does not say how a
+child announced after its parent was retired is to be treated, and that case is
+deferred (see Limitations). It is an open question for the lead, not a silent
+choice.
+
 ## Lookup, currency and counts
 
 - `lookup(map, window)` returns the realized entry only when both `window` and
@@ -238,11 +249,17 @@ must be retired first, and an unrelated generation is never silently replaced.
 
 ## Limitations (explicit, bounded)
 
-- A `retire` naming a deferred pair changes nothing, per section 8.44. A
-  deferred child whose parent never arrives stays deferred until its own
-  parent-chain retires, or until epoch reset. It occupies one of the 64 deferred
-  slots meanwhile. Conforming guests announce a child only after its parent is
-  exported, so this path is reachable only after a refused parent.
+- A `retire` naming a deferred pair changes nothing, per section 8.44. A deferred
+  child stays deferred until its parent pair realizes or the epoch resets. It
+  occupies one of the 64 deferred slots meanwhile.
+- A child announced after its parent pair was retired is not stale to the table.
+  The table cannot tell a retired parent from one not yet announced without
+  unbounded history, so the child defers and stays until epoch reset. Section
+  8.44's rule "a deferred child whose parent pair is retired is discarded" therefore
+  never fires for such a child, because the discard happens only at retire time.
+  Conforming guests send a child only after its parent is exported, so this is
+  reachable only by a protocol violation or after a refused parent. A retired-pair
+  record would close the gap; section 8.44 does not provide one.
 - A deferred child whose parent window is later realized under a different
   generation is not discarded by `announce`. `announce` has no discard output.
   Such an entry also stays until epoch reset.
