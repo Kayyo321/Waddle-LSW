@@ -18,6 +18,11 @@
  *    refusals) and dropped; the run continues.
  *  - WindowIconChanged is ignored and counted (counters.icons_ignored). The catalog lane owns icons.
  *  - Persistent maximize and fullscreen are host state planned by the reducer. Minimize is one-shot.
+ *  - Popups (menu, tooltip, IME preedit) have no maximize, minimize or fullscreen state, so their host actions are
+ *    satisfied without a compositor request.
+ *  - The reducer ABI takes a 32-bit generation. A window whose generation has zero low 32 bits (2^32, for example)
+ *    gets no reducer: its announce is refused and counted (counters.announces_refused), and the window is not realized.
+ *    Other generations above 2^32 work, because the reducer keys by the low 32 bits and the handler keys by all 64.
  *
  * Threading: every function and every callback runs on the pump thread that owns the control runtime. The handler
  * never retains a sender past the callback that received it.
@@ -178,6 +183,10 @@ void session_windows_release_press(session_windows_handler_t *handler, uint32_t 
 
 /**
  * @brief Register a seat listener that also receives the handler's seat removals (the input lane hook).
+ *
+ * A listener set on a ready handler is first told every seat the core records, as added, in slot order. Afterwards it
+ * receives each seat the core adds or removes; a removed seat is forgotten by the windows layer before the listener sees
+ * it. The seat pointer is valid during the call only for a removal.
  *
  * @param handler In/out. Initialized handler.
  * @param listener In. May be NULL to remove it.
