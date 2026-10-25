@@ -290,6 +290,15 @@ int catalog_runtime_next_action(catalog_runtime_t *runtime, catalog_runtime_acti
 uint64_t catalog_runtime_next_deadline(catalog_runtime_t *runtime, uint64_t now_ms);
 
 /**
+ * @brief Report whether an IconRequest for transfer `id` may still be sent.
+ * @param[in] runtime Handle; NULL returns zero.
+ * @param[in] id Transfer identifier.
+ * @return Nonzero while the transfer still awaits its TransferBegin, zero once released.
+ * @note Owner thread only. Use it before sending a request retained across callbacks.
+ */
+int catalog_runtime_request_live(catalog_runtime_t *runtime, uint32_t id);
+
+/**
  * @brief Mark the feature sender as refusing frames. While blocked, no new IconRequest is issued.
  * @param[in] runtime Handle; NULL is ignored.
  * @param[in] blocked Nonzero while the sender reports QueueFull, zero once it accepts frames again.

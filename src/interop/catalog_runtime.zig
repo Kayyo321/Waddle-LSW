@@ -279,6 +279,19 @@ extern fn interop_transfer_end(transfer: *transfer_state_t, hash: ?[*]const u8) 
 
 const transfer_phase_t = enum { AwaitBegin, Receiving };
 
+/// One ring entry: an outbound action with an owned copy of its key.
+const queued_action_t = struct {
+    kind: action_t.kind_t,
+    transfer: u32,
+    icon_size: u16,
+    status: u32,
+    key_length: usize,
+    key_buffer: [MaxKeyBytes]u8,
+};
+
+/// Longest app key the runtime accepts (InteropMaxAppKeyBytes).
+const MaxKeyBytes: usize = 200;
+
 const transfer_t = struct {
     id: u32,
     key: []u8,
@@ -339,8 +352,9 @@ pub const runtime_t = struct {
     uncatalogued: std.ArrayList(uncatalogued_t),
     /// Open icon transfers.
     transfers: [MaxTransfers]?transfer_t = [_]?transfer_t{null} ** MaxTransfers,
-    /// Outbound action ring.
-    actions: [MaxActions]action_t = undefined,
+    /// Outbound action ring. Each entry owns a copy of its key, so a queued request never refers to
+    /// transfer storage that may be released before the owner drains it.
+    actions: [MaxActions]queued_action_t = undefined,
     action_head: usize = 0,
     action_count: usize = 0,
     /// Set by the owner while the feature sender refuses frames (QueueFull). While set, no new
@@ -489,6 +503,8 @@ pub const runtime_t = struct {
     /// are not modified; the next full sync decides their fate.
     pub fn reset_session(self: *runtime_t) void {
         self.clear_snapshot();
+        self.action_count = 0;
+        self.action_head = 0;
         self.transaction_open = false;
         self.sync_required = false;
         self.menu_dirty = false;
@@ -627,10 +643,23 @@ pub const runtime_t = struct {
     /// returned action stay valid until the next runtime call.
     pub fn next_action(self: *runtime_t) ?action_t {
         if (self.action_count == 0) return null;
-        const action = self.actions[self.action_head];
+        const entry = &self.actions[self.action_head];
         self.action_head = (self.action_head + 1) % MaxActions;
         self.action_count -= 1;
-        return action;
+        return .{
+            .kind = entry.kind,
+            .transfer = entry.transfer,
+            .icon_size = entry.icon_size,
+            .status = entry.status,
+            .key = entry.key_buffer[0..entry.key_length],
+        };
+    }
+
+    /// True while transfer `id` still awaits its TransferBegin, so a retained IconRequest for it
+    /// may still be sent. Owner thread only.
+    pub fn request_live(self: *runtime_t, id: u32) bool {
+        const index = self.transfer_index(id) orelse return false;
+        return self.transfers[index].?.phase == .AwaitBegin;
     }
 
     /// Tell the runtime whether the feature sender is refusing frames. While `blocked` is true
@@ -869,6 +898,7 @@ pub const runtime_t = struct {
     fn free_transfer(self: *runtime_t, index: usize) void {
         const transfer = self.transfers[index].?;
         self.apps.items[self.find(transfer.key).?].icons[transfer.slot].requested = false;
+        self.purge_request(transfer.id);
         self.allocator.free(transfer.key);
         self.allocator.free(transfer.buffer);
         self.transfers[index] = null;
@@ -882,6 +912,7 @@ pub const runtime_t = struct {
             if (key.len != 0 and !std.mem.eql(u8, transfer.key, key)) continue;
             if (emit) self.push_cancel(transfer.id, CancelCancelled);
             self.apps.items[self.find(transfer.key).?].icons[transfer.slot].requested = false;
+            self.purge_request(transfer.id);
             self.allocator.free(transfer.key);
             self.allocator.free(transfer.buffer);
             self.transfers[index] = null;
@@ -899,8 +930,28 @@ pub const runtime_t = struct {
             self.dropped_actions +|= 1;
             return;
         }
-        self.actions[(self.action_head + self.action_count) % MaxActions] = action;
+        std.debug.assert(action.key.len <= MaxKeyBytes);
+        const entry = &self.actions[(self.action_head + self.action_count) % MaxActions];
+        entry.kind = action.kind;
+        entry.transfer = action.transfer;
+        entry.icon_size = action.icon_size;
+        entry.status = action.status;
+        entry.key_length = action.key.len;
+        @memcpy(entry.key_buffer[0..action.key.len], action.key);
         self.action_count += 1;
+    }
+
+    /// Remove every queued IconRequest for transfer `id`, keeping the order of the others.
+    fn purge_request(self: *runtime_t, id: u32) void {
+        var kept: usize = 0;
+        var index: usize = 0;
+        while (index < self.action_count) : (index += 1) {
+            const source = (self.action_head + index) % MaxActions;
+            if (self.actions[source].kind == .IconRequest and self.actions[source].transfer == id) continue;
+            if (kept != index) self.actions[(self.action_head + kept) % MaxActions] = self.actions[source];
+            kept += 1;
+        }
+        self.action_count = kept;
     }
 
     fn expire_transfers(self: *runtime_t, now: u64) void {
@@ -1616,6 +1667,12 @@ export fn catalog_runtime_next_action(runtime: ?*runtime_t, out: ?*action_c_t) c
 export fn catalog_runtime_next_deadline(runtime: ?*runtime_t, now_ms: u64) u64 {
     const self = runtime orelse return std.math.maxInt(u64);
     return self.next_deadline(now_ms) orelse std.math.maxInt(u64);
+}
+
+/// Report whether transfer `id` still awaits its TransferBegin (nonzero) or not (zero).
+export fn catalog_runtime_request_live(runtime: ?*runtime_t, id: u32) c_int {
+    const self = runtime orelse return 0;
+    return @intFromBool(self.request_live(id));
 }
 
 /// Mark the feature sender as refusing frames (nonzero) or accepting them again (zero).
@@ -3319,4 +3376,30 @@ test "send backpressure stops new icon requests until the sender recovers" {
     rt.set_send_blocked(false);
     rt.tick(1, UpdatedTimestamp);
     try testing.expectEqual(@as(usize, 1), collect_requests(rt, &ids));
+}
+
+test "removing an app purges its queued icon requests and reset clears the queue" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    const sizes = [_]u8{ 16, 0 };
+    rt.begin();
+    try rt.upsert(false, .{ .key = "a-Gone", .display_name = "G", .flags = 0, .icon_sizes = &sizes });
+    try rt.end();
+    rt.tick(0, UpdatedTimestamp);
+    // The request is queued and not drained when the application disappears.
+    rt.begin();
+    try rt.end();
+    rt.remove("a-Gone");
+    while (rt.next_action()) |action| {
+        if (action.kind == .IconRequest) try testing.expect(!std.mem.eql(u8, action.key, "a-Gone"));
+    }
+    // Queued work is dropped entirely when the session resets.
+    rt.begin();
+    try rt.upsert(false, .{ .key = "a-Again", .display_name = "A", .flags = 0, .icon_sizes = &sizes });
+    try rt.end();
+    rt.tick(1, UpdatedTimestamp);
+    rt.reset_session();
+    try testing.expect(rt.next_action() == null);
 }

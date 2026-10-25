@@ -130,7 +130,13 @@ static void drain_actions(session_catalog_handler_t *handler, interop_host_featu
     if (handler->has_pending) {
         if (now < handler->retry_at) return;
         handler->has_pending = 0;
-        if (!emit_action(handler, sender, &handler->pending, now)) return;
+        /* A request whose transfer was released meanwhile is dropped, never sent. */
+        if (handler->pending.kind == CatalogRuntimeActionIconRequest &&
+            !catalog_runtime_request_live(handler->runtime, handler->pending.transfer)) {
+            /* fall through to the queued actions */
+        } else if (!emit_action(handler, sender, &handler->pending, now)) {
+            return;
+        }
     }
     while (catalog_runtime_next_action(handler->runtime, &action) == 1) {
         if (!emit_action(handler, sender, &action, now)) return;

@@ -317,6 +317,49 @@ static void handler_bind(session_catalog_handler_t *handler, fake_sender_t *fake
 
 /* --- scenarios ------------------------------------------------------------------------- */
 
+/*
+ * A request refused by the sender is retained by the handler. Removing its application before the
+ * sender recovers must neither send the request nor read the released key (ASan).
+ */
+static void test_removed_app_requests_are_never_sent(const fixture_t *fixture)
+{
+    uint8_t frame[FixtureFrameBytes];
+    static const uint8_t sizes[] = {16, 0, 32, 0};
+    fake_sender_t fake;
+    fake_clock_t clock;
+    session_catalog_handler_t handler;
+    session_handler_t table;
+    size_t length;
+    uint32_t attempt;
+    memset(&fake, 0, sizeof fake);
+    fake.always_full = 1;
+    clock_set(&clock, 70000);
+    handler_bind(&handler, &fake, &clock, fixture->runtime);
+    table = session_catalog_handler_table(&handler);
+
+    length = guest_begin_or_end(InteropMsgCatalogBegin, frame);
+    Check(table.on_frame(table.context, InteropMsgCatalogBegin, 0, frame, length, NULL) == 0);
+    length = guest_app(InteropMsgCatalogAdd, "a-Victim", NULL, "Victim", 0, sizes, sizeof sizes, frame);
+    Check(table.on_frame(table.context, InteropMsgCatalogAdd, 0, frame, length, NULL) == 0);
+    length = guest_begin_or_end(InteropMsgCatalogEnd, frame);
+    Check(table.on_frame(table.context, InteropMsgCatalogEnd, 0, frame, length, NULL) == 0);
+    Check(table.on_tick(table.context, 70000, NULL) == 0);
+    Check(handler.has_pending == 1);
+
+    length = guest_remove("a-Victim", frame);
+    Check(table.on_frame(table.context, InteropMsgCatalogRemove, 0, frame, length, NULL) == 0);
+
+    /* The sender recovers. Only cancels may be sent now; no request for the removed key. */
+    fake.always_full = 0;
+    clock.monotonic_ms = 70500;
+    Check(table.on_tick(table.context, 70500, NULL) == 0);
+    for (attempt = 0; attempt < fake.attempts; ++attempt) {
+        interop_header_t header;
+        Check(interop_header_decode(fake.frames[attempt], fake.lengths[attempt], &header) == 0);
+        Check(header.type != InteropMsgIconRequest);
+    }
+}
+
 /* A sender that never drains must neither abort the host nor make the pump spin. */
 static void test_never_draining_sender(const fixture_t *fixture)
 {
@@ -762,6 +805,10 @@ int main(int argc, char **argv)
 
     make_fixture(&fixture, argv[1]);
     test_clock_defaults_closing_and_wall_failure(&fixture);
+    destroy_fixture(&fixture);
+
+    make_fixture(&fixture, argv[1]);
+    test_removed_app_requests_are_never_sent(&fixture);
     destroy_fixture(&fixture);
 
     make_fixture(&fixture, argv[1]);
