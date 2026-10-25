@@ -1377,7 +1377,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     partial response read by one deadline and add a real incomplete-header
     timeout regression. Normal and leak-enabled sanitizers pass; rerun CI.
 
-- **Commit `HEAD`**: `feat(interop): run actual bounded host control session entry`
+- **Commit `f68590b`**: `feat(interop): run actual bounded host control session entry`
   - **Task Impact**: +15% to TODO #7 (+0.60% overall), +5% to TODO #5
     (+0.15% overall); total21.60%.
   - **Summary**: Actual selected-profile CLI composes singleton/admission,
@@ -1386,3 +1386,10 @@ its uncompiled draft earns no credit until current acceptance passes.
     production build/help, runtime96.65%lines/90.61%arcs and CLI96.64%lines/
     92.61%arcs plus real leak-enabled sanitizers pass. Default build and CI
     now run it. Cap-zero diagnostics earn no Wayland/application/native credit.
+
+- **Commit `HEAD`**: `test(input): run keyboard golden consumer in existing AV coverage gate`
+  - **Task Impact**: +0% to TODO #15/#34; CI consumer integration correction.
+  - **Summary**: Retain exactf68590b AV failure; old gate ran only legacy cases
+    and covered87.50%of new table arcs. Combine every old state case with the
+    independent golden/inverse consumer and source/CSV hash checks, preserving
+    full scope and90%threshold. Combined100%lines/94.53%taken arcs pass.
