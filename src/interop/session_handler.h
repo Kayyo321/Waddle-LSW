@@ -68,6 +68,12 @@ typedef struct session_handler_t {
      * @param[in] capacity Always @c SessionHandlerMaxDescriptors.
      * @param[out] count Number of entries written, 0..capacity.
      * @return Zero on success, nonzero on failure.
+     * @note Allowed multiplexing pattern: a handler that serves more sockets than the descriptor
+     *       limit reports one epoll instance that owns them all (count 1, events EPOLLIN). The
+     *       runtime then delivers only that single readiness entry to on_fds, and the handler
+     *       drains its own sockets with a zero-timeout epoll_wait. Ownership stays with the handler:
+     *       the runtime never closes a reported descriptor, and the handler closes its epoll instance
+     *       in on_closing. session_local_handler.c uses this for its listener and up to four clients.
      */
     int (*poll_fds)(void *context, struct pollfd *fds, size_t capacity, size_t *count);
     /** @brief Deliver readiness for this handler's descriptors (same order and count as reported, revents filled). */
