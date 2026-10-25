@@ -1554,6 +1554,10 @@ typedef struct feature_probe_t {
     bool use_deadline;
     bool negative_probe;
     bool reentry;
+    bool reentry_poll;
+    bool reentry_deadline;
+    interop_host_control_result_t poll_reentry_cleanup;
+    interop_host_control_result_t deadline_reentry_cleanup;
     bool release_twice;
     bool send_window_close;
     bool send_on_closing;
@@ -1710,6 +1714,13 @@ static int probe_on_peer_error(void *context, uint32_t error_code, uint32_t requ
 static int probe_poll_fds(void *context, struct pollfd *fds, size_t capacity, size_t *count)
 {
     feature_probe_t *probe = context;
+    if (probe->reentry_poll) {
+        interop_host_control_owners_t owners;
+        memset(&owners, 0, sizeof(owners));
+        probe->poll_reentry_cleanup = interop_host_control_retry_cleanup(&owners);
+        *count = 0;
+        return 0;
+    }
     if (probe->poll_fail_after != 0 && ++probe->poll_calls > probe->poll_fail_after) return 1;
     if (probe->fds_mode == 1) return 1;
     if (probe->fds_mode == 2) {
@@ -1749,6 +1760,11 @@ static uint64_t probe_next_deadline(void *context, uint64_t now_ms)
 {
     feature_probe_t *probe = context;
     ++probe->deadline_calls;
+    if (probe->reentry_deadline) {
+        interop_host_control_owners_t owners;
+        memset(&owners, 0, sizeof(owners));
+        probe->deadline_reentry_cleanup = interop_host_control_retry_cleanup(&owners);
+    }
     return now_ms + 15;
 }
 
@@ -1788,9 +1804,10 @@ static interop_host_control_result_t run_feature_case(feature_probe_t *probe,
     ops.on_ready = probe->skip_ready ? NULL : probe_on_ready;
     ops.on_frame = probe->skip_frame ? NULL : probe_on_frame;
     ops.on_tick = probe->skip_tick ? NULL : probe_on_tick;
-    ops.poll_fds = probe->use_pipe || probe->fds_mode != 0 || probe->poll_fail_after != 0
-        ? probe_poll_fds : NULL;
-    ops.on_fds = probe->use_pipe || probe->fds_mode != 0 ? probe_on_fds : NULL;
+    ops.poll_fds = probe->use_pipe || probe->fds_mode != 0 || probe->poll_fail_after != 0 ||
+        probe->reentry_poll ? probe_poll_fds : NULL;
+    ops.on_fds = probe->use_pipe || probe->fds_mode != 0 || probe->reentry_poll
+        ? probe_on_fds : NULL;
     ops.next_deadline_ms = probe->use_deadline ? probe_next_deadline : NULL;
     ops.on_closing = probe_on_closing;
     ops.on_peer_error = probe_on_peer_error;
@@ -1978,6 +1995,19 @@ __attribute__((unused)) static void session_control_host_feature_tests(void)
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.peer_error_calls == 1 && probe.closing_calls == 1);
+
+    /* 7f. Callbacks outside sender scopes still refuse control-runtime re-entry. */
+    memset(&probe, 0, sizeof(probe));
+    probe.reentry_poll = true;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 300, 0, NULL);
+    assert(result == HostControlSuccess);
+    assert(probe.poll_reentry_cleanup == HostControlInvalidArgument);
+    memset(&probe, 0, sizeof(probe));
+    probe.reentry_deadline = true;
+    probe.use_deadline = true;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 300, 0, NULL);
+    assert(result == HostControlSuccess && probe.deadline_calls >= 1);
+    assert(probe.deadline_reentry_cleanup == HostControlInvalidArgument);
 
     /* 8. No run bound: the run lasts until cancellation, and closing sends are refused. */
     memset(&probe, 0, sizeof(probe));

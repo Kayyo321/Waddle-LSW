@@ -397,6 +397,28 @@ static int host_feature_call_peer_error(const interop_host_feature_ops_t *ops,
     return status;
 }
 
+/** @brief Invoke poll_fds with the control runtime's re-entry guard raised. */
+static int host_feature_call_poll_fds(const interop_host_feature_ops_t *ops,
+                                      struct pollfd *fds, size_t capacity, size_t *count)
+{
+    int status;
+    host_control_in_callback = true;
+    status = ops->poll_fds(ops->context, fds, capacity, count);
+    host_control_in_callback = false;
+    return status;
+}
+
+/** @brief Invoke next_deadline_ms with the control runtime's re-entry guard raised. */
+static uint64_t host_feature_call_next_deadline(const interop_host_feature_ops_t *ops,
+                                                uint64_t now_ms)
+{
+    uint64_t deadline;
+    host_control_in_callback = true;
+    deadline = ops->next_deadline_ms(ops->context, now_ms);
+    host_control_in_callback = false;
+    return deadline;
+}
+
 /** @brief Announce closing exactly once; the sender refuses admissions from then on. */
 static void host_feature_close_once(const interop_host_feature_ops_t *ops,
                                     interop_host_feature_sender_t *sender,
@@ -617,7 +639,7 @@ interop_host_control_result_t interop_host_control_run_detailed(
         };
         if (ready && !draining && feature_ops != NULL && feature_ops->poll_fds != NULL) {
             size_t supplied = 0;
-            int fds_status = feature_ops->poll_fds(feature_ops->context,
+            int fds_status = host_feature_call_poll_fds(feature_ops,
                 &descriptors[descriptor_count], InteropHostFeatureFdCapacity, &supplied);
             if (fds_status != 0 || supplied > InteropHostFeatureFdCapacity) {
                 /* Starting the drain here invalidates the poll cookie taken above. */
@@ -639,7 +661,7 @@ interop_host_control_result_t interop_host_control_run_detailed(
         if (ready && !draining && next_heartbeat_ms < wait_deadline)
             wait_deadline = next_heartbeat_ms;
         if (ready && !draining && feature_ops != NULL && feature_ops->next_deadline_ms != NULL) {
-            uint64_t feature_deadline = feature_ops->next_deadline_ms(feature_ops->context, now_ms);
+            uint64_t feature_deadline = host_feature_call_next_deadline(feature_ops, now_ms);
             if (feature_deadline < wait_deadline) wait_deadline = feature_deadline;
         }
         if (now_ms >= wait_deadline) timeout_ms = 0;
