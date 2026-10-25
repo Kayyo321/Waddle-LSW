@@ -1161,6 +1161,46 @@ static int test_random_sequences_with_faults(void) {
 
 /* ---- Argument, identity and failure forms not reached above ------------------------------------- */
 
+/**
+ * @brief A generation that does not fit in uint32_t is InvalidArgument in every entry that takes one, with
+ *        no change. The truncated value of 2^32 + 1 is 1, which is admitted, so each call must be refused
+ *        before it can match the admitted pair.
+ */
+static int test_generation_must_fit_uint32(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t minimize = action_of(WaddleWindowStateActionGuestMinimize);
+    const uint64_t TwoPow32 = UINT64_C(0x100000000);
+    const uint64_t Truncates = TwoPow32 + GenMain;
+    uint32_t bits = 0;
+    window_state_rect_t rect = {0, 0, 10, 10};
+
+    Check(fixture_open(&f) == 0);
+    wsa_double_add(&f.d, 0x3000, MainProcess, MainThread, rect);
+    wsa_double_reset(&f.d);
+
+    Check(window_state_adapter_admit(f.a, 0x3000, 3, TwoPow32) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_admit(f.a, 0x3000, 3, Truncates) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_release(f.a, IdMain, TwoPow32) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_release(f.a, IdMain, Truncates) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, TwoPow32, &bits) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, Truncates, &bits) == WindowStateAdapterInvalidArgument);
+    Check(bits == 0);
+    Check(window_state_adapter_execute(f.a, HwndMain, IdMain, Truncates, &minimize, 1, &completed) ==
+          WindowStateAdapterInvalidArgument);
+    Check(completed == 0);
+    Check(window_state_adapter_execute(f.a, HwndMain, IdMain, TwoPow32, &minimize, 1, &completed) ==
+          WindowStateAdapterInvalidArgument);
+    Check(f.d.log_count == 0);
+
+    /* The admitted pair is untouched by the refused calls, and the largest uint32 value is a valid generation. */
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
+    Check(window_state_adapter_admit(f.a, 0x3000, 3, UINT64_C(0xffffffff)) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, 3, UINT64_C(0xffffffff)) == WindowStateAdapterOk);
+    fixture_close(&f);
+    return 0;
+}
+
 /* calloc is wrapped (link flag --wrap=calloc) so the out-of-memory path of create can be taken. */
 extern void *__real_calloc(size_t count, size_t size);
 static int fail_next_calloc = 0;
@@ -1380,6 +1420,7 @@ int main(void) {
     failures += run_test("zero thread at identity and foreground", test_thread_zero_at_identity_and_foreground);
     failures += run_test("first fallback failure is kept", test_fallback_first_failure_is_kept);
     failures += run_test("geometry height above maximum", test_geometry_height_above_maximum);
+    failures += run_test("generation must fit uint32", test_generation_must_fit_uint32);
     if (failures != 0) {
         fprintf(stderr, "window_state_adapter_suite: %d test(s) failed\n", failures);
         return 1;

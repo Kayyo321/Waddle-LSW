@@ -127,6 +127,11 @@ header; `HWND` values travel as `uintptr_t`.
 - The HWND argument of `observe` and `execute` must equal the admitted HWND. A
   different value is `InvalidArgument` and changes nothing; the adapter does not
   look up a second window.
+- `generation` is a `uint64_t` argument of `admit`, `release`, `observe` and `execute`.
+  It must be nonzero and at most `UINT32_MAX`, because the entry stores 32 bits. Any
+  other value is `InvalidArgument` with no change. It is refused, never truncated, so
+  2^32 + 1 cannot match an admitted generation 1. The graph generation is 64 bits, so
+  the owner passes it at full width and must not cast it to `uint32_t` first.
 - `release(window_id, generation)` removes an admitted entry. It returns `Busy`
   when the entry has a saved fullscreen state, so the owner must leave fullscreen
   first. Release makes no native call.

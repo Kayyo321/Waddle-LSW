@@ -126,12 +126,22 @@ static void leave(window_state_adapter_t *adapter) {
     adapter->busy = 0;
 }
 
-/** @brief Finds the admitted entry for a pair, or NULL. */
+/**
+ * @brief True when a generation argument is usable: nonzero and within the 32-bit generation of the entry.
+ *
+ * The graph generation is 64 bits, the reducer's is 32 bits. A value above UINT32_MAX is refused, never
+ * truncated, so 2^32 + 1 cannot match an admitted generation 1.
+ */
+static int generation_is_valid(uint64_t generation) {
+    return generation != 0 && generation <= UINT32_MAX;
+}
+
+/** @brief Finds the admitted entry for a pair, or NULL. The generation is compared at full width. */
 static window_state_adapter_entry_t *find_pair(window_state_adapter_t *adapter, uint64_t window_id,
-                                               uint32_t generation) {
+                                               uint64_t generation) {
     for (uint32_t index = 0; index < WaddleWindowStateAdapterMaxWindows; ++index) {
         window_state_adapter_entry_t *entry = &adapter->entries[index];
-        if (entry->in_use != 0 && entry->window_id == window_id && entry->generation == generation) {
+        if (entry->in_use != 0 && entry->window_id == window_id && (uint64_t)entry->generation == generation) {
             return entry;
         }
     }
@@ -444,12 +454,14 @@ window_state_adapter_status_t window_state_adapter_destroy(window_state_adapter_
 }
 
 window_state_adapter_status_t window_state_adapter_admit(window_state_adapter_t *adapter, uintptr_t window,
-                                                         uint64_t window_id, uint32_t generation) {
+                                                         uint64_t window_id, uint64_t generation) {
     window_state_adapter_status_t status;
     window_state_adapter_entry_t *slot = NULL;
     uint32_t process_id = 0;
     uint32_t thread_id = 0;
-    if (adapter == NULL || window == 0 || window_id == 0 || generation == 0) return WindowStateAdapterInvalidArgument;
+    if (adapter == NULL || window == 0 || window_id == 0 || !generation_is_valid(generation)) {
+        return WindowStateAdapterInvalidArgument;
+    }
     status = enter(adapter);
     if (status != WindowStateAdapterOk) return status;
 
@@ -469,7 +481,7 @@ window_state_adapter_status_t window_state_adapter_admit(window_state_adapter_t 
             memset(slot, 0, sizeof(*slot));
             slot->in_use = 1;
             slot->window_id = window_id;
-            slot->generation = generation;
+            slot->generation = (uint32_t)generation;
             slot->window = window;
             slot->process_id = process_id;
             slot->thread_id = thread_id;
@@ -481,10 +493,10 @@ window_state_adapter_status_t window_state_adapter_admit(window_state_adapter_t 
 }
 
 window_state_adapter_status_t window_state_adapter_release(window_state_adapter_t *adapter, uint64_t window_id,
-                                                           uint32_t generation) {
+                                                           uint64_t generation) {
     window_state_adapter_status_t status;
     window_state_adapter_entry_t *entry;
-    if (adapter == NULL || window_id == 0 || generation == 0) return WindowStateAdapterInvalidArgument;
+    if (adapter == NULL || window_id == 0 || !generation_is_valid(generation)) return WindowStateAdapterInvalidArgument;
     status = enter(adapter);
     if (status != WindowStateAdapterOk) return status;
     entry = find_pair(adapter, window_id, generation);
@@ -501,7 +513,7 @@ window_state_adapter_status_t window_state_adapter_release(window_state_adapter_
 }
 
 window_state_adapter_status_t window_state_adapter_observe(window_state_adapter_t *adapter, uintptr_t window,
-                                                           uint64_t window_id, uint32_t generation,
+                                                           uint64_t window_id, uint64_t generation,
                                                            uint32_t *out_guest_state) {
     window_state_adapter_status_t status;
     window_state_adapter_entry_t *entry;
@@ -509,7 +521,7 @@ window_state_adapter_status_t window_state_adapter_observe(window_state_adapter_
     int zoomed = 0;
     int64_t style = 0;
     uint32_t bits = 0;
-    if (adapter == NULL || out_guest_state == NULL || window_id == 0 || generation == 0) {
+    if (adapter == NULL || out_guest_state == NULL || window_id == 0 || !generation_is_valid(generation)) {
         return WindowStateAdapterInvalidArgument;
     }
     status = enter(adapter);
@@ -549,13 +561,13 @@ window_state_adapter_status_t window_state_adapter_observe(window_state_adapter_
 }
 
 window_state_adapter_status_t window_state_adapter_execute(window_state_adapter_t *adapter, uintptr_t window,
-                                                           uint64_t window_id, uint32_t generation,
+                                                           uint64_t window_id, uint64_t generation,
                                                            const waddle_window_state_action_t *actions,
                                                            uint64_t count, uint64_t *out_completed) {
     window_state_adapter_status_t status;
     window_state_adapter_entry_t *entry;
     uint64_t index;
-    if (adapter == NULL || out_completed == NULL || window_id == 0 || generation == 0) {
+    if (adapter == NULL || out_completed == NULL || window_id == 0 || !generation_is_valid(generation)) {
         return WindowStateAdapterInvalidArgument;
     }
     if (count > WaddleWindowStateMaxActions || (count != 0 && actions == NULL)) {

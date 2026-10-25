@@ -198,25 +198,25 @@ window_state_adapter_status_t window_state_adapter_destroy(window_state_adapter_
  * @param[in,out] adapter Non-NULL owner-thread adapter.
  * @param[in] window HWND value. Must exist and have a thread id other than 0.
  * @param[in] window_id Protocol window identity, nonzero.
- * @param[in] generation Protocol generation, nonzero.
- * @return Ok, InvalidArgument (zero identity or NULL adapter), AlreadyAdmitted, CapacityExhausted,
+ * @param[in] generation Protocol generation, nonzero and at most UINT32_MAX (larger values are refused, not truncated).
+ * @return Ok, InvalidArgument (zero identity, generation above UINT32_MAX, or NULL adapter), AlreadyAdmitted, CapacityExhausted,
  *         NotFound, NativeFailure, WrongThread, or Reentrant. Nothing is changed on any failure.
  */
 window_state_adapter_status_t window_state_adapter_admit(window_state_adapter_t *adapter, uintptr_t window,
-                                                         uint64_t window_id, uint32_t generation);
+                                                         uint64_t window_id, uint64_t generation);
 
 /**
  * @brief Remove an admitted entry. Makes no native call.
  *
  * @param[in,out] adapter Non-NULL owner-thread adapter.
  * @param[in] window_id Admitted identity.
- * @param[in] generation Admitted identity.
+ * @param[in] generation Admitted identity; a value above UINT32_MAX is InvalidArgument.
  * @return Ok, NotAdmitted, Busy (the entry has a saved fullscreen state, so it stays admitted and
  *         recorded), InvalidArgument, WrongThread, or Reentrant. A Busy release can be retried after the
  *         owner leaves fullscreen; a retry after a failed leave repeats the same answer.
  */
 window_state_adapter_status_t window_state_adapter_release(window_state_adapter_t *adapter, uint64_t window_id,
-                                                           uint32_t generation);
+                                                           uint64_t generation);
 
 /**
  * @brief Read the guest observation of an admitted window.
@@ -224,13 +224,13 @@ window_state_adapter_status_t window_state_adapter_release(window_state_adapter_
  * @param[in,out] adapter Non-NULL owner-thread adapter.
  * @param[in] window Must equal the admitted HWND; any other value is InvalidArgument.
  * @param[in] window_id Admitted identity.
- * @param[in] generation Admitted identity.
+ * @param[in] generation Admitted identity; a value above UINT32_MAX is InvalidArgument.
  * @param[out] out_guest_state Non-NULL. Written only on Ok. Contains window_state.h state and capability bits.
  * @return Ok, InvalidArgument, NotAdmitted, StaleHandle (the entry is removed), NativeFailure
  *         (out is untouched), WrongThread, or Reentrant.
  */
 window_state_adapter_status_t window_state_adapter_observe(window_state_adapter_t *adapter, uintptr_t window,
-                                                           uint64_t window_id, uint32_t generation,
+                                                           uint64_t window_id, uint64_t generation,
                                                            uint32_t *out_guest_state);
 
 /**
@@ -242,7 +242,7 @@ window_state_adapter_status_t window_state_adapter_observe(window_state_adapter_
  * @param[in,out] adapter Non-NULL owner-thread adapter.
  * @param[in] window Must equal the admitted HWND; any other value is InvalidArgument.
  * @param[in] window_id Admitted identity.
- * @param[in] generation Admitted identity.
+ * @param[in] generation Admitted identity; a value above UINT32_MAX is InvalidArgument.
  * @param[in] actions Non-NULL when count is nonzero; read by value during the call.
  * @param[in] count Number of actions, at most WaddleWindowStateMaxActions.
  * @param[out] out_completed Non-NULL. Written on every status after argument validation.
@@ -251,7 +251,7 @@ window_state_adapter_status_t window_state_adapter_observe(window_state_adapter_
  *         The status describes the first action that did not complete.
  */
 window_state_adapter_status_t window_state_adapter_execute(window_state_adapter_t *adapter, uintptr_t window,
-                                                           uint64_t window_id, uint32_t generation,
+                                                           uint64_t window_id, uint64_t generation,
                                                            const waddle_window_state_action_t *actions,
                                                            uint64_t count, uint64_t *out_completed);
 
