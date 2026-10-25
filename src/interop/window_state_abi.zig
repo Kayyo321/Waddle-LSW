@@ -468,6 +468,29 @@ export fn waddle_window_state_snapshot(
 
 const testing = std.testing;
 
+// Every test call to an export goes through a `never_inline` wrapper. Without it the optimizer
+// inlines an export into the test with constant arguments and folds its checks away, so the coverage
+// recorder would measure copies that the tests never execute. The wrappers keep the real bodies live.
+fn call_create(window_id: u64, generation: u32, guest_state: u32, out_handle: ?*align(1) ?*handle_t) status_t {
+    return @call(.never_inline, waddle_window_state_create, .{ window_id, generation, guest_state, out_handle });
+}
+
+fn call_destroy(handle_slot: ?*align(1) ?*handle_t) status_t {
+    return @call(.never_inline, waddle_window_state_destroy, .{handle_slot});
+}
+
+fn call_plan(handle: ?*const handle_t, window_id: u64, generation: u32, input: ?*align(1) const c.waddle_window_state_input_t, out_plan: ?*align(1) c.waddle_window_state_plan_t) status_t {
+    return @call(.never_inline, waddle_window_state_plan, .{ handle, window_id, generation, input, out_plan });
+}
+
+fn call_complete(handle: ?*handle_t, plan: ?*align(1) const c.waddle_window_state_plan_t, succeeded: u32, completed_actions: u64) status_t {
+    return @call(.never_inline, waddle_window_state_complete, .{ handle, plan, succeeded, completed_actions });
+}
+
+fn call_snapshot(handle: ?*const handle_t, out_snapshot: ?*align(1) c.waddle_window_state_snapshot_t) status_t {
+    return @call(.never_inline, waddle_window_state_snapshot, .{ handle, out_snapshot });
+}
+
 /// Asserts that an ABI status equals an expected status.
 fn expect_status(expected: status_t, actual: status_t) !void {
     try testing.expectEqual(expected, actual);
@@ -488,14 +511,14 @@ fn expect_zero_plan(plan: *const c.waddle_window_state_plan_t) !void {
 fn create_for_test(window_id: u64, generation: u32, guest_state: u32) !*handle_t {
     abi_allocator = testing.allocator;
     var slot: ?*handle_t = null;
-    try expect_status(c.WaddleWindowStateOk, waddle_window_state_create(window_id, generation, guest_state, &slot));
+    try expect_status(c.WaddleWindowStateOk, call_create(window_id, generation, guest_state, &slot));
     return slot orelse error.TestUnexpectedResult;
 }
 
 /// Destroys a handle through the ABI and checks that the slot is cleared.
 fn destroy_for_test(handle: *handle_t) !void {
     var slot: ?*handle_t = handle;
-    try expect_status(c.WaddleWindowStateOk, waddle_window_state_destroy(&slot));
+    try expect_status(c.WaddleWindowStateOk, call_destroy(&slot));
     try testing.expect(slot == null);
 }
 
@@ -526,19 +549,19 @@ fn configure_of(state: u32, x: i32, y: i32, width: u32, height: u32) c.waddle_wi
 fn plan_ok(handle: *const handle_t, window_id: u64, generation: u32, raw: c.waddle_window_state_input_t) !c.waddle_window_state_plan_t {
     var plan = std.mem.zeroes(c.waddle_window_state_plan_t);
     var input = raw;
-    try expect_status(c.WaddleWindowStateOk, waddle_window_state_plan(handle, window_id, generation, &input, &plan));
+    try expect_status(c.WaddleWindowStateOk, call_plan(handle, window_id, generation, &input, &plan));
     return plan;
 }
 
 /// Completes through the ABI and returns the raw status.
 fn complete_abi(handle: *handle_t, plan: *align(1) const c.waddle_window_state_plan_t, succeeded: u32, completed: u64) status_t {
-    return waddle_window_state_complete(handle, plan, succeeded, completed);
+    return call_complete(handle, plan, succeeded, completed);
 }
 
 /// Reads the ABI snapshot and requires Ok.
 fn snapshot_of(handle: *const handle_t) !c.waddle_window_state_snapshot_t {
     var out = std.mem.zeroes(c.waddle_window_state_snapshot_t);
-    try expect_status(c.WaddleWindowStateOk, waddle_window_state_snapshot(handle, &out));
+    try expect_status(c.WaddleWindowStateOk, call_snapshot(handle, &out));
     return out;
 }
 
@@ -560,15 +583,15 @@ fn expect_same_snapshot(expected: c.waddle_window_state_snapshot_t, actual: c.wa
 
 test "create rejects a NULL slot, zero identity, and forbidden guest state without writing" {
     abi_allocator = testing.allocator;
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_create(1, 1, 0, null));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_create(1, 1, 0, null));
     var slot: ?*handle_t = null;
-    try expect_status(c.WaddleWindowStateInvalidIdentity, waddle_window_state_create(0, 1, 0, &slot));
+    try expect_status(c.WaddleWindowStateInvalidIdentity, call_create(0, 1, 0, &slot));
     try testing.expect(slot == null);
-    try expect_status(c.WaddleWindowStateInvalidIdentity, waddle_window_state_create(1, 0, 0, &slot));
+    try expect_status(c.WaddleWindowStateInvalidIdentity, call_create(1, 0, 0, &slot));
     try testing.expect(slot == null);
-    try expect_status(c.WaddleWindowStateInvalidState, waddle_window_state_create(1, 1, reducer.StateActivated, &slot));
+    try expect_status(c.WaddleWindowStateInvalidState, call_create(1, 1, reducer.StateActivated, &slot));
     try testing.expect(slot == null);
-    try expect_status(c.WaddleWindowStateInvalidState, waddle_window_state_create(1, 1, 0x80, &slot));
+    try expect_status(c.WaddleWindowStateInvalidState, call_create(1, 1, 0x80, &slot));
     try testing.expect(slot == null);
 }
 
@@ -577,8 +600,8 @@ test "create and destroy release the single allocation and destroy is idempotent
     try destroy_for_test(handle);
 
     var empty: ?*handle_t = null;
-    try expect_status(c.WaddleWindowStateOk, waddle_window_state_destroy(&empty));
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_destroy(null));
+    try expect_status(c.WaddleWindowStateOk, call_destroy(&empty));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_destroy(null));
 }
 
 test "create maps an injected allocation failure to OutOfMemory with a NULL output" {
@@ -586,7 +609,7 @@ test "create maps an injected allocation failure to OutOfMemory with a NULL outp
     abi_allocator = failing.allocator();
     defer abi_allocator = testing.allocator;
     var slot: ?*handle_t = null;
-    try expect_status(c.WaddleWindowStateOutOfMemory, waddle_window_state_create(9, 2, 0, &slot));
+    try expect_status(c.WaddleWindowStateOutOfMemory, call_create(9, 2, 0, &slot));
     try testing.expect(slot == null);
     try testing.expect(failing.has_induced_failure);
 }
@@ -596,9 +619,9 @@ test "create succeeds when the injected failure index is never reached" {
     abi_allocator = failing.allocator();
     defer abi_allocator = testing.allocator;
     var slot: ?*handle_t = null;
-    try expect_status(c.WaddleWindowStateOk, waddle_window_state_create(9, 2, 0, &slot));
+    try expect_status(c.WaddleWindowStateOk, call_create(9, 2, 0, &slot));
     try testing.expect(!failing.has_induced_failure);
-    try expect_status(c.WaddleWindowStateOk, waddle_window_state_destroy(&slot));
+    try expect_status(c.WaddleWindowStateOk, call_destroy(&slot));
     try testing.expect(slot == null);
 }
 
@@ -644,16 +667,16 @@ test "plan zeroes the output slot on every failing status" {
     var input = input_of(.GuestObservation, 0);
 
     @memset(std.mem.asBytes(&out), 0xaa);
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_plan(null, 12, 1, &input, &out));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_plan(null, 12, 1, &input, &out));
     try expect_zero_plan(&out);
 
     @memset(std.mem.asBytes(&out), 0xaa);
-    try expect_status(c.WaddleWindowStateStaleWindow, waddle_window_state_plan(handle, 13, 1, &input, &out));
+    try expect_status(c.WaddleWindowStateStaleWindow, call_plan(handle, 13, 1, &input, &out));
     try expect_zero_plan(&out);
 
     var configure = configure_of(0, 0, 0, 0, 0);
     @memset(std.mem.asBytes(&out), 0xaa);
-    try expect_status(c.WaddleWindowStateUnsynchronized, waddle_window_state_plan(handle, 12, 1, &configure, &out));
+    try expect_status(c.WaddleWindowStateUnsynchronized, call_plan(handle, 12, 1, &configure, &out));
     try expect_zero_plan(&out);
 }
 
@@ -663,19 +686,19 @@ test "plan rejects NULL arguments and bad input kinds or boolean words with Inva
     var out = std.mem.zeroes(c.waddle_window_state_plan_t);
     var input = input_of(.GuestObservation, 0);
 
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_plan(handle, 13, 1, null, &out));
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_plan(handle, 13, 1, &input, null));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_plan(handle, 13, 1, null, &out));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_plan(handle, 13, 1, &input, null));
 
     var bad_kind = input;
     bad_kind.kind = 0;
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_plan(handle, 13, 1, &bad_kind, &out));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_plan(handle, 13, 1, &bad_kind, &out));
     try expect_zero_plan(&out);
     bad_kind.kind = 7;
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_plan(handle, 13, 1, &bad_kind, &out));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_plan(handle, 13, 1, &bad_kind, &out));
 
     var bad_maximize = input_of(.HostStateRequest, 0);
     bad_maximize.maximize = 2;
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_plan(handle, 13, 1, &bad_maximize, &out));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_plan(handle, 13, 1, &bad_maximize, &out));
     try expect_zero_plan(&out);
 }
 
@@ -689,7 +712,7 @@ test "plan and complete read and write misaligned caller storage by value" {
     const plan_slot: *align(1) c.waddle_window_state_plan_t = @ptrCast(plan_buffer[1..].ptr);
 
     input_slot.* = input_of(.GuestObservation, 0);
-    try expect_status(c.WaddleWindowStateOk, waddle_window_state_plan(handle, 14, 1, input_slot, plan_slot));
+    try expect_status(c.WaddleWindowStateOk, call_plan(handle, 14, 1, input_slot, plan_slot));
     // Unsynchronized reconciliation of a non-minimized guest unmaximizes and unfullscreens.
     try testing.expectEqual(@as(u64, 2), plan_slot.action_count);
     try expect_status(c.WaddleWindowStateOk, complete_abi(handle, plan_slot, 1, 2));
@@ -746,35 +769,35 @@ test "plan maps identity, synchronization, state, geometry, capability, and revi
     var out = std.mem.zeroes(c.waddle_window_state_plan_t);
 
     var configure = configure_of(0, 0, 0, 0, 0);
-    try expect_status(c.WaddleWindowStateStaleWindow, waddle_window_state_plan(handle, 16, 2, &configure, &out));
-    try expect_status(c.WaddleWindowStateStaleWindow, waddle_window_state_plan(handle, 15, 3, &configure, &out));
-    try expect_status(c.WaddleWindowStateUnsynchronized, waddle_window_state_plan(handle, 15, 2, &configure, &out));
+    try expect_status(c.WaddleWindowStateStaleWindow, call_plan(handle, 16, 2, &configure, &out));
+    try expect_status(c.WaddleWindowStateStaleWindow, call_plan(handle, 15, 3, &configure, &out));
+    try expect_status(c.WaddleWindowStateUnsynchronized, call_plan(handle, 15, 2, &configure, &out));
 
     // Guest observations are accepted while unsynchronized, but their own bits are still checked.
     var observation = input_of(.GuestObservation, reducer.StateActivated);
-    try expect_status(c.WaddleWindowStateInvalidState, waddle_window_state_plan(handle, 15, 2, &observation, &out));
+    try expect_status(c.WaddleWindowStateInvalidState, call_plan(handle, 15, 2, &observation, &out));
     try expect_zero_plan(&out);
     observation.state = 0x80;
-    try expect_status(c.WaddleWindowStateInvalidState, waddle_window_state_plan(handle, 15, 2, &observation, &out));
+    try expect_status(c.WaddleWindowStateInvalidState, call_plan(handle, 15, 2, &observation, &out));
 
     try synchronize(handle, reducer.StateMinimizable);
 
     var zero_height = configure_of(0, 0, 0, 0, 5);
-    try expect_status(c.WaddleWindowStateInvalidGeometry, waddle_window_state_plan(handle, 15, 2, &zero_height, &out));
+    try expect_status(c.WaddleWindowStateInvalidGeometry, call_plan(handle, 15, 2, &zero_height, &out));
     var too_wide = configure_of(0, 0, 0, 16385, 1);
-    try expect_status(c.WaddleWindowStateInvalidGeometry, waddle_window_state_plan(handle, 15, 2, &too_wide, &out));
+    try expect_status(c.WaddleWindowStateInvalidGeometry, call_plan(handle, 15, 2, &too_wide, &out));
     var capability_bit = configure_of(reducer.StateMinimizable, 0, 0, 0, 0);
-    try expect_status(c.WaddleWindowStateInvalidState, waddle_window_state_plan(handle, 15, 2, &capability_bit, &out));
+    try expect_status(c.WaddleWindowStateInvalidState, call_plan(handle, 15, 2, &capability_bit, &out));
     try expect_zero_plan(&out);
 
     // Only Minimizable is held, so a maximize policy request is refused.
     var maximize = input_of(.HostStateRequest, 0);
     maximize.maximize = 1;
-    try expect_status(c.WaddleWindowStateUnsupportedStateRequest, waddle_window_state_plan(handle, 15, 2, &maximize, &out));
+    try expect_status(c.WaddleWindowStateUnsupportedStateRequest, call_plan(handle, 15, 2, &maximize, &out));
 
     handle.machine.revision = std.math.maxInt(u64);
     var close = input_of(.CloseRequest, 0);
-    try expect_status(c.WaddleWindowStateRevisionExhausted, waddle_window_state_plan(handle, 15, 2, &close, &out));
+    try expect_status(c.WaddleWindowStateRevisionExhausted, call_plan(handle, 15, 2, &close, &out));
     try expect_zero_plan(&out);
 }
 
@@ -804,7 +827,7 @@ test "complete rejects stale and malformed completions without changing state, t
     try expect_status(c.WaddleWindowStateStalePlan, complete_abi(handle, &close_b, 1, 1));
     var close_input = input_of(.CloseRequest, 0);
     var out = std.mem.zeroes(c.waddle_window_state_plan_t);
-    try expect_status(c.WaddleWindowStateUnsynchronized, waddle_window_state_plan(handle, 17, 5, &close_input, &out));
+    try expect_status(c.WaddleWindowStateUnsynchronized, call_plan(handle, 17, 5, &close_input, &out));
 
     // A fresh observation resynchronizes, and a successful close then posts.
     try synchronize(handle, reducer.StateMaximizable);
@@ -827,9 +850,9 @@ test "retirement completes only as a zero-action success and then rejects all pl
 
     var out = std.mem.zeroes(c.waddle_window_state_plan_t);
     var close = input_of(.CloseRequest, 0);
-    try expect_status(c.WaddleWindowStateRetired, waddle_window_state_plan(handle, 18, 6, &close, &out));
+    try expect_status(c.WaddleWindowStateRetired, call_plan(handle, 18, 6, &close, &out));
     var destroy_input = input_of(.DestroyObserved, 0);
-    try expect_status(c.WaddleWindowStateRetired, waddle_window_state_plan(handle, 18, 6, &destroy_input, &out));
+    try expect_status(c.WaddleWindowStateRetired, call_plan(handle, 18, 6, &destroy_input, &out));
     try expect_status(c.WaddleWindowStateRetired, complete_abi(handle, &hide, 1, 0));
 }
 
@@ -891,9 +914,9 @@ test "sealed plans reject edits, resealed invalid structure, foreign handles, an
     try expect_status(c.WaddleWindowStateInvalidPlan, complete_abi(owner, &bad_request, 0, 0));
 
     try expect_same_snapshot(before, try snapshot_of(owner));
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_complete(null, &configured, 1, 2));
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_complete(owner, null, 1, 2));
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_complete(owner, &configured, 2, 2));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_complete(null, &configured, 1, 2));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_complete(owner, null, 1, 2));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_complete(owner, &configured, 2, 2));
 
     // The untouched plan still completes exactly once.
     try expect_status(c.WaddleWindowStateOk, complete_abi(owner, &configured, 1, 2));
@@ -916,11 +939,11 @@ test "complete reports revision exhaustion for a resealed plan at the maximum re
 
 test "snapshot reports every host request word and rejects NULL arguments" {
     var out = std.mem.zeroes(c.waddle_window_state_snapshot_t);
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_snapshot(null, &out));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_snapshot(null, &out));
 
     const handle = try create_for_test(22, 9, reducer.StateMaximizable);
     defer destroy_for_test(handle) catch {};
-    try expect_status(c.WaddleWindowStateInvalidArgument, waddle_window_state_snapshot(handle, null));
+    try expect_status(c.WaddleWindowStateInvalidArgument, call_snapshot(handle, null));
     try expect_u32(c.WaddleWindowStateHostRequestNone, (try snapshot_of(handle)).host_request);
 
     try synchronize(handle, reducer.StateMaximizable);
@@ -1055,7 +1078,7 @@ test "random sequences through the ABI match direct reducer use step for step" {
             var out = std.mem.zeroes(c.waddle_window_state_plan_t);
             const oracle_plan = oracle.plan(.{ .window_id = window_id, .generation = generation_used }, reducer_of(step));
             if (oracle_plan) |plan_value| {
-                try expect_status(c.WaddleWindowStateOk, waddle_window_state_plan(handle, window_id, generation_used, &raw, &out));
+                try expect_status(c.WaddleWindowStateOk, call_plan(handle, window_id, generation_used, &raw, &out));
                 successful_plans += 1;
                 try testing.expectEqual(@as(u64, plan_value.action_count), out.action_count);
                 try testing.expectEqual(plan_value.base_revision, out.base_revision);
@@ -1087,7 +1110,7 @@ test "random sequences through the ABI match direct reducer use step for step" {
                     previous_oracle = plan_value;
                 }
             } else |err| {
-                try expect_status(status_of_plan_error(err), waddle_window_state_plan(handle, window_id, generation_used, &raw, &out));
+                try expect_status(status_of_plan_error(err), call_plan(handle, window_id, generation_used, &raw, &out));
                 try expect_zero_plan(&out);
             }
             try testing.expect(std.meta.eql(handle.machine, oracle));
