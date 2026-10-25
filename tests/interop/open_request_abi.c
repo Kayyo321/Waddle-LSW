@@ -118,6 +118,9 @@ static void check_read_failures(void) {
     assert(parse_argv(1, argv, 0, &reader, &request) == InteropOpenErrorImageUnreadable);
     assert(request.item_count == 0 && request.device == NULL);
     assert(interop_open_exit_code(InteropOpenErrorImageUnreadable) == InteropOpenExitNotExecutable);
+    reader.fail = 1;
+    assert(parse_argv(1, argv, 0, &reader, &request) == InteropOpenErrorNotFound);
+    assert(interop_open_exit_code(InteropOpenErrorNotFound) == InteropOpenExitNotFound);
     reader.fail = 0;
     reader.reported = InteropOpenPrefixBytes + 1;
     assert(parse_argv(1, argv, 0, &reader, &request) == InteropOpenErrorImageUnreadable);

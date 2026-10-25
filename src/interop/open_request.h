@@ -76,7 +76,8 @@ typedef enum interop_open_item_kind_t {
  * @param[out] buffer Writable parser-owned buffer of capacity bytes, valid for this call only.
  * @param[in] capacity Bytes writable in buffer; always InteropOpenPrefixBytes.
  * @param[out] length_out Nonnull; receives the byte count written, 0..capacity.
- * @return 0 on success; nonzero is a read failure (exit 126).
+ * @return 0 on success; 1 when the path does not exist (NotFound, exit 127); any other
+ *         nonzero value when the file cannot be read (ImageUnreadable, exit 126).
  * @note Runs synchronously on the calling thread. Must not retain any pointer.
  */
 typedef int (*interop_open_read_prefix_fn)(void *context, const char *path, size_t path_length, uint8_t *buffer, size_t capacity, size_t *length_out);

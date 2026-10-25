@@ -113,8 +113,15 @@ pub const item_kind_t = enum(u32) {
     }
 };
 
+/// Callback status: the prefix was read.
+pub const ReadStatusOk: c_int = 0;
+/// Callback status: the path does not exist (parser reports NotFound, exit 127).
+pub const ReadStatusNotFound: c_int = 1;
+
 /// Read callback: fills up to `capacity` leading bytes of one path and reports the count.
-/// Returns 0 on success, nonzero on read failure. The callee must not retain pointers.
+/// Returns ReadStatusOk on success, ReadStatusNotFound when the path is missing, and any
+/// other nonzero value when the file exists but cannot be read (exit 126). The callee must
+/// not retain pointers.
 pub const read_prefix_fn_t = *const fn (?*anyopaque, [*]const u8, usize, [*]u8, usize, *usize) callconv(.C) c_int;
 
 /// Caller-supplied options; borrowed for the duration of one parse call.
@@ -426,7 +433,8 @@ fn route_path(path: []const u8, options: *const options_t, new_console: bool, ki
 fn route_exe(path: []const u8, options: *const options_t, new_console: bool, gui_kind: item_kind_t, kind: *item_kind_t, image: *pe_header.image_kind_t) open_error_t {
     var prefix: [PrefixBytes]u8 = undefined;
     var length: usize = 0;
-    if (!read_header(path, options, &prefix, &length)) return .ImageUnreadable;
+    const read_status = read_header(path, options, &prefix, &length);
+    if (read_status != .None) return read_status;
     image.* = pe_header.classify(prefix[0..length]);
     if (image.* == .Gui) {
         kind.* = gui_kind;
@@ -438,13 +446,15 @@ fn route_exe(path: []const u8, options: *const options_t, new_console: bool, gui
     return .None;
 }
 
-fn read_header(path: []const u8, options: *const options_t, buffer: *[PrefixBytes]u8, length: *usize) bool {
-    const reader = options.read_prefix orelse return false;
+fn read_header(path: []const u8, options: *const options_t, buffer: *[PrefixBytes]u8, length: *usize) open_error_t {
+    const reader = options.read_prefix orelse return .ImageUnreadable;
     var reported: usize = 0;
-    if (reader(options.read_context, path.ptr, path.len, buffer, PrefixBytes, &reported) != 0) return false;
-    if (reported > PrefixBytes) return false;
+    const status = reader(options.read_context, path.ptr, path.len, buffer, PrefixBytes, &reported);
+    if (status == ReadStatusNotFound) return .NotFound;
+    if (status != ReadStatusOk) return .ImageUnreadable;
+    if (reported > PrefixBytes) return .ImageUnreadable;
     length.* = reported;
-    return true;
+    return .None;
 }
 
 fn value_at(args: []const []const u8, index: usize) ?[]const u8 {
@@ -1130,4 +1140,16 @@ test "extern layouts match open_request.h byte for byte" {
     try testing.expectEqual(@as(usize, 24), @offsetOf(request_t, "device_length"));
     try testing.expectEqual(@as(usize, 8), @offsetOf(options_t, "read_context"));
     try testing.expectEqual(@as(usize, 16), @offsetOf(options_t, "stdio_is_tty"));
+}
+
+test "callback status 1 is NotFound (127) and other nonzero statuses are unreadable (126)" {
+    const entries = [_]fake_entry_t{ .{ .path = "missing.exe", .status = 1 }, .{ .path = "locked.exe", .status = 5 } };
+    var fake = fake_reader_t{ .entries = &entries };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.NotFound, run(&.{"missing.exe"}, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.NotFound, run(&.{ "--", "missing.exe", "a" }, &fake, 0, &out));
+    try testing.expectEqual(ExitNotFound, exit_code_for_error(.NotFound));
+    try testing.expectEqual(@as(usize, 0), out.item_count);
+    try testing.expectEqual(open_error_t.ImageUnreadable, run(&.{"locked.exe"}, &fake, 0, &out));
+    try testing.expectEqual(ExitNotExecutable, exit_code_for_error(.ImageUnreadable));
 }

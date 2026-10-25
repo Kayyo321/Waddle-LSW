@@ -50,8 +50,10 @@ spawning, catalog lookup, and `working_dir`. The parser never reads
 - `buffer` has `capacity` == 4096 writable bytes owned by the parser for the
   duration of the call. The callback writes at most `capacity` bytes and sets
   `*length_out` to the count written (0..4096).
-- Return 0 on success. Any nonzero return, or `*length_out > 4096`, is a read
-  failure.
+- Return `ReadStatusOk` (0) on success. `ReadStatusNotFound` (1) means the path does not
+  exist: the parser returns `NotFound`, exit 127. Any other nonzero value means the path
+  exists or its state is unknown but it cannot be read: `ImageUnreadable`, exit 126.
+  A reported length above 4096 is also `ImageUnreadable`.
 - Thread safety: the callback runs synchronously on the calling thread.
 - A NULL `read_prefix` makes every `.exe` item a read failure (`ImageUnreadable`).
 
@@ -272,7 +274,8 @@ Usage (exit 2): `UnknownOption`, `DuplicateOption`, `MissingOptionValue`,
 
 Parse-time local (exit 126): `ImageUnreadable`.
 
-Caller-reported outcomes (mapped here so every consumer shares one table):
+Caller-reported outcomes (mapped here so every consumer shares one table; `NotFound`
+is also raised by the parser for read status 1, section 2.2):
 `OutsideShare` (126), `NotFound` (127), `LocalFailure` (125),
 `GuestUnreachable` (125), `GuestLaunchFailed` (1).
 
