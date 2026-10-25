@@ -49,6 +49,8 @@ pub const MaxActions: usize = 64;
 pub const MaxPublishBackoffMs: u64 = 8_000;
 /// An open transaction that receives no End within this many milliseconds is aborted.
 pub const TransactionTimeoutMs: u64 = 60_000;
+/// Delay before the next publication pass after a pass both failed and exhausted its budget.
+pub const PassBackoffMs: u64 = 250;
 /// Maximum retry backoff for a failed icon request, in milliseconds.
 pub const IconRetryBackoffMs: u64 = 5_000;
 /// Maximum display title bytes for an uncatalogued window entry.
@@ -228,6 +230,8 @@ pub const stats_c_t = extern struct {
     queued_actions: u32,
     /// Transactions aborted because no End arrived within the transaction timeout.
     aborted_transactions: u32,
+    /// Store commit and replace calls made by publication.
+    store_ops: u32,
 };
 
 /// Outbound action with its key borrowed from the runtime.
@@ -256,6 +260,9 @@ const app_t = struct {
     mark: u64 = 0,
     dirty: bool = true,
     icons: [7]icon_slot_t = [_]icon_slot_t{.{}} ** 7,
+    /// Publication backoff of this application unit.
+    publish_failures: u32 = 0,
+    publish_not_before: u64 = 0,
 };
 
 const icon_slot_t = struct {
@@ -310,6 +317,9 @@ const uncatalogued_t = struct {
     key: []u8,
     title: []u8,
     dirty: bool = true,
+    /// Publication backoff of this uncatalogued unit.
+    publish_failures: u32 = 0,
+    publish_not_before: u64 = 0,
 };
 
 /// Errors produced inside the runtime. Filesystem and allocation errors pass through.
@@ -386,9 +396,18 @@ pub const runtime_t = struct {
     sync_required: bool = false,
     /// True when the menu or directory artifacts must be regenerated.
     menu_dirty: bool = false,
-    /// Publication backoff state.
-    publish_failures: u32 = 0,
-    publish_not_before: u64 = 0,
+    /// Publication units are visited from this index; a pass that exhausts its budget resumes
+    /// at the unit it stopped on, so every unit is reached within a bounded number of passes.
+    cursor: usize = 0,
+    /// Monotonic time before which no publication pass runs (set when a pass fails and exhausts).
+    pass_not_before: u64 = 0,
+    /// Menu-unit backoff, the unit that renders the menu and directory artifacts.
+    menu_failures: u32 = 0,
+    menu_not_before: u64 = 0,
+    /// Store commit or replace calls made (diagnostic; bounds the store call rate in tests).
+    store_ops: u32 = 0,
+    /// Parsed base manifest, valid until `base` changes. Owned; released by replace_base/destroy.
+    base_cache: ?manifest.document_t = null,
     /// Frames rejected since creation.
     rejected_frames: u32 = 0,
 
@@ -452,6 +471,7 @@ pub const runtime_t = struct {
             }
         }
         self.apps.deinit();
+        self.drop_base_cache();
         if (self.base) |bytes| allocator.free(bytes);
         allocator.free(self.data_root);
         allocator.free(self.config_root);
@@ -525,8 +545,10 @@ pub const runtime_t = struct {
         self.tx_poisoned = false;
         self.sync_required = false;
         self.menu_dirty = false;
-        self.publish_failures = 0;
-        self.publish_not_before = 0;
+        self.pass_not_before = 0;
+        self.menu_failures = 0;
+        self.menu_not_before = 0;
+        self.cursor = 0;
     }
 
     /// Begin receiving the icon for the outstanding request `id`.
@@ -568,7 +590,7 @@ pub const runtime_t = struct {
             return self.fail_transfer(index, CancelGuestError, now);
         }
         const size = IconSizes[transfer.slot];
-        if (!png_header_valid(transfer.buffer, size)) {
+        if (!png_valid(transfer.buffer, size)) {
             self.note_failure(index, now);
             self.free_transfer(index);
             self.rejected_frames += 1;
@@ -602,14 +624,9 @@ pub const runtime_t = struct {
         self.expire_transaction(now);
         self.expire_transfers(now);
         self.issue_requests(now);
-        if (self.publication_pending() and !self.transaction_open and !self.sync_required and now >= self.publish_not_before) {
-            self.publish_pass(updated) catch |err| switch (err) {
-                error.PublicationBudget => {},
-                else => {
-                    self.publish_failures += 1;
-                    self.publish_not_before = now + backoff_ms(self.publish_failures, MaxPublishBackoffMs);
-                },
-            };
+        if (self.publication_pending() and !self.transaction_open and !self.sync_required and now >= self.pass_not_before) {
+            const outcome = self.publish_pass(now, updated);
+            if (outcome.failed and outcome.exhausted) self.pass_not_before = now + PassBackoffMs;
         }
     }
 
@@ -624,17 +641,18 @@ pub const runtime_t = struct {
         const index = self.uncat_index(key) orelse try self.insert_uncatalogued(key, title);
         self.uncatalogued.items[index].dirty = true;
         if (self.transaction_open or self.sync_required) return error.Pending;
-        const pass = self.publish_pass(updated);
-        if (pass) |_| {} else |err| switch (err) {
-            error.PublicationBudget => {},
+        // Only this entry is published here, under its own backoff; the full pass belongs to tick.
+        const entry = &self.uncatalogued.items[index];
+        if (now < entry.publish_not_before) return error.Pending;
+        var budget: usize = MaxOpsPerPass;
+        self.publish_uncatalogued(entry, updated, &budget) catch |err| switch (err) {
+            error.PublicationBudget => return error.Pending,
             else => {
-                self.publish_failures += 1;
-                self.publish_not_before = now + backoff_ms(self.publish_failures, MaxPublishBackoffMs);
+                self.note_unit_failure(&entry.publish_failures, &entry.publish_not_before, now);
+                return error.StoreFailed;
             },
-        }
-        const entry = self.uncat_index(key).?;
-        if (!self.uncatalogued.items[entry].dirty) return;
-        if (pass) |_| return error.Pending else |err| return if (err == error.PublicationBudget) error.Pending else error.StoreFailed;
+        };
+        self.note_unit_success(&entry.publish_failures);
     }
 
     /// Earliest absolute deadline the caller must tick at, or null when idle.
@@ -653,7 +671,7 @@ pub const runtime_t = struct {
             }
         }
         if (self.publication_pending() and !self.transaction_open and !self.sync_required) {
-            best = min_optional(best, @max(self.publish_not_before, now));
+            best = min_optional(best, self.next_publication_due(now));
         }
         return best;
     }
@@ -695,13 +713,14 @@ pub const runtime_t = struct {
             .outstanding = @intCast(self.outstanding()),
             .icon_bytes = self.icon_bytes,
             .rejected_frames = self.rejected_frames,
-            .publish_failures = self.publish_failures,
+            .publish_failures = self.backing_off_units(),
             .sync_required = @intFromBool(self.sync_required),
             .transaction_open = @intFromBool(self.transaction_open),
             .publication_pending = @intFromBool(self.publication_pending()),
             .dropped_actions = self.dropped_actions,
             .queued_actions = @intCast(self.action_count),
             .aborted_transactions = self.aborted_transactions,
+            .store_ops = self.store_ops,
         };
     }
 
@@ -1082,27 +1101,103 @@ pub const runtime_t = struct {
         return false;
     }
 
-    /// Publish every dirty unit. A failing app or entry stays dirty and does not stop the
-    /// others; the first failure is returned after the pass. Budget exhaustion stops at once.
-    fn publish_pass(self: *runtime_t, updated: []const u8) error_t!void {
-        var budget: usize = MaxOpsPerPass;
-        var failure: ?error_t = null;
-        for (self.apps.items) |*app| {
-            if (app.dirty) try settle(&failure, self.publish_app(app, updated, &budget));
-        }
-        if (self.menu_dirty) try settle(&failure, self.publish_menu(updated, &budget));
-        for (self.uncatalogued.items) |*entry| {
-            if (entry.dirty) try settle(&failure, self.publish_uncatalogued(entry, updated, &budget));
-        }
-        if (failure) |err| return err;
+    /// Result of one publication unit visit.
+    const unit_result_t = enum { Skipped, Published, Failed, Exhausted };
+
+    /// Result of one publication pass.
+    const pass_outcome_t = struct { failed: bool = false, exhausted: bool = false };
+
+    /// Total publication units: applications, then the menu unit, then uncatalogued entries.
+    fn unit_count(self: *runtime_t) usize {
+        return self.apps.items.len + 1 + self.uncatalogued.items.len;
     }
 
-    /// Record the first non-budget failure of a pass; budget exhaustion ends the pass at once.
-    fn settle(failure: *?error_t, result: error_t!void) error_t!void {
-        result catch |err| {
-            if (err == error.PublicationBudget) return err;
-            if (failure.* == null) failure.* = err;
-        };
+    /// Visit each publication unit once, starting at the cursor, and publish the dirty ones whose
+    /// backoff has expired. A failed unit is backed off and does not stop the others. When the
+    /// budget runs out the pass stops on that unit, which becomes the next starting point.
+    fn publish_pass(self: *runtime_t, now: u64, updated: []const u8) pass_outcome_t {
+        var outcome = pass_outcome_t{};
+        const total = self.unit_count();
+        if (total == 0) return outcome;
+        const start = self.cursor % total;
+        var budget: usize = MaxOpsPerPass;
+        var step: usize = 0;
+        while (step < total) : (step += 1) {
+            const unit = (start + step) % total;
+            switch (self.publish_unit(unit, now, updated, &budget)) {
+                .Skipped, .Published => {},
+                .Failed => outcome.failed = true,
+                .Exhausted => {
+                    outcome.exhausted = true;
+                    self.cursor = unit;
+                    return outcome;
+                },
+            }
+        }
+        self.cursor = (start + 1) % total;
+        return outcome;
+    }
+
+    fn publish_unit(self: *runtime_t, unit: usize, now: u64, updated: []const u8, budget: *usize) unit_result_t {
+        const apps = self.apps.items.len;
+        if (unit < apps) {
+            const app = &self.apps.items[unit];
+            if (!app.dirty or now < app.publish_not_before) return .Skipped;
+            self.publish_app(app, updated, budget) catch |err| return self.unit_failed(err, &app.publish_failures, &app.publish_not_before, now);
+            self.note_unit_success(&app.publish_failures);
+            return .Published;
+        }
+        if (unit == apps) {
+            if (!self.menu_dirty or now < self.menu_not_before) return .Skipped;
+            self.publish_menu(updated, budget) catch |err| return self.unit_failed(err, &self.menu_failures, &self.menu_not_before, now);
+            self.note_unit_success(&self.menu_failures);
+            return .Published;
+        }
+        const entry = &self.uncatalogued.items[unit - apps - 1];
+        if (!entry.dirty or now < entry.publish_not_before) return .Skipped;
+        self.publish_uncatalogued(entry, updated, budget) catch |err| return self.unit_failed(err, &entry.publish_failures, &entry.publish_not_before, now);
+        self.note_unit_success(&entry.publish_failures);
+        return .Published;
+    }
+
+    /// Classify a unit error. Budget exhaustion is not a failure of the unit; every other error
+    /// backs the unit off.
+    fn unit_failed(self: *runtime_t, err: error_t, failures: *u32, not_before: *u64, now: u64) unit_result_t {
+        if (err == error.PublicationBudget) return .Exhausted;
+        self.note_unit_failure(failures, not_before, now);
+        return .Failed;
+    }
+
+    fn note_unit_failure(self: *runtime_t, failures: *u32, not_before: *u64, now: u64) void {
+        _ = self;
+        failures.* +|= 1;
+        not_before.* = now + backoff_ms(failures.*, MaxPublishBackoffMs);
+    }
+
+    fn note_unit_success(self: *runtime_t, failures: *u32) void {
+        _ = self;
+        failures.* = 0;
+    }
+
+    /// Publication units currently backing off after a failure.
+    fn backing_off_units(self: *runtime_t) u32 {
+        var count: u32 = @intFromBool(self.menu_failures != 0);
+        for (self.apps.items) |app| count += @intFromBool(app.publish_failures != 0);
+        for (self.uncatalogued.items) |entry| count += @intFromBool(entry.publish_failures != 0);
+        return count;
+    }
+
+    /// Earliest time a dirty publication unit may run, never before `now`.
+    fn next_publication_due(self: *runtime_t, now: u64) u64 {
+        var best: u64 = std.math.maxInt(u64);
+        for (self.apps.items) |app| {
+            if (app.dirty) best = @min(best, @max(app.publish_not_before, self.pass_not_before, now));
+        }
+        if (self.menu_dirty) best = @min(best, @max(self.menu_not_before, self.pass_not_before, now));
+        for (self.uncatalogued.items) |entry| {
+            if (entry.dirty) best = @min(best, @max(entry.publish_not_before, self.pass_not_before, now));
+        }
+        return best;
     }
 
     fn publish_app(self: *runtime_t, app: *app_t, updated: []const u8, budget: *usize) error_t!void {
@@ -1179,6 +1274,9 @@ pub const runtime_t = struct {
             .items = items,
             .menu_filter = filter,
             .include_menu = include_menu,
+            // publish_artifact composes the commit candidate from the base manifest, so the
+            // producer's candidates only need their own record (linear output, no 32 MiB cap).
+            .cumulative_candidates = false,
         };
     }
 
@@ -1196,19 +1294,16 @@ pub const runtime_t = struct {
         var candidate_doc = manifest.parse(self.allocator, artifact.candidate_manifest) catch return error.InvalidManifest;
         defer candidate_doc.deinit();
         const new_record = find_record(candidate_doc.records, artifact.record_id) orelse return error.InvalidManifest;
-        var base_doc: ?manifest.document_t = if (self.base) |bytes| (manifest.parse(self.allocator, bytes) catch return error.InvalidManifest) else null;
-        defer if (base_doc) |*doc| doc.deinit();
-        const base_records: []const manifest.record_t = if (base_doc) |doc| doc.records else &.{};
-        const existing = find_record_index(base_records, artifact.record_id);
+        const current_records = try self.base_records();
+        const existing = find_record_index(current_records, artifact.record_id);
         if (existing) |index| {
-            if (std.mem.eql(u8, base_records[index].sha256, artifact.sha256[0..])) return;
+            if (std.mem.eql(u8, current_records[index].sha256, artifact.sha256[0..])) return;
         }
-        if (budget.* == 0) return error.PublicationBudget;
-        budget.* -= 1;
-        try self.ensure_parent_dirs(artifact.path);
+        const record_count = current_records.len + @intFromBool(existing == null);
+        if (record_count > manifest.MaxManifestRecords) return error.Quota;
         var merged = std.ArrayList(manifest.record_t).init(self.allocator);
         defer merged.deinit();
-        for (base_records, 0..) |record, index| {
+        for (current_records, 0..) |record, index| {
             var copy = record;
             if (existing != null and existing.? == index) copy.sha256 = artifact.sha256[0..];
             try merged.append(copy);
@@ -1218,10 +1313,15 @@ pub const runtime_t = struct {
             added.sha256 = artifact.sha256[0..];
             try merged.append(added);
         }
+        try self.ensure_parent_dirs(artifact.path);
         const candidate = emit_manifest(self.allocator, self.waddle_version, updated, merged.items) catch |err| {
             return map_publish_error(err);
         };
         errdefer self.allocator.free(candidate);
+        // The budget counts store calls only; a refusal before the store consumes nothing.
+        if (budget.* == 0) return error.PublicationBudget;
+        budget.* -= 1;
+        self.store_ops +%= 1;
         if (existing) |_| {
             const snapshot = self.store.inspect_record(artifact.record_id) catch |err| return map_publish_error(err);
             if (self.store.replace(.{
@@ -1241,9 +1341,29 @@ pub const runtime_t = struct {
                 .candidate_manifest = candidate,
             })) |_| {} else |err| try self.adopt_or_fail(err, artifact.record_id, candidate);
         }
+        self.replace_base(candidate);
+    }
+
+    /// The parsed base manifest, parsed once and reused until the base changes. Empty when there
+    /// is no manifest. The returned slices are valid until the next replace_base or destroy.
+    fn base_records(self: *runtime_t) error_t![]const manifest.record_t {
+        const bytes = self.base orelse return &.{};
+        if (self.base_cache == null) {
+            self.base_cache = manifest.parse(self.allocator, bytes) catch return error.InvalidManifest;
+        }
+        return self.base_cache.?.records;
+    }
+
+    /// Install a newly published manifest as the base and invalidate the parsed cache.
+    fn replace_base(self: *runtime_t, candidate: []u8) void {
         if (self.base) |old| self.allocator.free(old);
         self.base = candidate;
-        self.publish_failures = 0;
+        self.drop_base_cache();
+    }
+
+    fn drop_base_cache(self: *runtime_t) void {
+        if (self.base_cache) |*doc| doc.deinit();
+        self.base_cache = null;
     }
 
     /// Create missing parent directories of `path` below the store root that owns it. Each
@@ -1397,13 +1517,53 @@ fn valid_absolute(path: []const u8, directory: bool) bool {
     return true;
 }
 
-fn png_header_valid(bytes: []const u8, size: u16) bool {
-    if (bytes.len < 33) return false;
-    if (!std.mem.eql(u8, bytes[0..8], "\x89PNG\r\n\x1a\n")) return false;
-    if (!std.mem.eql(u8, bytes[12..16], "IHDR")) return false;
-    const width = std.mem.readInt(u32, bytes[16..20], .big);
-    const height = std.mem.readInt(u32, bytes[20..24], .big);
-    return width == size and height == size and bytes[24] == 8 and bytes[25] == 6 and bytes[26] == 0 and bytes[27] == 0 and bytes[28] == 0;
+/// Largest chunk count walked in one PNG; bounds the walk on hostile input.
+const MaxPngChunks: usize = 64;
+
+/// Validate a transferred icon as a complete, standalone PNG of the requested square size: the
+/// signature, IHDR first with its frozen fields, every chunk's length within the buffer and CRC-32
+/// correct, an IDAT present, and IEND as the final chunk. APNG control chunks and unknown critical
+/// chunks are refused. Bounded by MaxPngChunks; reads only within `bytes`.
+fn png_valid(bytes: []const u8, size: u16) bool {
+    const signature = "\x89PNG\r\n\x1a\n";
+    if (bytes.len < signature.len or !std.mem.eql(u8, bytes[0..signature.len], signature)) return false;
+    var position: usize = signature.len;
+    var seen_idat = false;
+    var chunks: usize = 0;
+    while (chunks < MaxPngChunks) : (chunks += 1) {
+        if (bytes.len - position < 12) return false;
+        const length: usize = std.mem.readInt(u32, bytes[position..][0..4], .big);
+        if (length > bytes.len - position - 12) return false;
+        const kind = bytes[position + 4 ..][0..4];
+        const body_end = position + 8 + length;
+        const stored_crc = std.mem.readInt(u32, bytes[body_end..][0..4], .big);
+        if (std.hash.Crc32.hash(bytes[position + 4 .. body_end]) != stored_crc) return false;
+        if (chunks == 0) {
+            if (!std.mem.eql(u8, kind, "IHDR") or length != 13 or !ihdr_valid(bytes[position + 8 .. body_end], size)) return false;
+        } else if (std.mem.eql(u8, kind, "IHDR") or !chunk_allowed(kind)) {
+            return false;
+        }
+        seen_idat = seen_idat or std.mem.eql(u8, kind, "IDAT");
+        position = body_end + 4;
+        if (std.mem.eql(u8, kind, "IEND")) return length == 0 and position == bytes.len and seen_idat;
+    }
+    return false;
+}
+
+fn ihdr_valid(data: []const u8, size: u16) bool {
+    return std.mem.readInt(u32, data[0..4], .big) == @as(u32, size) and
+        std.mem.readInt(u32, data[4..8], .big) == @as(u32, size) and
+        data[8] == 8 and data[9] == 6 and data[10] == 0 and data[11] == 0 and data[12] == 0;
+}
+
+/// Chunk types a standalone RGBA icon may contain: ASCII letters only; critical chunks are
+/// limited to PLTE, IDAT and IEND (IHDR is handled by the caller); APNG control chunks are refused.
+fn chunk_allowed(kind: []const u8) bool {
+    for (kind) |byte| if (!std.ascii.isAlphabetic(byte)) return false;
+    if (std.mem.eql(u8, kind, "acTL") or std.mem.eql(u8, kind, "fcTL") or std.mem.eql(u8, kind, "fdAT")) return false;
+    const critical = kind[0] & 0x20 == 0;
+    if (critical) return std.mem.eql(u8, kind, "PLTE") or std.mem.eql(u8, kind, "IDAT") or std.mem.eql(u8, kind, "IEND");
+    return true;
 }
 
 /// Counting sink: sizes the output without allocating. Appends cannot fail.
@@ -1819,24 +1979,46 @@ fn record_sha(rt: *runtime_t, record_id: []const u8) ![32]u8 {
 }
 
 /// A minimal PNG: signature, IHDR for the given square size, IDAT filler, IEND.
-fn fake_png(allocator: std.mem.Allocator, size: u32, filler: usize, seed: u8) ![]u8 {
-    const total = 8 + 25 + 12 + filler + 12;
+const png_chunk_t = struct { kind: [4]u8, data: []const u8 };
+
+/// Encode a PNG from chunks with correct CRC-32 values. Test-only.
+fn build_png_chunks(allocator: std.mem.Allocator, chunks: []const png_chunk_t) ![]u8 {
+    var total: usize = 8;
+    for (chunks) |chunk| total += 12 + chunk.data.len;
     const bytes = try allocator.alloc(u8, total);
-    @memset(bytes, seed);
     @memcpy(bytes[0..8], "\x89PNG\r\n\x1a\n");
-    std.mem.writeInt(u32, bytes[8..12], 13, .big);
-    @memcpy(bytes[12..16], "IHDR");
-    std.mem.writeInt(u32, bytes[16..20], size, .big);
-    std.mem.writeInt(u32, bytes[20..24], size, .big);
-    bytes[24] = 8;
-    bytes[25] = 6;
-    bytes[26] = 0;
-    bytes[27] = 0;
-    bytes[28] = 0;
-    std.mem.writeInt(u32, bytes[33..37], @intCast(filler), .big);
-    @memcpy(bytes[37..41], "IDAT");
-    @memcpy(bytes[bytes.len - 12 ..][4..8], "IEND");
+    var position: usize = 8;
+    for (chunks) |chunk| {
+        std.mem.writeInt(u32, bytes[position..][0..4], @intCast(chunk.data.len), .big);
+        @memcpy(bytes[position + 4 ..][0..4], &chunk.kind);
+        @memcpy(bytes[position + 8 ..][0..chunk.data.len], chunk.data);
+        const crc = std.hash.Crc32.hash(bytes[position + 4 .. position + 8 + chunk.data.len]);
+        std.mem.writeInt(u32, bytes[position + 8 + chunk.data.len ..][0..4], crc, .big);
+        position += 12 + chunk.data.len;
+    }
     return bytes;
+}
+
+/// IHDR body for a square 8-bit RGBA, non-interlaced image.
+fn ihdr_body(size: u32) [13]u8 {
+    var body: [13]u8 = undefined;
+    std.mem.writeInt(u32, body[0..4], size, .big);
+    std.mem.writeInt(u32, body[4..8], size, .big);
+    body[8..13].* = .{ 8, 6, 0, 0, 0 };
+    return body;
+}
+
+/// A complete standalone PNG of `size` pixels with one IDAT chunk of `filler` bytes of `seed`.
+fn fake_png(allocator: std.mem.Allocator, size: u32, filler: usize, seed: u8) ![]u8 {
+    const ihdr = ihdr_body(size);
+    const data = try allocator.alloc(u8, filler);
+    defer allocator.free(data);
+    @memset(data, seed);
+    return build_png_chunks(allocator, &.{
+        .{ .kind = "IHDR".*, .data = &ihdr },
+        .{ .kind = "IDAT".*, .data = data },
+        .{ .kind = "IEND".*, .data = &.{} },
+    });
 }
 
 /// Drain every queued action, returning the IconRequest identifiers in order.
@@ -1913,18 +2095,11 @@ test "policy helpers: validators, icon masks, titles and backoff" {
     try testing.expectEqual(@as(u3, 2), size_index(32).?);
     try testing.expect(size_index(17) == null);
 
-    var png_ok = [_]u8{0} ** 33;
-    @memcpy(png_ok[0..8], "\x89PNG\r\n\x1a\n");
-    @memcpy(png_ok[12..16], "IHDR");
-    std.mem.writeInt(u32, png_ok[16..20], 16, .big);
-    std.mem.writeInt(u32, png_ok[20..24], 16, .big);
-    png_ok[24] = 8;
-    png_ok[25] = 6;
-    try testing.expect(png_header_valid(&png_ok, 16));
-    try testing.expect(!png_header_valid(&png_ok, 32));
-    try testing.expect(!png_header_valid(png_ok[0..20], 16));
-    png_ok[25] = 2;
-    try testing.expect(!png_header_valid(&png_ok, 16));
+    const png_ok = try fake_png(testing.allocator, 16, 8, 0x11);
+    defer testing.allocator.free(png_ok);
+    try testing.expect(png_valid(png_ok, 16));
+    try testing.expect(!png_valid(png_ok, 32));
+    try testing.expect(!png_valid(png_ok[0..20], 16));
 
     var buffer: [64]u8 = undefined;
     var sink = fill_sink_t{ .bytes = &buffer };
@@ -2316,15 +2491,9 @@ test "icon budget refuses transfers beyond the retained byte cap" {
     defer rt.destroy();
     const size_256 = [_]u8{ 0x00, 0x01 };
     var keys: [33][6]u8 = undefined;
-    const big = try testing.allocator.alloc(u8, MaxIconBytes);
+    // A standalone PNG of exactly MaxIconBytes: 57 bytes of framing plus the IDAT payload.
+    const big = try fake_png(testing.allocator, 256, MaxIconBytes - 57, 0x5a);
     defer testing.allocator.free(big);
-    @memset(big, 0);
-    @memcpy(big[0..8], "\x89PNG\r\n\x1a\n");
-    std.mem.writeInt(u32, big[16..20], 256, .big);
-    std.mem.writeInt(u32, big[20..24], 256, .big);
-    big[24] = 8;
-    big[25] = 6;
-    @memcpy(big[12..16], "IHDR");
     var digest: [32]u8 = undefined;
     sha256.hash(big, &digest, .{});
 
@@ -2752,35 +2921,7 @@ test "helper branches: identifiers, icon sizes, PNG headers, titles and parent d
     }
     try testing.expectEqual(@as(u8, 0x7F), try parse_icon_mask(&[_]u8{ 16, 0, 24, 0, 32, 0, 48, 0, 64, 0, 128, 0, 0, 1 }));
 
-    var header = [_]u8{0} ** 33;
-    @memcpy(header[0..8], "\x89PNG\r\n\x1a\n");
-    @memcpy(header[12..16], "IHDR");
-    std.mem.writeInt(u32, header[16..20], 24, .big);
-    std.mem.writeInt(u32, header[20..24], 24, .big);
-    header[24] = 8;
-    header[25] = 6;
-    try testing.expect(png_header_valid(&header, 24));
-    var bad = header;
-    bad[0] = 0;
-    try testing.expect(!png_header_valid(&bad, 24));
-    bad = header;
-    bad[12] = 'X';
-    try testing.expect(!png_header_valid(&bad, 24));
-    bad = header;
-    std.mem.writeInt(u32, bad[20..24], 16, .big);
-    try testing.expect(!png_header_valid(&bad, 24));
-    bad = header;
-    bad[24] = 16;
-    try testing.expect(!png_header_valid(&bad, 24));
-    bad = header;
-    bad[26] = 1;
-    try testing.expect(!png_header_valid(&bad, 24));
-    bad = header;
-    bad[27] = 1;
-    try testing.expect(!png_header_valid(&bad, 24));
-    bad = header;
-    bad[28] = 1;
-    try testing.expect(!png_header_valid(&bad, 24));
+    // IHDR field and chunk checks live in the dedicated PNG chunk test below.
 
     // Multibyte titles are clipped on a character boundary; short titles pass through.
     const clipped = truncate_title("x" ** 63 ++ "é");
@@ -3482,4 +3623,161 @@ test "an unfinished transaction is aborted after the timeout and End without Beg
     // The snapshot is kept but never swept, and the late End is refused.
     try testing.expectEqual(@as(u32, 1), stats.apps);
     try testing.expectError(error.Rejected, rt.end());
+}
+
+test "one good app publishes within bounded ticks despite a hundred permanently failing units" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    // Each failing application's target path is occupied by a directory, so every commit is refused.
+    try env.data.makeDir("applications");
+    var key_buf: [16]u8 = undefined;
+    rt.begin(0);
+    for (0..100) |i| {
+        const key = try std.fmt.bufPrint(&key_buf, "a-Fail{d:0>3}", .{i});
+        var path_buf: [128]u8 = undefined;
+        try env.data.makeDir(try std.fmt.bufPrint(&path_buf, "applications/waddle.testdev.{s}.desktop", .{key}));
+        try rt.upsert(false, .{ .key = key, .display_name = "F", .flags = 0 });
+    }
+    try rt.upsert(false, .{ .key = "a-Good", .display_name = "Good", .flags = 0 });
+    try rt.end();
+    var rel_buf: [128]u8 = undefined;
+    var published_at: ?usize = null;
+    var tick_index: usize = 0;
+    while (tick_index < 12) : (tick_index += 1) {
+        rt.tick(@as(u64, tick_index) * 1000, UpdatedTimestamp);
+        if (published_at == null) {
+            if (env.data.statFile(desktop_rel(&rel_buf, "a-Good"))) |_| {
+                published_at = tick_index;
+            } else |_| {}
+        }
+    }
+    try testing.expect(published_at != null);
+    try testing.expect(published_at.? <= 4);
+    // At most one pass of MaxOpsPerPass store calls per tick, however many units fail.
+    try testing.expect(rt.stats().store_ops <= MaxOpsPerPass * 12);
+}
+
+test "PNG validation checks every chunk and refuses corrupted, truncated and APNG icons" {
+    const gpa = testing.allocator;
+    const ihdr = ihdr_body(16);
+    const idat = [_]u8{ 1, 2, 3, 4 };
+    const good = try build_png_chunks(gpa, &.{
+        .{ .kind = "IHDR".*, .data = &ihdr },
+        .{ .kind = "IDAT".*, .data = &idat },
+        .{ .kind = "IEND".*, .data = &.{} },
+    });
+    defer gpa.free(good);
+    try testing.expect(png_valid(good, 16));
+    try testing.expect(!png_valid(good, 24));
+    try testing.expect(!png_valid(good[0..8], 16));
+    // Bad signature and a truncated buffer.
+    {
+        var bad = try gpa.dupe(u8, good);
+        defer gpa.free(bad);
+        bad[1] = 0;
+        try testing.expect(!png_valid(bad, 16));
+    }
+    try testing.expect(!png_valid(good[0 .. good.len - 1], 16));
+    // Missing IEND, and data after IEND.
+    try testing.expect(!png_valid(good[0 .. good.len - 12], 16));
+    // A corrupted CRC in IHDR and a corrupted byte in IDAT (CRC mismatch).
+    {
+        var bad = try gpa.dupe(u8, good);
+        defer gpa.free(bad);
+        bad[8 + 8 + 13] ^= 1;
+        try testing.expect(!png_valid(bad, 16));
+        bad[8 + 8 + 13] ^= 1;
+        bad[8 + 12 + 8 + 1] ^= 0x40;
+        try testing.expect(!png_valid(bad, 16));
+    }
+    // A huge IDAT length is refused without reading past the buffer.
+    {
+        var bad = try gpa.dupe(u8, good);
+        defer gpa.free(bad);
+        std.mem.writeInt(u32, bad[8 + 12 + 13 ..][0..4], 0x7fffffff, .big);
+        try testing.expect(!png_valid(bad, 16));
+    }
+    // IHDR fields: length, dimensions, depth, colour type, compression, filter and interlace.
+    const variants = [_]struct { length: usize, body: [13]u8 }{
+        .{ .length = 12, .body = ihdr },
+        .{ .length = 13, .body = ihdr_body(24) },
+        .{ .length = 13, .body = blk: {
+            var b = ihdr;
+            b[8] = 16;
+            break :blk b;
+        } },
+        .{ .length = 13, .body = blk: {
+            var b = ihdr;
+            b[9] = 2;
+            break :blk b;
+        } },
+        .{ .length = 13, .body = blk: {
+            var b = ihdr;
+            b[10] = 1;
+            break :blk b;
+        } },
+        .{ .length = 13, .body = blk: {
+            var b = ihdr;
+            b[11] = 1;
+            break :blk b;
+        } },
+        .{ .length = 13, .body = blk: {
+            var b = ihdr;
+            b[12] = 1;
+            break :blk b;
+        } },
+    };
+    for (variants) |variant| {
+        const bytes = try build_png_chunks(gpa, &.{
+            .{ .kind = "IHDR".*, .data = variant.body[0..variant.length] },
+            .{ .kind = "IDAT".*, .data = &idat },
+            .{ .kind = "IEND".*, .data = &.{} },
+        });
+        defer gpa.free(bytes);
+        try testing.expect(!png_valid(bytes, 16));
+    }
+    // Structure: duplicate IHDR, no IDAT, IEND not last, APNG chunks, unknown critical chunk,
+    // non-letter type, and an unknown ancillary chunk, which is allowed.
+    const shapes = [_][]const png_chunk_t{
+        &.{ .{ .kind = "IHDR".*, .data = &ihdr }, .{ .kind = "IHDR".*, .data = &ihdr }, .{ .kind = "IDAT".*, .data = &idat }, .{ .kind = "IEND".*, .data = &.{} } },
+        &.{ .{ .kind = "IHDR".*, .data = &ihdr }, .{ .kind = "IEND".*, .data = &.{} } },
+        &.{ .{ .kind = "IHDR".*, .data = &ihdr }, .{ .kind = "IDAT".*, .data = &idat }, .{ .kind = "IEND".*, .data = &.{} }, .{ .kind = "abcd".*, .data = &.{} } },
+        &.{ .{ .kind = "IHDR".*, .data = &ihdr }, .{ .kind = "acTL".*, .data = &.{ 0, 0, 0, 1, 0, 0, 0, 0 } }, .{ .kind = "IDAT".*, .data = &idat }, .{ .kind = "IEND".*, .data = &.{} } },
+        &.{ .{ .kind = "IHDR".*, .data = &ihdr }, .{ .kind = "fcTL".*, .data = &.{} }, .{ .kind = "IDAT".*, .data = &idat }, .{ .kind = "IEND".*, .data = &.{} } },
+        &.{ .{ .kind = "IHDR".*, .data = &ihdr }, .{ .kind = "IDAT".*, .data = &idat }, .{ .kind = "fdAT".*, .data = &.{} }, .{ .kind = "IEND".*, .data = &.{} } },
+        &.{ .{ .kind = "IHDR".*, .data = &ihdr }, .{ .kind = "ABCD".*, .data = &.{} }, .{ .kind = "IDAT".*, .data = &idat }, .{ .kind = "IEND".*, .data = &.{} } },
+        &.{ .{ .kind = "IHDR".*, .data = &ihdr }, .{ .kind = "IH\x00D".*, .data = &.{} }, .{ .kind = "IDAT".*, .data = &idat }, .{ .kind = "IEND".*, .data = &.{} } },
+    };
+    for (shapes) |shape| {
+        const bytes = try build_png_chunks(gpa, shape);
+        defer gpa.free(bytes);
+        try testing.expect(!png_valid(bytes, 16));
+    }
+    const ancillary = try build_png_chunks(gpa, &.{
+        .{ .kind = "IHDR".*, .data = &ihdr },
+        .{ .kind = "abcd".*, .data = &.{} },
+        .{ .kind = "IDAT".*, .data = &idat },
+        .{ .kind = "IEND".*, .data = &.{} },
+    });
+    defer gpa.free(ancillary);
+    try testing.expect(png_valid(ancillary, 16));
+    // The walk is bounded: 64 chunks (IHDR, 61 ancillary, IDAT, IEND) are accepted, 65 are refused.
+    var at_limit_chunks: [64]png_chunk_t = undefined;
+    at_limit_chunks[0] = .{ .kind = "IHDR".*, .data = &ihdr };
+    for (at_limit_chunks[1..62]) |*chunk| chunk.* = .{ .kind = "abcd".*, .data = &.{} };
+    at_limit_chunks[62] = .{ .kind = "IDAT".*, .data = &idat };
+    at_limit_chunks[63] = .{ .kind = "IEND".*, .data = &.{} };
+    const at_limit = try build_png_chunks(gpa, &at_limit_chunks);
+    defer gpa.free(at_limit);
+    try testing.expect(png_valid(at_limit, 16));
+    var many: [65]png_chunk_t = undefined;
+    many[0] = .{ .kind = "IHDR".*, .data = &ihdr };
+    for (many[1..63]) |*chunk| chunk.* = .{ .kind = "abcd".*, .data = &.{} };
+    many[63] = .{ .kind = "IDAT".*, .data = &idat };
+    many[64] = .{ .kind = "IEND".*, .data = &.{} };
+    const over_limit = try build_png_chunks(gpa, &many);
+    defer gpa.free(over_limit);
+    try testing.expect(!png_valid(over_limit, 16));
 }

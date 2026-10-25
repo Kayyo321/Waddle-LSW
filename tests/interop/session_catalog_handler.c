@@ -87,6 +87,55 @@ int interop_host_feature_send(interop_host_feature_sender_t *sender, const uint8
     return fake_send(default_sink, sender, frame, length);
 }
 
+/* --- PNG fixtures ---------------------------------------------------------------------- */
+
+static uint32_t crc32_of(const uint8_t *data, size_t length)
+{
+    uint32_t crc = 0xffffffffu;
+    size_t i;
+    int bit;
+    for (i = 0; i < length; ++i) {
+        crc ^= data[i];
+        for (bit = 0; bit < 8; ++bit) crc = (crc & 1u) ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+    }
+    return crc ^ 0xffffffffu;
+}
+
+static size_t write_chunk(uint8_t *out, size_t position, const char *type, const uint8_t *data, uint32_t length)
+{
+    uint32_t crc;
+    int shift;
+    for (shift = 0; shift < 4; ++shift) out[position + (size_t)shift] = (uint8_t)(length >> (24 - 8 * shift));
+    memcpy(out + position + 4, type, 4);
+    if (length != 0) memcpy(out + position + 8, data, length);
+    crc = crc32_of(out + position + 4, 4 + (size_t)length);
+    for (shift = 0; shift < 4; ++shift) out[position + 8 + length + (size_t)shift] = (uint8_t)(crc >> (24 - 8 * shift));
+    return position + 12 + (size_t)length;
+}
+
+/* Build a valid square 8-bit RGBA PNG with one IDAT chunk and an IEND trailer. */
+static size_t build_png(uint8_t *out, uint32_t size)
+{
+    uint8_t ihdr[13];
+    uint8_t idat[8] = {0x78, 0x01, 0x01, 0x00, 0x00, 0xff, 0xff, 0x00};
+    size_t position;
+    int shift;
+    memcpy(out, "\x89PNG\r\n\x1a\n", 8);
+    for (shift = 0; shift < 4; ++shift) {
+        ihdr[shift] = (uint8_t)(size >> (24 - 8 * shift));
+        ihdr[4 + shift] = ihdr[shift];
+    }
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+    position = write_chunk(out, 8, "IHDR", ihdr, 13);
+    position = write_chunk(out, position, "IDAT", idat, sizeof idat);
+    position = write_chunk(out, position, "IEND", NULL, 0);
+    return position;
+}
+
 /* --- guest frame encoding -------------------------------------------------------------- */
 
 static size_t finish_guest(interop_writer_t *writer, uint16_t type, uint8_t *frame)
@@ -360,6 +409,38 @@ static void test_removed_app_requests_are_never_sent(const fixture_t *fixture)
     }
 }
 
+/*
+ * The header length must equal the bytes that follow it. A CatalogBegin whose header claims four
+ * payload bytes it does not carry is ignored: it must not open a transaction.
+ */
+static void test_header_length_must_match_frame(const fixture_t *fixture)
+{
+    uint8_t frame[FixtureFrameBytes];
+    fake_sender_t fake;
+    fake_clock_t clock;
+    session_catalog_handler_t handler;
+    session_handler_t table;
+    catalog_runtime_stats_t stats;
+    size_t length;
+    memset(&fake, 0, sizeof fake);
+    clock_set(&clock, 1000);
+    handler_bind(&handler, &fake, &clock, fixture->runtime);
+    table = session_catalog_handler_table(&handler);
+
+    length = guest_begin_or_end(InteropMsgCatalogBegin, frame);
+    frame[8] = 4; /* header length 4 with no payload bytes following */
+    Check(table.on_frame(table.context, InteropMsgCatalogBegin, 0, frame, length, NULL) == 0);
+    Check(handler.rejected_frames == 1);
+    Check(catalog_runtime_stats(fixture->runtime, &stats) == CatalogRuntimeOk);
+    Check(stats.transaction_open == 0);
+
+    /* The honest frame, with a matching length, opens the transaction. */
+    length = guest_begin_or_end(InteropMsgCatalogBegin, frame);
+    Check(table.on_frame(table.context, InteropMsgCatalogBegin, 0, frame, length, NULL) == 0);
+    Check(catalog_runtime_stats(fixture->runtime, &stats) == CatalogRuntimeOk);
+    Check(stats.transaction_open == 1);
+}
+
 /* A sender that never drains must neither abort the host nor make the pump spin. */
 static void test_never_draining_sender(const fixture_t *fixture)
 {
@@ -511,7 +592,8 @@ static void test_sync_requests_icon_and_publishes(const fixture_t *fixture)
     const uint8_t *key = NULL;
     uint16_t key_length = 0;
     uint32_t id;
-    uint8_t png[64];
+    uint8_t png[128];
+    size_t png_length;
     uint8_t digest[32];
 
     memset(&fake, 0, sizeof fake);
@@ -540,18 +622,11 @@ static void test_sync_requests_icon_and_publishes(const fixture_t *fixture)
     Check(table.next_deadline_ms(table.context, 1000) == 1000 + 10000);
 
     /* A valid PNG arrives in three frames: begin, chunk, end. */
-    memset(png, 0, sizeof png);
-    memcpy(png, "\x89PNG\r\n\x1a\n", 8);
-    png[15] = 13;
-    memcpy(png + 12, "IHDR", 4);
-    png[19] = 16;
-    png[23] = 16;
-    png[24] = 8;
-    png[25] = 6;
-    interop_sha256(png, sizeof png, digest);
-    length = guest_transfer_begin(id, sizeof png, "image/png", frame);
+    png_length = build_png(png, 16);
+    interop_sha256(png, png_length, digest);
+    length = guest_transfer_begin(id, png_length, "image/png", frame);
     Check(table.on_frame(table.context, InteropMsgTransferBegin, 0, frame, length, NULL) == 0);
-    length = guest_transfer_chunk(id, 0, png, sizeof png, frame);
+    length = guest_transfer_chunk(id, 0, png, (uint16_t)png_length, frame);
     Check(table.on_frame(table.context, InteropMsgTransferChunk, 0, frame, length, NULL) == 0);
     length = guest_transfer_end(id, digest, 32, frame);
     Check(table.on_frame(table.context, InteropMsgTransferEnd, 0, frame, length, NULL) == 0);
@@ -561,7 +636,7 @@ static void test_sync_requests_icon_and_publishes(const fixture_t *fixture)
     catalog_runtime_t *runtime = fixture->runtime;
     catalog_runtime_stats_t stats;
     Check(catalog_runtime_stats(runtime, &stats) == CatalogRuntimeOk);
-    Check(stats.apps == 1 && stats.outstanding == 0 && stats.icon_bytes == sizeof png);
+    Check(stats.apps == 1 && stats.outstanding == 0 && stats.icon_bytes == png_length);
 }
 
 static void test_exact_outbound_frames_and_queue_full(const fixture_t *fixture)
@@ -805,6 +880,10 @@ int main(int argc, char **argv)
 
     make_fixture(&fixture, argv[1]);
     test_clock_defaults_closing_and_wall_failure(&fixture);
+    destroy_fixture(&fixture);
+
+    make_fixture(&fixture, argv[1]);
+    test_header_length_must_match_frame(&fixture);
     destroy_fixture(&fixture);
 
     make_fixture(&fixture, argv[1]);
