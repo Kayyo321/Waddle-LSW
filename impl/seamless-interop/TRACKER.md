@@ -1502,7 +1502,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     nonblocking recv path; only actual recv0 records EOF, with no remote-detach
     inference. Keep the existing absolute deadline and all lifecycle assertions.
 
-- **Commit `HEAD`**: `fix(interop): convert ordinary Shell bitmaps with explicit alpha policy`
+- **Commit `eb5cbf2`**: `fix(interop): convert ordinary Shell bitmaps with explicit alpha policy`
   - **Task Impact**: +0% to TODO #27/#34 pending actual native qualification.
   - **Summary**: Real Windows status4 before allocator exposed the strict
     DIBSECTION assumption. Accept bounded real BITMAP dimensions and convert
@@ -1510,3 +1510,10 @@ its uncompiled draft earns no credit until current acceptance passes.
     no alpha contract opaque. Test authentic retained cleanup handles with
     fail-before-close and full guard cases. Root strict production(no seams)
     and profile fixture SDK/link pass; keep whole-source90% native gates.
+
+- **Commit `HEAD`**: `test(interop): expose read-only catalog smoke status without catalog contents`
+  - **Task Impact**: +0% to TODO #27/#34; native source gate remains open.
+  - **Summary**: Exact9fcd919 temporary shortcut/hash/close-retry cases pass,
+    but real AppsFolder/system smoke fails. Print typed status, copied native
+    error and retained handle count only. Genuine provider profile82.22%lines/
+    53.08%arcs remains below threshold; no enumeration progress accepted.

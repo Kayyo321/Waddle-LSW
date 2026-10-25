@@ -305,7 +305,10 @@ int main(void) {
     smoke_options.cleanup_owner = &cleanup_owner;
     smoke_options.max_nodes = 65536;
     smoke_options.deadline_monotonic_ns = GetTickCount64() * UINT64_C(1000000) + UINT64_C(30000000000);
-    Require(app_catalog_enumerate(allocator, &smoke_options, &smoke) == AppCatalogStatusOk);
+    app_catalog_status_t smoke_status = app_catalog_enumerate(allocator, &smoke_options, &smoke);
+    if (smoke_status != AppCatalogStatusOk) fprintf(stderr, "catalog smoke status=%u native_error=%lu pending_close=%zu\n",
+        (unsigned)smoke_status, (unsigned long)GetLastError(), cleanup_owner.count);
+    Require(smoke_status == AppCatalogStatusOk);
     Require(smoke.count <= AppCatalogMaxEntries);
     for (size_t index = 0; index < smoke.count; index++) Require(entry_identity_matches(&smoke.entries[index]));
 
