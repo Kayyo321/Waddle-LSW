@@ -1,19 +1,20 @@
 //! Pure bounded mapping of guest `(window, generation)` identities to host surfaces (TODO #11a).
 //!
-//! The table holds at most 64 realized windows and at most 64 deferred children per session
-//! epoch. It decides which identities the caller must realize or retire and in which order; it
-//! performs no native or Wayland call. Realized entries are kept in realization order, so every
-//! parent precedes its children. Deferred entries are kept in deferral order. The module owns only
-//! caller storage, allocates nothing, and never wraps a counter.
+//! The table holds at most 64 realized windows per session epoch. It decides whether one announced
+//! identity may be realized and which identities a retire removes, and in which order; it performs
+//! no native or Wayland call. Realized entries are kept in realization order, so every parent
+//! precedes its children. The module owns only caller storage, allocates nothing, and never wraps a
+//! counter.
 //!
-//! The contract is `impl/seamless-interop/claude_45_percent/host_window_map_contract.md`.
+//! A child whose exact parent pair is not realized is refused as a stale parent, never deferred. The
+//! guest defers such an announcement until the parent is exported (IMPL_DESC section 3.2.8), so the
+//! host keeps no deferred state. The contract is
+//! `impl/seamless-interop/claude_45_percent/host_window_map_contract.md`.
 const std = @import("std");
 
 /// Maximum realized windows (exported surfaces) per session epoch.
 pub const MaxRealized: usize = 64;
-/// Maximum deferred children per session epoch.
-pub const MaxDeferred: usize = 64;
-/// Minimum caller output capacity accepted by announce and retire.
+/// Minimum caller output capacity accepted by retire.
 pub const MaxOutput: usize = 64;
 
 /// Frozen `interop_window_role_t` value: Toplevel, xdg_toplevel without a parent.
@@ -49,72 +50,48 @@ pub const window_entry_t = extern struct {
     role: u8,
 };
 
-/// One deferred child, stored in deferral order.
-pub const deferred_entry_t = extern struct {
-    /// Announced identity that waits for its parent.
-    window: window_ref_t,
-    /// Exact parent identity that must become realized before this child can realize.
-    parent: window_ref_t,
-    /// Raw `interop_window_role_t` value, 1..6.
-    role: u8,
-};
-
 /// Complete table state. The caller owns the storage; the table holds no pointers.
 pub const host_window_map_t = extern struct {
-    /// Number of initialized entries at the front of `realized`.
+    /// Number of initialized entries at the front of `realized`, at most 64.
     realized_count: u32,
-    /// Number of initialized entries at the front of `deferred`.
-    deferred_count: u32,
     /// Realized windows in realization order.
     realized: [MaxRealized]window_entry_t,
-    /// Deferred children in deferral order.
-    deferred: [MaxDeferred]deferred_entry_t,
 };
 
 /// Result code of `announce`.
 pub const announce_status_t = enum(c_int) {
-    /// The window and the parent-closed deferred children were realized; see the output list.
+    /// The window is realized and appended to the table.
     Realize = 1,
-    /// The window waits for a parent that is not realized; it was appended to the deferred table.
-    Defer = 2,
-    /// The exact pair is already realized or already deferred.
-    RefuseDuplicate = 3,
-    /// The parent window is realized under a different generation; the reference is stale.
-    RefuseStaleParent = 4,
-    /// The window is known under a different generation; that generation must be retired first.
-    RefuseWindowConflict = 5,
-    /// A table limit or the realize closure would exceed 64 realized or 64 deferred entries.
-    RefuseExhausted = 6,
-    /// Zero identity, invalid role, invalid parent shape, or output capacity below MaxOutput.
-    RefuseInvalid = 7,
-};
-
-/// Result of `announce`. `count` is the number of entries written to the output list.
-pub const announce_result_t = extern struct {
-    /// Outcome of the announce.
-    status: announce_status_t,
-    /// Output entries written; nonzero only for Realize.
-    count: u32,
+    /// The exact pair is already realized. No change.
+    RefuseDuplicate = 2,
+    /// The parent pair is not realized: it was never announced, was retired, or its window is
+    /// realized under another generation. No change.
+    RefuseStaleParent = 3,
+    /// The window is realized under another generation; that generation must be retired first.
+    RefuseWindowConflict = 4,
+    /// The table already holds 64 realized windows. No change.
+    RefuseExhausted = 5,
+    /// Zero identity, invalid role, invalid parent shape. No change.
+    RefuseInvalid = 6,
 };
 
 /// Result code of `retire`.
 pub const retire_status_t = enum(c_int) {
-    /// The realized subtree was removed; output lists and counts describe it.
+    /// The realized subtree was removed; the output list and count describe it.
     Retired = 1,
-    /// No realized entry with that window and generation exists; nothing changed.
+    /// No realized entry with that exact pair exists (never realized, already retired, or another
+    /// generation). No change.
     Stale = 2,
-    /// Zero identity or output capacity below MaxOutput; nothing changed.
+    /// Zero identity or output capacity below MaxOutput. No change.
     RefuseInvalid = 3,
 };
 
-/// Result of `retire`. Counts are the number of entries written to each output list.
+/// Result of `retire`. `count` is the number of entries written to the output list.
 pub const retire_result_t = extern struct {
     /// Outcome of the retire.
     status: retire_status_t,
-    /// Realized windows removed, target included.
-    retired_count: u32,
-    /// Deferred children discarded because their parent pair was removed.
-    discarded_count: u32,
+    /// Removed windows written to the output list, target included; zero unless Retired.
+    count: u32,
 };
 
 /// Whether a window reference names a real identity (both fields nonzero).
@@ -147,30 +124,11 @@ fn realized_len(map: *const host_window_map_t) usize {
     return map.realized_count;
 }
 
-fn deferred_len(map: *const host_window_map_t) usize {
-    return map.deferred_count;
-}
-
 fn find_realized(map: *const host_window_map_t, window: u64) ?usize {
     for (map.realized[0..realized_len(map)], 0..) |entry, index| {
         if (entry.window.window == window) return index;
     }
     return null;
-}
-
-fn find_deferred(map: *const host_window_map_t, window: u64) ?usize {
-    for (map.deferred[0..deferred_len(map)], 0..) |entry, index| {
-        if (entry.window.window == window) return index;
-    }
-    return null;
-}
-
-fn refuse(status: announce_status_t) announce_result_t {
-    return .{ .status = status, .count = 0 };
-}
-
-fn refuse_retire(status: retire_status_t) retire_result_t {
-    return .{ .status = status, .retired_count = 0, .discarded_count = 0 };
 }
 
 /// Clear the table. Zero-filled storage is the same state. Callers must reset before first use
@@ -184,7 +142,7 @@ pub fn reset(map: *host_window_map_t) void {
 /// Look up a realized entry by exact identity.
 ///
 /// @param map Table; read only.
-/// @param window Identity to find; both fields must match. Returns null for any other pair.
+/// @param window Identity to find; both fields must match.
 /// @return A copy of the realized entry, or null when `window.window` is not realized under
 ///         `window.generation`.
 pub fn lookup(map: *const host_window_map_t, window: window_ref_t) ?window_entry_t {
@@ -211,135 +169,66 @@ pub fn realized_count(map: *const host_window_map_t) u32 {
     return map.realized_count;
 }
 
-/// Number of deferred children in the table.
+/// Realize one window if its parent, when named, is exactly realized.
 ///
-/// @param map Table; read only.
-/// @return Current deferred count, never above MaxDeferred.
-pub fn deferred_count(map: *const host_window_map_t) u32 {
-    return map.deferred_count;
-}
-
-/// Announce one window. Writes the realize list in output order when the status is Realize.
+/// A parent pair that is not realized is refused as a stale parent. The table never defers.
+/// The guest announces a child only after its parent is exported (IMPL_DESC section 3.2.8).
 ///
-/// The announced pair is `out[0]`. Deferred children whose parent is realized by this call follow
-/// in breadth-first order: children of `out[0]` in deferral order, then children of `out[1]`, and
-/// so on. Refusals and Defer change no state and write no output.
-///
-/// @param map Table; must not be null and must not alias `out`.
+/// @param map Table; must not be null.
 /// @param window Identity to realize; both fields nonzero.
-/// @param parent Exact parent identity, or none (zero in both fields).
-/// @param role Raw role value 1..6. Menu, Tooltip and ImePreedit require a valid parent.
-///             Toplevel and UacConsent require none.
-/// @param out Caller output list, length at least MaxOutput. Written only on Realize.
-/// @return Status and the number of output entries. Never fails with an error union.
+/// @param parent Exact parent identity, or none (zero in both fields). Menu, Tooltip and ImePreedit
+///               require a realized parent. Toplevel and UacConsent require none.
+/// @param role Raw role value 1..6.
+/// @return Status. Changes state only for Realize.
 /// @thread_safety Owner thread only; no internal synchronization.
-pub fn announce(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8, out: []window_ref_t) announce_result_t {
-    if (out.len < MaxOutput or !valid_ref(window) or !valid_optional_ref(parent) or !valid_role(role)) return refuse(.RefuseInvalid);
-    if (parent.window == window.window) return refuse(.RefuseInvalid);
-    if (forbids_parent(role) and parent.window != 0) return refuse(.RefuseInvalid);
-    if (is_popup_role(role) and parent.window == 0) return refuse(.RefuseInvalid);
+pub fn announce(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_status_t {
+    if (!valid_ref(window) or !valid_optional_ref(parent) or !valid_role(role)) return .RefuseInvalid;
+    if (parent.window == window.window) return .RefuseInvalid;
+    if (forbids_parent(role) and parent.window != 0) return .RefuseInvalid;
+    if (is_popup_role(role) and parent.window == 0) return .RefuseInvalid;
 
     if (find_realized(map, window.window)) |index| {
-        return refuse(if (map.realized[index].window.generation == window.generation) .RefuseDuplicate else .RefuseWindowConflict);
-    }
-    if (find_deferred(map, window.window)) |index| {
-        return refuse(if (map.deferred[index].window.generation == window.generation) .RefuseDuplicate else .RefuseWindowConflict);
+        return if (map.realized[index].window.generation == window.generation) .RefuseDuplicate else .RefuseWindowConflict;
     }
     if (parent.window != 0) {
-        if (find_realized(map, parent.window)) |index| {
-            if (map.realized[index].window.generation != parent.generation) return refuse(.RefuseStaleParent);
-        } else {
-            return defer_child(map, window, parent, role);
-        }
+        const index = find_realized(map, parent.window) orelse return .RefuseStaleParent;
+        if (map.realized[index].window.generation != parent.generation) return .RefuseStaleParent;
     }
-    return realize_closure(map, window, parent, role, out);
-}
-
-fn defer_child(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_result_t {
-    if (deferred_len(map) == MaxDeferred) return refuse(.RefuseExhausted);
-    map.deferred[deferred_len(map)] = .{ .window = window, .parent = parent, .role = role };
-    map.deferred_count += 1;
-    return .{ .status = .Defer, .count = 0 };
-}
-
-/// Plan the breadth-first realize closure, then commit it. Nothing is mutated until the whole
-/// closure is known to fit, so an exhausted refusal leaves the table unchanged.
-fn realize_closure(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8, out: []window_ref_t) announce_result_t {
-    if (realized_len(map) >= MaxRealized) return refuse(.RefuseExhausted);
-    var marked = [_]bool{false} ** MaxDeferred;
-    var take: [MaxDeferred]usize = undefined;
-    out[0] = window;
-    var planned: usize = 1;
-    var head: usize = 0;
-    while (head < planned) : (head += 1) {
-        const pair = out[head];
-        for (map.deferred[0..deferred_len(map)], 0..) |entry, index| {
-            if (marked[index] or !same_ref(entry.parent, pair)) continue;
-            if (realized_len(map) + planned >= MaxRealized) return refuse(.RefuseExhausted);
-            marked[index] = true;
-            take[planned - 1] = index;
-            out[planned] = entry.window;
-            planned += 1;
-        }
-    }
+    if (realized_len(map) == MaxRealized) return .RefuseExhausted;
 
     append_realized(map, window, parent, role);
-    for (take[0 .. planned - 1]) |index| {
-        const entry = map.deferred[index];
-        append_realized(map, entry.window, entry.parent, entry.role);
-    }
-    compact_deferred(map, &marked);
-    return .{ .status = .Realize, .count = @intCast(planned) };
+    return .Realize;
 }
 
-/// Append a realized entry. Its parent, when any, is already realized by construction.
+/// Append a realized entry. A popup's parent is realized by the caller's check.
 fn append_realized(map: *host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) void {
     const root = if (is_popup_role(role)) popup_root(map, parent) else window_ref_t{ .window = 0, .generation = 0 };
     map.realized[realized_len(map)] = .{ .window = window, .parent = parent, .root = root, .role = role };
     map.realized_count += 1;
 }
 
-/// Positioning root of a popup whose requested parent is already realized: a popup parent
-/// contributes its own root, any other parent is its own root.
+/// Positioning root of a popup whose parent is realized: a popup parent contributes its own root,
+/// any other parent is its own root.
 fn popup_root(map: *const host_window_map_t, parent: window_ref_t) window_ref_t {
     const index = find_realized(map, parent.window) orelse unreachable;
     const entry = map.realized[index];
     return if (is_popup_role(entry.role)) entry.root else entry.window;
 }
 
-/// Remove every deferred entry whose `remove` flag is set, keeping the relative order.
-fn compact_deferred(map: *host_window_map_t, remove: []const bool) void {
-    var write: usize = 0;
-    for (0..deferred_len(map)) |read| {
-        if (remove[read]) continue;
-        if (write != read) map.deferred[write] = map.deferred[read];
-        write += 1;
-    }
-    map.deferred_count = @intCast(write);
-}
-
-/// Remove a realized window and its realized subtree, and discard deferred children that can no
-/// longer realize.
+/// Remove a realized window and its realized subtree.
 ///
-/// Retired output is the removed set in reverse realization order: every descendant precedes its
-/// ancestor and the target is last. Discarded output lists discarded deferred children in deferral
-/// order. A discard cascades through deferred children of a discarded deferred pair.
+/// The output lists the removed pairs in reverse realization order: every descendant precedes its
+/// ancestor and the target is last. The subtree follows requested parents to any depth.
 ///
-/// Discard candidates cannot exist in a table built only by `announce` and `retire`: a deferred
-/// entry is created only when its parent is not realized, and a parent pair is unblocked the moment
-/// it realizes. The discard pass therefore runs only against states that the public operations
-/// cannot reach, and it keeps the reporting contract exact if such a state is ever constructed.
-///
-/// @param map Table; must not be null and must not alias either output list.
+/// @param map Table; must not be null and must not alias `out`.
 /// @param window Identity to retire; both fields nonzero and matching the realized generation.
-/// @param retired_out Output list, length at least MaxOutput.
-/// @param discarded_out Output list, length at least MaxOutput.
-/// @return Status and both output counts. Stale and refusal results change nothing.
+/// @param out Output list, length at least MaxOutput. Written only when the status is Retired.
+/// @return Status and the number of removed windows. Stale and refusal results change nothing.
 /// @thread_safety Owner thread only; no internal synchronization.
-pub fn retire(map: *host_window_map_t, window: window_ref_t, retired_out: []window_ref_t, discarded_out: []window_ref_t) retire_result_t {
-    if (retired_out.len < MaxOutput or discarded_out.len < MaxOutput or !valid_ref(window)) return refuse_retire(.RefuseInvalid);
-    const target = find_realized(map, window.window) orelse return refuse_retire(.Stale);
-    if (map.realized[target].window.generation != window.generation) return refuse_retire(.Stale);
+pub fn retire(map: *host_window_map_t, window: window_ref_t, out: []window_ref_t) retire_result_t {
+    if (out.len < MaxOutput or !valid_ref(window)) return .{ .status = .RefuseInvalid, .count = 0 };
+    const target = find_realized(map, window.window) orelse return .{ .status = .Stale, .count = 0 };
+    if (map.realized[target].window.generation != window.generation) return .{ .status = .Stale, .count = 0 };
 
     const len = realized_len(map);
     var remove = [_]bool{false} ** MaxRealized;
@@ -352,53 +241,16 @@ pub fn retire(map: *host_window_map_t, window: window_ref_t, retired_out: []wind
         }
     }
 
-    var retired_count: usize = 0;
+    var count: usize = 0;
     var position = len;
     while (position > 0) {
         position -= 1;
         if (!remove[position]) continue;
-        retired_out[retired_count] = map.realized[position].window;
-        retired_count += 1;
+        out[count] = map.realized[position].window;
+        count += 1;
     }
-
-    const deferred_total = deferred_len(map);
-    var discard = [_]bool{false} ** MaxDeferred;
-    var changed = true;
-    while (changed) {
-        changed = false;
-        for (map.deferred[0..deferred_total], 0..) |entry, index| {
-            if (discard[index]) continue;
-            if (!(parent_removed(map, &remove, entry.parent) or parent_discarded(map, &discard, entry.parent))) continue;
-            discard[index] = true;
-            changed = true;
-        }
-    }
-    var discarded_count: usize = 0;
-    for (map.deferred[0..deferred_total], 0..) |entry, index| {
-        if (!discard[index]) continue;
-        discarded_out[discarded_count] = entry.window;
-        discarded_count += 1;
-    }
-
     compact_realized(map, &remove);
-    compact_deferred(map, &discard);
-    return .{ .status = .Retired, .retired_count = @intCast(retired_count), .discarded_count = @intCast(discarded_count) };
-}
-
-/// Whether `parent` names a realized entry scheduled for removal.
-fn parent_removed(map: *const host_window_map_t, remove: []const bool, parent: window_ref_t) bool {
-    for (map.realized[0..realized_len(map)], 0..) |entry, index| {
-        if (remove[index] and same_ref(entry.window, parent)) return true;
-    }
-    return false;
-}
-
-/// Whether `parent` names a deferred entry already scheduled for discard.
-fn parent_discarded(map: *const host_window_map_t, discard: []const bool, parent: window_ref_t) bool {
-    for (map.deferred[0..deferred_len(map)], 0..) |entry, index| {
-        if (discard[index] and same_ref(entry.window, parent)) return true;
-    }
-    return false;
+    return .{ .status = .Retired, .count = @intCast(count) };
 }
 
 /// Remove realized entries flagged in `remove`, keeping realization order.
@@ -447,64 +299,37 @@ export fn host_window_map_reset(map: ?*host_window_map_t) callconv(.C) void {
     reset(map orelse return);
 }
 
-/// C ABI: announce one window. See `announce` for the status rules and output order.
+/// C ABI: realize one window. See `announce`.
 ///
 /// @param map Table; NULL gives RefuseInvalid. In, out.
-/// @param window Identity by value; both fields nonzero.
-/// @param parent Parent identity by value; both fields zero for none.
-/// @param role Raw `interop_window_role_t` value 1..6.
-/// @param out Output array of at least `out_capacity` entries; NULL gives RefuseInvalid. Written
-///            only on Realize. Must not overlap `map` or `out_count`. Out.
+/// @param window Identity by value; both fields nonzero. In.
+/// @param parent Parent identity by value; both fields zero for none. In.
+/// @param role Raw `interop_window_role_t` value 1..6. In.
+/// @return Announce status. Thread safety: owner thread only.
+export fn host_window_map_announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) callconv(.C) announce_status_t {
+    const target = map orelse return .RefuseInvalid;
+    return announce(target, window, parent, role);
+}
+
+/// C ABI: remove a realized subtree. See `retire` for the output order.
+///
+/// @param map Table; NULL gives RefuseInvalid. In, out.
+/// @param window Identity by value; both fields nonzero. In.
+/// @param out Output array of at least `out_capacity` entries; NULL gives RefuseInvalid. Written only
+///            on Retired. Must not overlap `map` or `out_count`. Out.
 /// @param out_capacity Entries available in `out`; below 64 gives RefuseInvalid. In.
-/// @param out_count Receives the output count. NULL gives RefuseInvalid. Not written for an
-///                  argument refusal (NULL or overlap). Must not overlap `map` or `out`. Out.
-/// @return Announce status. Never writes memory on RefuseInvalid from argument validation.
+/// @param out_count Receives the removed count; NULL gives RefuseInvalid. Must not overlap `map` or `out`. Out.
+/// @return Retire status. Argument refusals write no memory.
 /// @thread_safety Owner thread only; no internal synchronization.
-export fn host_window_map_announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) callconv(.C) announce_status_t {
+export fn host_window_map_retire(map: ?*host_window_map_t, window: window_ref_t, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) callconv(.C) retire_status_t {
     const count_ptr = out_count orelse return .RefuseInvalid;
     const target = map orelse return .RefuseInvalid;
     const out_base = out orelse return .RefuseInvalid;
     if (out_capacity < MaxOutput) return .RefuseInvalid;
     const out_slice = out_base[0..out_capacity];
     if (!regions_disjoint(&.{ region_of_value(target), region_of_slice(out_slice), region_of_value(count_ptr) })) return .RefuseInvalid;
-    const result = announce(target, window, parent, role, out_slice);
+    const result = retire(target, window, out_slice);
     count_ptr.* = result.count;
-    return result.status;
-}
-
-/// C ABI: remove a realized subtree. See `retire` for the output order and discard rules.
-///
-/// @param map Table; NULL gives RefuseInvalid. In, out.
-/// @param window Identity by value; both fields nonzero.
-/// @param retired_out Output array of at least `retired_capacity` entries; NULL gives RefuseInvalid.
-///                    Must not overlap any other argument region. Out.
-/// @param retired_capacity Entries available in `retired_out`; below 64 gives RefuseInvalid. In.
-/// @param retired_count Receives the retired count; NULL gives RefuseInvalid. Out.
-/// @param discarded_out Output array of at least `discarded_capacity` entries; NULL gives RefuseInvalid.
-///                      Must not overlap any other argument region. Out.
-/// @param discarded_capacity Entries available in `discarded_out`; below 64 gives RefuseInvalid. In.
-/// @param discarded_count Receives the discarded count; NULL gives RefuseInvalid. Out.
-/// @return Retire status. Argument refusals write no memory.
-/// @thread_safety Owner thread only; no internal synchronization.
-export fn host_window_map_retire(map: ?*host_window_map_t, window: window_ref_t, retired_out: ?[*]window_ref_t, retired_capacity: u32, retired_count: ?*u32, discarded_out: ?[*]window_ref_t, discarded_capacity: u32, discarded_count: ?*u32) callconv(.C) retire_status_t {
-    const retired_count_ptr = retired_count orelse return .RefuseInvalid;
-    const discarded_count_ptr = discarded_count orelse return .RefuseInvalid;
-    const target = map orelse return .RefuseInvalid;
-    const retired_base = retired_out orelse return .RefuseInvalid;
-    const discarded_base = discarded_out orelse return .RefuseInvalid;
-    if (retired_capacity < MaxOutput or discarded_capacity < MaxOutput) return .RefuseInvalid;
-    const retired_slice = retired_base[0..retired_capacity];
-    const discarded_slice = discarded_base[0..discarded_capacity];
-    if (!regions_disjoint(&.{
-        region_of_value(target),
-        region_of_slice(retired_slice),
-        region_of_slice(discarded_slice),
-        region_of_value(retired_count_ptr),
-        region_of_value(discarded_count_ptr),
-    })) return .RefuseInvalid;
-    const result = retire(target, window, retired_slice, discarded_slice);
-    retired_count_ptr.* = result.retired_count;
-    discarded_count_ptr.* = result.discarded_count;
     return result.status;
 }
 
@@ -542,19 +367,10 @@ export fn host_window_map_realized_count(map: ?*const host_window_map_t) callcon
     return if (map) |target| realized_count(target) else 0;
 }
 
-/// C ABI: number of deferred children; NULL gives 0.
-///
-/// @param map Table, read only. In.
-/// @return Deferred count, at most 64.
-/// @thread_safety Owner thread only.
-export fn host_window_map_deferred_count(map: ?*const host_window_map_t) callconv(.C) u32 {
-    return if (map) |target| deferred_count(target) else 0;
-}
-
 comptime {
     // Layout frozen by src/interop/host_window_map.h (and checked there by _Static_assert).
-    if (@sizeOf(window_ref_t) != 16 or @sizeOf(window_entry_t) != 56 or @sizeOf(deferred_entry_t) != 40) @compileError("host window map entry layout changed");
-    if (@sizeOf(host_window_map_t) != 6152) @compileError("host window map table layout changed");
+    if (@sizeOf(window_ref_t) != 16 or @sizeOf(window_entry_t) != 56) @compileError("host window map entry layout changed");
+    if (@sizeOf(host_window_map_t) != 3592) @compileError("host window map table layout changed");
 }
 
 // Test-only fixtures.
@@ -588,20 +404,45 @@ fn new_out() [MaxOutput]window_ref_t {
     return std.mem.zeroes([MaxOutput]window_ref_t);
 }
 
-test "reset produces an empty table with zero counts and zeroed entries" {
+/// The public functions are called through `never_inline` shims so that the optimized bodies keep
+/// their own branches. A call with constant arguments would otherwise fold refusal paths away.
+const abi_shim_t = struct {
+    fn reset(map: ?*host_window_map_t) void {
+        @call(.never_inline, host_window_map_reset, .{map});
+    }
+
+    fn announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8) announce_status_t {
+        return @call(.never_inline, host_window_map_announce, .{ map, window, parent, role });
+    }
+
+    fn retire(map: ?*host_window_map_t, window: window_ref_t, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) retire_status_t {
+        return @call(.never_inline, host_window_map_retire, .{ map, window, out, out_capacity, out_count });
+    }
+
+    fn lookup(map: ?*const host_window_map_t, window: window_ref_t, out: ?*window_entry_t) bool {
+        return @call(.never_inline, host_window_map_lookup, .{ map, window, out });
+    }
+
+    fn is_current(map: ?*const host_window_map_t, window: window_ref_t) bool {
+        return @call(.never_inline, host_window_map_is_current, .{ map, window });
+    }
+
+    fn realized(map: ?*const host_window_map_t) u32 {
+        return @call(.never_inline, host_window_map_realized_count, .{map});
+    }
+};
+
+test "reset produces an empty table and zero-filled storage is the same state" {
     var map = new_map();
     try testing.expectEqual(@as(u32, 0), realized_count(&map));
-    try testing.expectEqual(@as(u32, 0), deferred_count(&map));
     try expect_absent(&map, ref(1, 1));
+    var zeroed: host_window_map_t = std.mem.zeroes(host_window_map_t);
+    try testing.expectEqual(@as(u32, 0), realized_count(&zeroed));
 }
 
-test "announce toplevel realizes and records a single output entry" {
+test "announce toplevel realizes and records a rootless entry" {
     var map = new_map();
-    var out = new_out();
-    const result = announce(&map, ref(10, 1), none(), RoleToplevel, &out);
-    try testing.expectEqual(announce_status_t.Realize, result.status);
-    try testing.expectEqual(@as(u32, 1), result.count);
-    try expect_ref(ref(10, 1), out[0]);
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(10, 1), none(), RoleToplevel));
     try testing.expect(is_current(&map, ref(10, 1)));
     const entry = lookup(&map, ref(10, 1)).?;
     try testing.expectEqual(RoleToplevel, entry.role);
@@ -611,341 +452,194 @@ test "announce toplevel realizes and records a single output entry" {
 
 test "every announce refusal reports its status and changes nothing" {
     var map = new_map();
-    var out = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     const before = map;
 
     // Invalid identity and parent shapes.
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(0, 1), none(), RoleToplevel, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 0), none(), RoleToplevel, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(0, 1), RoleDialog, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(1, 0), RoleDialog, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(2, 1), RoleDialog, &out).status);
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(0, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 0), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(0, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(1, 0), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(2, 1), RoleDialog));
     // Invalid roles.
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), 0, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), 7, &out).status);
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), 0));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), 7));
     // Role parent rules.
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(1, 1), RoleToplevel, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(1, 1), RoleUacConsent, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleMenu, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleTooltip, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleImePreedit, &out).status);
-    // Output capacity below MaxOutput.
-    var short: [MaxOutput - 1]window_ref_t = undefined;
-    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleToplevel, &short).status);
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(1, 1), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), ref(1, 1), RoleUacConsent));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleMenu));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleTooltip));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, announce(&map, ref(2, 1), none(), RoleImePreedit));
 
-    // Duplicate and conflict.
-    try testing.expectEqual(announce_status_t.RefuseDuplicate, announce(&map, ref(1, 1), none(), RoleToplevel, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseWindowConflict, announce(&map, ref(1, 2), none(), RoleToplevel, &out).status);
-    try testing.expectEqual(@as(u32, 0), announce(&map, ref(1, 1), none(), RoleToplevel, &out).count);
+    // Duplicate and window conflict.
+    try testing.expectEqual(announce_status_t.RefuseDuplicate, announce(&map, ref(1, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseWindowConflict, announce(&map, ref(1, 2), none(), RoleToplevel));
 
     try testing.expectEqual(before.realized_count, map.realized_count);
-    try testing.expectEqual(before.deferred_count, map.deferred_count);
     try expect_ref(before.realized[0].window, map.realized[0].window);
     try testing.expectEqual(before.realized[0].role, map.realized[0].role);
 }
 
-test "stale parent generation refuses and duplicate or conflicting deferral is refused" {
+test "a child whose parent was never announced is refused as a stale parent and not stored" {
     var map = new_map();
-    var out = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(2, 1), ref(1, 2), RoleDialog, &out).status);
-    try testing.expectEqual(@as(u32, 0), deferred_count(&map));
-
-    // A child whose parent is not realized is deferred; a second copy of that pair is a duplicate.
-    try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(3, 1), ref(9, 1), RoleDialog, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseDuplicate, announce(&map, ref(3, 1), ref(9, 1), RoleDialog, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseWindowConflict, announce(&map, ref(3, 2), ref(9, 1), RoleDialog, &out).status);
-    try testing.expectEqual(@as(u32, 1), deferred_count(&map));
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(2, 1), ref(9, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(2, 1), ref(9, 1), RoleMenu));
+    try expect_absent(&map, ref(2, 1));
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
+    // The guest resends once the parent is exported; then the same child realizes.
+    _ = announce(&map, ref(9, 1), none(), RoleToplevel);
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(2, 1), ref(9, 1), RoleDialog));
 }
 
-test "deferred children realize breadth-first in deferral order when their parent arrives" {
+test "a parent realized under another generation is a stale parent" {
     var map = new_map();
-    var out = new_out();
-    // Deferred in this order: A and B wait for P, C waits for A.
-    try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(11, 1), ref(20, 1), RoleDialog, &out).status);
-    try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(12, 1), ref(20, 1), RoleDialog, &out).status);
-    try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(13, 1), ref(11, 1), RoleDialog, &out).status);
-    try testing.expectEqual(@as(u32, 3), deferred_count(&map));
-
-    const result = announce(&map, ref(20, 1), none(), RoleToplevel, &out);
-    try testing.expectEqual(announce_status_t.Realize, result.status);
-    try testing.expectEqual(@as(u32, 4), result.count);
-    try expect_ref(ref(20, 1), out[0]);
-    try expect_ref(ref(11, 1), out[1]);
-    try expect_ref(ref(12, 1), out[2]);
-    try expect_ref(ref(13, 1), out[3]);
-    try testing.expectEqual(@as(u32, 0), deferred_count(&map));
-    try testing.expectEqual(@as(u32, 4), realized_count(&map));
-    // Realization order keeps every parent before its children.
-    try expect_ref(ref(20, 1), map.realized[0].window);
-    try expect_ref(ref(13, 1), map.realized[3].window);
-    try expect_ref(ref(11, 1), map.realized[3].parent);
-}
-
-test "unblocking realizes only the children of the new pair and keeps the rest blocked in order" {
-    var map = new_map();
-    var out = new_out();
-    _ = announce(&map, ref(30, 1), ref(40, 1), RoleDialog, &out);
-    _ = announce(&map, ref(31, 1), ref(41, 1), RoleDialog, &out);
-    _ = announce(&map, ref(32, 1), ref(40, 1), RoleDialog, &out);
-    try testing.expectEqual(@as(u32, 3), deferred_count(&map));
-    const result = announce(&map, ref(40, 1), none(), RoleToplevel, &out);
-    try testing.expectEqual(@as(u32, 3), result.count);
-    try expect_ref(ref(30, 1), out[1]);
-    try expect_ref(ref(32, 1), out[2]);
-    try testing.expectEqual(@as(u32, 1), deferred_count(&map));
-    try expect_ref(ref(31, 1), map.deferred[0].window);
-}
-
-test "retire cascades children first in reverse realization order then the target" {
-    var map = new_map();
-    var out = new_out();
-    var retired = new_out();
-    var discarded = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog, &out);
-    _ = announce(&map, ref(3, 1), ref(2, 1), RoleDialog, &out);
-    _ = announce(&map, ref(4, 1), ref(1, 1), RoleDialog, &out);
-    _ = announce(&map, ref(5, 1), none(), RoleToplevel, &out);
-    // An unrelated child of a surviving window must not be swept up by the cascade.
-    _ = announce(&map, ref(6, 1), ref(5, 1), RoleDialog, &out);
-
-    const result = retire(&map, ref(1, 1), &retired, &discarded);
-    try testing.expectEqual(retire_status_t.Retired, result.status);
-    try testing.expectEqual(@as(u32, 4), result.retired_count);
-    try testing.expectEqual(@as(u32, 0), result.discarded_count);
-    try expect_ref(ref(4, 1), retired[0]);
-    try expect_ref(ref(3, 1), retired[1]);
-    try expect_ref(ref(2, 1), retired[2]);
-    try expect_ref(ref(1, 1), retired[3]);
-    try testing.expectEqual(@as(u32, 2), realized_count(&map));
-    try testing.expect(is_current(&map, ref(5, 1)));
-    try testing.expect(is_current(&map, ref(6, 1)));
-}
-
-test "retire discards a deferred child of the removed pair and cascades through its own children" {
-    // Reachable only from a state that announce cannot build (see retire's documentation): a
-    // deferred entry whose parent is realized. The table is built directly to exercise the rule.
-    var map = new_map();
-    var out = new_out();
-    var retired = new_out();
-    var discarded = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    _ = announce(&map, ref(9, 1), none(), RoleToplevel, &out);
-    map.deferred[0] = .{ .window = ref(5, 1), .parent = ref(1, 1), .role = RoleDialog };
-    map.deferred[1] = .{ .window = ref(6, 1), .parent = ref(5, 1), .role = RoleDialog };
-    map.deferred[2] = .{ .window = ref(7, 1), .parent = ref(9, 1), .role = RoleDialog };
-    map.deferred_count = 3;
-
-    const result = retire(&map, ref(1, 1), &retired, &discarded);
-    try testing.expectEqual(retire_status_t.Retired, result.status);
-    try testing.expectEqual(@as(u32, 1), result.retired_count);
-    try testing.expectEqual(@as(u32, 2), result.discarded_count);
-    try expect_ref(ref(5, 1), discarded[0]);
-    try expect_ref(ref(6, 1), discarded[1]);
-    try testing.expectEqual(@as(u32, 1), deferred_count(&map));
-    try expect_ref(ref(7, 1), map.deferred[0].window);
-}
-
-test "retire of unknown, stale and deferred pairs changes nothing" {
-    var map = new_map();
-    var out = new_out();
-    var retired = new_out();
-    var discarded = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    _ = announce(&map, ref(2, 1), ref(9, 1), RoleDialog, &out);
-    try testing.expectEqual(retire_status_t.Stale, retire(&map, ref(3, 1), &retired, &discarded).status);
-    try testing.expectEqual(retire_status_t.Stale, retire(&map, ref(1, 2), &retired, &discarded).status);
-    try testing.expectEqual(retire_status_t.Stale, retire(&map, ref(2, 1), &retired, &discarded).status);
-    try testing.expectEqual(retire_status_t.RefuseInvalid, retire(&map, ref(0, 1), &retired, &discarded).status);
-    var short: [MaxOutput - 1]window_ref_t = undefined;
-    try testing.expectEqual(retire_status_t.RefuseInvalid, retire(&map, ref(1, 1), &short, &discarded).status);
-    try testing.expectEqual(retire_status_t.RefuseInvalid, retire(&map, ref(1, 1), &retired, &short).status);
-    try expect_absent(&map, ref(1, 2));
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(2, 1), ref(1, 2), RoleDialog));
     try testing.expectEqual(@as(u32, 1), realized_count(&map));
-    try testing.expectEqual(@as(u32, 1), deferred_count(&map));
 }
 
-test "popup of a toplevel records the toplevel as its root" {
+test "a child announced after its parent was retired is a stale parent" {
     var map = new_map();
     var out = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(2, 1), ref(1, 1), RoleMenu, &out).status);
-    const entry = lookup(&map, ref(2, 1)).?;
-    try expect_ref(ref(1, 1), entry.parent);
-    try expect_ref(ref(1, 1), entry.root);
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    try testing.expectEqual(retire_status_t.Retired, retire(&map, ref(1, 1), &out).status);
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(2, 1), ref(1, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, announce(&map, ref(3, 1), ref(1, 1), RoleMenu));
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
 }
 
-test "popup of a popup is re-parented to the root toplevel while keeping the requested parent" {
+test "dialog without a parent and uac consent are realized without a parent" {
     var map = new_map();
-    var out = new_out();
-    var retired = new_out();
-    var discarded = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu, &out);
-    _ = announce(&map, ref(3, 1), ref(2, 1), RoleTooltip, &out);
-    _ = announce(&map, ref(4, 1), ref(3, 1), RoleImePreedit, &out);
-    const grandchild = lookup(&map, ref(4, 1)).?;
-    try expect_ref(ref(3, 1), grandchild.parent);
-    try expect_ref(ref(1, 1), grandchild.root);
-    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.root);
-
-    // The cascade follows the requested parent chain, so the whole popup chain goes with its root.
-    const result = retire(&map, ref(1, 1), &retired, &discarded);
-    try testing.expectEqual(@as(u32, 4), result.retired_count);
-    try expect_ref(ref(4, 1), retired[0]);
-}
-
-test "a popup whose parent is a deferred popup gets the root when the chain unblocks" {
-    var map = new_map();
-    var out = new_out();
-    try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(3, 1), ref(2, 1), RoleTooltip, &out).status);
-    try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(2, 1), ref(1, 1), RoleMenu, &out).status);
-    const result = announce(&map, ref(1, 1), none(), RoleDialog, &out);
-    try testing.expectEqual(@as(u32, 3), result.count);
-    try testing.expectEqual(@as(u32, 0), deferred_count(&map));
-    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.root);
-    try expect_ref(ref(1, 1), lookup(&map, ref(2, 1)).?.root);
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(1, 1), none(), RoleDialog));
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(2, 1), none(), RoleUacConsent));
+    try testing.expectEqual(RoleUacConsent, lookup(&map, ref(2, 1)).?.role);
 }
 
 test "a dialog keeps its parent and its own root stays none" {
     var map = new_map();
-    var out = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog, &out);
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(2, 1), ref(1, 1), RoleDialog));
     const dialog = lookup(&map, ref(2, 1)).?;
     try expect_ref(ref(1, 1), dialog.parent);
     try expect_ref(none(), dialog.root);
     try testing.expectEqual(RoleDialog, dialog.role);
 }
 
-test "dialog without a parent and uac consent are realized without a parent" {
+test "popup of a toplevel and of a dialog records that window as its root" {
     var map = new_map();
-    var out = new_out();
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(1, 1), none(), RoleDialog, &out).status);
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(2, 1), none(), RoleUacConsent, &out).status);
-    try testing.expectEqual(RoleUacConsent, lookup(&map, ref(2, 1)).?.role);
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(3, 1), ref(1, 1), RoleMenu));
+    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.root);
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(4, 1), ref(2, 1), RoleTooltip));
+    try expect_ref(ref(2, 1), lookup(&map, ref(4, 1)).?.root);
 }
 
-test "a popup whose parent is not realized defers instead of refusing" {
+test "popup of a popup is re-parented to the root while keeping the requested parent" {
     var map = new_map();
     var out = new_out();
-    try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(2, 1), ref(1, 1), RoleMenu, &out).status);
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(1, 1), none(), RoleToplevel, &out).status);
-    try testing.expect(is_current(&map, ref(2, 1)));
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
+    _ = announce(&map, ref(3, 1), ref(2, 1), RoleTooltip);
+    _ = announce(&map, ref(4, 1), ref(3, 1), RoleImePreedit);
+    const grandchild = lookup(&map, ref(4, 1)).?;
+    try expect_ref(ref(3, 1), grandchild.parent);
+    try expect_ref(ref(1, 1), grandchild.root);
+    try expect_ref(ref(1, 1), lookup(&map, ref(3, 1)).?.root);
+
+    // The cascade follows the requested parent chain, so the whole popup chain goes with its root.
+    const result = retire(&map, ref(1, 1), &out);
+    try testing.expectEqual(@as(u32, 4), result.count);
+    try expect_ref(ref(4, 1), out[0]);
+    try expect_ref(ref(1, 1), out[3]);
 }
 
-test "realize refuses when the closure would exceed 64 realized windows and changes nothing" {
+test "retire cascades children first in reverse realization order and leaves unrelated windows" {
     var map = new_map();
     var out = new_out();
-    for (1..MaxRealized) |index| {
-        _ = announce(&map, ref(index, 1), none(), RoleToplevel, &out);
-    }
-    try testing.expectEqual(@as(u32, 63), realized_count(&map));
-    try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(900, 1), ref(901, 1), RoleDialog, &out).status);
-    try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(902, 1), ref(901, 1), RoleDialog, &out).status);
-    // Realizing 901 unblocks 900 and 902: three slots are needed and only one is free.
-    try testing.expectEqual(announce_status_t.RefuseExhausted, announce(&map, ref(901, 1), none(), RoleToplevel, &out).status);
-    try testing.expectEqual(@as(u32, 63), realized_count(&map));
-    try testing.expectEqual(@as(u32, 2), deferred_count(&map));
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
+    _ = announce(&map, ref(3, 1), ref(2, 1), RoleDialog);
+    _ = announce(&map, ref(4, 1), ref(1, 1), RoleDialog);
+    _ = announce(&map, ref(5, 1), none(), RoleToplevel);
+    // An unrelated child of a surviving window must not be swept up by the cascade.
+    _ = announce(&map, ref(6, 1), ref(5, 1), RoleDialog);
+
+    const result = retire(&map, ref(1, 1), &out);
+    try testing.expectEqual(retire_status_t.Retired, result.status);
+    try testing.expectEqual(@as(u32, 4), result.count);
+    try expect_ref(ref(4, 1), out[0]);
+    try expect_ref(ref(3, 1), out[1]);
+    try expect_ref(ref(2, 1), out[2]);
+    try expect_ref(ref(1, 1), out[3]);
+    try testing.expectEqual(@as(u32, 2), realized_count(&map));
+    try testing.expect(is_current(&map, ref(5, 1)));
+    try testing.expect(is_current(&map, ref(6, 1)));
+}
+
+test "retire of unknown, stale, retired and invalid pairs changes nothing" {
+    var map = new_map();
+    var out = new_out();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    try testing.expectEqual(retire_status_t.Stale, retire(&map, ref(3, 1), &out).status);
+    try testing.expectEqual(retire_status_t.Stale, retire(&map, ref(1, 2), &out).status);
+    try testing.expectEqual(retire_status_t.RefuseInvalid, retire(&map, ref(0, 1), &out).status);
+    try testing.expectEqual(retire_status_t.RefuseInvalid, retire(&map, ref(1, 0), &out).status);
+    var short: [MaxOutput - 1]window_ref_t = undefined;
+    try testing.expectEqual(retire_status_t.RefuseInvalid, retire(&map, ref(1, 1), &short).status);
+    try testing.expectEqual(@as(u32, 1), realized_count(&map));
+
+    try testing.expectEqual(retire_status_t.Retired, retire(&map, ref(1, 1), &out).status);
+    try testing.expectEqual(retire_status_t.Stale, retire(&map, ref(1, 1), &out).status);
+    try testing.expectEqual(@as(u32, 0), realized_count(&map));
 }
 
 test "exactly 64 realized windows succeed and the 65th is refused" {
     var map = new_map();
-    var out = new_out();
     for (1..MaxRealized + 1) |index| {
-        try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(index, 1), none(), RoleToplevel, &out).status);
+        try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(index, 1), none(), RoleToplevel));
     }
     try testing.expectEqual(@as(u32, 64), realized_count(&map));
-    try testing.expectEqual(announce_status_t.RefuseExhausted, announce(&map, ref(65, 1), none(), RoleToplevel, &out).status);
-    try testing.expectEqual(announce_status_t.RefuseExhausted, announce(&map, ref(65, 1), ref(1, 1), RoleDialog, &out).status);
+    try testing.expectEqual(announce_status_t.RefuseExhausted, announce(&map, ref(65, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseExhausted, announce(&map, ref(65, 1), ref(1, 1), RoleDialog));
     try testing.expectEqual(@as(u32, 64), realized_count(&map));
-    try testing.expectEqual(@as(u32, 0), deferred_count(&map));
-}
-
-test "a realize closure that lands exactly on 64 succeeds and one more member is refused" {
-    // 61 realized, two children of 200: realizing 200 fills the table exactly to 64.
-    var map = new_map();
+    // Retiring one window frees a slot; the refused window then realizes.
     var out = new_out();
-    for (1..MaxRealized - 2) |index| {
-        _ = announce(&map, ref(index, 1), none(), RoleToplevel, &out);
-    }
-    _ = announce(&map, ref(300, 1), ref(200, 1), RoleDialog, &out);
-    _ = announce(&map, ref(301, 1), ref(200, 1), RoleDialog, &out);
-    const fits = announce(&map, ref(200, 1), none(), RoleToplevel, &out);
-    try testing.expectEqual(announce_status_t.Realize, fits.status);
-    try testing.expectEqual(@as(u32, 3), fits.count);
+    _ = retire(&map, ref(64, 1), &out);
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(65, 1), none(), RoleToplevel));
     try testing.expectEqual(@as(u32, 64), realized_count(&map));
-
-    // 62 realized, three children of 200: the closure needs 4 slots, only 2 are free.
-    var second = new_map();
-    for (1..MaxRealized - 1) |index| {
-        _ = announce(&second, ref(index, 1), none(), RoleToplevel, &out);
-    }
-    _ = announce(&second, ref(300, 1), ref(200, 1), RoleDialog, &out);
-    _ = announce(&second, ref(301, 1), ref(200, 1), RoleDialog, &out);
-    _ = announce(&second, ref(302, 1), ref(200, 1), RoleDialog, &out);
-    try testing.expectEqual(announce_status_t.RefuseExhausted, announce(&second, ref(200, 1), none(), RoleToplevel, &out).status);
-    try testing.expectEqual(@as(u32, 62), realized_count(&second));
-    try testing.expectEqual(@as(u32, 3), deferred_count(&second));
-    try expect_absent(&second, ref(200, 1));
 }
 
-test "exactly 64 deferred children succeed and the 65th is refused" {
+test "epoch reset clears every realized entry" {
     var map = new_map();
-    var out = new_out();
-    for (1..MaxDeferred + 1) |index| {
-        try testing.expectEqual(announce_status_t.Defer, announce(&map, ref(index, 1), ref(500, 1), RoleDialog, &out).status);
-    }
-    try testing.expectEqual(@as(u32, 64), deferred_count(&map));
-    try testing.expectEqual(announce_status_t.RefuseExhausted, announce(&map, ref(65, 1), ref(500, 1), RoleDialog, &out).status);
-    try testing.expectEqual(@as(u32, 64), deferred_count(&map));
-    try testing.expectEqual(@as(u32, 0), realized_count(&map));
-}
-
-test "epoch reset clears realized and deferred entries together" {
-    var map = new_map();
-    var out = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    _ = announce(&map, ref(2, 1), ref(7, 7), RoleDialog, &out);
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleDialog);
     reset(&map);
     try testing.expectEqual(@as(u32, 0), realized_count(&map));
-    try testing.expectEqual(@as(u32, 0), deferred_count(&map));
     try expect_absent(&map, ref(1, 1));
-    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(1, 1), none(), RoleToplevel, &out).status);
+    try testing.expectEqual(announce_status_t.Realize, announce(&map, ref(1, 1), none(), RoleToplevel));
 }
 
 // Reference model: a deliberately simple, separately written implementation of the same contract.
-// It uses growing lists and recursion where the module uses fixed arrays and one-pass closures, so
+// It uses growing lists and recursion where the module uses fixed arrays and one forward pass, so
 // agreement is evidence rather than a copy of the same code.
 const reference_model_t = struct {
     realized: std.ArrayList(window_entry_t),
-    deferred: std.ArrayList(deferred_entry_t),
 
     fn model_init() reference_model_t {
-        return .{ .realized = std.ArrayList(window_entry_t).init(testing.allocator), .deferred = std.ArrayList(deferred_entry_t).init(testing.allocator) };
+        return .{ .realized = std.ArrayList(window_entry_t).init(testing.allocator) };
     }
 
     fn model_deinit(self: *reference_model_t) void {
         self.realized.deinit();
-        self.deferred.deinit();
     }
 
     fn model_clear(self: *reference_model_t) void {
         self.realized.clearRetainingCapacity();
-        self.deferred.clearRetainingCapacity();
     }
 
-    fn model_find_realized(self: *const reference_model_t, window: u64) ?usize {
+    fn model_find(self: *const reference_model_t, window: u64) ?usize {
         for (self.realized.items, 0..) |entry, index| {
-            if (entry.window.window == window) return index;
-        }
-        return null;
-    }
-
-    fn model_find_deferred(self: *const reference_model_t, window: u64) ?usize {
-        for (self.deferred.items, 0..) |entry, index| {
             if (entry.window.window == window) return index;
         }
         return null;
@@ -953,13 +647,12 @@ const reference_model_t = struct {
 
     fn model_root(self: *const reference_model_t, parent: window_ref_t, role: u8) window_ref_t {
         if (!is_popup_role(role)) return none();
-        const index = self.model_find_realized(parent.window).?;
+        const index = self.model_find(parent.window).?;
         const entry = self.realized.items[index];
         return if (is_popup_role(entry.role)) entry.root else entry.window;
     }
 
-    fn model_announce(self: *reference_model_t, window: window_ref_t, parent: window_ref_t, role: u8, out: *std.ArrayList(window_ref_t)) !announce_status_t {
-        out.clearRetainingCapacity();
+    fn model_announce(self: *reference_model_t, window: window_ref_t, parent: window_ref_t, role: u8) !announce_status_t {
         if (window.window == 0 or window.generation == 0) return .RefuseInvalid;
         if ((parent.window == 0) != (parent.generation == 0)) return .RefuseInvalid;
         if (parent.window == window.window) return .RefuseInvalid;
@@ -967,50 +660,15 @@ const reference_model_t = struct {
         const popup = role == 3 or role == 4 or role == 6;
         if (popup and parent.window == 0) return .RefuseInvalid;
         if ((role == 1 or role == 5) and parent.window != 0) return .RefuseInvalid;
-
-        if (self.model_find_realized(window.window)) |index| {
+        if (self.model_find(window.window)) |index| {
             return if (self.realized.items[index].window.generation == window.generation) .RefuseDuplicate else .RefuseWindowConflict;
         }
-        if (self.model_find_deferred(window.window)) |index| {
-            return if (self.deferred.items[index].window.generation == window.generation) .RefuseDuplicate else .RefuseWindowConflict;
-        }
         if (parent.window != 0) {
-            if (self.model_find_realized(parent.window)) |index| {
-                if (self.realized.items[index].window.generation != parent.generation) return .RefuseStaleParent;
-            } else {
-                if (self.deferred.items.len == MaxDeferred) return .RefuseExhausted;
-                try self.deferred.append(.{ .window = window, .parent = parent, .role = role });
-                return .Defer;
-            }
+            const index = self.model_find(parent.window) orelse return .RefuseStaleParent;
+            if (self.realized.items[index].window.generation != parent.generation) return .RefuseStaleParent;
         }
         if (self.realized.items.len >= MaxRealized) return .RefuseExhausted;
-
-        // Breadth-first closure, planned on separate lists so a refused closure leaves the model as it was.
-        var pending = std.ArrayList(window_ref_t).init(testing.allocator);
-        defer pending.deinit();
-        var taken = std.ArrayList(usize).init(testing.allocator);
-        defer taken.deinit();
-        try pending.append(window);
-        var head: usize = 0;
-        while (head < pending.items.len) : (head += 1) {
-            for (self.deferred.items, 0..) |entry, index| {
-                if (std.mem.indexOfScalar(usize, taken.items, index) != null) continue;
-                if (!same_ref(entry.parent, pending.items[head])) continue;
-                if (self.realized.items.len + pending.items.len >= MaxRealized) return .RefuseExhausted;
-                try taken.append(index);
-                try pending.append(entry.window);
-            }
-        }
-
         try self.realized.append(.{ .window = window, .parent = parent, .root = self.model_root(parent, role), .role = role });
-        for (taken.items) |index| {
-            const entry = self.deferred.items[index];
-            try self.realized.append(.{ .window = entry.window, .parent = entry.parent, .root = self.model_root(entry.parent, entry.role), .role = entry.role });
-        }
-        std.mem.sort(usize, taken.items, {}, std.sort.desc(usize));
-        for (taken.items) |index| _ = self.deferred.orderedRemove(index);
-        try out.resize(pending.items.len);
-        @memcpy(out.items, pending.items);
         return .Realize;
     }
 
@@ -1023,70 +681,29 @@ const reference_model_t = struct {
         }
     }
 
-    fn model_retire(self: *reference_model_t, window: window_ref_t, retired: *std.ArrayList(window_ref_t), discarded: *std.ArrayList(window_ref_t)) !retire_status_t {
-        retired.clearRetainingCapacity();
-        discarded.clearRetainingCapacity();
+    fn model_retire(self: *reference_model_t, window: window_ref_t, out: *std.ArrayList(window_ref_t)) !retire_status_t {
+        out.clearRetainingCapacity();
         if (window.window == 0 or window.generation == 0) return .RefuseInvalid;
-        const target = self.model_find_realized(window.window) orelse return .Stale;
+        const target = self.model_find(window.window) orelse return .Stale;
         if (self.realized.items[target].window.generation != window.generation) return .Stale;
 
         var removed = std.ArrayList(usize).init(testing.allocator);
         defer removed.deinit();
         try self.model_collect(target, &removed);
         std.mem.sort(usize, removed.items, {}, std.sort.desc(usize));
-        for (removed.items) |index| try retired.append(self.realized.items[index].window);
-
-        var removed_pairs = std.ArrayList(window_ref_t).init(testing.allocator);
-        defer removed_pairs.deinit();
-        for (removed.items) |index| try removed_pairs.append(self.realized.items[index].window);
-
-        // Fixed point over deferred entries: discard when the parent was removed or discarded.
-        var dead = std.ArrayList(usize).init(testing.allocator);
-        defer dead.deinit();
-        var dead_pairs = std.ArrayList(window_ref_t).init(testing.allocator);
-        defer dead_pairs.deinit();
-        var changed = true;
-        while (changed) {
-            changed = false;
-            for (self.deferred.items, 0..) |entry, index| {
-                if (std.mem.indexOfScalar(usize, dead.items, index) != null) continue;
-                var hit = false;
-                for (removed_pairs.items) |pair| {
-                    if (same_ref(pair, entry.parent)) hit = true;
-                }
-                for (dead_pairs.items) |pair| {
-                    if (same_ref(pair, entry.parent)) hit = true;
-                }
-                if (!hit) continue;
-                try dead.append(index);
-                try dead_pairs.append(entry.window);
-                changed = true;
-            }
-        }
-        std.mem.sort(usize, dead.items, {}, std.sort.asc(usize));
-        for (dead.items) |index| try discarded.append(self.deferred.items[index].window);
-
-        std.mem.sort(usize, removed.items, {}, std.sort.desc(usize));
+        for (removed.items) |index| try out.append(self.realized.items[index].window);
         for (removed.items) |index| _ = self.realized.orderedRemove(index);
-        std.mem.sort(usize, dead.items, {}, std.sort.desc(usize));
-        for (dead.items) |index| _ = self.deferred.orderedRemove(index);
         return .Retired;
     }
 };
 
 fn expect_same_state(map: *const host_window_map_t, model: *const reference_model_t) !void {
     try testing.expectEqual(model.realized.items.len, realized_count(map));
-    try testing.expectEqual(model.deferred.items.len, deferred_count(map));
     for (model.realized.items, 0..) |entry, index| {
         try expect_ref(entry.window, map.realized[index].window);
         try expect_ref(entry.parent, map.realized[index].parent);
         try expect_ref(entry.root, map.realized[index].root);
         try testing.expectEqual(entry.role, map.realized[index].role);
-    }
-    for (model.deferred.items, 0..) |entry, index| {
-        try expect_ref(entry.window, map.deferred[index].window);
-        try expect_ref(entry.parent, map.deferred[index].parent);
-        try testing.expectEqual(entry.role, map.deferred[index].role);
     }
 }
 
@@ -1099,12 +716,6 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
     var out = new_out();
     var out_list = std.ArrayList(window_ref_t).init(testing.allocator);
     defer out_list.deinit();
-    var retired = new_out();
-    var retired_list = std.ArrayList(window_ref_t).init(testing.allocator);
-    defer retired_list.deinit();
-    var discarded = new_out();
-    var discarded_list = std.ArrayList(window_ref_t).init(testing.allocator);
-    defer discarded_list.deinit();
 
     var step: usize = 0;
     while (step < operations) : (step += 1) {
@@ -1117,21 +728,17 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
             const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
             const parent = if (random.uintLessThan(u8, 10) < 3) none() else ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
             const role = random.uintLessThan(u8, 9);
-            const got = announce(&map, window, parent, role, &out);
-            const expected = try model.model_announce(window, parent, role, &out_list);
-            try testing.expectEqual(expected, got.status);
-            try testing.expectEqual(@as(u32, @intCast(out_list.items.len)), got.count);
-            for (out_list.items, 0..) |pair, index| try expect_ref(pair, out[index]);
+            const got = announce(&map, window, parent, role);
+            const expected = try model.model_announce(window, parent, role);
+            try testing.expectEqual(expected, got);
         } else {
             const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
-            const got = retire(&map, window, &retired, &discarded);
-            const expected = try model.model_retire(window, &retired_list, &discarded_list);
+            const got = retire(&map, window, &out);
+            const expected = try model.model_retire(window, &out_list);
             try testing.expectEqual(expected, got.status);
             if (got.status == .Retired) {
-                try testing.expectEqual(@as(u32, @intCast(retired_list.items.len)), got.retired_count);
-                try testing.expectEqual(@as(u32, @intCast(discarded_list.items.len)), got.discarded_count);
-                for (retired_list.items, 0..) |pair, index| try expect_ref(pair, retired[index]);
-                for (discarded_list.items, 0..) |pair, index| try expect_ref(pair, discarded[index]);
+                try testing.expectEqual(@as(u32, @intCast(out_list.items.len)), got.count);
+                for (out_list.items, 0..) |pair, index| try expect_ref(pair, out[index]);
             }
         }
         try expect_same_state(&map, &model);
@@ -1146,47 +753,13 @@ test "randomized sequences agree with the reference model over small and large u
     try run_random_sequence(0x9E3779B97F4A7C15, 200, 6000);
 }
 
-/// The C ABI exports are called through `never_inline` shims so that the optimized wrapper bodies
-/// keep their own branches. A directly inlined call with constant NULL arguments would fold them away.
-const abi_shim_t = struct {
-    fn reset(map: ?*host_window_map_t) void {
-        @call(.never_inline, host_window_map_reset, .{map});
-    }
-
-    fn announce(map: ?*host_window_map_t, window: window_ref_t, parent: window_ref_t, role: u8, out: ?[*]window_ref_t, out_capacity: u32, out_count: ?*u32) announce_status_t {
-        return @call(.never_inline, host_window_map_announce, .{ map, window, parent, role, out, out_capacity, out_count });
-    }
-
-    fn retire(map: ?*host_window_map_t, window: window_ref_t, retired_out: ?[*]window_ref_t, retired_capacity: u32, retired_count: ?*u32, discarded_out: ?[*]window_ref_t, discarded_capacity: u32, discarded_count: ?*u32) retire_status_t {
-        return @call(.never_inline, host_window_map_retire, .{ map, window, retired_out, retired_capacity, retired_count, discarded_out, discarded_capacity, discarded_count });
-    }
-
-    fn lookup(map: ?*const host_window_map_t, window: window_ref_t, out: ?*window_entry_t) bool {
-        return @call(.never_inline, host_window_map_lookup, .{ map, window, out });
-    }
-
-    fn is_current(map: ?*const host_window_map_t, window: window_ref_t) bool {
-        return @call(.never_inline, host_window_map_is_current, .{ map, window });
-    }
-
-    fn realized(map: ?*const host_window_map_t) u32 {
-        return @call(.never_inline, host_window_map_realized_count, .{map});
-    }
-
-    fn deferred(map: ?*const host_window_map_t) u32 {
-        return @call(.never_inline, host_window_map_deferred_count, .{map});
-    }
-};
-
 test "C ABI counts and lookup accept NULL and report the table" {
     try testing.expectEqual(@as(u32, 0), abi_shim_t.realized(null));
-    try testing.expectEqual(@as(u32, 0), abi_shim_t.deferred(null));
     try testing.expect(!abi_shim_t.is_current(null, ref(1, 1)));
     try testing.expect(!abi_shim_t.lookup(null, ref(1, 1), null));
 
     var map = new_map();
-    var out = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
     abi_shim_t.reset(null);
     try testing.expectEqual(@as(u32, 1), abi_shim_t.realized(&map));
     abi_shim_t.reset(&map);
@@ -1197,25 +770,17 @@ test "C ABI counts and lookup accept NULL and report the table" {
 test "C ABI announce and retire write outputs and counts on success" {
     var map = new_map();
     var out = new_out();
-    var retired = new_out();
-    var discarded = new_out();
     var count: u32 = 99;
-    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, &count));
-    try testing.expectEqual(@as(u32, 1), count);
-    try expect_ref(ref(1, 1), out[0]);
-    try testing.expectEqual(announce_status_t.Defer, abi_shim_t.announce(&map, ref(2, 1), ref(9, 1), RoleDialog, &out, MaxOutput, &count));
-    try testing.expectEqual(@as(u32, 0), count);
-    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(9, 1), none(), RoleToplevel, &out, MaxOutput, &count));
-    try testing.expectEqual(@as(u32, 2), count);
-    try expect_ref(ref(2, 1), out[1]);
+    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.RefuseStaleParent, abi_shim_t.announce(&map, ref(2, 1), ref(9, 1), RoleDialog));
+    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(null, ref(2, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(9, 1), none(), RoleToplevel));
+    try testing.expectEqual(announce_status_t.Realize, abi_shim_t.announce(&map, ref(2, 1), ref(9, 1), RoleDialog));
 
-    var retired_count: u32 = 99;
-    var discarded_count: u32 = 99;
-    try testing.expectEqual(retire_status_t.Retired, abi_shim_t.retire(&map, ref(9, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(@as(u32, 2), retired_count);
-    try testing.expectEqual(@as(u32, 0), discarded_count);
-    try expect_ref(ref(2, 1), retired[0]);
-    try expect_ref(ref(9, 1), retired[1]);
+    try testing.expectEqual(retire_status_t.Retired, abi_shim_t.retire(&map, ref(9, 1), &out, MaxOutput, &count));
+    try testing.expectEqual(@as(u32, 2), count);
+    try expect_ref(ref(2, 1), out[0]);
+    try expect_ref(ref(9, 1), out[1]);
     try testing.expectEqual(@as(u32, 1), abi_shim_t.realized(&map));
 }
 
@@ -1223,45 +788,25 @@ test "C ABI rejects NULL, short and aliased arguments without writing" {
     var map = new_map();
     var out = new_out();
     var count: u32 = 77;
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(null, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, &count));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, null, MaxOutput, &count));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, null));
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput - 1, &count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(null, ref(1, 1), &out, MaxOutput, &count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), null, MaxOutput, &count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &out, MaxOutput, null));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &out, MaxOutput - 1, &count));
     try testing.expectEqual(@as(u32, 77), count);
 
-    // An output array that aliases the table, or a count that points into it, is refused untouched.
+    // An output array aliasing the table, or a count pointing into it, is refused untouched.
     const alias: [*]window_ref_t = @ptrCast(&map);
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, alias, MaxOutput, &count));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), alias, MaxOutput, &count));
     const inside: *u32 = &map.realized_count;
-    try testing.expectEqual(announce_status_t.RefuseInvalid, abi_shim_t.announce(&map, ref(1, 1), none(), RoleToplevel, &out, MaxOutput, inside));
+    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &out, MaxOutput, inside));
     try testing.expectEqual(@as(u32, 0), map.realized_count);
-    try testing.expectEqual(@as(u32, 0), map.deferred_count);
-
-    var retired = new_out();
-    var discarded = new_out();
-    var retired_count: u32 = 5;
-    var discarded_count: u32 = 5;
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(null, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), null, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, null, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, null, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, null));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput - 1, &retired_count, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput - 1, &discarded_count));
-    try testing.expectEqual(@as(u32, 5), retired_count);
-    try testing.expectEqual(@as(u32, 5), discarded_count);
-    // Retired and discarded output lists may not share storage with each other either.
-    const shared: [*]window_ref_t = &retired;
-    try testing.expectEqual(retire_status_t.RefuseInvalid, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, shared, MaxOutput, &discarded_count));
-    try testing.expectEqual(retire_status_t.Stale, abi_shim_t.retire(&map, ref(1, 1), &retired, MaxOutput, &retired_count, &discarded, MaxOutput, &discarded_count));
-    try testing.expectEqual(@as(u32, 0), retired_count);
+    try testing.expectEqual(@as(u32, 77), count);
 }
 
 test "C ABI lookup returns a copy and a presence test needs no output" {
     var map = new_map();
-    var out = new_out();
-    _ = announce(&map, ref(1, 1), none(), RoleToplevel, &out);
-    _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu, &out);
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    _ = announce(&map, ref(2, 1), ref(1, 1), RoleMenu);
     var entry: window_entry_t = undefined;
     try testing.expect(abi_shim_t.lookup(&map, ref(2, 1), &entry));
     try expect_ref(ref(1, 1), entry.root);
@@ -1270,5 +815,4 @@ test "C ABI lookup returns a copy and a presence test needs no output" {
     try testing.expect(abi_shim_t.is_current(&map, ref(2, 1)));
     try testing.expect(!abi_shim_t.is_current(&map, ref(3, 1)));
     try testing.expectEqual(@as(u32, 2), abi_shim_t.realized(&map));
-    try testing.expectEqual(@as(u32, 0), abi_shim_t.deferred(&map));
 }
