@@ -242,7 +242,7 @@ fn bytes_arg(ptr: ?[*]const u8, len: usize, max: usize) abi_error_t![]const u8 {
 /// `text` and `out` must be non-NULL when len is nonzero (`out` always).
 /// Returns Ok, NullArgument, or InvalidKlid. Writes `out` only on Ok.
 /// Thread safety: pure.
-export fn waddle_keyboard_layout_validate_klid(text: ?[*]const u8, len: usize, out: ?*klid_t) callconv(.C) status_t {
+export fn waddle_keyboard_layouts_validate_klid(text: ?[*]const u8, len: usize, out: ?*klid_t) callconv(.C) status_t {
     const o = out orelse return .NullArgument;
     const bytes = bytes_arg(text, len, KlidBytes) catch |err| return status_of(err);
     o.* = validate_klid(bytes) catch return .InvalidKlid;
@@ -254,7 +254,7 @@ export fn waddle_keyboard_layout_validate_klid(text: ?[*]const u8, len: usize, o
 /// with variant_len 0 for the default variant. `state` is inout, `out` is out.
 /// Returns Ok, NullArgument, or InvalidName. State and `out` change only on Ok.
 /// Thread safety: caller serializes calls on one state.
-export fn waddle_keyboard_layout_observe(state: ?*state_t, layout: ?[*]const u8, layout_len: usize, variant: ?[*]const u8, variant_len: usize, out: ?*outcome_abi_t) callconv(.C) status_t {
+export fn waddle_keyboard_layouts_observe(state: ?*state_t, layout: ?[*]const u8, layout_len: usize, variant: ?[*]const u8, variant_len: usize, out: ?*outcome_abi_t) callconv(.C) status_t {
     const s = state orelse return .NullArgument;
     const o = out orelse return .NullArgument;
     const layout_name = bytes_arg(layout, layout_len, MaxNameBytes) catch |err| return status_of(err);
@@ -266,7 +266,7 @@ export fn waddle_keyboard_layout_observe(state: ?*state_t, layout: ?[*]const u8,
 
 /// C ABI: clear the last-sent KLID. `state` is inout. Returns Ok or NullArgument.
 /// Thread safety: caller serializes calls on one state.
-export fn waddle_keyboard_layout_reset(state: ?*state_t) callconv(.C) status_t {
+export fn waddle_keyboard_layouts_reset(state: ?*state_t) callconv(.C) status_t {
     const s = state orelse return .NullArgument;
     reset(s);
     return .Ok;
@@ -387,44 +387,44 @@ test "C ABI validates arguments, maps outcomes and reports every status" {
     const null_state = rt(?*state_t, null);
     const null_text = rt(?[*]const u8, null);
     const null_outcome = rt(?*outcome_abi_t, null);
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_observe(null_state, us, us.len, null_text, 0, &outcome));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_observe(&state, us, us.len, null_text, 0, null_outcome));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_observe(&state, null_text, rt(usize, 2), null_text, 0, &outcome));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_observe(&state, us, us.len, null_text, rt(usize, 3), &outcome));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_observe(null_state, us, us.len, null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_observe(&state, us, us.len, null_text, 0, null_outcome));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_observe(&state, null_text, rt(usize, 2), null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_observe(&state, us, us.len, null_text, rt(usize, 3), &outcome));
     try std.testing.expectEqual(@as(u8, 0xEE), outcome.kind);
 
-    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layout_observe(&state, us, rt(usize, 0), null_text, 0, &outcome));
-    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layout_observe(&state, "U", 1, null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layouts_observe(&state, us, rt(usize, 0), null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layouts_observe(&state, "U", 1, null_text, 0, &outcome));
     const long = [_]u8{'a'} ** (MaxNameBytes + 1);
-    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layout_observe(&state, &long, rt(usize, long.len), null_text, 0, &outcome));
-    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layout_observe(&state, us, us.len, "B", 1, &outcome));
+    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layouts_observe(&state, &long, rt(usize, long.len), null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.InvalidName, waddle_keyboard_layouts_observe(&state, us, us.len, "B", 1, &outcome));
     try std.testing.expectEqual(@as(u8, 0xEE), outcome.kind);
     try std.testing.expect(!state.has_applied);
 
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_observe(&state, us, us.len, null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_observe(&state, us, us.len, null_text, 0, &outcome));
     try std.testing.expectEqual(@as(u8, @intFromEnum(outcome_kind_t.Send)), outcome.kind);
     try std.testing.expectEqualSlices(u8, "00000409", &outcome.klid.bytes);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_observe(&state, us, us.len, "intl", 4, &outcome));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_observe(&state, us, us.len, "intl", 4, &outcome));
     try std.testing.expectEqual(@as(u8, @intFromEnum(outcome_kind_t.Send)), outcome.kind);
     try std.testing.expectEqualSlices(u8, "00020409", &outcome.klid.bytes);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_observe(&state, "zz", 2, null_text, 0, &outcome));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_observe(&state, "zz", 2, null_text, 0, &outcome));
     try std.testing.expectEqual(@as(u8, @intFromEnum(outcome_kind_t.NoMapping)), outcome.kind);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_observe(&state, us, us.len, "intl", 4, &outcome));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_observe(&state, us, us.len, "intl", 4, &outcome));
     try std.testing.expectEqual(@as(u8, @intFromEnum(outcome_kind_t.Unchanged)), outcome.kind);
 
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_reset(null_state));
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_reset(&state));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_reset(null_state));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_reset(&state));
     try std.testing.expect(!state.has_applied);
 
     var klid = std.mem.zeroes(klid_t);
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_validate_klid("00000409", 8, rt(?*klid_t, null)));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layout_validate_klid(null_text, 8, &klid));
-    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layout_validate_klid("0000040g", 8, &klid));
-    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layout_validate_klid("00000409", 7, &klid));
-    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layout_validate_klid("000004090", 9, &klid));
-    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layout_validate_klid(null_text, rt(usize, 0), &klid));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_validate_klid("00000409", 8, rt(?*klid_t, null)));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_layouts_validate_klid(null_text, 8, &klid));
+    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layouts_validate_klid("0000040g", 8, &klid));
+    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layouts_validate_klid("00000409", 7, &klid));
+    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layouts_validate_klid("000004090", 9, &klid));
+    try std.testing.expectEqual(status_t.InvalidKlid, waddle_keyboard_layouts_validate_klid(null_text, rt(usize, 0), &klid));
     try std.testing.expectEqualSlices(u8, &[_]u8{0} ** KlidBytes, &klid.bytes);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layout_validate_klid("0000abcd", 8, &klid));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_layouts_validate_klid("0000abcd", 8, &klid));
     try std.testing.expectEqualSlices(u8, "0000ABCD", &klid.bytes);
 }
 

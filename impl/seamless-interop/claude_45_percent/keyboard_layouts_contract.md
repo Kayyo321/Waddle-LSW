@@ -1,6 +1,6 @@
 # Keyboard layout sync reducer (TODO #15 layout sync)
 
-`src/interop/keyboard_layout.zig` with C header `src/interop/keyboard_layout.h`
+`src/interop/keyboard_layouts.zig` with C header `src/interop/keyboard_layouts.h`
 implements the host-side layout mapping and send-on-change decision of IMPL_DESC
 3.6.3 "Layout sync". It owns no keymap parser, no libxkbcommon handle, no wire
 encoder and no `LoadKeyboardLayoutW` call. The host event loop passes it the
@@ -8,7 +8,7 @@ XKB layout and variant names it already obtained. The guest side gets only the
 KLID validator here; loading the layout is a guest API concern.
 
 File name: IMPL_DESC 3.6.3 names `src/interop/keyboard_layouts.zig`. This module
-is named `keyboard_layout.zig` as assigned for this lane. The lead must reconcile
+is named `keyboard_layouts.zig` as assigned for this lane. The lead must reconcile
 the two names in IMPL_DESC or rename the file before merge.
 
 ## Protocol facts used
@@ -43,8 +43,8 @@ the two names in IMPL_DESC or rename the file before merge.
 | `observe(state, layout, variant)` | fn | send-on-change decision |
 | `reset(state)` | fn | forget the last sent KLID |
 
-C ABI: `waddle_keyboard_layout_validate_klid`, `waddle_keyboard_layout_observe`,
-`waddle_keyboard_layout_reset`. Name arguments are `(ptr, len)` byte ranges.
+C ABI: `waddle_keyboard_layouts_validate_klid`, `waddle_keyboard_layouts_observe`,
+`waddle_keyboard_layouts_reset`. Name arguments are `(ptr, len)` byte ranges.
 A NULL pointer with length 0 means the empty string; a NULL pointer with a
 nonzero length returns `NullArgument`. Output is written only on `Ok`. The
 header mirrors the structs: `state_t` is 9 bytes, `outcome_abi_t` is 9 bytes,
@@ -181,11 +181,11 @@ connection, so `KeyboardLayout` is sent on connect (IMPL_DESC 3.6.3).
 | `InvalidKlid` | `error.InvalidKlid` | text not eight hex digits, or all zero | none |
 
 `NoMapping` is a successful outcome, not an error. The ABI returns `Ok` with
-`kind = WaddleKeyboardLayoutNoMapping`.
+`kind = WaddleKeyboardLayoutsNoMapping`.
 
 ## Verification
 
-Zig built-in tests in `keyboard_layout.zig` (run by `make interop-keyboard-lanes-test`):
+Zig built-in tests in `keyboard_layouts.zig` (run by `make interop-keyboard-lanes-test`):
 
 - Layout name charset: boundaries (1 and 64 bytes accepted, 0 and 65 rejected),
   uppercase, dash, space, dot, NUL, 0xFF rejected.
@@ -205,11 +205,11 @@ Zig built-in tests in `keyboard_layout.zig` (run by `make interop-keyboard-lanes
   keys and compares them directly.
 - ABI struct sizes match the C header.
 
-`keyboard_layout_abi.c` is an independent C consumer. It is built with
+`keyboard_layouts_abi.c` is an independent C consumer. It is built with
 `-fsanitize=address,leak,undefined` and run with `detect_leaks=1`
 (`make interop-keyboard-lanes-sanitizers`).
 
-Coverage (`python3 tests/av/coverage.py keyboard_layout`): line 100.00% (58/58),
+Coverage (`python3 tests/av/coverage.py keyboard_layouts`): line 100.00% (58/58),
 branch 96.15% (50/52), measured at this commit.
 
 Zig sanitizer runs are not claimed. The Zig suite uses no allocator, so
@@ -217,7 +217,7 @@ Zig sanitizer runs are not claimed. The Zig suite uses no allocator, so
 
 ## Deviations and open items
 
-- File name: `keyboard_layout.zig` instead of IMPL_DESC's `keyboard_layouts.zig`
+- File name: `keyboard_layouts.zig` instead of IMPL_DESC's `keyboard_layouts.zig`
   (see top of this document).
 - Table completeness: 36 verified rows against the spec's ≥ 80 (see above).
 - The table is built from the Windows default input profile for each locale.

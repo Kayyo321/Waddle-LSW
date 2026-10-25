@@ -10,31 +10,31 @@ build/interop_keyboard_lock.o: src/interop/keyboard_lock.zig | build
 	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -femit-bin=$@
 build/interop_keyboard_lock_abi_test: tests/interop/keyboard_lock_abi.c build/interop_keyboard_lock.o src/interop/keyboard_lock.h | build
 	$(CC) $(KeyboardLaneSanitizerFlags) $< build/interop_keyboard_lock.o $(LDFLAGS) -o $@
-build/interop_keyboard_layout.o: src/interop/keyboard_layout.zig | build
+build/interop_keyboard_layouts.o: src/interop/keyboard_layouts.zig | build
 	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -femit-bin=$@
-build/interop_keyboard_layout_abi_test: tests/interop/keyboard_layout_abi.c build/interop_keyboard_layout.o src/interop/keyboard_layout.h | build
-	$(CC) $(KeyboardLaneSanitizerFlags) $< build/interop_keyboard_layout.o $(LDFLAGS) -o $@
+build/interop_keyboard_layouts_abi_test: tests/interop/keyboard_layouts_abi.c build/interop_keyboard_layouts.o src/interop/keyboard_layouts.h | build
+	$(CC) $(KeyboardLaneSanitizerFlags) $< build/interop_keyboard_layouts.o $(LDFLAGS) -o $@
 build/interop_keyboard_inhibit.o: src/interop/keyboard_inhibit.zig | build
 	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -femit-bin=$@
 build/interop_keyboard_inhibit_abi_test: tests/interop/keyboard_inhibit_abi.c build/interop_keyboard_inhibit.o src/interop/keyboard_inhibit.h | build
 	$(CC) $(KeyboardLaneSanitizerFlags) $< build/interop_keyboard_inhibit.o $(LDFLAGS) -o $@
 
 .PHONY: interop-keyboard-lanes-sanitizers
-interop-keyboard-lanes-sanitizers: build/interop_keyboard_lock_abi_test build/interop_keyboard_layout_abi_test build/interop_keyboard_inhibit_abi_test
+interop-keyboard-lanes-sanitizers: build/interop_keyboard_lock_abi_test build/interop_keyboard_layouts_abi_test build/interop_keyboard_inhibit_abi_test
 	$(KeyboardLaneSanitizerEnv) ./build/interop_keyboard_lock_abi_test
-	$(KeyboardLaneSanitizerEnv) ./build/interop_keyboard_layout_abi_test
+	$(KeyboardLaneSanitizerEnv) ./build/interop_keyboard_layouts_abi_test
 	$(KeyboardLaneSanitizerEnv) ./build/interop_keyboard_inhibit_abi_test
 
 .PHONY: interop-keyboard-lanes-test
 interop-keyboard-lanes-test: interop-keyboard-lanes-sanitizers
 	$(ZIG) test src/interop/keyboard_lock.zig
-	$(ZIG) test src/interop/keyboard_layout.zig
+	$(ZIG) test src/interop/keyboard_layouts.zig
 	$(ZIG) test src/interop/keyboard_inhibit.zig
 
 .PHONY: interop-keyboard-lanes-coverage
 interop-keyboard-lanes-coverage:
 	python3 tests/av/coverage.py keyboard_lock
-	python3 tests/av/coverage.py keyboard_layout
+	python3 tests/av/coverage.py keyboard_layouts
 	python3 tests/av/coverage.py keyboard_inhibit
 
 InteropLaneTests += interop-keyboard-lanes-test
