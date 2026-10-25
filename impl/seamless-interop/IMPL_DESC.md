@@ -3907,23 +3907,20 @@ This amendment fills the positioner gap recorded by the 45 percent audit. It
 changes no frozen wire format. Hosts that implemented an earlier reading of
 Section 4.3 must conform to it before TODO #11 credit.
 
-**Mapping table.** The host keeps at most 64 exported windows and at most 64
-deferred children per session epoch, keyed by `(window, generation)` with both
-nonzero. A `WindowAnnounce` whose `parent` is nonzero is realized only when the
-exact `(parent, parent_generation)` pair is currently realized. If the exact parent
-pair is itself currently deferred, the child is deferred behind it and is
-re-evaluated whenever any window is realized. Otherwise (the parent pair was
-never announced, was retired, or its window is realized under a different
-generation) the Announce is refused as a stale parent, because the single
-ordered stream guarantees a parent is announced before its children. Retiring a
-deferred pair removes it and discards, in announce order, every deferred
-descendant; discarded children are never realized and the host's reply policy
-is an `Error` with `StaleWindow`. Retiring a
-parent retires its realized children first, in reverse announce order. Any
-message naming a pair that is not currently realized, or a generation other
-than the realized one for that window, is stale and changes nothing. Duplicate
-Announce for a realized pair is refused. The 65th realized window or 65th
-deferred child is refused with `Error{ResourceExhausted}` and no state change.
+**Mapping table.** The host keeps at most 64 realized windows per session epoch,
+keyed by `(window, generation)` with both nonzero. The guest defers announcing a
+child until its parent is exported (Section 3.2.8), so the host never defers: a
+`WindowAnnounce` whose `parent` is nonzero is realized only when the exact
+`(parent, parent_generation)` pair is currently realized, and is otherwise
+refused as a stale parent (parent never announced, retired, or its window
+realized under another generation). Retiring a parent retires its realized
+children first, in reverse realization order. A retire naming a pair that is
+not realized is a stale no-op. Any message naming a pair that is not currently
+realized, or a generation other than the realized one for that window, is
+stale and changes nothing. Duplicate Announce for a realized pair is refused,
+and Announce for a live window under another generation is refused as a
+conflict. The 65th realized window is refused with `Error{ResourceExhausted}`
+and no state change.
 
 **Roles.** `Toplevel` and `Dialog` map to `xdg_toplevel`; `Dialog` calls
 `set_parent` with the parent's toplevel when the parent is a realized
