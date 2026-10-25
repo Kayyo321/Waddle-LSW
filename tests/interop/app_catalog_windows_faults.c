@@ -19,6 +19,7 @@
 #include <propvarutil.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +40,8 @@ typedef enum catalog_fault_kind_t {
     CatalogFaultComCreateNull,
     CatalogFaultComPersistNull,
     CatalogFaultComPropertyFailedNonNull,
+    CatalogFaultUtf8Oversize,
+    CatalogFaultIdentityOversize,
 } catalog_fault_kind_t;
 
 typedef struct catalog_fault_state_t {
@@ -59,6 +62,7 @@ static size_t catalog_fault_property_qi_acquired;
 static size_t catalog_fault_property_releases;
 static size_t catalog_fault_property_get_value_calls;
 static IPropertyStore *catalog_fault_failed_property_store;
+static const wchar_t *catalog_fault_final_path_override;
 
 static HRESULT WINAPI catalog_fault_sh_get_known_folder_item(REFKNOWNFOLDERID folder_id,
     KNOWN_FOLDER_FLAG flags, HANDLE token, REFIID iid, void **output) {
@@ -133,6 +137,7 @@ static void *catalog_fault_realloc(void *pointer, size_t size) {
 static int WINAPI catalog_fault_wide_char_to_multi_byte(UINT code_page, DWORD flags,
     LPCWCH wide, int wide_length, LPSTR output, int output_length,
     LPCCH default_character, LPBOOL used_default_character) {
+    if (catalog_fault_hit(CatalogFaultUtf8Oversize) && output == NULL) return (int)InteropMaxStringBytes + 1;
     if (catalog_fault_hit(CatalogFaultUtf8Conversion)) {
         SetLastError(ERROR_NO_UNICODE_TRANSLATION);
         return 0;
@@ -144,6 +149,7 @@ static int WINAPI catalog_fault_wide_char_to_multi_byte(UINT code_page, DWORD fl
 static int WINAPI catalog_fault_lcmap_string_ex(LPCWSTR locale, DWORD flags,
     LPCWSTR source, int source_length, LPWSTR destination, int destination_length,
     LPNLSVERSIONINFO version, LPVOID reserved, LPARAM sort_handle) {
+    if (catalog_fault_hit(CatalogFaultIdentityOversize) && destination == NULL) return (int)AppCatalogMaxPathUnits + 1;
     if (catalog_fault_hit(CatalogFaultIdentityMapping)) {
         SetLastError(ERROR_INVALID_DATA);
         return 0;
@@ -167,6 +173,12 @@ static DWORD WINAPI catalog_fault_get_final_path(HANDLE file, LPWSTR output,
     if (catalog_fault_hit(CatalogFaultFinalPath)) {
         SetLastError(ERROR_ACCESS_DENIED);
         return 0;
+    }
+    if (catalog_fault_final_path_override != NULL) {
+        size_t length = wcslen(catalog_fault_final_path_override);
+        if (length + 1 > capacity) return (DWORD)(length + 1);
+        memcpy(output, catalog_fault_final_path_override, (length + 1) * sizeof(wchar_t));
+        return (DWORD)length;
     }
     return GetFinalPathNameByHandleW(file, output, capacity, flags);
 }
@@ -264,6 +276,8 @@ typedef struct catalog_fake_item_t {
     bool fail_display_name;
     bool fail_property;
     bool null_store_success;
+    bool separator_as_ui4;
+    ULONG separator_ui4_value;
 } catalog_fake_item_t;
 
 typedef struct catalog_fake_enumerator_t {
@@ -484,8 +498,13 @@ static HRESULT STDMETHODCALLTYPE catalog_fake_store_get_value(IPropertyStore *se
     if (item->fail_property) return E_FAIL;
     if (property_key->pid == PKEY_AppUserModel_IsDestListSeparator.pid &&
         IsEqualGUID(&property_key->fmtid, &PKEY_AppUserModel_IsDestListSeparator.fmtid)) {
-        value->vt = VT_BOOL;
-        value->boolVal = item->separator ? VARIANT_TRUE : VARIANT_FALSE;
+        if (item->separator_as_ui4) {
+            value->vt = VT_UI4;
+            value->ulVal = item->separator_ui4_value;
+        } else {
+            value->vt = VT_BOOL;
+            value->boolVal = item->separator ? VARIANT_TRUE : VARIANT_FALSE;
+        }
         return S_OK;
     }
     if (property_key->pid == PKEY_AppUserModel_ID.pid &&
@@ -858,6 +877,208 @@ static bool catalog_fault_cancelled(void *context) {
     return cancelled != NULL && *cancelled;
 }
 
+static bool catalog_fault_test_canonical_and_storage_helpers(const wchar_t *target) {
+    app_catalog_cleanup_owner_t owner;
+    app_catalog_cleanup_owner_init(&owner);
+    catalog_collector_t collector = {0};
+    collector.cleanup_owner = &owner;
+    collector.status = AppCatalogStatusOk;
+
+    wchar_t canonical[128];
+    size_t units = 777;
+    catalog_fault_final_path_override = L"\\\\?\\UNC\\server\\share\\target.exe";
+    bool ok = canonical_target(&collector, target, canonical, 128, &units) &&
+              units == wcslen(L"\\\\server\\share\\target.exe") &&
+              wcscmp(canonical, L"\\\\server\\share\\target.exe") == 0;
+    catalog_fault_final_path_override = L"relative-target";
+    units = 777;
+    if (canonical_target(&collector, target, canonical, 128, &units) || units != 777) ok = false;
+    catalog_fault_final_path_override = NULL;
+    catalog_fault_final_path_override = L"C:\\some-long-target.exe";
+    units = 777;
+    if (canonical_target(&collector, target, canonical, 8, &units) || units != 777) ok = false;
+    catalog_fault_final_path_override = NULL;
+    units = 777;
+    if (canonical_target(&collector, NULL, canonical, 128, &units) ||
+        canonical_target(&collector, target, NULL, 128, &units) ||
+        canonical_target(&collector, target, canonical, 7, &units) || units != 777) ok = false;
+    if (owner.count != 0) ok = false;
+
+    uint8_t *storage = malloc(AppCatalogMaxBytes);
+    if (storage == NULL) return false;
+    collector.storage = storage;
+    collector.storage_capacity = AppCatalogMaxBytes;
+    collector.storage_used = 0;
+    collector.status = AppCatalogStatusOk;
+    app_catalog_bytes_t empty = collector_copy(&collector, NULL, 0);
+    if (empty.data != NULL || empty.length != 0 || collector.storage_used != 0) ok = false;
+    if (collector_copy(&collector, NULL, 1).length != 0 || collector.status != AppCatalogStatusQuota ||
+        collector.storage_used != 0) ok = false;
+    collector.status = AppCatalogStatusOk;
+    collector.storage_used = AppCatalogMaxBytes - 1;
+    app_catalog_bytes_t last = collector_copy(&collector, "Z", 1);
+    if (last.data != storage + AppCatalogMaxBytes - 1 || last.length != 1 || storage[AppCatalogMaxBytes - 1] != 'Z' ||
+        collector.storage_used != AppCatalogMaxBytes) ok = false;
+    if (collector_copy(&collector, "Q", 1).length != 0 || collector.status != AppCatalogStatusQuota ||
+        collector.storage_used != AppCatalogMaxBytes) ok = false;
+
+    collector.storage_used = 0;
+    collector.status = AppCatalogStatusOk;
+    app_catalog_bytes_t converted = collector_utf8(&collector, L"codec", 5);
+    if (converted.length != 5 || memcmp(converted.data, "codec", 5) != 0) ok = false;
+    collector.storage_used = 0;
+    collector.status = AppCatalogStatusOk;
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultUtf8Conversion, 2, 0 };
+    converted = collector_utf8(&collector, L"codec", 5);
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultNone, 0, 0 };
+    if (converted.length != 0 || collector.status != AppCatalogStatusInvalidText || collector.storage_used != 0) ok = false;
+    collector.status = AppCatalogStatusOk;
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultUtf8Oversize, 1, 0 };
+    converted = collector_utf8(&collector, L"codec", 5);
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultNone, 0, 0 };
+    if (converted.length != 0 || collector.status != AppCatalogStatusQuota || collector.storage_used != 0) ok = false;
+    collector.status = AppCatalogStatusOk;
+    if (collector_utf8(&collector, NULL, 1).length != 0 || collector.status != AppCatalogStatusInvalidText) ok = false;
+    collector.status = AppCatalogStatusOk;
+    if (collector_utf8(&collector, L"x", (size_t)INT_MAX + 1).length != 0 || collector.status != AppCatalogStatusInvalidText) ok = false;
+
+    collector.status = AppCatalogStatusOk;
+    if (collector_identity_path(&collector, L"x", 0).length != 0 || collector.status != AppCatalogStatusQuota) ok = false;
+    collector.status = AppCatalogStatusOk;
+    if (collector_identity_path(&collector, L"x", AppCatalogMaxPathUnits + 1).length != 0 || collector.status != AppCatalogStatusQuota) ok = false;
+    collector.status = AppCatalogStatusOk;
+    const wchar_t *identity_input = L"C:\\TEMP\\APP.EXE";
+    size_t identity_units = wcslen(identity_input);
+    app_catalog_bytes_t identity = collector_identity_path(&collector, identity_input, identity_units);
+    if (identity.length != identity_units * sizeof(wchar_t) ||
+        wcsncmp((const wchar_t *)identity.data, identity_input, identity_units) != 0) ok = false;
+    collector.storage_used = 0;
+    collector.status = AppCatalogStatusOk;
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultIdentityMapping, 2, 0 };
+    identity = collector_identity_path(&collector, identity_input, identity_units);
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultNone, 0, 0 };
+    if (identity.length != 0 || collector.status != AppCatalogStatusInvalidPathIdentity || collector.storage_used != 0) ok = false;
+    collector.status = AppCatalogStatusOk;
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultIdentityOversize, 1, 0 };
+    identity = collector_identity_path(&collector, identity_input, identity_units);
+    catalog_fault_state = (catalog_fault_state_t){ CatalogFaultNone, 0, 0 };
+    if (identity.length != 0 || collector.status != AppCatalogStatusInvalidPathIdentity || collector.storage_used != 0) ok = false;
+
+    free(storage);
+    return ok;
+}
+
+static bool catalog_fault_test_value_helpers(void) {
+    app_catalog_cleanup_owner_t owner;
+    app_catalog_cleanup_owner_init(&owner);
+    uint8_t storage[256] = {0};
+    catalog_collector_t collector = {0};
+    collector.storage = storage;
+    collector.storage_capacity = sizeof(storage);
+    collector.options = &(app_catalog_enumeration_options_t){ .max_nodes = 1 };
+    collector.cleanup_owner = &owner;
+    collector.status = AppCatalogStatusOk;
+
+    const struct { const wchar_t *path; const char *expected; } directories[] = {
+        { L"C:\\file.exe", "C:\\" },
+        { L"C:\\", "C:\\" },
+        { L"\\\\server\\share\\file.exe", "\\\\server\\share" },
+        { L"plain", "" },
+    };
+    bool ok = true;
+    for (size_t index = 0; index < sizeof(directories) / sizeof(directories[0]); index++) {
+        collector.storage_used = 0;
+        collector.status = AppCatalogStatusOk;
+        app_catalog_bytes_t directory = directory_of_path(&collector, directories[index].path, wcslen(directories[index].path));
+        size_t expected_length = strlen(directories[index].expected);
+        if (directory.length != expected_length ||
+            (expected_length != 0 && memcmp(directory.data, directories[index].expected, expected_length) != 0)) ok = false;
+    }
+
+    catalog_fake_item_t item;
+    catalog_fake_item_init(&item);
+    item.aumid = L"short-id";
+    wchar_t buffer[16] = {0};
+    size_t units = 999;
+    if (property_string(&item.property_store, &PKEY_AppUserModel_ID, buffer, 8, &units) || units != 999) ok = false;
+    units = 999;
+    if (!property_string(&item.property_store, &PKEY_AppUserModel_ID, buffer, 9, &units) ||
+        units != 8 || wcscmp(buffer, L"short-id") != 0) ok = false;
+    item.separator_as_ui4 = true;
+    item.separator_ui4_value = 1;
+    if (!property_bool(&item.property_store, &PKEY_AppUserModel_IsDestListSeparator)) ok = false;
+    item.separator_ui4_value = 0;
+    if (property_bool(&item.property_store, &PKEY_AppUserModel_IsDestListSeparator)) ok = false;
+    if (property_string(NULL, &PKEY_AppUserModel_ID, buffer, 9, &units) ||
+        property_string(&item.property_store, &PKEY_AppUserModel_ID, NULL, 9, &units) ||
+        property_string(&item.property_store, &PKEY_AppUserModel_ID, buffer, 0, &units) ||
+        property_string(&item.property_store, &PKEY_AppUserModel_ID, buffer, 9, NULL) || property_bool(NULL, &PKEY_AppUserModel_IsDestListSeparator)) ok = false;
+
+    bool cancelled = true;
+    collector.options = &(app_catalog_enumeration_options_t){ .max_nodes = 1, .is_cancelled = catalog_fault_cancelled, .cancel_context = &cancelled };
+    collector.nodes = 0;
+    if (collector_checkpoint(&collector) || collector.status != AppCatalogStatusCancelled || collector.nodes != 0) ok = false;
+    cancelled = false;
+    collector.status = AppCatalogStatusOk;
+    collector.options = &(app_catalog_enumeration_options_t){ .max_nodes = 1, .deadline_monotonic_ns = 1 };
+    if (collector_checkpoint(&collector) || collector.status != AppCatalogStatusTimedOut || collector.nodes != 0) ok = false;
+    collector.status = AppCatalogStatusOk;
+    collector.options = &(app_catalog_enumeration_options_t){ .max_nodes = 0 };
+    if (collector_checkpoint(&collector) || collector.status != AppCatalogStatusQuota || collector.nodes != 0) ok = false;
+    collector.status = AppCatalogStatusOk;
+    collector.options = &(app_catalog_enumeration_options_t){ .max_nodes = 1 };
+    if (!collector_checkpoint(&collector) || collector.nodes != 1) ok = false;
+
+    collector.options = &(app_catalog_enumeration_options_t){ .max_nodes = 1 };
+    collector.count = AppCatalogMaxEntries;
+    collector.status = AppCatalogStatusOk;
+    if (add_item(&collector, AppCatalogSourceUserPrograms, AppCatalogIdentityAumid, L"id", 2,
+                 L"id", 2, L"name", 4, NULL, 0, L"", 0, L"", 0, NULL, 0, NULL, 0, false) ||
+        collector.status != AppCatalogStatusQuota) ok = false;
+    collector.count = 1;
+    collector.status = AppCatalogStatusOk;
+    if (add_item(&collector, AppCatalogSourceUserPrograms, AppCatalogIdentityAumid, L"id", 2,
+                 L"id", 2, L"name", 4, NULL, 0, L"", 0, L"", 0, NULL, 0, NULL, 0, false) ||
+        collector.status != AppCatalogStatusQuota) ok = false;
+
+    HANDLE handles[AppCatalogCleanupMaxHandles + 1] = {0};
+    app_catalog_cleanup_owner_t full_owner;
+    app_catalog_cleanup_owner_init(&full_owner);
+    if (retain_failed_handle(NULL, INVALID_HANDLE_VALUE, AppCatalogCleanupHandleWin32)) ok = false;
+    for (size_t index = 0; index < AppCatalogCleanupMaxHandles; index++) {
+        handles[index] = CreateEventW(NULL, FALSE, FALSE, NULL);
+        if (handles[index] == NULL) {
+            for (size_t prior = 0; prior < index; prior++) if (!CloseHandle(handles[prior])) ok = false;
+            return false;
+        }
+    }
+    handles[AppCatalogCleanupMaxHandles] = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (handles[AppCatalogCleanupMaxHandles] == NULL) {
+        for (size_t index = 0; index < AppCatalogCleanupMaxHandles; index++) if (!CloseHandle(handles[index])) ok = false;
+        return false;
+    }
+    for (size_t index = 0; index < AppCatalogCleanupMaxHandles; index++) {
+        full_owner.native_handles[index] = handles[index];
+        full_owner.kinds[index] = AppCatalogCleanupHandleWin32;
+        full_owner.count++;
+    }
+    if (retain_failed_handle(&full_owner, handles[AppCatalogCleanupMaxHandles], AppCatalogCleanupHandleWin32) ||
+        full_owner.count != AppCatalogCleanupMaxHandles || cleanup_owner_empty(&full_owner) ||
+        cleanup_owner_empty(NULL)) ok = false;
+    if (!CloseHandle(handles[AppCatalogCleanupMaxHandles])) ok = false;
+    if (app_catalog_cleanup_owner_retry(&full_owner) != AppCatalogStatusOk || full_owner.count != 0) ok = false;
+    app_catalog_cleanup_owner_init(&full_owner);
+    HANDLE retained = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (retained == NULL) return false;
+    if (!retain_failed_handle(&full_owner, retained, AppCatalogCleanupHandleWin32)) {
+        CloseHandle(retained);
+        return false;
+    }
+    if (!cleanup_owner_empty(&owner) || full_owner.count != 1 ||
+        app_catalog_cleanup_owner_retry(&full_owner) != AppCatalogStatusOk || full_owner.count != 0) ok = false;
+    return ok;
+}
+
 static void catalog_fault_remove_tree(const wchar_t *root, const wchar_t *link_directory,
                                       const wchar_t *target_path, size_t link_count) {
     (void)root;
@@ -917,6 +1138,10 @@ int app_catalog_windows_fault_fixture_run(void) {
         cleanup_owner.count = 1;
         goto cleanup;
     }
+    stage = "private-helper-branches";
+    stage_index = 0;
+    if (!catalog_fault_test_canonical_and_storage_helpers(target) ||
+        !catalog_fault_test_value_helpers()) goto cleanup;
     if (!catalog_fault_test_apps_folder_items(target, &cleanup_owner) ||
         !catalog_fault_test_apps_folder_enumerator()) goto cleanup;
     for (size_t index = 0; index < 33; index++) {

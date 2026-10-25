@@ -1627,7 +1627,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     property reads and one release. Strict standalone/profile SDK compiles pass;
     actual Windows rerun pending.
 
-- **Commit `HEAD`**: `test(interop): qualify native icon extraction and shared image ownership`
+- **Commit `60acf9d`**: `test(interop): qualify native icon extraction and shared image ownership`
   - **Task Impact**: +15% to TODO #27 (+0.60% overall; total27.00%).
   - **Summary**: Exact24cc612 Windows job121258778958 passes native Shell/GDI
     primary/fallback, independent pixels/masks and retained cleanup/retry cases;
@@ -1636,3 +1636,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     ASan/LSan(detect_leaks1)/UBSan and wires this gate into default CI targets.
     Windows GDI is not claimed to run under Linux sanitizers. Separate catalog
     coverage still fails; watches/runtime/integrated qualification remain open.
+
+- **Commit `HEAD`**: `test(interop): cover catalog canonicalization and bounded helper failures`
+  - **Task Impact**: +0% to TODO #27/#34 pending native90% gates.
+  - **Summary**: Real opened file handles with bounded path-result seams test
+    UNC normalization, invalid/truncated results and guards. Exercise conversion
+    second-call errors, storage limits, property variants, directory derivation,
+    cancellation/deadline/node limits and exact cleanup-owner capacity. Root
+    review fixed partial event acquisition cleanup and truncation fixture intent.
+    Strict profile SDK compile/link passes; native rerun pending.
