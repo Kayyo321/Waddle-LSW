@@ -364,6 +364,40 @@ static int test_retirement(void) {
     return 0;
 }
 
+static int test_destroy_observation_retires_without_native_action(void) {
+    waddle_window_state_handle_t *synced = NULL;
+    waddle_window_state_handle_t *unsynced = NULL;
+    waddle_window_state_input_t destroyed = bare_input(WaddleWindowStateInputDestroyObserved);
+    waddle_window_state_input_t close_input = bare_input(WaddleWindowStateInputCloseRequest);
+    waddle_window_state_plan_t plan;
+    waddle_window_state_snapshot_t snapshot;
+
+    /* Live, synchronized window: the destroy plan carries no action, so no native call is made. */
+    Check(create_synced(17, 2, StateMaximizable, &synced) == 0);
+    Check(waddle_window_state_plan(synced, 17, 2, &destroyed, &plan) == WaddleWindowStateOk);
+    Check(plan.action_count == 0);
+    Check(plan.pending_kind == WaddleWindowStatePendingRetire);
+    Check(waddle_window_state_complete(synced, &plan, 1, 0) == WaddleWindowStateOk);
+    Check(waddle_window_state_snapshot(synced, &snapshot) == WaddleWindowStateOk);
+    Check(snapshot.retired == 1);
+    Check(snapshot.close_posted == 0);
+    Check(snapshot.applied_guest_state == 0);
+    Check(snapshot.applied_host_state == 0);
+    Check(waddle_window_state_plan(synced, 17, 2, &close_input, &plan) == WaddleWindowStateRetired);
+    Check(waddle_window_state_destroy(&synced) == WaddleWindowStateOk);
+
+    /* Unsynchronized window: destroy is accepted without a fresh observation and still carries no action. */
+    Check(waddle_window_state_create(18, 1, StateMinimizable, &unsynced) == WaddleWindowStateOk);
+    Check(waddle_window_state_plan(unsynced, 18, 1, &destroyed, &plan) == WaddleWindowStateOk);
+    Check(plan.action_count == 0);
+    Check(waddle_window_state_complete(unsynced, &plan, 1, 0) == WaddleWindowStateOk);
+    Check(waddle_window_state_snapshot(unsynced, &snapshot) == WaddleWindowStateOk);
+    Check(snapshot.retired == 1);
+    Check(snapshot.close_posted == 0);
+    Check(waddle_window_state_destroy(&unsynced) == WaddleWindowStateOk);
+    return 0;
+}
+
 static int test_forged_and_foreign_plans(void) {
     waddle_window_state_handle_t *owner = NULL;
     waddle_window_state_handle_t *other = NULL;
@@ -472,6 +506,7 @@ int main(void) {
     failures += run("stale plans and identity", test_stale_plans_and_identity);
     failures += run("maximize capability gate", test_maximize_capability_gate);
     failures += run("retirement", test_retirement);
+    failures += run("destroy observation retires without native action", test_destroy_observation_retires_without_native_action);
     failures += run("forged and foreign plans", test_forged_and_foreign_plans);
     failures += run("misaligned storage", test_misaligned_storage);
     failures += run("snapshot is read only", test_snapshot_is_read_only);

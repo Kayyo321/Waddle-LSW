@@ -856,6 +856,38 @@ test "retirement completes only as a zero-action success and then rejects all pl
     try expect_status(c.WaddleWindowStateRetired, complete_abi(handle, &hide, 1, 0));
 }
 
+test "destroy observation retires a synchronized window with no native action" {
+    const handle = try create_for_test(23, 10, reducer.StateMaximizable);
+    defer destroy_for_test(handle) catch {};
+    try synchronize(handle, reducer.StateMaximizable);
+
+    const destroyed = try plan_ok(handle, 23, 10, input_of(.DestroyObserved, 0));
+    try testing.expectEqual(@as(u64, 0), destroyed.action_count);
+    try expect_status(c.WaddleWindowStateOk, call_complete(handle, &destroyed, 1, 0));
+
+    const snap = try snapshot_of(handle);
+    try expect_u32(1, snap.retired);
+    try expect_u32(0, snap.close_posted);
+    try testing.expectEqual(@as(u32, 0), snap.applied_host_state);
+    try expect_u32(0, snap.applied_guest_state);
+}
+
+test "destroy observation retires an unsynchronized window with no native action" {
+    const handle = try create_for_test(24, 11, reducer.StateMinimized);
+    defer destroy_for_test(handle) catch {};
+
+    const destroyed = try plan_ok(handle, 24, 11, input_of(.DestroyObserved, 0));
+    try testing.expectEqual(@as(u64, 0), destroyed.action_count);
+    try expect_status(c.WaddleWindowStateOk, call_complete(handle, &destroyed, 1, 0));
+
+    const snap = try snapshot_of(handle);
+    try expect_u32(1, snap.retired);
+    try expect_u32(0, snap.close_posted);
+    var out = std.mem.zeroes(c.waddle_window_state_plan_t);
+    var close = input_of(.CloseRequest, 0);
+    try expect_status(c.WaddleWindowStateRetired, call_plan(handle, 24, 11, &close, &out));
+}
+
 test "sealed plans reject edits, resealed invalid structure, foreign handles, and NULL arguments" {
     const owner = try create_for_test(19, 7, 0);
     defer destroy_for_test(owner) catch {};
@@ -1024,10 +1056,12 @@ fn random_step(random: std.rand.Random) step_t {
     } else if (roll < 75) {
         step.kind = .HostStateRequest;
         step.maximize = random.boolean();
-    } else if (roll < 99) {
+    } else if (roll < 98) {
         step.kind = .CloseRequest;
-    } else {
+    } else if (roll == 98) {
         step.kind = .HideObserved;
+    } else {
+        step.kind = .DestroyObserved;
     }
     return step;
 }
