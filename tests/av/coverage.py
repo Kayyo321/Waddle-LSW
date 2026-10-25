@@ -66,7 +66,7 @@ root=Path.cwd(); output=root/'build/coverage'/('daemon' if mode in DaemonModes e
 output = output / ('run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
 output.mkdir(parents=True, exist_ok=False)
 print('preserved ' + mode + ' coverage: ' + str(output), flush=True)
-oracle = {'control_peer_abi': 'build/interop_codec.o', 'control_peer': 'build/interop_codec.o', 'stream_reader': 'build/interop_codec.o', 'stream_send_queue': 'build/interop_codec.o', 'venus_device_wire': 'build/venus_device_wire_oracle.o', 'venus_values': 'build/venus_values_oracle.o', 'venus_instance_wire': 'build/venus_instance_oracle.o', 'venus_query_wire': 'build/venus_query_oracle.o', 'venus_icd': 'build/venus_icd_oracle.o', 'venus_render_wire': 'build/venus_render_wire_oracle.o', 'venus_descriptor_wire': 'build/venus_descriptor_wire_oracle.o', 'venus_graphics_wire': 'build/venus_graphics_wire_oracle.o', 'venus_compute_wire': 'build/venus_compute_wire_oracle.o', 'venus_graphics_pipeline_wire': 'build/venus_graphics_pipeline_wire_oracle.o', 'venus_graphics_command_wire': 'build/venus_graphics_command_wire_oracle.o', 'venus_features_wire': 'build/venus_features_query_oracle.o', 'venus_features_native': 'build/venus_features_query_oracle.o', 'venus_tcp_wire': 'build/venus_tcp_wire_oracle.o'}.get(mode)
+oracle = {'control_peer_abi': 'build/interop_codec.o', 'control_peer': 'build/interop_codec.o', 'stream_reader': 'build/interop_codec.o', 'stream_send_queue': 'build/interop_codec.o', 'venus_device_wire': 'build/venus_device_wire_oracle.o', 'venus_values': 'build/venus_values_oracle.o', 'venus_instance_wire': 'build/venus_instance_oracle.o', 'venus_query_wire': 'build/venus_query_oracle.o', 'venus_icd': 'build/venus_icd_oracle.o', 'venus_render_wire': 'build/venus_render_wire_oracle.o', 'venus_descriptor_wire': 'build/venus_descriptor_wire_oracle.o', 'venus_graphics_wire': 'build/venus_graphics_wire_oracle.o', 'venus_compute_wire': 'build/venus_compute_wire_oracle.o', 'venus_graphics_pipeline_wire': 'build/venus_graphics_pipeline_wire_oracle.o', 'venus_graphics_command_wire': 'build/venus_graphics_command_wire_oracle.o', 'venus_features_wire': 'build/venus_features_query_oracle.o', 'venus_features_native': 'build/venus_features_query_oracle.o', 'venus_tcp_wire': 'build/venus_tcp_wire_oracle.o', 'session_stop_command': 'build/interop_codec.o'}.get(mode)
 if mode == 'venus_device_native':
     for name in ('device', 'render'):
         subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
@@ -142,7 +142,7 @@ if mode in ('interop_layout_abi', 'interop_slot_runtime_abi', 'window_state_abi'
     extra_args += ['-Isrc/interop']
 if mode in ('pe_header', 'open_request', 'open_command'):
     extra_args += link_objects
-if mode == 'open_command':
+if mode in ('open_command', 'session_stop_command'):
     extra_args += ['-Isrc/daemon', '-Isrc/common']
 test_source = 'src/vgpu/venus_graphics_general_wire.zig' if mode == 'venus_pipeline_wire_helpers' else source
 compile_command=['zig','test',test_source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
