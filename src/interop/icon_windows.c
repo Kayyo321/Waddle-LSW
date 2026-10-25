@@ -41,7 +41,20 @@ static bool test_fail_delete_once;
 static bool test_fail_cleanup_delete_once;
 static bool test_fail_cleanup_dc_once;
 static bool test_fail_cleanup_icon_once;
+static bool test_fail_close_dc_once;
+static bool test_fail_close_icon_once;
+static bool test_fail_get_icon_info_once;
+static bool test_force_icon_mask_null_once;
+static bool test_fail_mask_dibits_once;
+static bool test_fail_select_object_once;
+static bool test_fail_draw_icon_once;
+static bool test_fail_restore_object_once;
+static bool test_fail_create_dc_once;
+static bool test_fail_create_dib_once;
 static uint32_t test_shell_image_dimension;
+static uint32_t test_corrupt_shell_source_field_once;
+static uint32_t test_corrupt_output_dib_field_once;
+static bool test_corrupt_output_dib_size_once;
 static uint32_t test_last_native_stage;
 static uint32_t test_last_native_error;
 static uint32_t test_last_native_detail;
@@ -154,6 +167,15 @@ static bool close_icon(HICON *icon, icon_windows_cleanup_t *cleanup)
     if (*icon == NULL) {
         return true;
     }
+#ifdef IconWindowsTestSeams
+    if (test_fail_close_icon_once) {
+        test_fail_close_icon_once = false;
+        SetLastError(ERROR_BUSY);
+        cleanup->last_error = GetLastError();
+        keep_icon(cleanup, *icon);
+        return false;
+    }
+#endif
     if (DestroyIcon(*icon) == 0) {
         cleanup->last_error = GetLastError();
         keep_icon(cleanup, *icon);
@@ -168,6 +190,15 @@ static bool close_dc(HDC *device_context, icon_windows_cleanup_t *cleanup)
     if (*device_context == NULL) {
         return true;
     }
+#ifdef IconWindowsTestSeams
+    if (test_fail_close_dc_once) {
+        test_fail_close_dc_once = false;
+        SetLastError(ERROR_BUSY);
+        cleanup->last_error = GetLastError();
+        keep_dc(cleanup, *device_context);
+        return false;
+    }
+#endif
     if (DeleteDC(*device_context) == 0) {
         cleanup->last_error = GetLastError();
         keep_dc(cleanup, *device_context);
@@ -247,12 +278,25 @@ static bool apply_legacy_icon_mask(HDC device_context,
 {
     ICONINFO icon_info;
     memset(&icon_info, 0, sizeof(icon_info));
+#ifdef IconWindowsTestSeams
+    if (test_fail_get_icon_info_once) {
+        test_fail_get_icon_info_once = false;
+        *error_out = ERROR_INVALID_HANDLE;
+        return false;
+    }
+#endif
     if (GetIconInfo(icon, &icon_info) == 0) {
         *error_out = GetLastError();
         return false;
     }
     *color_bitmap_out = icon_info.hbmColor;
     *mask_bitmap_out = icon_info.hbmMask;
+#ifdef IconWindowsTestSeams
+    if (test_force_icon_mask_null_once) {
+        test_force_icon_mask_null_once = false;
+        icon_info.hbmMask = NULL;
+    }
+#endif
     if (icon_info.hbmMask == NULL || dimension > 48u) {
         *error_out = ERROR_INVALID_DATA;
         return false;
@@ -278,8 +322,20 @@ static bool apply_legacy_icon_mask(HDC device_context,
     mask_info.bmiHeader.biPlanes = 1u;
     mask_info.bmiHeader.biBitCount = 32u;
     mask_info.bmiHeader.biCompression = BI_RGB;
-    if (GetDIBits(device_context, icon_info.hbmMask, 0u, MaskHeight,
-                  mask_pixels, &mask_info, DIB_RGB_COLORS) != (int)MaskHeight) {
+#ifdef IconWindowsTestSeams
+    int mask_rows = 0;
+    if (test_fail_mask_dibits_once) {
+        test_fail_mask_dibits_once = false;
+        SetLastError(ERROR_GEN_FAILURE);
+    } else {
+        mask_rows = GetDIBits(device_context, icon_info.hbmMask, 0u, MaskHeight,
+                              mask_pixels, &mask_info, DIB_RGB_COLORS);
+    }
+#else
+    const int mask_rows = GetDIBits(device_context, icon_info.hbmMask, 0u, MaskHeight,
+                                    mask_pixels, &mask_info, DIB_RGB_COLORS);
+#endif
+    if (mask_rows != (int)MaskHeight) {
         *error_out = GetLastError();
         return false;
     }
@@ -361,19 +417,46 @@ static bool draw_icon_to_top_down_dib(HDC device_context,
                                       uint32_t dimension,
                                       DWORD *error_out)
 {
+#ifdef IconWindowsTestSeams
+    if (test_fail_select_object_once) {
+        test_fail_select_object_once = false;
+        SetLastError(ERROR_INVALID_HANDLE);
+        *error_out = GetLastError();
+        return false;
+    }
+#endif
     HGDIOBJ previous = SelectObject(device_context, destination_bitmap);
     if (previous == NULL || previous == HGDI_ERROR) {
         *error_out = GetLastError();
         return false;
     }
+#ifdef IconWindowsTestSeams
+    const BOOL Drawn = test_fail_draw_icon_once ? FALSE :
+        DrawIconEx(device_context, 0, 0, icon, (int)dimension,
+                   (int)dimension, 0u, NULL, DI_NORMAL);
+    test_fail_draw_icon_once = false;
+    if (Drawn == 0) {
+        SetLastError(ERROR_INVALID_HANDLE);
+    }
+#else
     const BOOL Drawn = DrawIconEx(device_context, 0, 0, icon, (int)dimension,
                                   (int)dimension, 0u, NULL, DI_NORMAL);
+#endif
     if (Drawn == 0) {
         *error_out = GetLastError();
         (void)SelectObject(device_context, previous);
         return false;
     }
-    if (SelectObject(device_context, previous) == NULL) {
+#ifdef IconWindowsTestSeams
+    if (test_fail_restore_object_once) {
+        test_fail_restore_object_once = false;
+        SetLastError(ERROR_INVALID_HANDLE);
+        *error_out = GetLastError();
+        return false;
+    }
+#endif
+    const HGDIOBJ restored = SelectObject(device_context, previous);
+    if (restored == NULL || restored == HGDI_ERROR) {
         *error_out = GetLastError();
         return false;
     }
@@ -492,8 +575,22 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
         native_stage = 4u;
         BITMAP source_description;
         memset(&source_description, 0, sizeof(source_description));
-        if (GetObjectW(shell_bitmap, sizeof(source_description), &source_description) !=
-                sizeof(source_description) ||
+        int source_description_bytes = GetObjectW(
+            shell_bitmap, sizeof(source_description), &source_description);
+#ifdef IconWindowsTestSeams
+        switch (test_corrupt_shell_source_field_once) {
+        case 1u: source_description_bytes = 0; break;
+        case 2u: source_description.bmWidth = 0; break;
+        case 3u: source_description.bmHeight = 0; break;
+        case 4u: source_description.bmWidth =
+                    (LONG)IconWindowsMaxNativeSourceDimension + 1; break;
+        case 5u: source_description.bmHeight =
+                    (LONG)IconWindowsMaxNativeSourceDimension + 1; break;
+        default: break;
+        }
+        test_corrupt_shell_source_field_once = 0u;
+#endif
+        if (source_description_bytes != sizeof(source_description) ||
             source_description.bmWidth <= 0 || source_description.bmHeight <= 0 ||
             source_description.bmWidth > (LONG)IconWindowsMaxNativeSourceDimension ||
             source_description.bmHeight > (LONG)IconWindowsMaxNativeSourceDimension) {
@@ -506,14 +603,35 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
         bitmap_info.bmiHeader.biHeight = -(LONG)source_height;
     }
 
+#ifdef IconWindowsTestSeams
+    if (test_fail_create_dc_once) {
+        test_fail_create_dc_once = false;
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        device_context = NULL;
+    } else {
+        device_context = CreateCompatibleDC(NULL);
+    }
+#else
     device_context = CreateCompatibleDC(NULL);
+#endif
     native_stage = 5u;
     if (device_context == NULL) {
         native_error = GetLastError();
         goto cleanup;
     }
+#ifdef IconWindowsTestSeams
+    if (test_fail_create_dib_once) {
+        test_fail_create_dib_once = false;
+        SetLastError(ERROR_INVALID_DATA);
+        dib_bitmap = NULL;
+    } else {
+        dib_bitmap = CreateDIBSection(device_context, &bitmap_info, DIB_RGB_COLORS,
+                                      &dib_pixels, NULL, 0u);
+    }
+#else
     dib_bitmap = CreateDIBSection(device_context, &bitmap_info, DIB_RGB_COLORS,
                                   &dib_pixels, NULL, 0u);
+#endif
     native_stage = 6u;
     if (dib_bitmap == NULL || dib_pixels == NULL) {
         native_detail = dib_bitmap == NULL ? 1u : 2u;
@@ -524,7 +642,24 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
     memset(&output_description, 0, sizeof(output_description));
     const int output_description_bytes = GetObjectW(
         dib_bitmap, sizeof(output_description), &output_description);
+    int checked_output_description_bytes = output_description_bytes;
 #ifdef IconWindowsTestSeams
+    if (test_corrupt_output_dib_size_once) {
+        checked_output_description_bytes = 0;
+    }
+    test_corrupt_output_dib_size_once = false;
+    if (test_corrupt_output_dib_field_once != 0u) {
+        switch (test_corrupt_output_dib_field_once) {
+        case 1u: output_description.dsBm.bmWidth += 1; break;
+        case 2u: output_description.dsBm.bmHeight += 1; break;
+        case 3u: output_description.dsBm.bmBitsPixel = 24u; break;
+        case 4u: output_description.dsBmih.biHeight += 1; break;
+        case 5u: output_description.dsBmih.biBitCount = 24u; break;
+        case 6u: output_description.dsBmih.biCompression = BI_RLE8; break;
+        default: break;
+        }
+        test_corrupt_output_dib_field_once = 0u;
+    }
     test_last_output_description_bytes = output_description_bytes;
     test_last_output_bitmap_width = output_description.dsBm.bmWidth;
     test_last_output_bitmap_height = output_description.dsBm.bmHeight;
@@ -534,7 +669,7 @@ static icon_windows_status_t extract_native_image(IShellItem *item,
     test_last_output_compression = output_description.dsBmih.biCompression;
 #endif
     /* GetObject may normalize the DIBSECTION height sign; creation requested top-down. */
-    if (output_description_bytes != sizeof(output_description)) {
+    if (checked_output_description_bytes != sizeof(output_description)) {
         native_detail = 3u;
     } else if (output_description.dsBm.bmWidth != (LONG)source_width) {
         native_detail = 4u;

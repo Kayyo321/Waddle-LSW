@@ -1216,7 +1216,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     no path field; no VM/TPM process started. Secret-bearing assets stay outside
     Git in the private ignored build directory. Prototype is not native acceptance.
 
-- **Commit `HEAD`**: `docs(interop): save night checkpoint and release parallel work ownership`
+- **Commit `4af7747`**: `docs(interop): save night checkpoint and release parallel work ownership`
   - **Task Impact**: +0% to TODO #1-#34 (+0% overall; total18.00%).
   - **Summary**: Stops at the user's request with all implementation committed,
     no active agents/native children, and [exact resume instructions](checkpoint_2026_10_24_night.md).
@@ -1562,7 +1562,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     fail-before-close HDC/HICON retries plus image deinit guards. Root strict
     production(no seams) and profile fixture compile/link pass.
 
-- **Commit `HEAD`**: `fix(interop): validate DIB extent independently of normalized header sign`
+- **Commit `4af7747`**: `fix(interop): validate DIB extent independently of normalized header sign`
   - **Task Impact**: +0% to TODO #27/#34 pending native90%gates.
   - **Summary**: Exact0fbfe70 Windows DIB reports valid32x32/32bpp/BI_RGB with
     positive header height despite requested negative creation height. Accept
@@ -1570,3 +1570,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     asymmetric first/last row bytes verify actual top-down copying. Strict SDK
     profile link passes. Catalog smoke/deep-tree now pass; provider coverage
     87.09%lines/62.21%arcs and icon71.51%lines/55.31%arcs remain unaccepted.
+
+- **Commit `HEAD`**: `test(interop): exercise native icon failures with genuine retained handles`
+  - **Task Impact**: +0% to TODO #27/#34 pending whole-source native90% gates.
+  - **Summary**: Add bounded native API/metadata failure cases and private guard
+    coverage using authentic GDI/Shell resources. Fail restore before consuming
+    SelectObject so cleanup must close the real DC before its selected bitmap.
+    Keep one production source-size guard; standalone production and instrumented
+    fixture strict Windows SDK builds/link pass. Native execution pending.

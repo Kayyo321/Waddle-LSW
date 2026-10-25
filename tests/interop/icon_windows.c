@@ -328,6 +328,31 @@ static void test_shell_extraction(void)
            cleanup.device_context_count == 0u);
     allocation_state.fail_allocate = false;
 
+    test_fail_create_dc_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    test_fail_create_dib_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    for (uint32_t corrupt_field = 1u; corrupt_field <= 5u; ++corrupt_field) {
+        test_corrupt_shell_source_field_once = corrupt_field;
+        assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+               IconWindowsStatusNativeFailure);
+        assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    }
+    for (uint32_t corrupt_field = 1u; corrupt_field <= 6u; ++corrupt_field) {
+        test_corrupt_output_dib_field_once = corrupt_field;
+        assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+               IconWindowsStatusNativeFailure);
+        assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    }
+    test_corrupt_output_dib_size_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+
     for (size_t index = 0u; index < IconWindowsSupportedDimensionCount; ++index) {
         assert(icon_windows_extract_rgba(item, path, Dimensions[index], allocator,
                                          &image, &cleanup) == IconWindowsStatusOk);
@@ -356,6 +381,34 @@ static void test_shell_extraction(void)
         icon_windows_image_deinit(&image);
     }
     test_fail_shell_factory_query = false;
+
+    test_fail_shell_factory_query = true;
+    test_fail_select_object_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    test_fail_draw_icon_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    test_fail_restore_object_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    test_fail_get_icon_info_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    test_force_icon_mask_null_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    test_fail_mask_dibits_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusNativeFailure);
+    assert(image.rgba == NULL && cleanup_is_empty(&cleanup));
+    test_fail_shell_factory_query = false;
+
     test_shell_image_dimension = 64u;
     assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
            IconWindowsStatusOk);
@@ -374,6 +427,24 @@ static void test_shell_extraction(void)
     assert(allocation_state.allocations == allocation_state.deallocations);
     assert(allocation_state.bytes_allocated == allocation_state.bytes_deallocated);
     assert(icon_windows_cleanup_retry(&cleanup) == IconWindowsStatusOk);
+
+    test_fail_close_dc_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusCleanupRequired);
+    assert(image.rgba == NULL && cleanup.device_context_count == 1u &&
+           cleanup.device_context_handles[0] != 0u &&
+           cleanup.operation_status == IconWindowsStatusOk &&
+           cleanup.operation_error == ERROR_SUCCESS);
+    assert(icon_windows_cleanup_retry(&cleanup) == IconWindowsStatusOk);
+
+    test_fail_shell_factory_query = true;
+    test_fail_close_icon_once = true;
+    assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
+           IconWindowsStatusCleanupRequired);
+    assert(image.rgba == NULL && cleanup.icon_count == 1u &&
+           cleanup.icon_handles[0] != 0u && cleanup.operation_status == IconWindowsStatusOk);
+    assert(icon_windows_cleanup_retry(&cleanup) == IconWindowsStatusOk);
+    test_fail_shell_factory_query = false;
 
     test_fail_shell_image_get = true;
     assert(icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup) ==
@@ -417,6 +488,7 @@ static void test_shell_extraction(void)
 int main(void)
 {
     test_owned_gdi_fixtures();
+    icon_windows_run_private_helper_tests();
     icon_windows_run_fault_tests();
     test_shell_extraction();
     return 0;
