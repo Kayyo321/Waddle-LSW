@@ -127,7 +127,7 @@ static int release_held(av_input_state_t *state, unsigned mask,
     }
     if (mask & AvInputReleaseButtons) {
         event.type = MsgInputButton;
-        for (unsigned button = 1; button <= 3; ++button) {
+        for (unsigned button = 1; button <= 5; ++button) {
             if (!state->buttons[button]) continue;
             event.width = button;
             if (ops->emit(context, &event) != 0) result = -1;
@@ -160,7 +160,7 @@ int av_input_apply_admitted(av_input_state_t *state, const av_message_t *event,
         event->type < MsgInputFocus || event->type > MsgInputRelease) return -1;
     if (event->type == MsgInputKey &&
         (event->width == 0 || event->width >= AvInputKeys || !av_input_key_injectable(event->width))) return -1;
-    if (event->type == MsgInputButton && (event->width == 0 || event->width >= 4)) return -1;
+    if (event->type == MsgInputButton && (event->width == 0 || event->width >= 6)) return -1;
     if (event->type == MsgInputFocus && event->flags) {
         int status = ops->target(context, event->window_id, event->sequence, -1);
         if (status > 0) return 0; /* Retired identity: ordered no-op. */

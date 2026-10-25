@@ -79,6 +79,8 @@ typedef void (*WINEVENTPROC)(HWINEVENTHOOK,DWORD,HWND,LONG,LONG,DWORD,DWORD);
 #define MOUSEEVENTF_RIGHTUP 0x10
 #define MOUSEEVENTF_MIDDLEDOWN 0x20
 #define MOUSEEVENTF_MIDDLEUP 0x40
+#define MOUSEEVENTF_XDOWN 0x80
+#define MOUSEEVENTF_XUP 0x100
 #define MOUSEEVENTF_WHEEL 0x800
 #define MOUSEEVENTF_HWHEEL 0x1000
 #define MOUSEEVENTF_ABSOLUTE 0x8000
@@ -522,8 +524,56 @@ static void typed_injection_tests(void) {
     finish();
     puts("Win32 typed injection: plain, extended, virtual-key, Pause make/break, suppressed rejection and release passed");
 }
+/* XBUTTON1/XBUTTON2 pointer buttons: exact MOUSEINPUT fields through both emit paths. */
+static void expect_mouse(INPUT input, DWORD flags, DWORD data) {
+    assert(input.type == INPUT_MOUSE && input.mi.dwFlags == flags && input.mi.mouseData == data);
+}
+static void xbutton_tests(void) {
+    fixture_reset();
+    cursor_window = native_handle(1);
+    av_message_t event = {.type = MsgInputButton, .window_id = (uint64_t)(uintptr_t)native_handle(1), .width = 4, .flags = 1};
+    unsigned base = insertions;
+    assert(legacy_input_emit(NULL, &event) == 0 && insertions == base + 1);
+    expect_mouse(inserted[insertions - 1], MOUSEEVENTF_XDOWN, AvWinXButton1);
+    event.flags = 0;
+    assert(legacy_input_emit(NULL, &event) == 0);
+    expect_mouse(inserted[insertions - 1], MOUSEEVENTF_XUP, AvWinXButton1);
+    event.width = 5; event.flags = 1;
+    assert(legacy_input_emit(NULL, &event) == 0);
+    expect_mouse(inserted[insertions - 1], MOUSEEVENTF_XDOWN, AvWinXButton2);
+    event.flags = 0;
+    assert(legacy_input_emit(NULL, &event) == 0);
+    expect_mouse(inserted[insertions - 1], MOUSEEVENTF_XUP, AvWinXButton2);
+    event.width = 1; event.flags = 1;
+    assert(legacy_input_emit(NULL, &event) == 0);
+    expect_mouse(inserted[insertions - 1], MOUSEEVENTF_LEFTDOWN, 0);
+    /* Widths outside 1..5 never reach SendInput; a down needs an owned point. */
+    unsigned count = insertions;
+    event.width = 6; event.flags = 1;
+    assert(legacy_input_emit(NULL, &event) == -1 && insertions == count);
+    event.width = 0;
+    assert(legacy_input_emit(NULL, &event) == -1 && insertions == count);
+    event.width = 4; event.flags = 1; cursor_window = NULL;
+    assert(legacy_input_emit(NULL, &event) == -1 && insertions == count);
+    /* Lease path: a held XBUTTON is released as its up form on revocation. */
+    fixture_reset();
+    start_ready();
+    foreground = native_handle(1);
+    focus(1);
+    cursor_window = native_handle(1);
+    av_message_t held = host_message(MsgInputButtonV3, (unsigned)lease_state.input.window_id, 5, 1);
+    unsigned before_hold = insertions;
+    assert(av_windows_input(&held) == 0 && insertions == before_hold + 1);
+    expect_mouse(inserted[insertions - 1], MOUSEEVENTF_XDOWN, AvWinXButton2);
+    foreground = native_handle(2); foreground_event(foreground);
+    assert(av_windows_tick() == 0 && lease_state.phase == AvLeaseAwaitAck);
+    expect_mouse(inserted[insertions - 1], MOUSEEVENTF_XUP, AvWinXButton2);
+    finish();
+    puts("Win32 XBUTTON pointer buttons: exact XDOWN/XUP mouseData per button, width rejection and revocation release passed");
+}
 int main(void) {
     typed_injection_tests();
+    xbutton_tests();
     startup_tests(); transition_tests(); accounting_tests(); cleanup_retry_tests(); eligibility_tests(); legacy_tests(); failure_tests();
     puts("Win32 lease API doubles: startup, recovery, exact accounting, lifecycle, deadlines and teardown passed");
     return 0;
