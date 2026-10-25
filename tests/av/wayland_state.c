@@ -135,6 +135,11 @@ int __wrap_wl_display_dispatch_pending(struct wl_display *display) {
     if (during_drain) during_drain();
     return 0;
 }
+/* Non-blocking socket drain doubles: the fake display has no socket, so there is nothing to read. */
+int __wrap_wl_display_prepare_read(struct wl_display *display) { (void)display; return 0; }
+int __wrap_wl_display_read_events(struct wl_display *display) { (void)display; return 0; }
+void __wrap_wl_display_cancel_read(struct wl_display *display) { (void)display; }
+int __wrap_wl_display_get_fd(struct wl_display *display) { (void)display; return -1; }
 void __wrap_wl_display_disconnect(struct wl_display *display) { (void)display; ++disconnects; }
 #include "av_wayland.c"
 #include <assert.h>
@@ -719,6 +724,33 @@ static void incarnation_wide_repeat(void) {
     live_key(&client, 30, 0);
     puts("AV Wayland repeat: a 64-bit incarnation of 1 << 32 is a valid focus and repeats passed");
 }
+static av_wayland_t *ordering_client;
+static void release_during_drain(void) {
+    keyboard_key(ordering_client, NULL, 0, 0, 30, WL_KEYBOARD_KEY_STATE_RELEASED);
+}
+/* A release already in the socket must be dispatched before a repeat that is due in the same
+ * poll, so the repeat is never delivered after the key was released. */
+static void release_before_due_repeat(void) {
+    av_wayland_t client; video_window_t *window;
+    live_ready(&client, &window);
+    now_ms = 14000;
+    keyboard_repeat(&client, NULL, 25, 100);
+    live_enter(&client, window);
+    deliveries = 0;
+    live_key(&client, 30, 1);
+    assert(deliveries == 1);
+    client.display = (struct wl_display *)(uintptr_t)1; /* enables the socket drain */
+    now_ms = 14100;
+    ordering_client = &client;
+    during_drain = release_during_drain;
+    assert(av_wayland_timeout(&client, 0) == 0);
+    during_drain = NULL;
+    client.display = NULL;
+    assert(deliveries == 2 && delivered.type == MsgInputKey && delivered.flags == 0 && delivered.width == 30);
+    uint64_t deadline = 0;
+    assert(!live_next(&client, &deadline));
+    puts("AV Wayland repeat ordering: a release already queued before the due repeat prevents the repeat passed");
+}
 static void live_repeat(void) {
     live_repeat_timing();
     live_repeat_info();
@@ -773,6 +805,7 @@ int main(void) {
     wheel_paths_live();
     pointer_randomized_live();
     incarnation_wide_repeat();
+    release_before_due_repeat();
     lifecycle_callbacks();
     decoration_callbacks();
     lease_callbacks();

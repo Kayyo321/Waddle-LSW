@@ -1089,9 +1089,8 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message) {
     return av_wayland_flush(client);
 }
 int av_wayland_dispatch(av_wayland_t *client) {
-    if (av_wayland_timeout(client, 0) < 0 || wl_display_dispatch(client->display) < 0 ||
-        av_wayland_timeout(client, 0) < 0) return fail_input(client);
-    return 0;
+    /* av_wayland_timeout drains the socket without blocking, then services due repeats. */
+    return av_wayland_timeout(client, 0) < 0 ? fail_input(client) : 0;
 }
 static int repeat_service(av_wayland_t *client, uint64_t now) {
     for (;;) {
@@ -1118,8 +1117,23 @@ static int repeat_timeout(av_wayland_t *client, uint64_t now, int maximum) {
     uint64_t remaining_ms = (remaining_ns + 999999) / 1000000;
     return remaining_ms < (uint64_t)maximum ? (int)remaining_ms : maximum;
 }
+/* Read and dispatch whatever the compositor already queued, without blocking. Repeats are
+ * serviced only after this, so a release that is already in the socket is seen first and
+ * a repeat that was due at the same instant is never delivered after the key went up. */
+static int drain_display(av_wayland_t *client) {
+    if (!client->display) return 0;
+    while (wl_display_prepare_read(client->display) != 0)
+        if (wl_display_dispatch_pending(client->display) < 0) return -1;
+    struct pollfd readable = {wl_display_get_fd(client->display), POLLIN, 0};
+    int ready = poll(&readable, 1, 0);
+    if (ready > 0 && (readable.revents & POLLIN)) {
+        if (wl_display_read_events(client->display) < 0) return -1;
+    } else wl_display_cancel_read(client->display);
+    return wl_display_dispatch_pending(client->display) < 0 ? -1 : 0;
+}
 int av_wayland_timeout(av_wayland_t *client, int maximum) {
     if (client->shutting_down || client->delivery_failed || maximum < 0) return -1;
+    if (drain_display(client) != 0 || client->shutting_down || client->delivery_failed) return -1;
     uint64_t now_ns = monotonic_ns();
     if (now_ns && repeat_service(client, now_ns) != 0) return fail_input(client);
     if (!lease_mode(client)) return now_ns ? repeat_timeout(client, now_ns, maximum) : maximum;
