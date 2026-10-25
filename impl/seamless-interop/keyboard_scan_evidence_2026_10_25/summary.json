@@ -1,0 +1,12 @@
+{
+  "line": {
+    "covered": 74,
+    "total": 74,
+    "percent": 100.0
+  },
+  "branch": {
+    "covered": 121,
+    "total": 128,
+    "percent": 94.53125
+  }
+}

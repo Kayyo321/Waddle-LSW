@@ -1,0 +1,257 @@
+{
+  "compiler_versions": {
+    "cc": "cc (Debian 14.2.0-19) 14.2.0",
+    "gcov": "gcov (Debian 14.2.0-19) 14.2.0"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cc",
+        "--version"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "gcov",
+        "--version"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "cc",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-Iinclude",
+        "-Isrc/av",
+        "-O0",
+        "-g",
+        "--coverage",
+        "-fprofile-abs-path",
+        "-c",
+        "src/av/av_input.c",
+        "-o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/input.o"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "cc",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-Iinclude",
+        "-Isrc/av",
+        "-O0",
+        "-g",
+        "--coverage",
+        "-fprofile-abs-path",
+        "-Dmain=av_input_legacy_test_main",
+        "-c",
+        "tests/av/input.c",
+        "-o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/legacy_input.o"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "cc",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-Iinclude",
+        "-Isrc/av",
+        "-O0",
+        "-g",
+        "--coverage",
+        "-fprofile-abs-path",
+        "-c",
+        "tests/interop/keyboard_scan.c",
+        "-o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/keyboard_scan.o"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "cc",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-Iinclude",
+        "-Isrc/av",
+        "-O0",
+        "-g",
+        "--coverage",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/input.o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/legacy_input.o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/keyboard_scan.o",
+        "build/av_codec.o",
+        "-o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/runner"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/runner"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "gcov",
+        "--json-format",
+        "-b",
+        "-c",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/input.gcno"
+      ],
+      "cwd": "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835"
+    },
+    {
+      "argv": [
+        "cc",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-Iinclude",
+        "-Isrc/av",
+        "-O0",
+        "-g",
+        "-fsanitize=address,leak,undefined",
+        "-fno-omit-frame-pointer",
+        "-c",
+        "src/av/av_input.c",
+        "-o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/input_sanitized.o"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "cc",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-Iinclude",
+        "-Isrc/av",
+        "-O0",
+        "-g",
+        "-fsanitize=address,leak,undefined",
+        "-fno-omit-frame-pointer",
+        "-Dmain=av_input_legacy_test_main",
+        "-c",
+        "tests/av/input.c",
+        "-o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/legacy_input_sanitized.o"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "cc",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-Iinclude",
+        "-Isrc/av",
+        "-O0",
+        "-g",
+        "-fsanitize=address,leak,undefined",
+        "-fno-omit-frame-pointer",
+        "-c",
+        "tests/interop/keyboard_scan.c",
+        "-o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/keyboard_scan_sanitized.o"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "cc",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-Iinclude",
+        "-Isrc/av",
+        "-O0",
+        "-g",
+        "-fsanitize=address,leak,undefined",
+        "-fno-omit-frame-pointer",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/input_sanitized.o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/legacy_input_sanitized.o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/keyboard_scan_sanitized.o",
+        "build/av_codec.o",
+        "-o",
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/runner_sanitized"
+      ],
+      "cwd": "/home/dev/Waddle-LSW"
+    },
+    {
+      "argv": [
+        "/tmp/waddle-keyboard-scan-coverage/run-20261025T165605360310Z-217835/runner_sanitized"
+      ],
+      "cwd": "/home/dev/Waddle-LSW",
+      "env_overrides": {
+        "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
+        "UBSAN_OPTIONS": "halt_on_error=1"
+      }
+    }
+  ],
+  "inputs_before_sha256": {
+    "src/av/av_input.c": "bbd9c8b41084cfa59fbce077b90fc794c47a0f9bf8db3ddb61374c2f35f94007",
+    "src/av/av_input.h": "0d857ecda1f63731b953b69aad0877c6bf98985954e484b0abc34a8b74f5b41c",
+    "include/waddle/av_protocol.h": "ffcb8de9993b143a5235dbaeb3c89e22324e9cce125cdf04090d62c80f6d9538",
+    "tests/av/input.c": "a7a5a671590da08cae0d33193c6e4e5f757f2029b1246d76d8f6b33b5b498e21",
+    "tests/interop/keyboard_scan.c": "cd502befcbed662ccc59c003fd64f9516cd7cc613a152ca5e323c6b98e681793",
+    "tests/interop/keyboard_scan_coverage.py": "ca83ef8638ca453eb3e09916efe632867938b907c5dafb8b6c5fd3a685f0899f",
+    "tests/interop/scancodes.csv": "e094ddf50704dc9a4ac3022de85988605614cba86bc0640632234de73894891e",
+    "impl/seamless-interop/keyboard_scan_contract.md": "25cb22a8cb3afc3d83882e05dca4e7894dcde2488b4814936db9678f790ddf60",
+    "build/av_codec.o": "263e1bcd1eb90e05b97d1b69bea430fdb25d78be9bc8752c259ccf5f5fdb14c8"
+  },
+  "inputs_after_sha256": {
+    "src/av/av_input.c": "bbd9c8b41084cfa59fbce077b90fc794c47a0f9bf8db3ddb61374c2f35f94007",
+    "src/av/av_input.h": "0d857ecda1f63731b953b69aad0877c6bf98985954e484b0abc34a8b74f5b41c",
+    "include/waddle/av_protocol.h": "ffcb8de9993b143a5235dbaeb3c89e22324e9cce125cdf04090d62c80f6d9538",
+    "tests/av/input.c": "a7a5a671590da08cae0d33193c6e4e5f757f2029b1246d76d8f6b33b5b498e21",
+    "tests/interop/keyboard_scan.c": "cd502befcbed662ccc59c003fd64f9516cd7cc613a152ca5e323c6b98e681793",
+    "tests/interop/keyboard_scan_coverage.py": "ca83ef8638ca453eb3e09916efe632867938b907c5dafb8b6c5fd3a685f0899f",
+    "tests/interop/scancodes.csv": "e094ddf50704dc9a4ac3022de85988605614cba86bc0640632234de73894891e",
+    "impl/seamless-interop/keyboard_scan_contract.md": "25cb22a8cb3afc3d83882e05dca4e7894dcde2488b4814936db9678f790ddf60",
+    "build/av_codec.o": "263e1bcd1eb90e05b97d1b69bea430fdb25d78be9bc8752c259ccf5f5fdb14c8"
+  },
+  "inputs_unchanged_during_run": true,
+  "coverage": {
+    "line": {
+      "covered": 74,
+      "total": 74,
+      "percent": 100.0
+    },
+    "branch": {
+      "covered": 121,
+      "total": 128,
+      "percent": 94.53125
+    }
+  },
+  "address_leak_undefined_sanitizers_passed": true
+}

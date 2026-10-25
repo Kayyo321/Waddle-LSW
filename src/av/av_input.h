@@ -40,6 +40,40 @@ typedef struct av_input_state_t {
     uint8_t keys[AvInputKeys]; /**< Successfully injected keys awaiting release. */
     uint8_t buttons[4]; /**< Successfully injected button IDs 1..3. */
 } av_input_state_t;
+/** @brief Immutable translation category returned by av_input_translate_key().
+ * Values have static table semantics, require no ownership or deallocation,
+ * and may be consumed concurrently. Unknown evdev values always return
+ * AvKeyTranslationUnsupported.
+ */
+typedef enum av_key_translation_kind_t {
+    /** No supported mapping exists. */ AvKeyTranslationUnsupported,
+    /** Set-1 scan byte, with E0 indicated by `extended`. */ AvKeyTranslationScanCode,
+    /** Windows virtual key in `virtual_key`; no scan code is implied. */ AvKeyTranslationVirtualKey,
+    /** Pause has explicit E1 make/break byte sequences in `pause_make` and `pause_break`. */ AvKeyTranslationPause,
+    /** Power/sleep policy suppresses the key; no injection is authorized. */ AvKeyTranslationSuppressed,
+} av_key_translation_kind_t;
+/** @brief Allocation-free typed translation value for one Linux evdev code.
+ * @details Fields not selected by `kind` are zero. Scan-code fields are a
+ * single Set-1 byte plus E0 extension flag; Pause fields preserve exact E1
+ * sequences. The returned value owns no resources and is safe to copy.
+ * @note Pure and thread-safe; does not itself authorize or perform injection.
+ */
+typedef struct av_key_translation_t {
+    /** Result category. */ av_key_translation_kind_t kind;
+    /** Set-1 scan byte for AvKeyTranslationScanCode. */ uint8_t scan_code;
+    /** Nonzero only for an E0-prefixed scan code. */ uint8_t extended;
+    /** Windows VK value for AvKeyTranslationVirtualKey. */ uint16_t virtual_key;
+    /** Pause make bytes E1 1D 45 for AvKeyTranslationPause. */ uint8_t pause_make[3];
+    /** Pause break bytes E1 9D C5 for AvKeyTranslationPause. */ uint8_t pause_break[3];
+} av_key_translation_t;
+/** @brief Translate evdev code 1..767 using the frozen host keyboard table.
+ * @param[in] key Linux evdev key code; no upper-wire admission is implied.
+ * @return By-value typed translation. Unsupported inputs return the explicit
+ * unsupported kind and all unused fields are zero.
+ * @note Allocation-free, pure, thread-safe. The table is immutable. This
+ * function does not inject keys and does not change AV protocol bounds.
+ */
+av_key_translation_t av_input_translate_key(uint32_t key);
 /** @brief Apply one input event after defensive canonical validation.
  * @param[in,out] state Nonnull caller-owned zero-initialized state.
  * @param[in] event Nonnull borrowed input message; never retained.
@@ -71,8 +105,11 @@ int av_input_apply_admitted(av_input_state_t *state, const av_message_t *event,
  */
 int av_input_reset(av_input_state_t *state, const av_input_ops_t *ops, void *context);
 /** @brief Translate supported Linux physical key to Windows Set-1 scan code.
- * @param[in] key Evdev key code. @return Low byte scan code with bit 8 meaning
- * extended E0; zero means unsupported. Pure/thread-safe, allocation-free.
+ * @param[in] key Legacy AV evdev code 1..127. @return Low byte scan code with bit 8 meaning
+ * extended E0; zero means the typed result is not an ordinary scan code.
+ * Pause and virtual-key results are never coerced into scan codes.
+ * Pure/thread-safe, allocation-free. Preserves the existing ABI and does not
+ * widen the AV wire codec's 1..127 admission bound.
  */
 uint16_t av_input_scan_code(uint32_t key);
 #endif

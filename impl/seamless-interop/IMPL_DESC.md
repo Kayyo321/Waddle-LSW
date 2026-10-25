@@ -894,8 +894,8 @@ unchanged in semantics, carried by `LeaseRevoked`/`LeaseAck`/`LeaseReady` with
 | 117 | KEY_KPEQUAL | 0x59 |
 | 119 | KEY_PAUSE | E1 1D 45 / E1 9D C5 (special sequence) |
 | 121 | KEY_KPCOMMA | 0x7E |
-| 122 | KEY_HANGEUL | 0xF2 (`VK_HANGUL` virtual key path) |
-| 123 | KEY_HANJA | 0xF1 (`VK_HANJA` virtual key path) |
+| 122 | KEY_HANGEUL | 0x15 (`VK_HANGUL` virtual key path; corrected 2026-10-25) |
+| 123 | KEY_HANJA | 0x19 (`VK_HANJA` virtual key path; corrected 2026-10-25) |
 | 124 | KEY_YEN | 0x7D |
 | 127 | KEY_COMPOSE | E0 5D |
 | 128 | KEY_STOP | E0 68 |
@@ -3719,3 +3719,18 @@ It verifies Hello/header validation/Ack/Ready/heartbeat and pre-Ready EOF/timeou
 then joins all map readers before explicit fixture-detach cleanup. Windows
 execution is a distinct CI gate; neither cross-link nor Linux doubles earn it.
 Driver-native, signing/deployment, UIAccess and installed runtime remain open.
+
+### 8.37 Typed keyboard translation and VK correction (2026-10-25)
+
+Microsoft's [virtual-key code reference](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes)
+specifies VK_HANGUL=0x15 and VK_HANJA=0x19. This versioned correction supersedes
+the erroneous0xF2/0xF1 values in the original §3.6.3 freeze. Canonical Pause E1
+make/break metadata remains typed; no unsupported SendInput E1 flag is invented.
+[keyboard_scan_contract.md](keyboard_scan_contract.md) specifies the immutable
+1..767 table, unsupported gaps, suppressed power/sleep, golden/inverse tests,
+legacy packed ABI compatibility and explicit held-state bounds. New
+av_input_translate_key returns a typed by-value result; av_input_scan_code
+retains legacy1..127 scan-only admission, avoiding a silent AV wire change.
+Typed injection, full interop input dispatch and Pause native behavior remain
+open. Translation alone accepts10% of #15; injection15%, host repeat20%, lock
+sync15%, layout sync20%, inhibit10%, integrated/native qualification10% remain.

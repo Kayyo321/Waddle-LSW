@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-windows-session-unit-test interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
+interop-test: interop-keyboard-scan-test interop-windows-session-unit-test interop-manifest-store-test interop-windows-socket-test interop-host-session-test interop-mapping-linux-test interop-native-runner-test interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -353,3 +353,9 @@ build/interop_guest_session_integration_test.exe: tests/interop/session_control_
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Isrc/interop -Isubmodules/looking_glass/module -Isubmodules/looking_glass/vendor/ivshmem tests/interop/session_control_windows_integration.c tests/interop/session_control_windows_mapping_seam.c src/interop/windows_socket_owner.c src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib build/interop_layout_abi_windows.lib -lws2_32 -lsetupapi -lbcrypt -o $@
 build/waddle-session-guest.exe: src/interop/session_guest_main.c $(InteropGuestControlDependencies) build/interop_guest_session_sdk.o build/interop_windows_socket_sdk.o build/interop_mapping_windows_sdk.o src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib build/interop_layout_abi_windows.lib | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/interop $< build/interop_guest_session_sdk.o build/interop_windows_socket_sdk.o build/interop_mapping_windows_sdk.o src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c build/interop_control_peer_abi_windows.lib build/interop_codec_windows.lib build/interop_layout_abi_windows.lib -lws2_32 -lsetupapi -lbcrypt -o $@
+
+
+# Full typed keyboard table plus legacy state/bounds and leak-enabled C gate.
+.PHONY: interop-keyboard-scan-test
+interop-keyboard-scan-test: build/av_codec.o
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/keyboard_scan_coverage.py
