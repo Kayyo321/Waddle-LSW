@@ -36,9 +36,23 @@ const c = @cImport({
 const handle_t = struct {
     /// The reducer state for one exact window generation.
     machine: reducer.machine_t,
-    /// Random per-handle key for `plan_seal`; never exposed to C.
+    /// Per-handle key for `plan_seal`, distinct for every handle created in this process; never exposed to C.
     seal_seed: u64,
 };
+
+/// Process-wide count of handles created. Each create takes the next value, so no two handles
+/// share a seal seed until the count wraps after 2^64 creations. An atomic add cannot fail,
+/// and creation performs no OS call.
+var seal_epoch = std.atomic.Value(u64).init(0);
+
+/// Bijective 64-bit mixer (splitmix64 finalizer). Each step is invertible, so distinct epochs
+/// give distinct seeds, and the seeds do not follow the creation order visibly.
+fn mix64(value: u64) u64 {
+    var z = value +% 0x9e3779b97f4a7c15;
+    z = (z ^ (z >> 30)) *% 0xbf58476d1ce4e5b9;
+    z = (z ^ (z >> 27)) *% 0x94d049bb133111eb;
+    return z ^ (z >> 31);
+}
 
 /// Allocation seam of the ABI. Production never writes it. Tests swap it to observe and fail
 /// allocations. It is not synchronized, so a test must swap it while no other thread calls `create`.
@@ -358,7 +372,8 @@ export fn waddle_window_state_create(
     slot.* = null;
     const machine = reducer.machine_t.init(window_id, generation, guest_state) catch |err| return status_of_init_error(err);
     const storage = abi_allocator.create(handle_t) catch return c.WaddleWindowStateOutOfMemory;
-    storage.* = .{ .machine = machine, .seal_seed = std.crypto.random.int(u64) };
+    const epoch = seal_epoch.fetchAdd(1, .monotonic);
+    storage.* = .{ .machine = machine, .seal_seed = mix64(epoch) };
     slot.* = storage;
     return c.WaddleWindowStateOk;
 }
@@ -886,6 +901,22 @@ test "destroy observation retires an unsynchronized window with no native action
     var out = std.mem.zeroes(c.waddle_window_state_plan_t);
     var close = input_of(.CloseRequest, 0);
     try expect_status(c.WaddleWindowStateRetired, call_plan(handle, 24, 11, &close, &out));
+}
+
+test "a plan from a destroyed handle is rejected by a recreated handle with the same identity" {
+    const first = try create_for_test(25, 12, 0);
+    try synchronize(first, 0);
+    const stale = try plan_ok(first, 25, 12, input_of(.CloseRequest, 0));
+    try destroy_for_test(first);
+
+    const second = try create_for_test(25, 12, 0);
+    defer destroy_for_test(second) catch {};
+    try synchronize(second, 0);
+    // Same identity and same revision: only the per-handle seal separates the two.
+    try testing.expectEqual(second.machine.revision, stale.base_revision);
+    const before = try snapshot_of(second);
+    try expect_status(c.WaddleWindowStateInvalidPlan, call_complete(second, &stale, 1, 1));
+    try expect_same_snapshot(before, try snapshot_of(second));
 }
 
 test "sealed plans reject edits, resealed invalid structure, foreign handles, and NULL arguments" {

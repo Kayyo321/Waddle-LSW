@@ -111,10 +111,17 @@ The ABI tests and the C test verify each size, alignment and offset with
 
 ## 3. Handle and ownership
 
-- `waddle_window_state_create` is the only allocating function. It takes exactly
+- `waddle_window_state_create` is the only allocating function. It makes exactly
   one allocation of the internal handle, through `abi_allocator`, which defaults
-  to `std.heap.c_allocator`. The handle contains the reducer's `machine_t` and a
-  64-bit seal seed drawn from `std.crypto.random` at creation.
+  to `std.heap.c_allocator`. It makes no other allocation, no OS call, and no
+  random-number call.
+- The handle contains the reducer's `machine_t` and a 64-bit seal seed. The seed
+  is `mix64(e)`, where `e` is the value that `create` takes from a process-wide
+  atomic counter (`fetchAdd(1, monotonic)`, starting at 0). `mix64` is the
+  splitmix64 finalizer, which is bijective, so two handles created in the same
+  process never share a seed until the counter wraps after 2^64 creations.
+  An atomic add cannot fail, so `create` has no failure path beyond the single
+  allocation.
 - The caller owns the handle until `waddle_window_state_destroy`. Destroy frees it
   through the same allocator and sets the caller's slot to NULL.
 - A destroyed handle, and every copy of its pointer, is dangling. The ABI does
@@ -244,11 +251,16 @@ Every function returns one of these. Zero is the only success value.
   `maximized`.
 - The `seal` field itself is never hashed. Bytes of actions at index
   `action_count` and above are never hashed.
-- Purpose: detect accidental edits and plans issued by a different handle. Two
-  handles created in the same process have independent random seeds.
-- Limits: this is not a cryptographic authenticator. Wyhash keyed by a secret
-  seed does not resist a deliberate forger who can read handle memory or who can
-  compute tags for chosen plans. The reducer remains memory safe for any input,
+- Purpose: detect accidental edits, plans issued by a different handle, and plans
+  issued by a handle that was destroyed and recreated with the same identity. Each
+  handle has a distinct seed (section 3), so the second handle rejects the first
+  handle's plan even when both have the same identity and revision.
+- Predictability: the seed is a function of creation order, which an attacker
+  inside the process can observe. That is acceptable under the stated limit below.
+- Limits: this is not a cryptographic authenticator. The seed is not secret. A
+  forger who knows the handle's seed, for example one who can read its memory or
+  one who can count the handles created in the process, can compute valid tags
+  for chosen plans. The reducer remains memory safe for any input,
   so a forged plan can change only the state of its own handle. A caller who can
   read the handle is outside the trust boundary.
 
@@ -261,16 +273,20 @@ Every function returns one of these. Zero is the only success value.
 - `complete` and `destroy` mutate or free the handle. They must not run
   concurrently with any other call on that handle.
 - Calls on distinct handles are independent and may run on any threads.
-- `create` uses `abi_allocator` and `std.crypto.random`. Both are thread-safe for
-  production use. `abi_allocator` is a global variable that tests replace; no
-  production code writes it.
+- `create` uses `abi_allocator` and the process-wide seal counter. `create` may run
+  on any thread. The counter is an atomic and `c_allocator` is thread-safe.
+  `abi_allocator` is a global variable that tests replace; no production code
+  writes it.
 
 ## 7. Error handling summary
 
 - Every error leaves the handle unchanged, except that `create` on failure leaves
   the output slot NULL, `destroy` on success always leaves the slot NULL, and
   `plan` on failure leaves the output plan all zero.
-- No function aborts, logs, or blocks.
+- No function aborts, logs, or waits on a lock or an OS service. The only
+  operation that can fail is the allocation in `create`, which reports
+  OutOfMemory. The allocator is the one external dependency and is the caller's
+  responsibility if it blocks.
 - A caller passing a pointer that is neither NULL nor a live handle (for example a
   destroyed handle) has undefined behavior; the ABI cannot detect it.
 
