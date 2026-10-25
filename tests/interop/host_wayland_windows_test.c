@@ -1178,6 +1178,39 @@ static int check_reset(void) {
 #include "host_wayland_windows_stress.h"
 #include "host_wayland_windows_defensive.h"
 
+/**
+ * @brief A binding captured before a window was retired still names its old generation. The same slot now
+ * holds the next generation, and its xdg_surface is the live object. resolve() must refuse the stale binding by
+ * generation, not by the proxy it names: without the generation check the stale event would be acknowledged.
+ */
+static int check_stale_binding_generation(void) {
+    Check(begin_plain_session() == 0);
+    announce_spec_t first_spec = toplevel_spec(1, 1, "a-app");
+    Check(announce_spec(&session_ctx, &first_spec) == HostWaylandOk);
+    host_wayland_record_t *first = find_record(&session_ctx, 1, 1);
+    Check(first != NULL);
+    host_wayland_binding_t stale = first->bindings[HostWaylandKindXdgSurface];
+    Check(retire_frame(1, 1) == HostWaylandOk);
+    announce_spec_t second_spec = toplevel_spec(1, 2, "a-app");
+    Check(announce_spec(&session_ctx, &second_spec) == HostWaylandOk);
+    host_wayland_record_t *second = find_record(&session_ctx, 1, 2);
+    Check(second != NULL && second->xdg_surface != NULL);
+    Check(stale.slot == (uint32_t)(second - session_ctx.records));
+    unsigned acks_before = fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE);
+    on_surface_configure(&stale, second->xdg_surface, 7);
+    Check(fake_count_requests("xdg_surface", XDG_SURFACE_ACK_CONFIGURE) == acks_before);
+    Check(!second->mapped);
+    return 0;
+}
+
+/** @brief Every request the module sent was accepted by the strict double. Runs last. */
+static int check_fake_protocol_clean(void) {
+    Check(fake_dead_requests == 0);
+    Check(fake_invalid_serials == 0);
+    Check(fake_protocol_errors == 0);
+    return 0;
+}
+
 int main(void) {
     if (check_init() != 0) return 1;
     if (check_scale() != 0) return 1;
@@ -1220,6 +1253,8 @@ int main(void) {
     if (check_root_walk_bound() != 0) return 1;
     if (check_missing_record() != 0) return 1;
     if (check_retire_and_reset_paths() != 0) return 1;
+    if (check_stale_binding_generation() != 0) return 1;
+    if (check_fake_protocol_clean() != 0) return 1;
     puts("host_wayland_windows_test: all checks passed");
     return 0;
 }
