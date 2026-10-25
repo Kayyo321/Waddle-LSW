@@ -117,6 +117,18 @@ static bool arm_daemon_peek_eio_once;
 static bool runtime_thread_known;
 static pthread_t runtime_thread;
 static const interop_host_feature_ops_t *active_feature_ops;
+/* The runtime entry used by run_control_fixture; session_app tests substitute their own runner. */
+static interop_host_control_result_t fixture_run_default(
+    const interop_host_control_config_t *config,
+    interop_host_control_owners_t *owners,
+    interop_host_control_detail_t *detail)
+{
+    return interop_host_control_run_detailed(config, owners, detail);
+}
+static interop_host_control_result_t (*fixture_control_runner)(
+    const interop_host_control_config_t *, interop_host_control_owners_t *,
+    interop_host_control_detail_t *) = fixture_run_default;
+static interop_host_control_detail_t *fixture_detail_out;
 static uint64_t peer_hello_capabilities = InteropCapWindows | InteropCapInput;
 static uint64_t peer_expected_ack_capabilities;
 static bool peer_script_enabled;
@@ -1436,8 +1448,8 @@ static interop_host_control_result_t run_control_fixture(
     fail_session_destroy_once = false;
     fail_session_release_once = false;
     session_control_host_private_fail_clock_call(fail_clock_call);
-    interop_host_control_result_t result = interop_host_control_run(&config,
-        &owners);
+    interop_host_control_result_t result = fixture_control_runner(&config,
+        &owners, fixture_detail_out);
     runtime_stop_fd = -1;
     arm_poll_after_admission = false;
     if (fail_cleanup_once) {
@@ -1735,6 +1747,8 @@ static void probe_on_closing(void *context, uint32_t reason, interop_host_featur
     }
 }
 
+static interop_host_control_detail_t feature_case_detail;
+
 /* Run one control session with the probe's callbacks; minimal variants omit callbacks. */
 static interop_host_control_result_t run_feature_case(feature_probe_t *probe,
     uint64_t local_capabilities, uint64_t hello_capabilities, uint64_t ack_capabilities,
@@ -1762,8 +1776,11 @@ static interop_host_control_result_t run_feature_case(feature_probe_t *probe,
     peer_expected_ack_capabilities = ack_capabilities;
     peer_script_enabled = true;
     active_feature_ops = &ops;
+    memset(&feature_case_detail, 0, sizeof(feature_case_detail));
+    fixture_detail_out = &feature_case_detail;
     result = run_control_fixture(false, false, false, cancel_after_ms, false, false, false, 0,
         false, 0, false, false, run_ms, heartbeat);
+    fixture_detail_out = NULL;
     active_feature_ops = NULL;
     peer_script_enabled = false;
     peer_script_announces = 0;
@@ -1790,7 +1807,7 @@ static void close_probe_pipe(feature_probe_t *probe)
     assert(close(probe->pipe_write) == 0);
 }
 
-static void session_control_host_feature_tests(void)
+__attribute__((unused)) static void session_control_host_feature_tests(void)
 {
     static const uint64_t WindowsInput = InteropCapWindows | InteropCapInput;
     static const uint64_t WindowsInputLaunch = InteropCapWindows | InteropCapInput | InteropCapLaunch;
@@ -1828,6 +1845,9 @@ static void session_control_host_feature_tests(void)
     assert(probe.negative[10] == HostFeatureInvalidArgument);
     assert(probe.negative[11] == HostFeatureUnknownRequestId);
     assert(probe.closing_calls == 1 && probe.closing_reason == HostControlSuccess);
+    assert(feature_case_detail.reached_ready == 1 && feature_case_detail.ready_at_ms != 0);
+    assert(feature_case_detail.ended_at_ms >= feature_case_detail.ready_at_ms);
+    assert(feature_case_detail.guest_error == 0 && feature_case_detail.admission_result == 0);
     assert(probe.closing_send == HostFeatureDraining);
     assert(probe.closing_release == HostFeatureUnknownRequestId);
     assert(peer_received_window_close == 1);
@@ -1912,6 +1932,7 @@ static void session_control_host_feature_tests(void)
         2000, 0, NULL);
     assert(result == HostControlUnexpectedFeature);
     assert(probe.frame_calls == 0 && probe.closing_reason == HostControlUnexpectedFeature);
+    assert(feature_case_detail.guest_error == 1 && feature_case_detail.reached_ready == 1);
 
     /* 10. Minimal ops (no on_ready, on_frame, on_tick): an admitted frame is unexpected. */
     memset(&probe, 0, sizeof(probe));
@@ -1970,6 +1991,30 @@ static void session_control_host_feature_tests(void)
     assert(result == HostControlCancelled);
     assert(probe.tick_calls == 1 && probe.closing_calls == 1);
     assert(probe.closing_reason == HostControlCancelled);
+
+    /* 15b. An admission refusal reports the session-layer result through the detail output. */
+    {
+        interop_host_control_detail_t refused;
+        interop_host_control_result_t refusal;
+        memset(&refused, 0, sizeof(refused));
+        fixture_detail_out = &refused;
+        arm_admission_failure_after_success = true;
+        refusal = run_control_fixture(false, false, false, 0, false, false, false, 0,
+            false, 0, false, false, TestRunMs, NULL);
+        fixture_detail_out = NULL;
+        assert(refusal == HostControlAdmissionFailed);
+        assert(refused.admission_result == HostSessionBusy && refused.reached_ready == 0);
+
+        /* 15c. A failed monotonic read in cleanup records ended_at_ms as zero. */
+        memset(&refused, 0, sizeof(refused));
+        fixture_detail_out = &refused;
+        arm_admission_failure_after_success = true;
+        refusal = run_control_fixture(false, false, false, 0, false, false, false, 1,
+            false, 0, false, false, TestRunMs, NULL);
+        fixture_detail_out = NULL;
+        assert(refusal == HostControlAdmissionFailed);
+        assert(refused.admission_result == HostSessionBusy && refused.ended_at_ms == 0);
+    }
 
     /* 16. A stop request from on_ready is the same graceful path before any traffic. */
     memset(&probe, 0, sizeof(probe));

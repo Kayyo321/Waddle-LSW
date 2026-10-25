@@ -113,6 +113,30 @@ typedef struct interop_host_control_config_t {
     const interop_host_feature_ops_t *feature_ops; /**< Optional feature module; NULL keeps capability-zero behaviour. */
 } interop_host_control_config_t;
 
+/** @brief Diagnostic detail of one control run, filled by interop_host_control_run_detailed.
+ * @note Every field is zero on entry; detail is written only by the owning pump thread.
+ */
+typedef struct interop_host_control_detail_t {
+    uint32_t admission_result; /**< interop_host_session_result_t when the outcome is AdmissionFailed; else 0. */
+    uint32_t reached_ready; /**< 1 when Ready was committed during this run. */
+    uint32_t guest_error; /**< 1 when the guest sent a protocol Error or an unadmitted feature frame. */
+    uint32_t reserved_zero; /**< Must be zero. */
+    uint64_t ready_at_ms; /**< Monotonic milliseconds when Ready was committed; zero when not reached. */
+    uint64_t ended_at_ms; /**< Monotonic milliseconds when the pump stopped; zero when unavailable. */
+} interop_host_control_detail_t;
+
+/** @brief Run one host control-only lifecycle and report diagnostic detail.
+ * @param[in] config As for interop_host_control_run.
+ * @param[out] out_owners As for interop_host_control_run.
+ * @param[out] detail Optional aligned output disjoint from config and owners; zeroed then filled; NULL allowed.
+ * @return The same outcome interop_host_control_run returns for the same inputs.
+ * @thread_safety Not thread-safe; the creating pthread is the only user.
+ */
+interop_host_control_result_t interop_host_control_run_detailed(
+    const interop_host_control_config_t *config,
+    interop_host_control_owners_t *out_owners,
+    interop_host_control_detail_t *detail);
+
 /** @brief Run one host control-only admission and event-pump lifecycle.
  * @param[in] config Aligned readable config and nested admission inputs until return.
  * @param[out] out_owners Aligned writable zero-valued owner pair; holds any authentic

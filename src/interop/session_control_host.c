@@ -415,6 +415,14 @@ interop_host_control_result_t interop_host_control_run(
     const interop_host_control_config_t *config,
     interop_host_control_owners_t *out_owners)
 {
+    return interop_host_control_run_detailed(config, out_owners, NULL);
+}
+
+interop_host_control_result_t interop_host_control_run_detailed(
+    const interop_host_control_config_t *config,
+    interop_host_control_owners_t *out_owners,
+    interop_host_control_detail_t *detail)
+{
     interop_host_control_result_t outcome = HostControlSuccess;
     interop_mapping_linux_view_t view;
     interop_shm_header_snapshot_t snapshot;
@@ -437,6 +445,7 @@ interop_host_control_result_t interop_host_control_run(
     memset(&view, 0, sizeof(view));
     memset(&snapshot, 0, sizeof(snapshot));
     memset(&sender, 0, sizeof(sender));
+    if (detail != NULL) memset(detail, 0, sizeof(*detail));
     if (host_control_in_callback) return HostControlInvalidArgument;
     if (config == NULL || out_owners == NULL ||
         (uintptr_t)config % _Alignof(interop_host_control_config_t) != 0 ||
@@ -493,6 +502,7 @@ interop_host_control_result_t interop_host_control_run(
         &admission, &out_owners->session_owner,
         &(uint32_t){0});
     if (admitted != HostSessionSuccess) {
+        if (detail != NULL) detail->admission_result = (uint32_t)admitted;
         outcome = HostControlAdmissionFailed;
         goto cleanup;
     }
@@ -780,6 +790,10 @@ interop_host_control_result_t interop_host_control_run(
                 else break;
             } else if (outcome == HostControlSuccess) {
                 ready = true;
+                if (detail != NULL) {
+                    detail->reached_ready = 1;
+                    detail->ready_at_ms = now_ms;
+                }
                 last_heartbeat = snapshot.host_heartbeat;
                 next_heartbeat_ms = now_ms > UINT64_MAX - HostControlHeartbeatMs
                     ? UINT64_MAX : now_ms + HostControlHeartbeatMs;
@@ -814,6 +828,9 @@ interop_host_control_result_t interop_host_control_run(
                 host_control_record_outcome(&outcome, HostControlUnexpectedFeature);
             else
                 host_control_record_outcome(&outcome, HostControlPeerFailed);
+            if (detail != NULL && (work.event.kind == InteropPeerEventError ||
+                    work.event.error_code != 0))
+                detail->guest_error = 1;
             /* A remote Error can leave the peer Ready, so the drain starts here. */
             if (!draining) {
                 if (host_control_begin_drain(socket_owner, token, now_ms) == HostControlSuccess)
@@ -830,6 +847,10 @@ interop_host_control_result_t interop_host_control_run(
 
 cleanup:
     host_feature_close_once(feature_ops, &sender, &closing_notified, now_ms, outcome);
+    if (detail != NULL) {
+        uint64_t ended = host_control_monotonic_ms();
+        detail->ended_at_ms = ended == UINT64_MAX ? 0 : ended;
+    }
     if (view_published) {
         /* The pump is synchronous and no other thread ever receives this view. */
         view_published = false;
