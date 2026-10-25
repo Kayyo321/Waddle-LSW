@@ -39,8 +39,8 @@ implementation (`RealHooks`) uses:
 | clock | monotonic |
 | delegate | `exec_fn(argc, argv, 2)` with `waddle exec --device NAME --translate-path -- GUEST ARG...` |
 
-`waddle-session` is located by `PATH` lookup. Next to `/proc/self/exe` is a
-possible refinement and is not implemented.
+`waddle-session` is located next to `/proc/self/exe` when that file exists, and
+otherwise by `PATH` lookup.
 
 ## 3. Parse, device and paths
 
@@ -127,19 +127,35 @@ Notices from replies are printed to stderr as `waddle open: <message>`.
 1. Module location (section 1): `src/interop/` instead of `src/cli/`.
 2. Reply policy without `--wait` (section 8): a 2 s grace for an immediate Error
    or non-Ok LaunchResult, else handover. The spec does not name a value.
-3. The `waddle-session` lookup: `PATH` only. A binary next to `/proc/self/exe`
-   would be preferred for an installed tree.
-4. `MissingTarget`-type usage messages are terse (`invalid request (<tag>)`) and
-   could get human wording.
+3. Usage messages are terse (`invalid request (code N)`) and could get human
+   wording.
 
 ## 11. Verification
 
-- Unit tests in `open_command.zig`: 102 tests, scripted fakes plus production
-  hooks against real directories, sockets, file reads, realpath, mount config,
-  detached spawn and notify scripts on PATH, and allocation-failure sweeps with
-  `std.testing.FailingAllocator` over four argument shapes.
-- Coverage: see the lane report for the measured numbers and any gap.
-- Build: `make build/waddle` links the module; `waddle open` dispatches and
-  reports usage and missing-device errors (smoke test in an isolated HOME).
-- Not covered by a fake-server end-to-end test yet: the binary talking to a
-  live session socket. The server side is another lane.
+- Unit tests in `open_command.zig` (104): scripted fakes with a virtual clock,
+  and production hooks against real directories, Unix sockets, file reads,
+  realpath, mount config, a pseudo-terminal, detached spawn and notify scripts on
+  PATH. Allocation-failure sweeps use `std.testing.FailingAllocator` over five
+  argument shapes; the allocator tracks every block so the sweep reaches each
+  allocation site; `testing.allocator` detects leaks.
+- Coverage (`tests/av/coverage.py open_command`): 94.03 percent branches
+  (126/134) and 95.19 percent lines (277/291).
+- End-to-end (`tests/integration/open_e2e.py`, target `interop-open-e2e-test`):
+  runs the built `build/waddle` against a fake `session.sock` in a temporary
+  `XDG_RUNTIME_DIR/waddle/alpha/` (directory mode 0700). The fake server decodes
+  each frame with a Python TLV reader (`open_fake_session.py`) and replies with
+  frames encoded by the production codec (`tests/interop/open_frame_dump.c`).
+  The Python reader is cross-checked against Zig-codec frames for each field kind
+  and the critical bits. Twelve cases: see the commit message of `996aec3`.
+- Slow case (`interop-open-e2e-slow`): the real 120 s cold-start deadline.
+
+Decisions made while implementing section 7's test requirements:
+
+- The 120 s deadline is tested with the real timeout in the slow case, not a
+  shortened one. A test-only deadline override would change production
+  semantics, which the lane rules forbid. The deadline logic is also covered by
+  unit tests with a virtual clock.
+- `working_dir` is not sent (section 6). The end-to-end test asserts that it is
+  absent.
+- The device name in the outside-share message was a dangling stack pointer
+  until the end-to-end run found it (fixed in `c6977ed`).
