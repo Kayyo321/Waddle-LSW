@@ -33,7 +33,7 @@ typedef enum interop_open_exit_t {
 /** @brief Parse, local and caller outcome codes; zero is success. */
 typedef enum interop_open_error_t {
     InteropOpenErrorNone = 0, /**< Success; request output is valid. */
-    InteropOpenErrorInvalidArgument = 1, /**< NULL or aliasing pointer; output untouched. Maps to 125. */
+    InteropOpenErrorInvalidArgument = 1, /**< NULL output, options or argv pointer; output untouched. Maps to 125. */
     InteropOpenErrorUnknownOption = 2, /**< Unrecognized token beginning with `-`. */
     InteropOpenErrorDuplicateOption = 3, /**< Single-occurrence option or flag repeated. */
     InteropOpenErrorMissingOptionValue = 4, /**< Value option without a value, or value begins with `-`. */
@@ -82,11 +82,11 @@ typedef enum interop_open_item_kind_t {
  *         nonzero value when the file cannot be read (ImageUnreadable, exit 126).
  * @note Runs synchronously on the calling thread. Must not retain any pointer.
  */
-typedef int (*interop_open_read_prefix_fn)(void *context, const char *path, size_t path_length, uint8_t *buffer, size_t capacity, size_t *length_out);
+typedef int (*interop_open_read_prefix_fn_t)(void *context, const char *path, size_t path_length, uint8_t *buffer, size_t capacity, size_t *length_out);
 
 /** @brief Caller-supplied parse options; borrowed for one call. */
 typedef struct interop_open_options_t {
-    interop_open_read_prefix_fn read_prefix; /**< In, nullable; NULL makes every .exe item ImageUnreadable. */
+    interop_open_read_prefix_fn_t read_prefix; /**< In, nullable; NULL makes every .exe item ImageUnreadable. */
     void *read_context; /**< In, opaque; never dereferenced by the parser. */
     uint32_t stdio_is_tty; /**< In; 1 only when stdin and stdout are both terminals. */
 } interop_open_options_t;

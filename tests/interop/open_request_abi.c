@@ -47,6 +47,9 @@ static int read_image(void *context, const char *path, size_t path_length, uint8
     return 0;
 }
 
+/* The callback typedef is a _t type; this line fails to compile until it is renamed. */
+static const interop_open_read_prefix_fn_t reader_callback = read_image;
+
 static int parse_argv(size_t argc, const char *const *argv, uint32_t tty, reader_t *reader, interop_open_request_t *request) {
     interop_open_options_t options = { read_image, reader, tty };
     return interop_open_parse(argc, argv, &options, request);
@@ -325,6 +328,7 @@ static void check_quote_limits(void) {
 }
 
 int main(void) {
+    (void)reader_callback;
     check_app_form();
     check_paths_and_device();
     check_dash_form_and_tail();

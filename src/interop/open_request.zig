@@ -35,7 +35,7 @@ pub const ExitNotFound: u8 = 127;
 pub const open_error_t = enum(u32) {
     /// Success; the request output is valid.
     None = 0,
-    /// C ABI NULL or aliasing pointer, a caller defect. Maps to 125.
+    /// C ABI NULL output, options or argv pointer, a caller defect. Maps to 125.
     InvalidArgument = 1,
     /// Token beginning with `-` that is not a recognized option.
     UnknownOption = 2,

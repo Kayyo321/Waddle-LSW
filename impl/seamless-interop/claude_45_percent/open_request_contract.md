@@ -43,7 +43,7 @@ spawning, catalog lookup, and `working_dir`. The parser never reads
 | `read_context` | opaque pointer | Passed unchanged to the callback. Not dereferenced by the parser. |
 | `stdio_is_tty` | u32, 0 or 1 | Caller sets 1 only when stdin and stdout are both terminals. |
 
-`read_prefix` callback contract (C typedef `interop_open_read_prefix_fn`):
+`read_prefix` callback contract (C typedef `interop_open_read_prefix_fn_t`):
 
 - Signature: `int (*)(void *context, const char *path, size_t path_length, uint8_t *buffer, size_t capacity, size_t *length_out)`.
 - `path` is not necessarily NUL terminated. Use `path_length` (1..4096 bytes).
@@ -273,8 +273,10 @@ uint8_t interop_open_launch_exit_code(uint32_t status);
 - `interop_open_parse`: returns `interop_open_error_t` (0 = None). `argv` may be
   NULL only when `argc` is 0. `options` and `request` must be non-NULL; a NULL
   one returns `InvalidArgument` (value 1) and leaves `request` untouched. Each
-  `argv[i]` must be readable up to its NUL or 4097 bytes. `request` must not
-  alias `argv` or `options`.
+  `argv[i]` must be readable up to its NUL or 4097 bytes. Overlap is not
+  checked: `request` must not overlap `argv`, because the returned item text
+  borrows argv bytes, and it must not overlap `options`, which the parser reads
+  before it writes the output.
 - `interop_open_quote`: returns 0 Ok, 1 InvalidArgument (NULL `out` or
   `length_out`, argc > 64, argument longer than 4096), 2 QuotedTooLarge, 3 NoSpace.
   `capacity` must be at least `length + 1` for the NUL. `out` and `argv` must not
@@ -301,7 +303,7 @@ is also raised by the parser for read status 1, section 2.2):
 `OutsideShare` (126), `NotFound` (127), `LocalFailure` (125),
 `GuestUnreachable` (125), `GuestLaunchFailed` (1).
 
-`InvalidArgument` (C ABI only, NULL or aliasing pointers) is value 1 and maps to
+`InvalidArgument` (C ABI only, a NULL output, options or argv pointer) is value 1 and maps to
 125 in `interop_open_exit_code`, because it indicates a caller defect, not a
 user usage error.
 
