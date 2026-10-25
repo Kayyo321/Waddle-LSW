@@ -10,6 +10,8 @@
 #include "../../src/interop/session_app.h"
 #include "../../src/interop/session_supervisor.h"
 #include "../../src/interop/session_handlers_builtin.h"
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <stdio.h>
 
@@ -687,6 +689,51 @@ static void test_deadlines_and_capability_zero(void)
 }
 
 /* Handlers that provide only the mandatory owns_type: every optional callback is absent. */
+/* The launch handler through the registry: Ready binds in a private runtime directory, the forwarders run
+ * in the ready state, and on_closing removes the socket and the directories this test created. */
+static void test_builtin_launch_ready_path(void)
+{
+    char root[64] = "/tmp/session-builtin-XXXXXX";
+    char device_directory[128];
+    char runtime_waddle[96];
+    char socket_path[160];
+    session_builtin_storage_t storage;
+    session_builtin_config_t config;
+    session_handler_t handlers[SessionAppMaxHandlers];
+    size_t count = 0;
+    struct pollfd fds[SessionHandlerMaxDescriptors];
+    size_t fd_count = 0;
+    interop_host_feature_sender_t *sender = NULL;
+
+    assert(mkdtemp(root) != NULL);
+    assert(snprintf(runtime_waddle, sizeof(runtime_waddle), "%s/waddle", root) > 0);
+    assert(snprintf(device_directory, sizeof(device_directory), "%s/alpha", runtime_waddle) > 0);
+    assert(snprintf(socket_path, sizeof(socket_path), "%s/session.sock", device_directory) > 0);
+    memset(&config, 0, sizeof(config));
+    memset(&storage, 0, sizeof(storage));
+    config.runtime_dir = root;
+    config.device_name = "alpha";
+    config.storage = &storage;
+    assert(session_handlers_builtin_make(&config, handlers, &count) == 0 && count == 1);
+
+    assert(handlers[0].on_ready(&storage, InteropCapLaunch, sender) == 0);
+    assert(storage.launch_ready && storage.launch_initialized);
+    assert(storage.launch.lock_held_proof == 1);
+    assert(access(socket_path, F_OK) == 0);
+    assert(handlers[0].owns_type(&storage, InteropMsgLaunchResult) == 1);
+    assert(handlers[0].owns_type(&storage, InteropMsgLocalLaunch) == 0);
+    assert(handlers[0].poll_fds(&storage, fds, SessionHandlerMaxDescriptors, &fd_count) == 0 && fd_count == 1);
+    assert(handlers[0].on_fds(&storage, fds, 0, 1, sender) == 0);
+    assert(handlers[0].on_tick(&storage, 2, sender) == 0);
+    assert(handlers[0].next_deadline_ms(&storage, 2) == UINT64_MAX);
+    handlers[0].on_closing(&storage, HostControlSuccess, sender);
+    assert(!storage.launch_ready && storage.launch_initialized);
+    assert(access(socket_path, F_OK) != 0);
+    session_handlers_builtin_destroy(&storage);
+    session_handlers_builtin_destroy(&storage);
+    assert(rmdir(device_directory) == 0 && rmdir(runtime_waddle) == 0 && rmdir(root) == 0);
+}
+
 /* The builtin registry: validation, the offered table, forwarding before Ready, and idempotent destroy. */
 static void test_builtin_registry(void)
 {
@@ -894,6 +941,7 @@ int main(void)
 {
     assert(signal(SIGPIPE, SIG_IGN) != SIG_ERR);
     test_builtin_registry();
+    test_builtin_launch_ready_path();
     test_validation();
     test_routing_and_union();
     test_request_ids_and_sends_reach_guest();

@@ -74,6 +74,7 @@ Commands.append(["cc", *LinkObjects, *Coverage, "-pthread", "-Wl,--gc-sections",
 Commands.append([str(Attempt / "runner")])
 Commands.append(["gcov", "--json-format", "-b", "-c", str(Attempt / "app.gcno")])
 Commands.append(["gcov", "--json-format", "-b", "-c", str(Attempt / "supervisor.gcno")])
+Commands.append(["gcov", "--json-format", "-b", "-c", str(Attempt / "builtin.gcno")])
 SanitizerFlags = ["-fsanitize=address,leak,undefined", "-fno-omit-frame-pointer"]
 SanitizerCommands = [
     ["cc", *Flags, *SanitizerFlags, "-c", str(Private), "-o", str(Attempt / "runtime-private.san.o")],
@@ -103,7 +104,8 @@ if any(hashlib.sha256(path.read_bytes()).hexdigest() != Hashes[str(path.relative
     raise RuntimeError("coverage input changed during attempt")
 Summary = {}
 Failed = False
-for source, report_name in ((App, "app.gcov.json.gz"), (Supervisor, "supervisor.gcov.json.gz")):
+for source, report_name in ((App, "app.gcov.json.gz"), (Supervisor, "supervisor.gcov.json.gz"),
+                            (Builtin, "builtin.gcov.json.gz")):
     Report = json.loads(gzip.decompress((Attempt / report_name).read_bytes()))
     Files = [file for file in Report["files"] if Path(file["file"]).resolve() == source.resolve()]
     if len(Files) != 1:
