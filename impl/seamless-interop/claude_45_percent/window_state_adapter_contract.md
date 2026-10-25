@@ -156,9 +156,17 @@ are `InvalidAction` at their index; they are never executed by the guest.
    - No saved state: `NoSavedState`, no change. The adapter never invents a style
      or a rectangle.
    - `set_style(saved_style)`, then `set_window_pos(saved_rect, SWP_FRAMECHANGED |
-     SWP_NOZORDER | SWP_NOACTIVATE)`, then `set_placement(saved_placement)`. Any
-     failure is `NativeFailure` and keeps the record, so a retry repeats these
-     calls. Each of them is idempotent.
+     SWP_NOZORDER | SWP_NOACTIVATE)`, then `is_iconic` and `is_zoomed` read the
+     current state, then `set_placement` with the saved placement whose
+     `show_command` is replaced by the current state: SW_SHOWMINIMIZED when
+     minimized, SW_SHOWMAXIMIZED when maximized, otherwise SW_SHOWNORMAL. The
+     placement therefore restores the saved normal rectangle and leaves the
+     minimized and maximized state alone. The reducer decides that state with its
+     own actions, and they run before this one. Re-applying the saved show command
+     would undo them: the integration test found exactly that, where a configure
+     restored the window and then LeaveFullscreen maximized it again. Any failure
+     is `NativeFailure` and keeps the record, so a retry repeats these calls. Each
+     of them is idempotent.
    - On success, the record is removed.
 6. **Activate** (kind 11, `GuestActivate`):
    - `set_foreground_window(window)`. If it succeeds, the action completes.

@@ -236,7 +236,7 @@ int main(void) {
     uint64_t guest_completions = 0;
     uint64_t native_failures = 0;
     uint64_t stale_recoveries = 0;
-    uint32_t rounds = 60;
+    uint32_t rounds = 200;
     for (uint32_t round = 0; round < rounds; ++round) {
         if (run_round(round, &guest_completions, &native_failures, &stale_recoveries) != 0) {
             fprintf(stderr, "FAILED: round %u\n", round);

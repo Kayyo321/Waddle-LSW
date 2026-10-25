@@ -22,6 +22,9 @@ enum {
     WsaSwMinimize = 6,
     WsaSwMaximize = 3,
     WsaSwRestore = 9,
+    WsaShowNormal = 1,
+    WsaShowMinimized = 2,
+    WsaShowMaximized = 3,
     WsaSwpNoSize = 0x0001,
     WsaSwpNoMove = 0x0002,
     WsaSwpNoZOrder = 0x0004,
@@ -233,11 +236,21 @@ static window_state_adapter_status_t enter_fullscreen(window_state_adapter_t *ad
     return WindowStateAdapterOk;
 }
 
-/** @brief LeaveFullscreen: restore the saved style, rectangle and placement. Keeps the record on failure. */
+/**
+ * @brief LeaveFullscreen: restore the saved style and rectangle, then the saved normal rectangle.
+ *
+ * The placement is restored with the window's current minimized or maximized state as its show
+ * command, not the saved one. The reducer emits its own restore and maximize actions before the
+ * fullscreen transition, so re-applying the saved show command would undo them. Keeps the record on
+ * failure, so a retry repeats the same calls.
+ */
 static window_state_adapter_status_t leave_fullscreen(window_state_adapter_t *adapter,
                                                       window_state_adapter_entry_t *entry) {
     window_state_adapter_status_t status;
+    window_state_placement_t placement;
     void *context = adapter->context;
+    int iconic = 0;
+    int zoomed = 0;
 
     if (entry->fullscreen == 0) return WindowStateAdapterNoSavedState;
     status = check_identity(adapter, entry);
@@ -249,7 +262,11 @@ static window_state_adapter_status_t leave_fullscreen(window_state_adapter_t *ad
                                      WsaSwpFrameChanged | WsaSwpNoZOrder | WsaSwpNoActivate)) {
         return native_fail(adapter);
     }
-    if (!adapter->api.set_placement(context, entry->window, &entry->saved_placement)) return native_fail(adapter);
+    if (!adapter->api.is_iconic(context, entry->window, &iconic)) return native_fail(adapter);
+    if (!adapter->api.is_zoomed(context, entry->window, &zoomed)) return native_fail(adapter);
+    placement = entry->saved_placement;
+    placement.show_command = iconic != 0 ? WsaShowMinimized : (zoomed != 0 ? WsaShowMaximized : WsaShowNormal);
+    if (!adapter->api.set_placement(context, entry->window, &placement)) return native_fail(adapter);
     entry->fullscreen = 0;
     return WindowStateAdapterOk;
 }
@@ -549,6 +566,9 @@ _Static_assert(WsaStyleMinimizeBox == WS_MINIMIZEBOX, "WS_MINIMIZEBOX value");
 _Static_assert(WsaSwMinimize == SW_MINIMIZE, "SW_MINIMIZE value");
 _Static_assert(WsaSwMaximize == SW_MAXIMIZE, "SW_MAXIMIZE value");
 _Static_assert(WsaSwRestore == SW_RESTORE, "SW_RESTORE value");
+_Static_assert(WsaShowNormal == SW_SHOWNORMAL, "SW_SHOWNORMAL value");
+_Static_assert(WsaShowMinimized == SW_SHOWMINIMIZED, "SW_SHOWMINIMIZED value");
+_Static_assert(WsaShowMaximized == SW_SHOWMAXIMIZED, "SW_SHOWMAXIMIZED value");
 _Static_assert(WsaSwpNoSize == SWP_NOSIZE, "SWP_NOSIZE value");
 _Static_assert(WsaSwpNoMove == SWP_NOMOVE, "SWP_NOMOVE value");
 _Static_assert(WsaSwpNoZOrder == SWP_NOZORDER, "SWP_NOZORDER value");

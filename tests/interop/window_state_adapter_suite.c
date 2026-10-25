@@ -287,7 +287,8 @@ static int test_fullscreen_round_trip(void) {
         WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleGetStyle, WsaDoubleGetRect,
         WsaDoubleGetPlacement, WsaDoubleMonitorRect, WsaDoubleSetStyle, WsaDoubleSetWindowPos};
     const wsa_double_entry_t leave_expected[] = {
-        WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleSetStyle, WsaDoubleSetWindowPos, WsaDoubleSetPlacement};
+        WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleSetStyle, WsaDoubleSetWindowPos, WsaDoubleIsIconic,
+        WsaDoubleIsZoomed, WsaDoubleSetPlacement};
     uint32_t bits = 0;
     int64_t default_style;
 
@@ -312,7 +313,7 @@ static int test_fullscreen_round_trip(void) {
 
     wsa_double_reset(&f.d);
     Check(run(&f, &leave, 1, &completed) == WindowStateAdapterOk);
-    Check(log_matches(&f.d, leave_expected, 5));
+    Check(log_matches(&f.d, leave_expected, 7));
     Check(f.d.windows[0].style == default_style);
     Check(f.d.windows[0].rect.left == MainRect.left && f.d.windows[0].rect.right == MainRect.right);
     Check(f.d.windows[0].rect.top == MainRect.top && f.d.windows[0].rect.bottom == MainRect.bottom);
