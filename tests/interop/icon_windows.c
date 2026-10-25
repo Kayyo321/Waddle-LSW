@@ -105,6 +105,20 @@ static void test_owned_gdi_fixtures(void)
     assert(source_has_alpha);
     assert(memcmp(source_bits, destination_bits, (size_t)Dimension * Dimension * 4u) == 0);
 
+    HBITMAP monochrome_bitmap = CreateBitmap((int)Dimension, (int)Dimension,
+                                              1u, 1u, NULL);
+    assert(monochrome_bitmap != NULL);
+    memset(destination_bits, 0, (size_t)Dimension * Dimension * 4u);
+    assert(copy_bitmap_to_top_down_dib(device_context, monochrome_bitmap, Dimension,
+                                       Dimension, destination_bits, &destination_info,
+                                       &source_has_alpha, &error));
+    assert(!source_has_alpha);
+    const uint8_t *opaque_converted_pixels = destination_bits;
+    for (size_t index = 0u; index < (size_t)Dimension * Dimension; ++index) {
+        assert(opaque_converted_pixels[index * 4u + 3u] == 255u);
+    }
+    assert(DeleteObject(monochrome_bitmap) != 0);
+
     uint8_t pixel[4] = {0};
     const uint8_t PremultipliedPixel[4] = {16u, 32u, 64u, 128u};
     convert_premultiplied_bgra_to_rgba(pixel, PremultipliedPixel);
@@ -275,13 +289,23 @@ static void test_shell_extraction(void)
         icon_windows_extract_rgba(item, path, 32u, allocator, &image, &cleanup);
     if (allocation_failure_status != IconWindowsStatusOutOfMemory) {
         (void)fprintf(stderr,
-                      "allocation failure returned status %u, stage %u, native error %lu, "
-                      "Shell HRESULT 0x%08lx, GetLastError %lu\n",
+                      "allocation failure returned status %u, stage %u, detail %u, "
+                      "native error %lu, Shell HRESULT 0x%08lx, GetLastError %lu; "
+                      "DIB bytes %d, bitmap %ldx%ld %u-bpp, header height %ld, "
+                      "header %u-bpp compression %lu\n",
                       (unsigned int)allocation_failure_status,
                       (unsigned int)test_last_native_stage,
+                      (unsigned int)test_last_native_detail,
                       (unsigned long)test_last_native_error,
                       (unsigned long)(uint32_t)test_last_shell_result,
-                      (unsigned long)GetLastError());
+                      (unsigned long)GetLastError(),
+                      test_last_output_description_bytes,
+                      (long)test_last_output_bitmap_width,
+                      (long)test_last_output_bitmap_height,
+                      (unsigned int)test_last_output_bits_pixel,
+                      (long)test_last_output_header_height,
+                      (unsigned int)test_last_output_header_bits_pixel,
+                      (unsigned long)test_last_output_compression);
     }
     assert(allocation_failure_status == IconWindowsStatusOutOfMemory);
     assert(image.rgba == NULL && cleanup.bitmap_count == 0u && cleanup.icon_count == 0u &&

@@ -1546,10 +1546,18 @@ its uncompiled draft earns no credit until current acceptance passes.
     terminal with exact ownership retained. Add real temporary stale-shortcut
     regression; root strict native SDK/link passes, actual rerun pending.
 
-- **Commit `HEAD`**: `fix(interop): bound recursive catalog path storage on the heap`
+- **Commit `2ba7fa9`**: `fix(interop): bound recursive catalog path storage on the heap`
   - **Task Impact**: +0% to TODO #27/#34; native provider gates remain open.
   - **Summary**: Root review found two64KiB arrays in each of65possible
     recursive frames, exceeding normal Windows stack limits. Give each frame
     one owned131072-byte allocation with deterministic free on all exits;
     total path working storage <=8519680bytes. Add24real nested temporary
     directories and reverse cleanup. Strict native compile/link passes.
+
+- **Commit `HEAD`**: `test(interop): retain native DIB field diagnostics and exact GDI retries`
+  - **Task Impact**: +0% to TODO #27/#34 pending native90%gates.
+  - **Summary**: Actual59a1c8d reports stage6/ERROR_INVALID_DATA; record the
+    exact GetObject DIB dimensions, bit depths and compression before changing
+    acceptance rules. Add real1bpp conversion/opaque-alpha and authentic
+    fail-before-close HDC/HICON retries plus image deinit guards. Root strict
+    production(no seams) and profile fixture compile/link pass.
