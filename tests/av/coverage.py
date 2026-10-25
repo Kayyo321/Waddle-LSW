@@ -136,7 +136,7 @@ if mode in ('pe_header', 'open_request'):
         'tests/interop/pe_header.c', '-o', str(fixture_object)], check=True)
     link_objects.append(str(fixture_object))
 extra_args = ['-Isubmodules/venus_protocol/include', *link_objects] if oracle or mode in ModernModeOracles or mode in ('venus_transfer2_native', 'venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else []
-if mode in ('interop_layout_abi', 'interop_slot_runtime_abi'):
+if mode in ('interop_layout_abi', 'interop_slot_runtime_abi', 'window_state_abi'):
     extra_args += ['-Isrc/interop']
 if mode in ('pe_header', 'open_request'):
     extra_args += link_objects
