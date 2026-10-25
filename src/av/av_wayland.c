@@ -47,6 +47,16 @@ typedef struct video_window_t {
     int device_fd, dmabuf_failed;
 } video_window_t;
 /** @brief Event-thread context; alloc/free are the sole ownership boundary. */
+/* One axis's sums for the current wl_pointer frame. Each source has a seen flag, so
+ * the precedence value120 > discrete > continuous is decided per frame. */
+typedef struct av_axis_frame_t {
+    int value120_seen, discrete_seen, continuous_seen;
+    int64_t value120; /* Sum of axis_value120, already in wheel units. */
+    int64_t discrete; /* Sum of axis_discrete notches; multiply by 120. */
+    int64_t continuous; /* Sum of continuous wl_fixed values. */
+} av_axis_frame_t;
+/* Per-frame magnitude bound and per-message bound (the wire admits +-1200 per message). */
+enum { AvAxisFrameUnits = 12000, AvAxisMessageUnits = 1200, AvWheelDelta = 120 };
 struct av_wayland_t {
     struct wl_display *display;
     struct wl_registry *registry;
@@ -69,7 +79,12 @@ struct av_wayland_t {
     /* Host-owned typematic repeat: caller storage for the keyboard_repeat reducer. */
     waddle_keyboard_repeat_t repeat;
     uint8_t suppressed_keys[AvInputKeys];
-    uint8_t observed_keys[AvInputKeys], observed_buttons[4], suppressed_buttons[4];
+    uint8_t observed_keys[AvInputKeys], observed_buttons[6], suppressed_buttons[6];
+    /* Pointer axes (IMPL_DESC 3.6.4): 0 vertical, 1 horizontal. Sums are per wl_pointer frame. */
+    av_axis_frame_t axes[2];
+    int64_t axis_carry[2]; /* Continuous remainder, 1/256 wheel-unit numerator; |carry| < 256. */
+    uint8_t axis_inverted[2]; /* wl_pointer v9 inverted (natural) scrolling, reset on leave. */
+    uint32_t seat_version; /* min(advertised, 9) at bind; the pointer inherits it. */
     av_lease_host_t lease;
     struct wl_callback *lease_sync;
     uint64_t lease_sync_epoch;
@@ -118,7 +133,7 @@ static void suppress_observed(av_wayland_t *client, uint32_t mask) {
         for (unsigned key = 0; key < AvInputKeys; ++key)
             client->suppressed_keys[key] |= client->observed_keys[key];
     if (mask & AvInputReleaseButtons)
-        for (unsigned button = 1; button < 4; ++button)
+        for (unsigned button = 1; button < 6; ++button)
             client->suppressed_buttons[button] |= client->observed_buttons[button];
 }
 static void cancel_lease_sync(av_wayland_t *client) {
@@ -314,6 +329,10 @@ static void clear_pointer_focus(av_wayland_t *client) {
         send_input(client, client->keyboard_window, MsgInputRelease, AvInputReleaseButtons, 0, 0, 0);
     suppress_observed(client, AvInputReleaseButtons);
     client->pointer_window = NULL;
+    /* Leaving the surface drops every partial frame, carry and natural-scroll state. */
+    memset(client->axes, 0, sizeof(client->axes));
+    memset(client->axis_carry, 0, sizeof(client->axis_carry));
+    memset(client->axis_inverted, 0, sizeof(client->axis_inverted));
 }
 static void pointer_enter(void *context, struct wl_pointer *pointer, uint32_t serial,
                           struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
@@ -343,12 +362,23 @@ static void pointer_motion(void *context, struct wl_pointer *pointer, uint32_t t
     client->pointer_x = x; client->pointer_y = y;
     forward_pointer(client);
 }
+/* Linux BTN_LEFT/RIGHT/MIDDLE/SIDE/EXTRA map to wire buttons 1..5; BTN_FORWARD,
+ * BTN_BACK and every other code are dropped (IMPL_DESC 3.6.4). */
+static uint32_t pointer_button_code(uint32_t button) {
+    switch (button) {
+    case 0x110: return 1; /* BTN_LEFT */
+    case 0x111: return 2; /* BTN_RIGHT */
+    case 0x112: return 3; /* BTN_MIDDLE */
+    case 0x113: return 4; /* BTN_SIDE, XBUTTON1 */
+    case 0x114: return 5; /* BTN_EXTRA, XBUTTON2 */
+    default: return 0;
+    }
+}
 static void pointer_button(void *context, struct wl_pointer *pointer, uint32_t serial,
                            uint32_t time, uint32_t button, uint32_t state) {
     (void)pointer; (void)serial; (void)time;
     av_wayland_t *client = context;
-    // Linux input-event-codes BTN_LEFT/RIGHT/MIDDLE, no extra buttons guessed.
-    uint32_t code = button >= 0x110 && button <= 0x112 ? button - 0x110 + 1 : 0;
+    uint32_t code = pointer_button_code(button);
     if (!code || state > WL_POINTER_BUTTON_STATE_PRESSED) return;
     if (lease_mode(client)) {
         int suppressed = client->suppressed_buttons[code];
@@ -367,34 +397,92 @@ static void pointer_button(void *context, struct wl_pointer *pointer, uint32_t s
                (state && !input_coordinates_valid(client))) return;
     send_input(client, client->keyboard_window, MsgInputButton, state, code, 0, 0);
 }
+/* Accumulate one source into the current frame. Sums saturate at the frame bound. */
+static void axis_accumulate(int64_t *sum, int64_t value) {
+    int64_t next = *sum + value;
+    *sum = next > AvAxisFrameUnits * 4096LL ? AvAxisFrameUnits * 4096LL
+        : next < -AvAxisFrameUnits * 4096LL ? -AvAxisFrameUnits * 4096LL : next;
+}
+static int axis_valid(uint32_t axis) { return axis == WL_POINTER_AXIS_VERTICAL_SCROLL || axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL; }
 static void pointer_axis(void *context, struct wl_pointer *pointer, uint32_t time,
                          uint32_t axis, wl_fixed_t value) {
     (void)pointer; (void)time;
     av_wayland_t *client = context;
-    if (!input_coordinates_valid(client)) return;
-    // Baseline continuous scrolling: ten surface units correspond to 120 wheel units.
-    int64_t units = (int64_t)value * 12 / 256;
-    if (!units || units < -1200 || units > 1200 ||
-        (axis != WL_POINTER_AXIS_VERTICAL_SCROLL && axis != WL_POINTER_AXIS_HORIZONTAL_SCROLL)) return;
-    if (lease_mode(client) && forward_pointer(client) != 0) return;
-    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
-        send_input(client, client->keyboard_window, MsgInputWheel, 0, 0, 0, -(int32_t)units);
-    else
-        send_input(client, client->keyboard_window, MsgInputWheel, 0, 0, (int32_t)units, 0);
+    if (!axis_valid(axis)) return;
+    client->axes[axis].continuous_seen = 1;
+    axis_accumulate(&client->axes[axis].continuous, value);
 }
-static void pointer_frame(void *context, struct wl_pointer *pointer) { (void)context; (void)pointer; }
+static void pointer_axis_value120(void *context, struct wl_pointer *pointer, uint32_t axis, int32_t value120) {
+    (void)pointer;
+    av_wayland_t *client = context;
+    if (!axis_valid(axis)) return;
+    client->axes[axis].value120_seen = 1;
+    axis_accumulate(&client->axes[axis].value120, value120);
+}
+static void pointer_discrete(void *context, struct wl_pointer *pointer, uint32_t axis, int32_t discrete) {
+    (void)pointer;
+    av_wayland_t *client = context;
+    if (!axis_valid(axis)) return;
+    client->axes[axis].discrete_seen = 1;
+    axis_accumulate(&client->axes[axis].discrete, discrete);
+}
+static void pointer_axis_relative_direction(void *context, struct wl_pointer *pointer, uint32_t axis,
+                                            uint32_t direction) {
+    (void)pointer;
+    av_wayland_t *client = context;
+    if (!axis_valid(axis)) return;
+    client->axis_inverted[axis] = direction == WL_POINTER_AXIS_RELATIVE_DIRECTION_INVERTED;
+}
+/* Turn one frame's sums into wheel units for both axes, consuming the frame. Precedence is
+ * value120, then discrete * 120, then continuous with the documented 12/256 conversion. Only the
+ * continuous path touches the carry, so a frame that uses value120 never moves the remainder. */
+static void axis_frame_units(av_wayland_t *client, int64_t units[2]) {
+    for (unsigned axis = 0; axis < 2; ++axis) {
+        av_axis_frame_t *frame = &client->axes[axis];
+        int64_t value = 0;
+        if (frame->value120_seen) value = frame->value120;
+        else if (frame->discrete_seen) value = frame->discrete * AvWheelDelta;
+        else if (frame->continuous_seen) {
+            int64_t scaled = client->axis_carry[axis] + frame->continuous * 12;
+            value = scaled / 256; /* Truncates toward zero, so the carry keeps the sign of the remainder. */
+            client->axis_carry[axis] = scaled % 256;
+        }
+        if (client->axis_inverted[axis]) value = -value;
+        units[axis] = value > AvAxisFrameUnits ? AvAxisFrameUnits : value < -AvAxisFrameUnits ? -AvAxisFrameUnits : value;
+    }
+    memset(client->axes, 0, sizeof(client->axes));
+}
+/* wl_pointer.frame: one InputPointerAxis per frame. Horizontal stays as-is (right is positive);
+ * vertical is inverted because Wayland's positive is down and Windows' wheel positive is away.
+ * A frame larger than one message is split into ordered messages of at most AvAxisMessageUnits. */
+static void pointer_frame(void *context, struct wl_pointer *pointer) {
+    (void)pointer;
+    av_wayland_t *client = context;
+    int64_t units[2];
+    axis_frame_units(client, units);
+    int64_t horizontal = units[1], vertical = -units[0];
+    if (!horizontal && !vertical) return;
+    if (!input_coordinates_valid(client)) return;
+    if (lease_mode(client) && forward_pointer(client) != 0) return;
+    while (horizontal || vertical) {
+        int32_t x = (int32_t)(horizontal > AvAxisMessageUnits ? AvAxisMessageUnits :
+            horizontal < -AvAxisMessageUnits ? -AvAxisMessageUnits : horizontal);
+        int32_t y = (int32_t)(vertical > AvAxisMessageUnits ? AvAxisMessageUnits :
+            vertical < -AvAxisMessageUnits ? -AvAxisMessageUnits : vertical);
+        horizontal -= x; vertical -= y;
+        if (send_input(client, client->keyboard_window, MsgInputWheel, 0, 0, x, y) != 0) return;
+    }
+}
 static void pointer_source(void *context, struct wl_pointer *pointer, uint32_t source) {
     (void)context; (void)pointer; (void)source;
 }
 static void pointer_stop(void *context, struct wl_pointer *pointer, uint32_t time, uint32_t axis) {
     (void)context; (void)pointer; (void)time; (void)axis;
 }
-static void pointer_discrete(void *context, struct wl_pointer *pointer, uint32_t axis, int32_t discrete) {
-    (void)context; (void)pointer; (void)axis; (void)discrete;
-}
 static const struct wl_pointer_listener PointerEvents = {.enter = pointer_enter, .leave = pointer_leave,
     .motion = pointer_motion, .button = pointer_button, .axis = pointer_axis, .frame = pointer_frame,
-    .axis_source = pointer_source, .axis_stop = pointer_stop, .axis_discrete = pointer_discrete};
+    .axis_source = pointer_source, .axis_stop = pointer_stop, .axis_discrete = pointer_discrete,
+    .axis_value120 = pointer_axis_value120, .axis_relative_direction = pointer_axis_relative_direction};
 static void seat_capabilities(void *context, struct wl_seat *seat, uint32_t capabilities) {
     av_wayland_t *client = context;
     if ((capabilities & WL_SEAT_CAPABILITY_KEYBOARD) && !client->keyboard && !client->shutting_down) {
@@ -656,7 +744,9 @@ static void registry_global(void *context, struct wl_registry *registry, uint32_
                             const char *interface_name, uint32_t version) {
     av_wayland_t *client = context;
     if (!strcmp(interface_name, "wl_seat") && version >= 5 && !client->seat && !client->shutting_down) {
-        client->seat = wl_registry_bind(registry, name, &wl_seat_interface, 5);
+        /* IMPL_DESC 3.6.4: bind at min(advertised, 9); the pointer inherits this version. */
+        client->seat_version = version < 9 ? version : 9;
+        client->seat = wl_registry_bind(registry, name, &wl_seat_interface, client->seat_version);
         client->seat_global = name;
         if (!client->seat || wl_seat_add_listener(client->seat, &SeatEvents, client) != 0)
             mark_delivery_failed(client);

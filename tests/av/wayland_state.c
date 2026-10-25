@@ -195,6 +195,7 @@ static void input_callbacks(void) {
     pointer_motion(&client, NULL, 0, -1, wl_fixed_from_int(20));
     pointer_button(&client, NULL, 0, 0, 0x111, 1);
     pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(10));
+    pointer_frame(&client, NULL);
     assert(deliveries == 4); /* bounds apply to new downs and wheel during implicit grabs */
     pointer_button(&client, NULL, 0, 0, 0x110, 0);
     assert(deliveries == 5 && delivered.flags == 0); /* releases always escape */
@@ -203,12 +204,18 @@ static void input_callbacks(void) {
     assert(deliveries == 5);
     pointer_motion(&client, NULL, 0, wl_fixed_from_int(319), wl_fixed_from_int(199));
     pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(10));
+    pointer_frame(&client, NULL);
     assert(deliveries == 7 && delivered.type == MsgInputWheel && delivered.y == -120);
     pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_HORIZONTAL_SCROLL, wl_fixed_from_int(10));
+    pointer_frame(&client, NULL);
     assert(deliveries == 8 && delivered.x == 120);
+    /* A huge frame is clamped to 12000 units and sent as ten ordered 1200-unit messages. */
     pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, INT32_MAX);
-    pointer_button(&client, NULL, 0, 0, 0x113, 1);
-    assert(deliveries == 8);
+    pointer_frame(&client, NULL);
+    assert(deliveries == 18 && delivered.type == MsgInputWheel && delivered.y == -1200 && delivered.x == 0);
+    pointer_button(&client, NULL, 0, 0, 0x115, 1); /* BTN_FORWARD is dropped */
+    assert(deliveries == 18);
+    deliveries = 8; /* Continue the original sequence numbering after the chunk check. */
     pointer_leave(&client, NULL, 0, first->surface);
     assert(deliveries == 9 && delivered.type == MsgInputRelease && delivered.flags == AvInputReleaseButtons);
     pointer_enter(&client, NULL, 0, second->surface, wl_fixed_from_int(15), wl_fixed_from_int(25));
@@ -522,6 +529,187 @@ static void live_randomized(void) {
     assert(fired >= 20); /* many separate arms fired; every step is still compared exactly */
     puts("AV Wayland repeat randomized: 2000-step lifecycle matches the reference model passed");
 }
+/* Pointer axes and buttons (IMPL_DESC 3.6.4). Each frame is closed with wl_pointer.frame. */
+static void pointer_live_ready(av_wayland_t *client, video_window_t **window) {
+    live_ready(client, window);
+    live_enter(client, *window);
+    pointer_enter(client, NULL, 0, (*window)->surface, wl_fixed_from_int(10), wl_fixed_from_int(20));
+    deliveries = 0;
+}
+static void wheel_frame(av_wayland_t *client, uint32_t axis, wl_fixed_t value) {
+    pointer_axis(client, NULL, 0, axis, value);
+    pointer_frame(client, NULL);
+}
+static void pointer_buttons_live(void) {
+    av_wayland_t client; video_window_t *window;
+    pointer_live_ready(&client, &window);
+    pointer_button(&client, NULL, 0, 0, 0x113, 1); /* BTN_SIDE -> XBUTTON1 (4) */
+    assert(deliveries == 1 && delivered.type == MsgInputButton && delivered.width == 4 && delivered.flags == 1);
+    pointer_button(&client, NULL, 0, 0, 0x113, 0);
+    assert(deliveries == 2 && delivered.width == 4 && delivered.flags == 0);
+    pointer_button(&client, NULL, 0, 0, 0x114, 1); /* BTN_EXTRA -> XBUTTON2 (5) */
+    assert(deliveries == 3 && delivered.width == 5 && delivered.flags == 1);
+    pointer_button(&client, NULL, 0, 0, 0x115, 1); /* BTN_FORWARD is dropped */
+    pointer_button(&client, NULL, 0, 0, 0x116, 1); /* BTN_BACK is dropped */
+    assert(deliveries == 3);
+    /* A held XBUTTON is released with the other buttons when the pointer leaves. */
+    pointer_leave(&client, NULL, 0, window->surface);
+    assert(deliveries == 4 && delivered.type == MsgInputRelease && delivered.flags == AvInputReleaseButtons);
+    puts("AV Wayland pointer buttons: BTN_SIDE/BTN_EXTRA map to widths 4/5, BTN_FORWARD/BTN_BACK dropped, leave releases passed");
+}
+static void wheel_paths_live(void) {
+    av_wayland_t client; video_window_t *window;
+    pointer_live_ready(&client, &window);
+    /* wl_pointer v5: axis_discrete notches * 120. */
+    client.seat_version = 5;
+    pointer_discrete(&client, NULL, 0, 2);
+    pointer_frame(&client, NULL);
+    assert(deliveries == 1 && delivered.type == MsgInputWheel && delivered.y == -240 && delivered.x == 0);
+    pointer_discrete(&client, NULL, 1, -1);
+    pointer_frame(&client, NULL);
+    assert(deliveries == 2 && delivered.x == -120 && delivered.y == 0);
+    /* Continuous 10 px is 120 units; a frame with two events sums before conversion. */
+    wheel_frame(&client, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(10));
+    assert(deliveries == 3 && delivered.y == -120);
+    pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(10));
+    pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(10));
+    pointer_frame(&client, NULL);
+    assert(deliveries == 4 && delivered.y == -240);
+    /* wl_pointer v8: axis_value120 is used, and it takes precedence over the other sources in the frame. */
+    client.seat_version = 8;
+    pointer_axis_value120(&client, NULL, 0, 120);
+    pointer_discrete(&client, NULL, 0, 9);
+    pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(100));
+    pointer_frame(&client, NULL);
+    assert(deliveries == 5 && delivered.y == -120);
+    /* Natural scrolling (v9 inverted) negates the logical value before the Windows sign rule. */
+    pointer_axis_relative_direction(&client, NULL, 0, WL_POINTER_AXIS_RELATIVE_DIRECTION_INVERTED);
+    pointer_axis_value120(&client, NULL, 0, 120);
+    pointer_frame(&client, NULL);
+    assert(deliveries == 6 && delivered.y == 120);
+    pointer_axis_relative_direction(&client, NULL, 0, WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+    /* Horizontal keeps the Wayland sign: right is positive. One frame, both axes, one message. */
+    pointer_axis_value120(&client, NULL, 1, -240);
+    pointer_axis_value120(&client, NULL, 0, 120);
+    pointer_frame(&client, NULL);
+    assert(deliveries == 7 && delivered.x == -240 && delivered.y == -120);
+    /* A frame without axis events sends nothing. */
+    pointer_frame(&client, NULL);
+    assert(deliveries == 7);
+    /* A frame larger than one message is split into ordered 1200-unit messages. */
+    pointer_axis_value120(&client, NULL, 0, 2500);
+    pointer_frame(&client, NULL);
+    assert(deliveries == 10 && delivered_log[7].y == -1200 && delivered_log[8].y == -1200 && delivered_log[9].y == -100);
+    /* Continuous remainder carries across frames; 85/256 px is 1020/256 units per frame. */
+    client.seat_version = 9;
+    deliveries = 0;
+    wheel_frame(&client, WL_POINTER_AXIS_VERTICAL_SCROLL, 85);
+    assert(deliveries == 1 && delivered.y == -3);
+    wheel_frame(&client, WL_POINTER_AXIS_VERTICAL_SCROLL, 85);
+    assert(deliveries == 2 && delivered.y == -4);
+    wheel_frame(&client, WL_POINTER_AXIS_VERTICAL_SCROLL, 85);
+    assert(deliveries == 3 && delivered.y == -4 && client.axis_carry[0] == 244);
+    /* Leaving the surface resets the remainder: the next frame starts from zero. */
+    pointer_leave(&client, NULL, 0, window->surface);
+    pointer_enter(&client, NULL, 0, window->surface, wl_fixed_from_int(10), wl_fixed_from_int(20));
+    deliveries = 0;
+    assert(client.axis_carry[0] == 0);
+    wheel_frame(&client, WL_POINTER_AXIS_VERTICAL_SCROLL, 85);
+    assert(deliveries == 1 && delivered.y == -3);
+    /* Bind at min(advertised, 9): a v10 advertisement binds v9, a v4 advertisement is refused. */
+    av_wayland_t bind; memset(&bind, 0, sizeof(bind));
+    bind.registry = (struct wl_registry *)(uintptr_t)1;
+    registry_global(&bind, bind.registry, 7, "wl_seat", 10);
+    assert(bind.seat_version == 9 && bind.seat != NULL);
+    av_wayland_t refused; memset(&refused, 0, sizeof(refused));
+    refused.registry = (struct wl_registry *)(uintptr_t)1;
+    registry_global(&refused, refused.registry, 7, "wl_seat", 4);
+    assert(refused.seat == NULL && refused.seat_version == 0);
+    puts("AV Wayland wheel: v5 discrete, v8 value120 precedence, natural scrolling, sign, frame sums, chunks, carry and reset passed");
+}
+/* Randomized pointer lifecycle: compositor-side held buttons and axis frames against a guest model
+ * built only from delivered events. Focus loss, pointer leave and held XBUTTONs are included. */
+static void pointer_randomized_live(void) {
+    static const uint32_t Buttons[] = {0x110, 0x111, 0x112, 0x113, 0x114, 0x115};
+    av_wayland_t client; video_window_t *window;
+    pointer_live_ready(&client, &window);
+    int cheld[6] = {0}, gheld[6] = {0}, pointer_in = 1, focused = 1;
+    unsigned checked = 0;
+    for (unsigned step = 0; step < 1500; ++step) {
+        if (deliveries > 900) deliveries = 0;
+        unsigned before = deliveries;
+        uint32_t op = live_random() % 100;
+        int clears_guest = 0;
+        if (op < 35) {
+            unsigned index = live_random() % 6;
+            if (!cheld[index]) {
+                cheld[index] = 1;
+                pointer_button(&client, NULL, 0, 0, Buttons[index], 1);
+            } else {
+                cheld[index] = 0;
+                pointer_button(&client, NULL, 0, 0, Buttons[index], 0);
+            }
+        } else if (op < 55) {
+            uint32_t axis = live_random() % 2;
+            int32_t units = (int32_t)(live_random() % 401) - 200;
+            if (live_random() % 2) pointer_axis_value120(&client, NULL, axis, units);
+            else pointer_discrete(&client, NULL, axis, units / 120);
+            if (live_random() % 3 == 0) pointer_frame(&client, NULL);
+        } else if (op < 70) {
+            pointer_frame(&client, NULL);
+        } else if (op < 78) {
+            /* Pointer leaves: every held button is released for the guest. */
+            pointer_leave(&client, NULL, 0, window->surface);
+            pointer_in = 0;
+            for (unsigned i = 0; i < 6; ++i) cheld[i] = 0; /* the compositor drops its grab */
+            clears_guest = 1;
+        } else if (op < 86) {
+            if (!pointer_in) {
+                pointer_enter(&client, NULL, 0, window->surface, wl_fixed_from_int(10), wl_fixed_from_int(20));
+                pointer_in = 1;
+            }
+        } else if (op < 92) {
+            /* Keyboard focus loss: the guest focus clear releases everything. */
+            keyboard_leave(&client, NULL, 0, window->surface);
+            focused = 0;
+            for (unsigned i = 0; i < 6; ++i) cheld[i] = 0;
+            clears_guest = 1;
+        } else {
+            if (!focused) {
+                live_enter(&client, window);
+                focused = 1;
+                pointer_in = 1;
+                pointer_enter(&client, NULL, 0, window->surface, wl_fixed_from_int(10), wl_fixed_from_int(20));
+            }
+        }
+        /* Guest model: apply exactly the delivered events in order. */
+        for (unsigned i = before; i < deliveries; ++i) {
+            const av_message_t *event = &delivered_log[i];
+            if (event->type == MsgInputButton) {
+                assert(event->width >= 1 && event->width <= 5);
+                /* Wire buttons 1..5 map to indices 0..4. A down must never duplicate a held button;
+                 * an up for a button the guest does not hold is delivered and ignored by the guest. */
+                unsigned index = event->width - 1;
+                if (event->flags) assert(!gheld[index]);
+                gheld[index] = event->flags != 0;
+            } else if (event->type == MsgInputRelease && (event->flags & AvInputReleaseButtons)) {
+                for (unsigned k = 0; k < 6; ++k) gheld[k] = 0;
+            } else if (event->type == MsgInputFocus && event->flags == 0) {
+                for (unsigned k = 0; k < 6; ++k) gheld[k] = 0;
+            }
+        }
+        if (clears_guest) {
+            for (unsigned k = 0; k < 6; ++k) assert(!gheld[k]); /* no stuck XBUTTON or button after loss */
+        }
+        ++checked;
+    }
+    /* Final release: leaving the surface and losing focus leave nothing held on the guest. */
+    pointer_leave(&client, NULL, 0, window->surface);
+    keyboard_leave(&client, NULL, 0, window->surface);
+    for (unsigned k = 0; k < 6; ++k) assert(!gheld[k]);
+    assert(checked == 1500);
+    puts("AV Wayland pointer randomized: 1500-step button, axis, leave and focus-loss lifecycle has no stuck buttons passed");
+}
 static void live_repeat(void) {
     live_repeat_timing();
     live_repeat_info();
@@ -572,6 +760,9 @@ int main(void) {
     assert(deliveries == 6 && client.delivery_failed);
     input_callbacks();
     live_repeat();
+    pointer_buttons_live();
+    wheel_paths_live();
+    pointer_randomized_live();
     lifecycle_callbacks();
     decoration_callbacks();
     lease_callbacks();
@@ -831,6 +1022,7 @@ static void lease_callbacks(void) {
     pointer_motion(&client, NULL, 0, wl_fixed_from_int(19), wl_fixed_from_int(24));
     unsigned before = deliveries;
     pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(10));
+    pointer_frame(&client, NULL);
     assert(deliveries == before + 2 && delivered_log[before].type == MsgInputPointerV3);
     assert(delivered_log[before].x == 19 && delivered.type == MsgInputWheelV3 && delivered.y == -120);
     keyboard_key(&client, NULL, 0, 0, 31, 1);
@@ -1003,11 +1195,14 @@ static void lease_failures(void) {
             pointer_enter(&client, NULL, 0, client.windows[0].surface, wl_fixed_from_int(10), wl_fixed_from_int(20));
             unsigned before = deliveries;
             fail_delivery_at = deliveries + failing_frame;
-            if (wheel) pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(10));
-            else pointer_button(&client, NULL, 0, 0, 0x110, 1);
+            if (wheel) {
+                pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(10));
+                pointer_frame(&client, NULL);
+            } else pointer_button(&client, NULL, 0, 0, 0x110, 1);
             assert(client.delivery_failed && client.lease.phase == AvLeaseHostTerminal);
             assert(deliveries == before + failing_frame && delivered_log[before].type == MsgInputPointerV3);
             pointer_axis(&client, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(10));
+            pointer_frame(&client, NULL);
             pointer_button(&client, NULL, 0, 0, 0x110, 0);
             assert(deliveries == before + failing_frame);
         }
