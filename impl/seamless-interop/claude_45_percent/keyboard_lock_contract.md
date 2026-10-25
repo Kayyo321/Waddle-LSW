@@ -43,25 +43,26 @@ calls, and wire encoding of `InputLockState` (already in `interop_codec.zig`).
 | `VkCapital`, `VkNumlock`, `VkScroll` | const u16 | 0x14, 0x90, 0x91 |
 | `MaxToggleActions` | const usize | 6 (three keys, press and release) |
 | `HalfSerialSpace` | const u32 | 0x80000000 |
-| `error_t` | error set | `InvalidIndex`, `InvalidMask`, `InvalidSerial`, `InvalidEpoch` |
+| `error_t` | error set | `InvalidIndex`, `InvalidMask`, `InvalidSerial`, `InvalidEpoch`, `EpochMismatch` |
 | `modifiers_t` | extern struct | `depressed`, `latched`, `locked` (u32 each), by value |
 | `indices_t` | extern struct | `caps`, `num`, `scroll` (u8 each), by value |
-| `host_state_t` | extern struct | `focused: bool`, `last_mask: u8`. Zero = valid initial value |
+| `host_state_t` | extern struct | `focused: bool`, `pending_sync: bool`. Zero = valid initial value |
 | `host_decision_t` | extern struct | `send: bool`, `mask: u8` |
 | `guest_state_t` | extern struct | `accepted: bool`, `epoch: u64`, `serial: u32`. Zero = valid initial value |
 | `toggle_action_t` | extern struct | `vk: u16`, `pressed: bool` |
 | `toggle_plan_t` | extern struct | `count: u8`, `actions: [6]toggle_action_t` |
 | `update_t` | extern struct | `applied: bool`, `plan: toggle_plan_t` |
-| `status_t` | enum(c_int) | `Ok`=0, `NullArgument`=1, `InvalidIndex`=2, `InvalidMask`=3, `InvalidSerial`=4, `InvalidEpoch`=5 |
+| `status_t` | enum(c_int) | `Ok`=0, `NullArgument`=1, `InvalidIndex`=2, `InvalidMask`=3, `InvalidSerial`=4, `InvalidEpoch`=5, `EpochMismatch`=6 |
 | `lock_mask(mods, indices)` | fn | Returns the mask, or `InvalidIndex` |
-| `host_enter`, `host_observe`, `host_leave` | fn | Host reducer (below) |
+| `host_enter(state, indices)`, `host_observe(state, mods, indices)`, `host_leave(state)` | fn | Host reducer (below) |
 | `serial_newer(candidate, last)` | fn | Wrap-safe serial order (below) |
 | `plan_toggles(desired, current)` | fn | Ordered toggle plan (below) |
-| `guest_update(state, epoch, serial, desired, current)` | fn | Guest gate plus plan |
+| `guest_update(state, current_epoch, epoch, serial, desired, current)` | fn | Lease-epoch gate, serial gate, plan |
 
 C ABI (`export fn`, `callconv(.C)`, all pointer parameters are nullable and a
 NULL pointer returns `NullArgument`): `waddle_keyboard_lock_mask`,
-`waddle_keyboard_lock_host_enter`, `waddle_keyboard_lock_host_observe`,
+`waddle_keyboard_lock_host_enter` (no output; arms the sync),
+`waddle_keyboard_lock_host_observe`,
 `waddle_keyboard_lock_host_leave`, `waddle_keyboard_lock_guest_update`,
 `waddle_keyboard_lock_plan_toggles`. Output structs are written only when the
 call returns `Ok`. The C header mirrors the struct layouts exactly; the Zig
@@ -75,19 +76,25 @@ index equal to `ModifierAbsent` contributes 0. An index in 32 through 254 is
 `InvalidIndex`. Validation of all three indices happens before any state is
 read, so an invalid call never changes state and never sends.
 
-`host_enter(state, mods, indices)`: computes the mask, sets `focused = true`,
-records `last_mask`, and returns `send = true`. Every wl_keyboard enter sends
-exactly one `InputLockState`, including a second enter without an intervening
-leave and an enter whose mask equals the previous one. The spec requires one
-message per `InputFocus{enter}`.
+Sync trigger. The protocol requires exactly one `InputLockState` per
+`InputFocus{enter}` (IMPL_DESC 3.6.3). `wl_keyboard.enter` carries no modifiers,
+so the sync is sent by the first `modifiers` observation after the enter.
 
-`host_observe(state, mods, indices)`: computes the mask. If not focused, or the
-mask equals `last_mask`, returns `send = false`. Otherwise records the new
-mask and returns `send = true`. A duplicate mask is never re-sent without a
-focus enter. While unfocused the recorded mask is not updated.
+`host_enter(state, indices)`: validates the three indices, sets `focused = true`
+and `pending_sync = true`. A second enter without an intervening leave re-arms
+the sync, so it still yields one message. Invalid indices return `InvalidIndex`
+with no state change.
 
-`host_leave(state)`: clears `focused`. `last_mask` is retained but is not used
-until the next enter, which always sends.
+`host_observe(state, mods, indices)`: validates the indices and computes the
+mask. The message is sent only when the observation is focused and
+`pending_sync` is set. That observation clears `pending_sync` and returns
+`send = true` with the mask. Every later observation returns `send = false`,
+even when the mask changed, until the next enter. Mask changes while focused
+are carried by `InputKey` events (Caps Lock is a key press), so sending a second
+`InputLockState` would race the guest toggle. Unfocused observations send nothing.
+
+`host_leave(state)`: clears `focused` and `pending_sync`. A sync that was armed
+but not consumed is discarded.
 
 ## Guest gate and planner
 
@@ -96,23 +103,32 @@ Staleness: `serial_newer(candidate, last)` is true when
 style serial arithmetic. A forward distance of exactly 2^31 is treated as
 older, so no distance is ambiguous.
 
-`guest_update(state, epoch, serial, desired, current)`:
+`guest_update(state, current_epoch, epoch, serial, desired, current)`:
 
-1. `epoch == 0` returns `InvalidEpoch`. `serial == 0` returns `InvalidSerial`.
-2. `plan_toggles(desired, current)` validates both masks (`InvalidMask`).
-3. If `state.accepted` and (`epoch < state.epoch` or not
-   `serial_newer(serial, state.serial)`), the update is stale. Return
+1. `current_epoch == 0` or `epoch == 0` returns `InvalidEpoch`.
+   `serial == 0` returns `InvalidSerial`.
+2. `epoch != current_epoch`, in either direction, returns `EpochMismatch`. An
+   update from another lease is never applied and never changes state. It is an
+   explicit rejection, not a silent drop, so the caller can count and log it.
+3. `plan_toggles(desired, current)` validates both masks (`InvalidMask`).
+4. If `state.accepted`, `state.epoch == epoch`, and not
+   `serial_newer(serial, state.serial)`, the update is stale. Return
    `applied = false` with an empty plan. State is unchanged.
-4. Otherwise store `(accepted = true, epoch, serial)` and return
+5. Otherwise store `(accepted = true, epoch, serial)` and return
    `applied = true` with the plan.
 
-Every rejection in steps 1 and 2 leaves state unchanged. The first update
-after zero state is always applied.
+Every rejection in steps 1 to 3 leaves state unchanged. The first update after
+zero state is applied when it passes steps 1 to 3.
 
-Because the host serial is strictly increasing across all host-to-guest
-messages (IMPL_DESC 3.6.2), an update whose serial is older than the last
-accepted one is always stale, even when its lease epoch is newer. This is the
-stricter reading of "lease_epoch or serial is older than the last accepted".
+Serial order is scoped to one lease epoch. Each epoch starts a fresh order: the
+first update of a new epoch is applied regardless of the serial of the previous
+epoch, because that serial belonged to a lease the guest no longer holds. Within
+an epoch, the wrap-safe rule of `serial_newer` decides staleness. The host serial
+is strictly increasing within the session (IMPL_DESC 3.6.2), so an in-epoch
+update with an older serial is always stale.
+
+The guest supplies `current_epoch` from its live lease state. The reducer does
+not track lease changes itself.
 
 `plan_toggles(desired, current)`: `differing = desired XOR current`. Iterates
 bits in the fixed order Caps, Num, Scroll and appends press then release for
@@ -146,7 +162,8 @@ any other key (IMPL_DESC 3.6.3).
 | `InvalidIndex` | `error.InvalidIndex` | index outside 0..31 and not ModifierAbsent | none |
 | `InvalidMask` | `error.InvalidMask` | mask bit outside 0x07 | none |
 | `InvalidSerial` | `error.InvalidSerial` | serial 0 | none |
-| `InvalidEpoch` | `error.InvalidEpoch` | epoch 0 | none |
+| `InvalidEpoch` | `error.InvalidEpoch` | epoch 0 or current epoch 0 | none |
+| `EpochMismatch` | `error.EpochMismatch` | update epoch differs from current epoch | none |
 
 A stale `guest_update` is not an error. It returns `Ok` with `applied = false`.
 
@@ -156,17 +173,20 @@ Zig built-in tests in `keyboard_lock.zig` (run by `make interop-keyboard-lanes-t
 
 - Lock mask: each bit, absent index, index 31, ignored `depressed`/`latched`,
   rejection of 32, 33, 254 at each of the three positions.
-- Host: enter sends; observe sends only on change while focused; duplicate
-  mask suppressed; unfocused observe never sends; leave then enter sends;
-  repeated enter sends each time; invalid indices leave state and output
-  unchanged.
+- Host: the first observation after enter sends exactly once; later changes and
+  duplicates never send until the next enter; unfocused observations never send;
+  a second enter re-arms one sync; leave discards an unconsumed sync; invalid
+  indices on enter or observe leave state and output unchanged.
 - Serial: equal, older, newer, wrap from 0xFFFFFFFF to 1, distance 2^31 - 1
   newer, distance 2^31 and above older.
 - Plan: equal masks empty; single key press-release; all keys in order; each
   unknown-bit rejection in either argument.
-- Guest: first update applied; equal serial stale; older serial stale; older
-  epoch stale; newer serial with older epoch stale; newer epoch and newer serial
-  applied; zero epoch, zero serial and unknown bits rejected with no mutation.
+- Guest: first update of the current epoch applied; equal serial stale; older
+  serial stale; newer serial applied; every epoch other than the current one
+  (below and above) rejected with `EpochMismatch` and no mutation; a new epoch
+  restarts serial order; wrap across 0xFFFFFFFF and the 2^31 boundary; zero
+  current epoch, zero epoch, zero serial and unknown masks rejected with no
+  mutation.
 - C ABI: every NULL argument position and every status code; outputs unchanged
   on error.
 - Randomized sequence of 20000 host and guest operations (valid and invalid

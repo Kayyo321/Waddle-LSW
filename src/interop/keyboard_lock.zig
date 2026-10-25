@@ -29,8 +29,10 @@ pub const HalfSerialSpace: u32 = 0x8000_0000;
 /// InvalidIndex: index is neither ModifierAbsent nor in 0 through 31.
 /// InvalidMask: a lock mask has a bit outside LockAll.
 /// InvalidSerial: protocol serial is zero (a value the codec also rejects).
-/// InvalidEpoch: lease epoch is zero (a value the codec also rejects).
-pub const error_t = error{ InvalidIndex, InvalidMask, InvalidSerial, InvalidEpoch };
+/// InvalidEpoch: lease epoch, or the guest's current epoch, is zero (the codec rejects zero).
+/// EpochMismatch: the update's lease epoch differs from the guest's current epoch,
+/// in either direction. Such an update belongs to another lease and is never applied.
+pub const error_t = error{ InvalidIndex, InvalidMask, InvalidSerial, InvalidEpoch, EpochMismatch };
 
 /// Wayland wl_keyboard.modifiers masks, copied by value. Only `locked` selects
 /// lock bits; `depressed` and `latched` are carried for diagnostics only.
@@ -60,12 +62,12 @@ pub const indices_t = extern struct {
 pub const host_state_t = extern struct {
     /// True between a focus enter and the next leave.
     focused: bool,
-    /// Lock mask last sent to the guest for the current focus.
-    last_mask: u8,
+    /// True from a focus enter until the first modifiers observation consumes it.
+    pending_sync: bool,
 };
 
-/// Host decision for one observation. When `send` is true the caller queues
-/// exactly one InputLockState carrying `mask`; otherwise it queues nothing.
+/// Host decision for one modifiers observation. When `send` is true the caller
+/// queues exactly one InputLockState carrying `mask`; otherwise it queues nothing.
 pub const host_decision_t = extern struct {
     /// True when an InputLockState must be queued.
     send: bool,
@@ -121,8 +123,10 @@ pub const status_t = enum(c_int) {
     InvalidMask = 3,
     /// The protocol serial is zero.
     InvalidSerial = 4,
-    /// The lease epoch is zero.
+    /// The lease epoch, or the guest's current epoch, is zero.
     InvalidEpoch = 5,
+    /// The update's lease epoch differs from the guest's current epoch.
+    EpochMismatch = 6,
 };
 
 const toggle_entry_t = struct { bit: u8, vk: u16 };
@@ -138,10 +142,8 @@ const toggle_table = [_]toggle_entry_t{
 /// Returns the lock mask, a subset of LockAll.
 /// Errors: InvalidIndex when any index is neither ModifierAbsent nor 0..31.
 /// Thread safety: pure function, callable from any thread.
-pub fn lock_mask(mods: modifiers_t, indices: indices_t) error_t!u8 {
-    try validate_index(indices.caps);
-    try validate_index(indices.num);
-    try validate_index(indices.scroll);
+pub noinline fn lock_mask(mods: modifiers_t, indices: indices_t) error_t!u8 {
+    try validate_indices(indices);
     var mask: u8 = 0;
     if (locked_bit(mods.locked, indices.caps)) mask |= LockCaps;
     if (locked_bit(mods.locked, indices.num)) mask |= LockNum;
@@ -149,38 +151,41 @@ pub fn lock_mask(mods: modifiers_t, indices: indices_t) error_t!u8 {
     return mask;
 }
 
-/// Host focus enter. Always decides to send one InputLockState, because every
-/// wl_keyboard enter requires a fresh guest sync. Marks the state focused and
-/// records the mask as sent.
-/// `state` is in/out and owner-serialized; `mods` and `indices` are in by value.
-/// Returns the decision with send=true.
-/// Errors: InvalidIndex; state is not mutated on error.
+/// Host focus enter. Arms exactly one lock sync. wl_keyboard.enter carries no
+/// modifiers; the modifiers event that follows is the observation that sends the
+/// sync (IMPL_DESC 3.6.3: lock state is sent on InputFocus{enter}). A second enter
+/// without a leave re-arms the sync, so it still yields one message.
+/// `state` is in/out and owner-serialized; `indices` is in by value.
+/// Errors: InvalidIndex when an index is invalid; state is not mutated on error.
 /// Thread safety: caller serializes all calls on one state.
-pub fn host_enter(state: *host_state_t, mods: modifiers_t, indices: indices_t) error_t!host_decision_t {
-    const mask = try lock_mask(mods, indices);
+pub noinline fn host_enter(state: *host_state_t, indices: indices_t) error_t!void {
+    try validate_indices(indices);
     state.focused = true;
-    state.last_mask = mask;
-    return .{ .send = true, .mask = mask };
+    state.pending_sync = true;
 }
 
-/// Host modifier observation. Sends only on change while focused, so an
-/// unchanged mask is never duplicated. While unfocused nothing is sent and the
-/// recorded mask is left unchanged.
+/// Host modifiers observation. Sends exactly one InputLockState for the first
+/// observation after a focus enter, and nothing for later observations until the
+/// next enter, even when the lock mask changes. Caps Lock pressed while focused is
+/// delivered as InputKey, so a mask update here would race the guest toggle.
+/// While unfocused nothing is sent.
 /// `state` is in/out; `mods` and `indices` are in by value.
-/// Returns the decision; send=true means exactly one InputLockState is due.
+/// Returns the decision; `mask` is the lock mask of this observation.
 /// Errors: InvalidIndex; state is not mutated on error, and nothing is sent.
 /// Thread safety: caller serializes all calls on one state.
-pub fn host_observe(state: *host_state_t, mods: modifiers_t, indices: indices_t) error_t!host_decision_t {
+pub noinline fn host_observe(state: *host_state_t, mods: modifiers_t, indices: indices_t) error_t!host_decision_t {
     const mask = try lock_mask(mods, indices);
-    if (!state.focused or mask == state.last_mask) return .{ .send = false, .mask = mask };
-    state.last_mask = mask;
+    if (!state.focused or !state.pending_sync) return .{ .send = false, .mask = mask };
+    state.pending_sync = false;
     return .{ .send = true, .mask = mask };
 }
 
-/// Host focus leave. Clears focus so later observations send nothing.
-/// `state` is in/out. No error. Thread safety: caller serializes.
-pub fn host_leave(state: *host_state_t) void {
+/// Host focus leave. Clears focus and any unconsumed sync, so later observations
+/// send nothing until the next enter. `state` is in/out. No error.
+/// Thread safety: caller serializes.
+pub noinline fn host_leave(state: *host_state_t) void {
     state.focused = false;
+    state.pending_sync = false;
 }
 
 /// Wrap-safe serial ordering (RFC 1982 style). `candidate` is newer than `last`
@@ -200,7 +205,7 @@ pub fn serial_newer(candidate: u32, last: u32) bool {
 /// Returns the plan with count of 0, 2, 4 or 6.
 /// Errors: InvalidMask when either mask has a bit outside LockAll.
 /// Thread safety: pure function.
-pub fn plan_toggles(desired: u8, current: u8) error_t!toggle_plan_t {
+pub noinline fn plan_toggles(desired: u8, current: u8) error_t!toggle_plan_t {
     try validate_mask(desired);
     try validate_mask(current);
     var plan = empty_plan();
@@ -213,54 +218,65 @@ pub fn plan_toggles(desired: u8, current: u8) error_t!toggle_plan_t {
     return plan;
 }
 
-/// Guest handling of one InputLockState. Validates every input first, then
-/// applies the staleness gate: an update is stale when its lease epoch is older
-/// than the last accepted epoch, or its serial is not wrap-newer than the last
-/// accepted serial. Stale updates change nothing and yield an empty plan.
-/// Accepted updates record (epoch, serial) and yield the toggle plan.
+/// Guest handling of one InputLockState for the guest's live lease.
+/// Validation order: zero epochs, zero serial, epoch mismatch, masks. Only then the
+/// serial gate applies. An update is accepted only when its lease epoch equals
+/// `current_epoch`, in either direction. Within that epoch, an update whose serial
+/// is not wrap-newer than the last accepted serial is stale: applied = false, empty
+/// plan, state unchanged. A change of epoch starts a fresh serial order, because
+/// the last accepted serial belonged to an older lease.
 /// `state` is in/out and owner-serialized; scalars are by value.
 /// Returns the update result.
-/// Errors: InvalidEpoch, InvalidSerial, InvalidMask; state is not mutated on error.
+/// Errors: InvalidEpoch (either epoch zero), InvalidSerial, EpochMismatch,
+/// InvalidMask. State is not mutated on error.
 /// Thread safety: caller serializes all calls on one state.
-pub fn guest_update(state: *guest_state_t, epoch: u64, serial: u32, desired: u8, current: u8) error_t!update_t {
-    if (epoch == 0) return error.InvalidEpoch;
+pub noinline fn guest_update(state: *guest_state_t, current_epoch: u64, epoch: u64, serial: u32, desired: u8, current: u8) error_t!update_t {
+    if (current_epoch == 0 or epoch == 0) return error.InvalidEpoch;
     if (serial == 0) return error.InvalidSerial;
+    if (epoch != current_epoch) return error.EpochMismatch;
     const plan = try plan_toggles(desired, current);
-    if (state.accepted and (epoch < state.epoch or !serial_newer(serial, state.serial))) {
+    if (state.accepted and state.epoch == epoch and !serial_newer(serial, state.serial)) {
         return .{ .applied = false, .plan = empty_plan() };
     }
     state.* = .{ .accepted = true, .epoch = epoch, .serial = serial };
     return .{ .applied = true, .plan = plan };
 }
 
-fn validate_index(index: u8) error_t!void {
+noinline fn validate_index(index: u8) error_t!void {
     if (index != ModifierAbsent and index > MaxModifierIndex) return error.InvalidIndex;
 }
 
-fn validate_mask(mask: u8) error_t!void {
+noinline fn validate_indices(indices: indices_t) error_t!void {
+    try validate_index(indices.caps);
+    try validate_index(indices.num);
+    try validate_index(indices.scroll);
+}
+
+noinline fn validate_mask(mask: u8) error_t!void {
     if ((mask & ~LockAll) != 0) return error.InvalidMask;
 }
 
-fn locked_bit(locked: u32, index: u8) bool {
+noinline fn locked_bit(locked: u32, index: u8) bool {
     if (index == ModifierAbsent) return false;
     return ((locked >> @as(u5, @intCast(index))) & 1) == 1;
 }
 
-fn empty_plan() toggle_plan_t {
+noinline fn empty_plan() toggle_plan_t {
     return std.mem.zeroes(toggle_plan_t);
 }
 
-fn append(plan: *toggle_plan_t, vk: u16, pressed: bool) void {
+noinline fn append(plan: *toggle_plan_t, vk: u16, pressed: bool) void {
     plan.actions[plan.count] = .{ .vk = vk, .pressed = pressed };
     plan.count += 1;
 }
 
-fn status_of(err: error_t) status_t {
+noinline fn status_of(err: error_t) status_t {
     return switch (err) {
         error.InvalidIndex => .InvalidIndex,
         error.InvalidMask => .InvalidMask,
         error.InvalidSerial => .InvalidSerial,
         error.InvalidEpoch => .InvalidEpoch,
+        error.EpochMismatch => .EpochMismatch,
     };
 }
 
@@ -275,21 +291,19 @@ export fn waddle_keyboard_lock_mask(mods: ?*const modifiers_t, indices: ?*const 
     return .Ok;
 }
 
-/// C ABI: host focus enter. `state` is inout; `mods`/`indices` are in; `out` is out.
-/// Returns Ok, NullArgument, or InvalidIndex. State and `out` change only on Ok.
+/// C ABI: host focus enter. `state` is inout; `indices` is in. Returns Ok,
+/// NullArgument, or InvalidIndex. State changes only on Ok.
 /// Thread safety: caller serializes calls on one state.
-export fn waddle_keyboard_lock_host_enter(state: ?*host_state_t, mods: ?*const modifiers_t, indices: ?*const indices_t, out: ?*host_decision_t) callconv(.C) status_t {
+export fn waddle_keyboard_lock_host_enter(state: ?*host_state_t, indices: ?*const indices_t) callconv(.C) status_t {
     const s = state orelse return .NullArgument;
-    const m = mods orelse return .NullArgument;
     const i = indices orelse return .NullArgument;
-    const o = out orelse return .NullArgument;
-    o.* = host_enter(s, m.*, i.*) catch |err| return status_of(err);
+    host_enter(s, i.*) catch |err| return status_of(err);
     return .Ok;
 }
 
-/// C ABI: host modifier observation. `state` is inout; `mods`/`indices` are in;
+/// C ABI: host modifiers observation. `state` is inout; `mods`/`indices` are in;
 /// `out` is out. Returns Ok, NullArgument, or InvalidIndex. Writes state and
-/// `out` only on Ok.
+/// `out` only on Ok. `send` is true for exactly one observation per focus enter.
 /// Thread safety: caller serializes calls on one state.
 export fn waddle_keyboard_lock_host_observe(state: ?*host_state_t, mods: ?*const modifiers_t, indices: ?*const indices_t, out: ?*host_decision_t) callconv(.C) status_t {
     const s = state orelse return .NullArgument;
@@ -308,14 +322,15 @@ export fn waddle_keyboard_lock_host_leave(state: ?*host_state_t) callconv(.C) st
     return .Ok;
 }
 
-/// C ABI: guest InputLockState handling. `state` is inout; scalars are in;
-/// `out` is out. Returns Ok, NullArgument, InvalidEpoch, InvalidSerial, or
-/// InvalidMask. State and `out` change only on Ok.
+/// C ABI: guest InputLockState handling. `state` is inout; `current_epoch`,
+/// `epoch`, `serial`, `desired`, `current` are in; `out` is out. Returns Ok,
+/// NullArgument, InvalidEpoch, InvalidSerial, EpochMismatch, or InvalidMask.
+/// State and `out` change only on Ok.
 /// Thread safety: caller serializes calls on one state.
-export fn waddle_keyboard_lock_guest_update(state: ?*guest_state_t, epoch: u64, serial: u32, desired: u8, current: u8, out: ?*update_t) callconv(.C) status_t {
+export fn waddle_keyboard_lock_guest_update(state: ?*guest_state_t, current_epoch: u64, epoch: u64, serial: u32, desired: u8, current: u8, out: ?*update_t) callconv(.C) status_t {
     const s = state orelse return .NullArgument;
     const o = out orelse return .NullArgument;
-    o.* = guest_update(s, epoch, serial, desired, current) catch |err| return status_of(err);
+    o.* = guest_update(s, current_epoch, epoch, serial, desired, current) catch |err| return status_of(err);
     return .Ok;
 }
 
@@ -354,58 +369,65 @@ test "lock mask rejects indices outside 0 through 31 at every position" {
     try std.testing.expectEqual(@as(u8, 0), try lock_mask(mods, good));
 }
 
-test "host enter always sends and observe sends only on change while focused" {
-    var state = host_state_t{ .focused = false, .last_mask = 0 };
-    const caps_on = modifiers_t{ .depressed = 0, .latched = 0, .locked = 1 << 1 };
+test "host sends one sync for the first modifiers observation after enter and never on later changes" {
+    var state = host_state_t{ .focused = false, .pending_sync = false };
     const indices = indices_t{ .caps = 1, .num = 2, .scroll = ModifierAbsent };
-    const unchanged = try host_observe(&state, caps_on, indices);
-    try std.testing.expect(!unchanged.send);
-    try std.testing.expect(!state.focused);
+    const caps_on = modifiers_t{ .depressed = 0, .latched = 0, .locked = 1 << 1 };
+    const num_on = modifiers_t{ .depressed = 0, .latched = 0, .locked = 1 << 2 };
 
-    const entered = try host_enter(&state, caps_on, indices);
-    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockCaps }, entered);
-    try std.testing.expect(state.focused);
-    try std.testing.expectEqual(@as(u8, LockCaps), state.last_mask);
+    const unfocused = try host_observe(&state, caps_on, indices);
+    try std.testing.expect(!unfocused.send);
+
+    try host_enter(&state, indices);
+    try std.testing.expect(state.focused and state.pending_sync);
+
+    const first = try host_observe(&state, caps_on, indices);
+    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockCaps }, first);
+    try std.testing.expect(!state.pending_sync);
 
     const duplicate = try host_observe(&state, caps_on, indices);
     try std.testing.expect(!duplicate.send);
-    try std.testing.expectEqual(@as(u8, LockCaps), duplicate.mask);
 
-    const changed = try host_observe(&state, .{ .depressed = 0, .latched = 0, .locked = 1 << 2 }, indices);
-    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockNum }, changed);
-    try std.testing.expectEqual(@as(u8, LockNum), state.last_mask);
+    const changed = try host_observe(&state, num_on, indices);
+    try std.testing.expect(!changed.send);
+    try std.testing.expectEqual(@as(u8, LockNum), changed.mask);
 
     host_leave(&state);
-    try std.testing.expect(!state.focused);
-    const after_leave = try host_observe(&state, .{ .depressed = 0, .latched = 0, .locked = 0 }, indices);
-    try std.testing.expect(!after_leave.send);
-    try std.testing.expectEqual(@as(u8, LockNum), state.last_mask);
+    try std.testing.expect(!state.focused and !state.pending_sync);
+    try std.testing.expect(!(try host_observe(&state, caps_on, indices)).send);
 
-    const reentered = try host_enter(&state, .{ .depressed = 0, .latched = 0, .locked = 0 }, indices);
-    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = 0 }, reentered);
+    try host_enter(&state, indices);
+    const after_reenter = try host_observe(&state, num_on, indices);
+    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockNum }, after_reenter);
 }
 
-test "host enter repeated without leave still sends one message per enter" {
-    var state = host_state_t{ .focused = false, .last_mask = 0 };
+test "a second enter without a leave re-arms one sync and enter without modifiers sends nothing" {
+    var state = host_state_t{ .focused = false, .pending_sync = false };
     const indices = indices_t{ .caps = 0, .num = 1, .scroll = 2 };
     const mods = modifiers_t{ .depressed = 0, .latched = 0, .locked = 0b100 };
-    try std.testing.expect((try host_enter(&state, mods, indices)).send);
-    try std.testing.expect((try host_enter(&state, mods, indices)).send);
+    try host_enter(&state, indices);
+    try host_enter(&state, indices);
+    try std.testing.expect((try host_observe(&state, mods, indices)).send);
+    try std.testing.expect(!(try host_observe(&state, mods, indices)).send);
+
+    try host_enter(&state, indices);
+    host_leave(&state);
     try std.testing.expect(!(try host_observe(&state, mods, indices)).send);
 }
 
 test "host rejections preserve state and never send" {
-    var state = host_state_t{ .focused = false, .last_mask = 0 };
+    var state = host_state_t{ .focused = false, .pending_sync = false };
     const mods = rt(modifiers_t, .{ .depressed = 0, .latched = 0, .locked = 1 });
     const bad = rt(indices_t, .{ .caps = 40, .num = 1, .scroll = 2 });
     const before = state;
-    try std.testing.expectError(error.InvalidIndex, host_enter(&state, mods, bad));
+    try std.testing.expectError(error.InvalidIndex, host_enter(&state, bad));
     try std.testing.expectEqualDeep(before, state);
 
-    _ = try host_enter(&state, mods, .{ .caps = 0, .num = 1, .scroll = 2 });
-    const focused = state;
+    try host_enter(&state, rt(indices_t, .{ .caps = 0, .num = 1, .scroll = 2 }));
+    const armed = state;
     try std.testing.expectError(error.InvalidIndex, host_observe(&state, mods, bad));
-    try std.testing.expectEqualDeep(focused, state);
+    try std.testing.expectEqualDeep(armed, state);
+    try std.testing.expect(state.pending_sync);
 }
 
 test "serial ordering is wrap safe and rejects equal and half-space distances" {
@@ -451,63 +473,80 @@ test "toggle plan rejects unknown bits in either mask" {
     try std.testing.expectEqual(@as(u8, 0), (try plan_toggles(LockAll, LockAll)).count);
 }
 
-test "guest accepts first update and rejects equal, older serial, and older epoch" {
+test "guest accepts the first update of the current epoch and orders serials within it" {
     var state = guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 };
-    const first = try guest_update(&state, 5, 10, LockCaps, 0);
+    const first = try guest_update(&state, 5, 5, 10, LockCaps, 0);
     try std.testing.expect(first.applied);
     try std.testing.expectEqual(@as(u8, 2), first.plan.count);
 
-    const same = try guest_update(&state, 5, 10, 0, LockCaps);
+    const same = try guest_update(&state, 5, 5, 10, 0, LockCaps);
     try std.testing.expect(!same.applied);
     try std.testing.expectEqual(@as(u8, 0), same.plan.count);
 
-    const older = try guest_update(&state, 5, 9, 0, LockCaps);
+    const older = try guest_update(&state, 5, 5, 9, 0, LockCaps);
     try std.testing.expect(!older.applied);
 
-    const older_epoch = try guest_update(&state, 4, 99, 0, LockCaps);
-    try std.testing.expect(!older_epoch.applied);
+    const newer = try guest_update(&state, 5, 5, 11, LockNum, 0);
+    try std.testing.expect(newer.applied);
     try std.testing.expectEqual(@as(u64, 5), state.epoch);
-    try std.testing.expectEqual(@as(u32, 10), state.serial);
-
-    const newer_serial_older_epoch = try guest_update(&state, 4, 11, 0, LockCaps);
-    try std.testing.expect(!newer_serial_older_epoch.applied);
-
-    const newer_epoch = try guest_update(&state, 6, 11, LockNum, 0);
-    try std.testing.expect(newer_epoch.applied);
-    try std.testing.expectEqual(@as(u64, 6), state.epoch);
     try std.testing.expectEqual(@as(u32, 11), state.serial);
+}
+
+test "guest rejects every epoch other than the current one in both directions without mutation" {
+    var state = guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 };
+    _ = try guest_update(&state, 5, 5, 10, LockCaps, 0);
+    const before = state;
+    try std.testing.expectError(error.EpochMismatch, guest_update(&state, 5, 4, 99, 0, LockCaps));
+    try std.testing.expectError(error.EpochMismatch, guest_update(&state, 5, 6, 99, 0, LockCaps));
+    try std.testing.expectError(error.EpochMismatch, guest_update(&state, 5, 6, 1, LockAll, rt(u8, 8)));
+    try std.testing.expectEqualDeep(before, state);
+}
+
+test "a new epoch starts a fresh serial order and replaces the older lease state" {
+    var state = guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 };
+    _ = try guest_update(&state, 5, 5, 900, LockCaps, 0);
+    const next = try guest_update(&state, 6, 6, 3, LockNum, 0);
+    try std.testing.expect(next.applied);
+    try std.testing.expectEqual(@as(u64, 6), state.epoch);
+    try std.testing.expectEqual(@as(u32, 3), state.serial);
+    const stale = try guest_update(&state, 6, 6, 3, 0, LockNum);
+    try std.testing.expect(!stale.applied);
+    try std.testing.expectError(error.EpochMismatch, guest_update(&state, 6, 5, 901, 0, LockCaps));
+    try std.testing.expectEqual(@as(u32, 3), state.serial);
 }
 
 test "guest serial gate survives uint32 wrap and rejects half-space jumps" {
     var state = guest_state_t{ .accepted = true, .epoch = 1, .serial = 0xFFFF_FFFE };
-    try std.testing.expect((try guest_update(&state, 1, 0xFFFF_FFFF, 0, 0)).applied);
-    try std.testing.expect((try guest_update(&state, 1, 1, 0, 0)).applied);
-    try std.testing.expect(!(try guest_update(&state, 1, 0xFFFF_FFFF, 0, 0)).applied);
-    try std.testing.expect(!(try guest_update(&state, 1, 1 +% HalfSerialSpace, 0, 0)).applied);
+    try std.testing.expect((try guest_update(&state, 1, 1, 0xFFFF_FFFF, 0, 0)).applied);
+    try std.testing.expect((try guest_update(&state, 1, 1, 1, 0, 0)).applied);
+    try std.testing.expect(!(try guest_update(&state, 1, 1, 0xFFFF_FFFF, 0, 0)).applied);
+    try std.testing.expect(!(try guest_update(&state, 1, 1, 1 +% HalfSerialSpace, 0, 0)).applied);
     try std.testing.expectEqual(@as(u32, 1), state.serial);
 }
 
-test "guest rejects zero epoch zero serial and unknown bits without mutation" {
+test "guest rejects zero epochs, zero serial and unknown bits without mutation" {
     var state = guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 };
-    try std.testing.expectError(error.InvalidEpoch, guest_update(&state, rt(u64, 0), 1, 0, 0));
-    try std.testing.expectError(error.InvalidSerial, guest_update(&state, 1, rt(u32, 0), 0, 0));
-    try std.testing.expectError(error.InvalidMask, guest_update(&state, 1, 1, rt(u8, 8), 0));
-    try std.testing.expectError(error.InvalidMask, guest_update(&state, 1, 1, 0, rt(u8, 8)));
+    try std.testing.expectError(error.InvalidEpoch, guest_update(&state, rt(u64, 0), 0, 1, 0, 0));
+    try std.testing.expectError(error.InvalidEpoch, guest_update(&state, 1, rt(u64, 0), 1, 0, 0));
+    try std.testing.expectError(error.InvalidSerial, guest_update(&state, 1, 1, rt(u32, 0), 0, 0));
+    try std.testing.expectError(error.InvalidMask, guest_update(&state, 1, 1, 1, rt(u8, 8), 0));
+    try std.testing.expectError(error.InvalidMask, guest_update(&state, 1, 1, 1, 0, rt(u8, 8)));
     try std.testing.expectEqualDeep(guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 }, state);
 }
 
 test "C ABI maps every status and writes outputs only on success" {
     var sentinel_update = update_t{ .applied = true, .plan = std.mem.zeroes(toggle_plan_t) };
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_guest_update(rt(?*guest_state_t, null), 1, 1, 0, 0, &sentinel_update));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_guest_update(rt(?*guest_state_t, null), 1, 1, 1, 0, 0, &sentinel_update));
     var guest = guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 };
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_guest_update(&guest, 1, 1, 0, 0, rt(?*update_t, null)));
-    try std.testing.expectEqual(status_t.InvalidEpoch, waddle_keyboard_lock_guest_update(&guest, rt(u64, 0), 1, 0, 0, &sentinel_update));
-    try std.testing.expectEqual(status_t.InvalidSerial, waddle_keyboard_lock_guest_update(&guest, 1, rt(u32, 0), 0, 0, &sentinel_update));
-    try std.testing.expectEqual(status_t.InvalidMask, waddle_keyboard_lock_guest_update(&guest, 1, 1, rt(u8, 9), 0, &sentinel_update));
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_guest_update(&guest, 1, 1, LockCaps, 0, &sentinel_update));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_guest_update(&guest, 1, 1, 1, 0, 0, rt(?*update_t, null)));
+    try std.testing.expectEqual(status_t.InvalidEpoch, waddle_keyboard_lock_guest_update(&guest, 1, rt(u64, 0), 1, 0, 0, &sentinel_update));
+    try std.testing.expectEqual(status_t.InvalidSerial, waddle_keyboard_lock_guest_update(&guest, 1, 1, rt(u32, 0), 0, 0, &sentinel_update));
+    try std.testing.expectEqual(status_t.EpochMismatch, waddle_keyboard_lock_guest_update(&guest, 2, 1, 1, 0, 0, &sentinel_update));
+    try std.testing.expectEqual(status_t.InvalidMask, waddle_keyboard_lock_guest_update(&guest, 1, 1, 1, rt(u8, 9), 0, &sentinel_update));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_guest_update(&guest, 1, 1, 1, LockCaps, 0, &sentinel_update));
     try std.testing.expect(sentinel_update.applied);
     try std.testing.expectEqual(@as(u8, 2), sentinel_update.plan.count);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_guest_update(&guest, 1, 1, 0, 0, &sentinel_update));
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_guest_update(&guest, 1, 1, 1, 0, 0, &sentinel_update));
     try std.testing.expect(!sentinel_update.applied);
 
     const mods = rt(modifiers_t, .{ .depressed = 0, .latched = 0, .locked = 1 });
@@ -522,28 +561,29 @@ test "C ABI maps every status and writes outputs only on success" {
     try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_mask(&mods, &indices, &mask));
     try std.testing.expectEqual(@as(u8, LockCaps), mask);
 
-    var host = host_state_t{ .focused = false, .last_mask = 0 };
+    var host = host_state_t{ .focused = false, .pending_sync = false };
     var decision = host_decision_t{ .send = true, .mask = 0xEE };
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(rt(?*host_state_t, null), &mods, &indices, &decision));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(&host, rt(?*const modifiers_t, null), &indices, &decision));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(&host, &mods, rt(?*const indices_t, null), &decision));
-    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(&host, &mods, &indices, rt(?*host_decision_t, null)));
-    try std.testing.expectEqual(status_t.InvalidIndex, waddle_keyboard_lock_host_enter(&host, &mods, &bad_indices, &decision));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(rt(?*host_state_t, null), &indices));
+    try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_enter(&host, rt(?*const indices_t, null)));
+    try std.testing.expectEqual(status_t.InvalidIndex, waddle_keyboard_lock_host_enter(&host, &bad_indices));
     try std.testing.expect(!host.focused);
-    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_enter(&host, &mods, &indices, &decision));
-    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockCaps }, decision);
-    decision = .{ .send = true, .mask = 0xEE };
-    try std.testing.expectEqual(status_t.InvalidIndex, waddle_keyboard_lock_host_observe(&host, &mods, &bad_indices, &decision));
-    try std.testing.expectEqual(@as(u8, 0xEE), decision.mask);
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_enter(&host, &indices));
+    try std.testing.expect(host.focused and host.pending_sync);
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_observe(rt(?*host_state_t, null), &mods, &indices, &decision));
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_observe(&host, rt(?*const modifiers_t, null), &indices, &decision));
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_observe(&host, &mods, rt(?*const indices_t, null), &decision));
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_observe(&host, &mods, &indices, rt(?*host_decision_t, null)));
+    decision = .{ .send = true, .mask = 0xEE };
+    try std.testing.expectEqual(status_t.InvalidIndex, waddle_keyboard_lock_host_observe(&host, &mods, &bad_indices, &decision));
+    try std.testing.expectEqual(@as(u8, 0xEE), decision.mask);
+    try std.testing.expect(host.pending_sync);
+    try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_observe(&host, &mods, &indices, &decision));
+    try std.testing.expectEqualDeep(host_decision_t{ .send = true, .mask = LockCaps }, decision);
     try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_observe(&host, &mods, &indices, &decision));
     try std.testing.expect(!decision.send);
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_host_leave(rt(?*host_state_t, null)));
     try std.testing.expectEqual(status_t.Ok, waddle_keyboard_lock_host_leave(&host));
-    try std.testing.expect(!host.focused);
+    try std.testing.expect(!host.focused and !host.pending_sync);
 
     var plan = std.mem.zeroes(toggle_plan_t);
     try std.testing.expectEqual(status_t.NullArgument, waddle_keyboard_lock_plan_toggles(LockAll, 0, rt(?*toggle_plan_t, null)));
@@ -565,7 +605,7 @@ fn rt(comptime T: type, value: T) T {
 // Independent references: pure arithmetic written differently from the reducer.
 const reference_t = struct {
     focused: bool = false,
-    last_mask: u8 = 0,
+    pending: bool = false,
     accepted: bool = false,
     epoch: u64 = 0,
     serial: u32 = 0,
@@ -595,7 +635,7 @@ fn random_index(random: std.Random) u8 {
 test "randomized host and guest sequences match independent references" {
     var prng = std.Random.DefaultPrng.init(0x6c6f636b);
     const random = prng.random();
-    var host = host_state_t{ .focused = false, .last_mask = 0 };
+    var host = host_state_t{ .focused = false, .pending_sync = false };
     var guest = guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 };
     var reference = reference_t{};
     var wrap_base: u32 = 0;
@@ -607,15 +647,12 @@ test "randomized host and guest sequences match independent references" {
             0 => {
                 const before = host;
                 if (!valid) {
-                    try std.testing.expectError(error.InvalidIndex, host_enter(&host, mods, indices));
+                    try std.testing.expectError(error.InvalidIndex, host_enter(&host, indices));
                     try std.testing.expectEqualDeep(before, host);
                 } else {
-                    const mask = reference_mask(mods, indices);
-                    const decision = try host_enter(&host, mods, indices);
-                    try std.testing.expect(decision.send);
-                    try std.testing.expectEqual(mask, decision.mask);
+                    try host_enter(&host, indices);
                     reference.focused = true;
-                    reference.last_mask = mask;
+                    reference.pending = true;
                 }
             },
             1 => {
@@ -626,31 +663,43 @@ test "randomized host and guest sequences match independent references" {
                 } else {
                     const mask = reference_mask(mods, indices);
                     const decision = try host_observe(&host, mods, indices);
-                    const expect_send = reference.focused and mask != reference.last_mask;
+                    const expect_send = reference.focused and reference.pending;
                     try std.testing.expectEqual(expect_send, decision.send);
                     try std.testing.expectEqual(mask, decision.mask);
-                    if (expect_send) reference.last_mask = mask;
+                    if (expect_send) reference.pending = false;
                 }
             },
             2 => {
                 host_leave(&host);
                 reference.focused = false;
+                reference.pending = false;
             },
             else => {
-                const epoch = random.uintLessThan(u64, 4);
+                const current_epoch: u64 = if (random.uintLessThan(u8, 16) == 0) 0 else 1 + random.uintLessThan(u64, 3);
+                const epoch: u64 = if (random.uintLessThan(u8, 8) == 0) random.uintLessThan(u64, 4) else current_epoch;
                 wrap_base = if (random.boolean()) 0 else 0xFFFF_FFF0;
                 const serial = random.uintLessThan(u32, 16) +% wrap_base;
                 const desired = random.uintLessThan(u8, 9);
-                const current = random.uintLessThan(u8, 8);
+                const current = random.uintLessThan(u8, 16);
                 const before = guest;
-                if (epoch == 0 or serial == 0 or desired > LockAll) {
-                    try std.testing.expect(std.meta.isError(guest_update(&guest, epoch, serial, desired, current)));
+                const expected_error: ?anyerror = if (current_epoch == 0 or epoch == 0)
+                    error.InvalidEpoch
+                else if (serial == 0)
+                    error.InvalidSerial
+                else if (epoch != current_epoch)
+                    error.EpochMismatch
+                else if (desired > LockAll or current > LockAll)
+                    error.InvalidMask
+                else
+                    null;
+                if (expected_error) |expected| {
+                    try std.testing.expectError(expected, guest_update(&guest, current_epoch, epoch, serial, desired, current));
                     try std.testing.expectEqualDeep(before, guest);
                     continue;
                 }
-                const update = try guest_update(&guest, epoch, serial, desired, current);
-                const expect_applied = !reference.accepted or
-                    (epoch >= reference.epoch and @as(i32, @bitCast(serial -% reference.serial)) > 0);
+                const update = try guest_update(&guest, current_epoch, epoch, serial, desired, current);
+                const expect_applied = !reference.accepted or reference.epoch != epoch or
+                    @as(i32, @bitCast(serial -% reference.serial)) > 0;
                 try std.testing.expectEqual(expect_applied, update.applied);
                 if (expect_applied) {
                     reference.accepted = true;
@@ -665,7 +714,71 @@ test "randomized host and guest sequences match independent references" {
             },
         }
         try std.testing.expectEqual(reference.focused, host.focused);
+        try std.testing.expectEqual(reference.pending, host.pending_sync);
     }
+}
+
+test "every index and guest epoch, serial and mask combination is classified exactly" {
+    // Bounds are runtime-opaque so every error and accept edge stays live.
+    const index_limit = rt(u8, 40);
+    var index: u8 = 0;
+    while (index < index_limit) : (index += 1) {
+        const valid_index = index == ModifierAbsent or index <= MaxModifierIndex;
+        const mods = modifiers_t{ .depressed = 0, .latched = 0, .locked = rt(u32, 0xFFFF_FFFF) };
+        for ([_]indices_t{
+            .{ .caps = index, .num = 1, .scroll = 2 },
+            .{ .caps = 0, .num = index, .scroll = 2 },
+            .{ .caps = 0, .num = 1, .scroll = index },
+        }) |probe| {
+            const result = lock_mask(mods, probe);
+            if (valid_index) {
+                _ = try result;
+            } else {
+                try std.testing.expectError(error.InvalidIndex, result);
+            }
+        }
+    }
+    var current_epoch: u64 = 0;
+    const epoch_limit = rt(u64, 3);
+    while (current_epoch <= epoch_limit) : (current_epoch += 1) {
+        var epoch: u64 = 0;
+        while (epoch <= epoch_limit) : (epoch += 1) {
+            var serial: u32 = 0;
+            const serial_limit = rt(u32, 2);
+            while (serial <= serial_limit) : (serial += 1) {
+                var desired: u8 = 0;
+                const mask_limit = rt(u8, 9);
+                while (desired <= mask_limit) : (desired += 1) {
+                    var current_mask: u8 = 0;
+                    const current_limit = rt(u8, 9);
+                    while (current_mask <= current_limit) : (current_mask += 1) {
+                        var state = guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 };
+                        const expected_error: ?anyerror = if (current_epoch == 0 or epoch == 0)
+                            error.InvalidEpoch
+                        else if (serial == 0)
+                            error.InvalidSerial
+                        else if (epoch != current_epoch)
+                            error.EpochMismatch
+                        else if (desired > LockAll or current_mask > LockAll)
+                            error.InvalidMask
+                        else
+                            null;
+                        const outcome = guest_update(&state, current_epoch, epoch, serial, desired, current_mask);
+                        if (expected_error) |expected| {
+                            try std.testing.expectError(expected, outcome);
+                            try std.testing.expectEqualDeep(guest_state_t{ .accepted = false, .epoch = 0, .serial = 0 }, state);
+                        } else {
+                            const update = try outcome;
+                            try std.testing.expect(update.applied);
+                            try std.testing.expectEqual(@as(u8, @intCast(@popCount(desired ^ current_mask) * 2)), update.plan.count);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    try std.testing.expectError(error.InvalidMask, plan_toggles(rt(u8, 8), 0));
+    try std.testing.expectEqual(@as(u8, 0), (try plan_toggles(rt(u8, 0), 0)).count);
 }
 
 test "ABI struct sizes match the C header layouts" {
