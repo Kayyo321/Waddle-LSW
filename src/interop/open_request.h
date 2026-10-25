@@ -53,7 +53,8 @@ typedef enum interop_open_error_t {
     InteropOpenErrorNotFound = 18, /**< Caller-reported: local path missing (127). */
     InteropOpenErrorLocalFailure = 19, /**< Caller-reported: local failure (125). */
     InteropOpenErrorGuestUnreachable = 20, /**< Caller-reported: guest not reachable in 120 s (125). */
-    InteropOpenErrorGuestLaunchFailed = 21 /**< Caller-reported: guest launch failure (1). */
+    InteropOpenErrorGuestLaunchFailed = 21, /**< Caller-reported: guest launch failure (1). */
+    InteropOpenErrorDelegateConflict = 22 /**< Usage: several DelegateExec items, or DelegateExec mixed with sent items. Reported after the read callback. */
 } interop_open_error_t;
 
 /** @brief Launch item kinds; Unused is the zero value of slots beyond item_count. */

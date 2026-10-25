@@ -182,6 +182,12 @@ with no ARG tokens is still `ExeWithArgs` with `argument_count` 0.
 | Console | 5 `InteropLaunchConsole` | |
 | DelegateExec | none (null) | executed locally through `waddle exec`; never sent |
 
+DelegateExec rule (`DelegateConflict`, exit 2): a request may contain one
+DelegateExec item only when it is the sole item. Two delegated executables, or a
+delegated one next to any sent item, are rejected. This error depends on file
+classification, so it is reported after the read callback has run for the
+items; grammar errors are always reported before any callback.
+
 Codec cross-field rule (`interop_codec.zig` `cross_valid`): App requires app_key
 and forbids target_path; every other wire kind requires target_path and forbids
 app_key. The parser's output satisfies this for every non-delegated item.
@@ -276,7 +282,7 @@ languages): `item_t` 40 bytes, `request_t` 2592 bytes, `options_t` 24 bytes.
 Usage (exit 2): `UnknownOption`, `DuplicateOption`, `MissingOptionValue`,
 `InvalidDevice`, `InvalidAppKey`, `OptionAfterTarget`, `MissingTarget`,
 `MixedTargets`, `EmptyPath`, `EmptyExecutable`, `ExecutableNotExe`,
-`TooManyArgs`, `ArgumentTooLong`, `QuotedArgumentsTooLong`.
+`TooManyArgs`, `ArgumentTooLong`, `QuotedArgumentsTooLong`, `DelegateConflict`.
 
 Parse-time local (exit 126): `ImageUnreadable`.
 

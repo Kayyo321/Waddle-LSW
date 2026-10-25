@@ -77,6 +77,9 @@ pub const open_error_t = enum(u32) {
     GuestUnreachable = 20,
     /// Caller-reported: guest reported a launch failure (exit 1).
     GuestLaunchFailed = 21,
+    /// Usage: more than one DelegateExec item, or DelegateExec mixed with sent items.
+    /// Depends on classification, so it is reported after the read callback has run.
+    DelegateConflict = 22,
 };
 
 /// Launch item kind before path translation. Unused is the zero value of empty slots.
@@ -236,6 +239,7 @@ pub fn exit_code_for_error(err: open_error_t) u8 {
         .TooManyArgs,
         .ArgumentTooLong,
         .QuotedArgumentsTooLong,
+        .DelegateConflict,
         => ExitUsage,
         .ImageUnreadable, .OutsideShare => ExitNotExecutable,
         .NotFound => ExitNotFound,
@@ -423,6 +427,9 @@ fn classify_plan(args: []const []const u8, options: *const options_t, plan: *con
             count += 1;
         }
     }
+    var delegated: usize = 0;
+    for (result.items[0..count]) |item| delegated += @intFromBool(item.kind == .DelegateExec);
+    if (delegated > 1 or (delegated == 1 and count > 1)) return .DelegateConflict;
     result.item_count = count;
     result.wait = @intFromBool(plan.wait);
     result.new_console = @intFromBool(plan.new_console);
@@ -953,6 +960,7 @@ test "exit tables cover every error value and LaunchResult status" {
         .{ .err = .LocalFailure, .code = 125 },
         .{ .err = .GuestUnreachable, .code = 125 },
         .{ .err = .GuestLaunchFailed, .code = 1 },
+        .{ .err = .DelegateConflict, .code = 2 },
     };
     for (expected) |case| {
         try testing.expectEqual(case.code, exit_code_for_error(case.err));
@@ -1227,4 +1235,27 @@ test "flags may precede the target in any order; options after --app are usage e
     try testing.expectEqual(open_error_t.DuplicateOption, run(&.{ "--app", "a-x", "--app", "a-y" }, &fake, 0, &out));
     try testing.expectEqual(open_error_t.MixedTargets, run(&.{ "--app", "a-x", "a.txt" }, &fake, 0, &out));
     try testing.expectEqual(@as(usize, 0), out.item_count);
+}
+
+test "DelegateExec must be the only item: two delegated executables or a mix are usage errors" {
+    var pe_cui: [256]u8 = undefined;
+    const cui = pe_image(&pe_cui, 3);
+    const entries = [_]fake_entry_t{
+        .{ .path = "c1.exe", .bytes = cui },
+        .{ .path = "c2.exe", .bytes = cui },
+    };
+    var fake = fake_reader_t{ .entries = &entries };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.DelegateConflict, run(&.{ "c1.exe", "c2.exe" }, &fake, 1, &out));
+    try testing.expectEqual(open_error_t.DelegateConflict, run(&.{ "c1.exe", "notes.txt" }, &fake, 1, &out));
+    try testing.expectEqual(open_error_t.DelegateConflict, run(&.{ "notes.txt", "c1.exe" }, &fake, 1, &out));
+    try testing.expectEqual(@as(usize, 0), out.item_count);
+    try testing.expectEqual(ExitUsage, exit_code_for_error(.DelegateConflict));
+    try testing.expectEqual(open_error_t.None, run(&.{ "c1.exe", "c2.exe" }, &fake, 0, &out));
+    try testing.expectEqual(item_kind_t.Console, out.items[1].kind);
+    try testing.expectEqual(open_error_t.None, run(&.{ "--new-console", "c1.exe", "c2.exe" }, &fake, 1, &out));
+    try testing.expectEqual(open_error_t.None, run(&.{ "c1.exe" }, &fake, 1, &out));
+    try testing.expectEqual(item_kind_t.DelegateExec, out.items[0].kind);
+    try testing.expectEqual(open_error_t.None, run(&.{ "--", "c1.exe", "x" }, &fake, 1, &out));
+    try testing.expectEqual(item_kind_t.DelegateExec, out.items[0].kind);
 }

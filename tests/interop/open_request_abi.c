@@ -232,6 +232,7 @@ static void check_exit_tables(void) {
     assert(interop_open_exit_code(InteropOpenErrorLocalFailure) == InteropOpenExitLocalError);
     assert(interop_open_exit_code(InteropOpenErrorGuestUnreachable) == InteropOpenExitLocalError);
     assert(interop_open_exit_code(InteropOpenErrorGuestLaunchFailed) == InteropOpenExitGuestFailure);
+    assert(interop_open_exit_code(InteropOpenErrorDelegateConflict) == InteropOpenExitUsage);
     assert(interop_open_exit_code(999u) == InteropOpenExitLocalError);
     assert(interop_open_launch_exit_code(0) == InteropOpenExitOk);
     assert(interop_open_launch_exit_code(1) == InteropOpenExitGuestFailure);
