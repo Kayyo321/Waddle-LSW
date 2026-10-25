@@ -23,6 +23,22 @@
 /** @brief Session context shared by the tests; lives in static storage. */
 static host_wayland_t session_ctx;
 
+/** @brief Record a pointer press on lease 1; the test-side shorthand for `host_wayland_windows_record_press`. */
+static host_wayland_status_t record_press_at(host_wayland_t *ctx, uint32_t protocol_serial, uint32_t wayland_serial, struct wl_seat *seat, uint64_t window, uint64_t generation, uint64_t now_ms) {
+    host_wayland_press_input_t input;
+    memset(&input, 0, sizeof input);
+    input.protocol_serial = protocol_serial;
+    input.wayland_serial = wayland_serial;
+    input.seat = seat;
+    input.window = window;
+    input.generation = generation;
+    input.lease_epoch = 1;
+    input.kind = HostWaylandPressPointer;
+    input.button = 272;
+    input.now_ms = now_ms;
+    return host_wayland_windows_record_press(ctx, &input);
+}
+
 /* ---- callback capture -------------------------------------------------------------------------- */
 
 typedef struct capture_t {
@@ -262,20 +278,20 @@ static int check_presses(void) {
     host_wayland_config_t config = sentinel_config();
     Check(host_wayland_windows_init(&ctx, &config) == HostWaylandOk);
 
-    Check(host_wayland_windows_record_press(&ctx, 0, 7, fake_seat, 1, 1, 0) == HostWaylandInvalidArgument);
-    Check(host_wayland_windows_record_press(&ctx, 1, 7, NULL, 1, 1, 0) == HostWaylandInvalidArgument);
-    Check(host_wayland_windows_record_press(&ctx, 1, 7, fake_seat, 0, 1, 0) == HostWaylandInvalidArgument);
-    Check(host_wayland_windows_record_press(&ctx, 1, 7, fake_seat, 1, 0, 0) == HostWaylandInvalidArgument);
-    Check(host_wayland_windows_record_press(NULL, 1, 7, fake_seat, 1, 1, 0) == HostWaylandNotInitialized);
+    Check(record_press_at(&ctx, 0, 7, fake_seat, 1, 1, 0) == HostWaylandInvalidArgument);
+    Check(record_press_at(&ctx, 1, 7, NULL, 1, 1, 0) == HostWaylandInvalidArgument);
+    Check(record_press_at(&ctx, 1, 7, fake_seat, 0, 1, 0) == HostWaylandInvalidArgument);
+    Check(record_press_at(&ctx, 1, 7, fake_seat, 1, 0, 0) == HostWaylandInvalidArgument);
+    Check(record_press_at(NULL, 1, 7, fake_seat, 1, 1, 0) == HostWaylandNotInitialized);
 
-    Check(host_wayland_windows_record_press(&ctx, 10, 7, fake_seat, 1, 1, 1000) == HostWaylandOk);
+    Check(record_press_at(&ctx, 10, 7, fake_seat, 1, 1, 1000) == HostWaylandOk);
     host_wayland_press_t *press = press_find(&ctx, 10, 1000);
     Check(press != NULL && press->wayland_serial == 7 && press->seat == fake_seat && press->window == 1);
     /* Valid for exactly the 300 ms window, expired afterwards. */
     Check(press_find(&ctx, 10, 1300) != NULL);
     Check(press_find(&ctx, 10, 1301) == NULL);
     /* A clock that moved backwards keeps entries. */
-    Check(host_wayland_windows_record_press(&ctx, 11, 8, other_seat, 2, 3, 2000) == HostWaylandOk);
+    Check(record_press_at(&ctx, 11, 8, other_seat, 2, 3, 2000) == HostWaylandOk);
     Check(press_find(&ctx, 11, 1500) != NULL);
     host_wayland_windows_release_press(&ctx, 11);
     Check(press_find(&ctx, 11, 2000) == NULL);
@@ -284,16 +300,16 @@ static int check_presses(void) {
 
     /* Fill all 64 entries live; the 65th is refused and no live entry is evicted. */
     for (uint32_t serial = 100; serial < 100 + PRESS_COUNT; ++serial) {
-        Check(host_wayland_windows_record_press(&ctx, serial, serial, fake_seat, 5, 5, 5000) == HostWaylandOk);
+        Check(record_press_at(&ctx, serial, serial, fake_seat, 5, 5, 5000) == HostWaylandOk);
     }
-    Check(host_wayland_windows_record_press(&ctx, 999, 1, fake_seat, 5, 5, 5000) == HostWaylandPressTableFull);
+    Check(record_press_at(&ctx, 999, 1, fake_seat, 5, 5, 5000) == HostWaylandPressTableFull);
     Check(press_find(&ctx, 100, 5000) != NULL && press_find(&ctx, 163, 5000) != NULL);
     /* Once the validity window has passed, the table makes room again. */
-    Check(host_wayland_windows_record_press(&ctx, 999, 1, fake_seat, 5, 5, 5301) == HostWaylandOk);
+    Check(record_press_at(&ctx, 999, 1, fake_seat, 5, 5, 5301) == HostWaylandOk);
     Check(press_find(&ctx, 100, 5301) == NULL);
     /* Releasing a live press frees its slot immediately. */
     host_wayland_windows_release_press(&ctx, 999);
-    Check(host_wayland_windows_record_press(&ctx, 1000, 1, fake_seat, 5, 5, 5301) == HostWaylandOk);
+    Check(record_press_at(&ctx, 1000, 1, fake_seat, 5, 5, 5301) == HostWaylandOk);
     return 0;
 }
 
@@ -771,7 +787,7 @@ static int check_popup_grab(void) {
     Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
     unsigned seat = fake_new("wl_seat");
     struct wl_seat *seat_proxy = (struct wl_seat *)fake_object(seat);
-    Check(host_wayland_windows_record_press(&session_ctx, 77, 500, seat_proxy, 1, 1, 1000) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 77, 500, seat_proxy, 1, 1, 1000) == HostWaylandOk);
     unsigned before = fake_request_count;
     Check(menu_with_serial(77, 3, 1100) == HostWaylandOk);
     int grab = fake_find("xdg_popup", XDG_POPUP_GRAB, before);
@@ -793,7 +809,7 @@ static int check_popup_grab(void) {
     Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
     seat = fake_new("wl_seat");
     seat_proxy = (struct wl_seat *)fake_object(seat);
-    Check(host_wayland_windows_record_press(&session_ctx, 79, 501, seat_proxy, 1, 1, 1000) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 79, 501, seat_proxy, 1, 1, 1000) == HostWaylandOk);
     before = fake_request_count;
     Check(menu_with_serial(79, 3, 1301) == HostWaylandOk);
     Check(fake_find("xdg_popup", XDG_POPUP_GRAB, before) < 0);
@@ -801,7 +817,7 @@ static int check_popup_grab(void) {
     Check(begin_popup_session(5) == 0);
     root = toplevel_spec(1, 1, "a-root");
     Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
-    Check(host_wayland_windows_record_press(&session_ctx, 80, 502, seat_proxy, 9, 9, 1000) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 80, 502, seat_proxy, 9, 9, 1000) == HostWaylandOk);
     before = fake_request_count;
     Check(menu_with_serial(80, 3, 1100) == HostWaylandOk);
     Check(fake_find("xdg_popup", XDG_POPUP_GRAB, before) < 0);
@@ -809,7 +825,7 @@ static int check_popup_grab(void) {
     Check(begin_popup_session(5) == 0);
     root = toplevel_spec(1, 1, "a-root");
     Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
-    Check(host_wayland_windows_record_press(&session_ctx, 81, 503, seat_proxy, 1, 1, 1000) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 81, 503, seat_proxy, 1, 1, 1000) == HostWaylandOk);
     /* The codec allows a trigger serial on a Menu only, so a tooltip carrying one is malformed. */
     announce_spec_t tooltip = menu_spec(3, 1, 1, 4, 30, 12, 40, 20);
     tooltip.has_serial = true;
@@ -1168,7 +1184,7 @@ static int check_late_events_after_retire(void) {
 
 static int check_retire_releases_press(void) {
     Check(build_tree() == 0);
-    Check(host_wayland_windows_record_press(&session_ctx, 300, 40, (struct wl_seat *)fake_object(fake_new("wl_seat")), 2, 1, 1000) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 300, 40, (struct wl_seat *)fake_object(fake_new("wl_seat")), 2, 1, 1000) == HostWaylandOk);
     Check(press_find(&session_ctx, 300, 1000) != NULL);
     Check(retire_frame(2, 1) == HostWaylandOk);
     Check(press_find(&session_ctx, 300, 1000) == NULL);
@@ -1257,7 +1273,7 @@ static int check_grab_topmost_rules(void) {
     struct wl_seat *seat = (struct wl_seat *)fake_object(fake_new("wl_seat"));
     Check(menu_under(3, 1, 1, false, 0, 1100) == HostWaylandOk);
     Check(fake_grants == 0);
-    Check(host_wayland_windows_record_press(&session_ctx, 20, 600, seat, 3, 1, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 20, 600, seat, 3, 1, 1100) == HostWaylandOk);
     Check(menu_under(4, 3, 1, true, 20, 1100) == HostWaylandOk);
     Check(fake_grants == 0 && fake_invalid_grabs == 0);
 
@@ -1266,8 +1282,8 @@ static int check_grab_topmost_rules(void) {
     root = toplevel_spec(1, 1, "a-root");
     Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
     seat = (struct wl_seat *)fake_object(fake_new("wl_seat"));
-    Check(host_wayland_windows_record_press(&session_ctx, 30, 600, seat, 1, 1, 1100) == HostWaylandOk);
-    Check(host_wayland_windows_record_press(&session_ctx, 31, 601, seat, 1, 1, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 30, 600, seat, 1, 1, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 31, 601, seat, 1, 1, 1100) == HostWaylandOk);
     Check(menu_under(5, 1, 1, true, 30, 1100) == HostWaylandOk);
     Check(menu_under(6, 1, 1, true, 31, 1100) == HostWaylandOk);
     Check(fake_grants == 1 && fake_invalid_grabs == 0);
@@ -1279,19 +1295,19 @@ static int check_grab_topmost_rules(void) {
     root = toplevel_spec(1, 1, "a-root");
     Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
     seat = (struct wl_seat *)fake_object(fake_new("wl_seat"));
-    Check(host_wayland_windows_record_press(&session_ctx, 40, 600, seat, 1, 1, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 40, 600, seat, 1, 1, 1100) == HostWaylandOk);
     Check(menu_under(3, 1, 1, true, 40, 1100) == HostWaylandOk);
-    Check(host_wayland_windows_record_press(&session_ctx, 41, 601, seat, 3, 1, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 41, 601, seat, 3, 1, 1100) == HostWaylandOk);
     Check(menu_under(4, 3, 1, true, 41, 1100) == HostWaylandOk);
-    Check(host_wayland_windows_record_press(&session_ctx, 42, 602, seat, 4, 1, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 42, 602, seat, 4, 1, 1100) == HostWaylandOk);
     Check(menu_under(5, 4, 1, true, 42, 1100) == HostWaylandOk);
     Check(fake_grants == 3 && fake_invalid_grabs == 0);
     deliver_popup_done(fake_nth("xdg_popup", 1));
-    Check(host_wayland_windows_record_press(&session_ctx, 43, 603, seat, 5, 1, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 43, 603, seat, 5, 1, 1100) == HostWaylandOk);
     Check(menu_under(6, 5, 1, true, 43, 1100) == HostWaylandOk);
     Check(fake_count_requests("xdg_popup", XDG_POPUP_GRAB) == 3 && fake_grants == 3 && fake_invalid_grabs == 0);
     /* A's own children are eligible again: A is still the topmost grabbing popup of the seat. */
-    Check(host_wayland_windows_record_press(&session_ctx, 44, 604, seat, 3, 1, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 44, 604, seat, 3, 1, 1100) == HostWaylandOk);
     Check(menu_under(7, 3, 1, true, 44, 1100) == HostWaylandOk);
     Check(fake_grants == 4 && fake_invalid_grabs == 0);
     return 0;
@@ -1353,6 +1369,103 @@ static int check_popup_rect_update(void) {
     return 0;
 }
 
+/** @brief Press input with the given fields; the rest are the pointer defaults used by the tests. */
+static host_wayland_press_input_t press_input(uint32_t protocol_serial, struct wl_seat *seat, uint64_t epoch, uint64_t window, uint64_t now_ms) {
+    host_wayland_press_input_t input;
+    memset(&input, 0, sizeof input);
+    input.protocol_serial = protocol_serial;
+    input.wayland_serial = protocol_serial + 1000u;
+    input.seat = seat;
+    input.window = window;
+    input.generation = 1;
+    input.lease_epoch = epoch;
+    input.kind = HostWaylandPressPointer;
+    input.button = 272;
+    input.now_ms = now_ms;
+    return input;
+}
+
+/**
+ * @brief Press table rules (3.6.2): duplicate serials are refused, kinds and buttons are validated, a lease change
+ * drops the other leases' presses, a destroyed seat drops its presses and grabs, a press on an unregistered seat never
+ * grants a grab, the seat table is bounded, and a clock that moves backwards clears the table.
+ */
+static int check_press_table_rules(void) {
+    static char seat_slots[HostWaylandMaxSeats + 2];
+    struct wl_seat *first = (struct wl_seat *)(void *)&seat_slots[0];
+    struct wl_seat *second = (struct wl_seat *)(void *)&seat_slots[1];
+
+    Check(begin_popup_session(5) == 0);
+    host_wayland_press_input_t input = press_input(90, first, 1, 1, 1000);
+    Check(host_wayland_windows_record_press(&session_ctx, &input) == HostWaylandOk);
+    input.protocol_serial = 90;
+    Check(host_wayland_windows_record_press(&session_ctx, &input) == HostWaylandDuplicateSerial);
+    input.protocol_serial = 91;
+    input.kind = 0;
+    Check(host_wayland_windows_record_press(&session_ctx, &input) == HostWaylandInvalidArgument);
+    input.kind = 9;
+    Check(host_wayland_windows_record_press(&session_ctx, &input) == HostWaylandInvalidArgument);
+    input.kind = HostWaylandPressPointer;
+    input.button = 0;
+    Check(host_wayland_windows_record_press(&session_ctx, &input) == HostWaylandInvalidArgument);
+    input.kind = HostWaylandPressTouch;
+    input.button = 0;
+    Check(host_wayland_windows_record_press(&session_ctx, &input) == HostWaylandOk);
+    Check(press_find(&session_ctx, 91, 1000) != NULL);
+
+    /* Lease change: only the presses of the surviving lease stay. */
+    Check(begin_popup_session(5) == 0);
+    input = press_input(50, first, 1, 1, 1000);
+    Check(host_wayland_windows_record_press(&session_ctx, &input) == HostWaylandOk);
+    input = press_input(51, first, 2, 1, 1000);
+    Check(host_wayland_windows_record_press(&session_ctx, &input) == HostWaylandOk);
+    host_wayland_windows_drop_presses(&session_ctx, 2);
+    Check(press_find(&session_ctx, 50, 1000) == NULL && press_find(&session_ctx, 51, 1000) != NULL);
+    host_wayland_windows_drop_presses(NULL, 2);
+
+    /* A destroyed seat: its press is gone, and its grab is released so a child cannot grab on it. */
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 60, 600, first, 1, 1, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 61, 601, second, 1, 1, 1100) == HostWaylandOk);
+    Check(menu_under(3, 1, 1, true, 60, 1100) == HostWaylandOk);
+    Check(fake_grants == 1);
+    host_wayland_windows_forget_seat(&session_ctx, first);
+    Check(press_find(&session_ctx, 60, 1100) == NULL && press_find(&session_ctx, 61, 1100) != NULL);
+    Check(menu_under(4, 3, 1, true, 61, 1100) == HostWaylandOk);
+    Check(fake_grants == 1 && fake_invalid_grabs == 0);
+    host_wayland_windows_forget_seat(NULL, first);
+    host_wayland_windows_forget_seat(&session_ctx, NULL);
+
+    /* A seat registration removed while its press is still recorded: the grab is refused, never sent. */
+    Check(begin_popup_session(5) == 0);
+    root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 70, 700, second, 1, 1, 1100) == HostWaylandOk);
+    for (size_t index = 0; index < HostWaylandMaxSeats; ++index) {
+        if (session_ctx.seats[index] == second) session_ctx.seats[index] = NULL;
+    }
+    Check(menu_under(3, 1, 1, true, 70, 1100) == HostWaylandOk);
+    Check(fake_grants == 0 && fake_count_requests("xdg_popup", XDG_POPUP_GRAB) == 0);
+
+    /* The seat table holds HostWaylandMaxSeats seats; the next distinct seat is refused. */
+    Check(begin_popup_session(5) == 0);
+    for (uint32_t index = 0; index < HostWaylandMaxSeats; ++index) {
+        struct wl_seat *seat = (struct wl_seat *)(void *)&seat_slots[index];
+        Check(record_press_at(&session_ctx, 100 + index, 100, seat, 1, 1, 1000) == HostWaylandOk);
+    }
+    Check(record_press_at(&session_ctx, 200, 200, (struct wl_seat *)(void *)&seat_slots[HostWaylandMaxSeats], 1, 1, 1000) == HostWaylandSeatTableFull);
+    Check(press_find(&session_ctx, 200, 1000) == NULL);
+
+    /* A clock that moves backwards clears every stored press before the new one is recorded. */
+    Check(begin_popup_session(5) == 0);
+    Check(record_press_at(&session_ctx, 80, 800, first, 1, 1, 1000) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 81, 801, first, 1, 1, 900) == HostWaylandOk);
+    Check(press_find(&session_ctx, 80, 900) == NULL && press_find(&session_ctx, 81, 900) != NULL);
+    return 0;
+}
+
 /** @brief Every request the module sent was accepted by the strict double. Runs last. */
 static int check_fake_protocol_clean(void) {
     Check(fake_dead_requests == 0);
@@ -1388,6 +1501,7 @@ int main(void) {
     if (check_update_parent() != 0) return 1;
     if (check_update_is_atomic() != 0) return 1;
     if (check_popup_rect_update() != 0) return 1;
+    if (check_press_table_rules() != 0) return 1;
     if (check_retire_order() != 0) return 1;
     if (check_retire_stale_and_invalid() != 0) return 1;
     if (check_late_events_after_retire() != 0) return 1;

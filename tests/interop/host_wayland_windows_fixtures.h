@@ -70,7 +70,7 @@ static int check_codec_fixtures(void) {
     announce_spec_t root = toplevel_spec(1, 1, "a-root");
     Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
     unsigned seat = fake_new("wl_seat");
-    Check(host_wayland_windows_record_press(&session_ctx, 50, 600, (struct wl_seat *)fake_object(seat), 1, 1, 1000) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 50, 600, (struct wl_seat *)fake_object(seat), 1, 1, 1000) == HostWaylandOk);
     mark = fake_request_count;
     announce_spec_t menu = menu_spec(3, 1, 1, 3, 30, 12, 40, 20);
     menu.has_serial = true;

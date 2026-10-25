@@ -155,7 +155,7 @@ static int stress_step(uint64_t *now_ms, unsigned *press_serial) {
         unsigned seat = fake_nth("wl_seat", 0);
         if (seat != FAKE_NONE) {
             *press_serial += 1;
-            (void)host_wayland_windows_record_press(&session_ctx, *press_serial, 900 + *press_serial, (struct wl_seat *)fake_object(seat), 1 + stress_below(10), 1 + stress_below(2), *now_ms);
+            (void)record_press_at(&session_ctx, *press_serial, 900 + *press_serial, (struct wl_seat *)fake_object(seat), 1 + stress_below(10), 1 + stress_below(2), *now_ms);
         }
     } else {
         host_wayland_windows_release_press(&session_ctx, *press_serial - stress_below(3));

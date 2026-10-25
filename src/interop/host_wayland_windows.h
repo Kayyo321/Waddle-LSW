@@ -45,8 +45,33 @@ typedef enum host_wayland_status_t {
     HostWaylandRefused = 4, /**< The window table or the positioner refused the frame; `on_error` reported it. Nothing changed. */
     HostWaylandRealizeFailed = 5, /**< A Wayland object or listener could not be created; the window was rolled back and retired; `on_error` reported it. */
     HostWaylandPressTableFull = 6, /**< All 64 press entries are live; the caller must fail the session (3.6.2). Nothing changed. */
-    HostWaylandNotInitialized = 7 /**< The context was not initialized or was reset. */
+    HostWaylandNotInitialized = 7, /**< The context was not initialized or was reset. */
+    HostWaylandDuplicateSerial = 8, /**< A live press already holds this protocol serial T. Nothing changed. */
+    HostWaylandSeatTableFull = 9 /**< All `HostWaylandMaxSeats` seats are registered; the press was not recorded. */
 } host_wayland_status_t;
+
+/** @brief Seats the press table can name at once. A press on a seat beyond this is refused. */
+#define HostWaylandMaxSeats 8u
+
+/** @brief Input class of a press (3.6.2). A popup grab may follow any of them. */
+typedef enum host_wayland_press_kind_t {
+    HostWaylandPressPointer = 1, /**< Pointer button. `button` is the evdev code and must be nonzero. */
+    HostWaylandPressTouch = 2, /**< Touch down. `button` is ignored. */
+    HostWaylandPressKey = 3 /**< Keyboard key. `button` is the evdev code. */
+} host_wayland_press_kind_t;
+
+/** @brief Everything one press records. Passed by pointer; the module copies it. */
+typedef struct host_wayland_press_input_t {
+    uint32_t protocol_serial; /**< Host protocol input serial T, nonzero and unique among live entries. */
+    uint32_t wayland_serial; /**< Wayland seat serial S, used only at a compositor request. */
+    struct wl_seat *seat; /**< Borrowed seat the press came from; registered by the press and forgotten by `forget_seat`. */
+    uint64_t window; /**< Window the press landed on. */
+    uint64_t generation; /**< Generation of that window, nonzero. */
+    uint64_t lease_epoch; /**< Input lease the press belongs to. `drop_presses` keeps one epoch. */
+    uint32_t kind; /**< A `host_wayland_press_kind_t` value. */
+    uint32_t button; /**< Evdev button or key code; nonzero for a pointer press. */
+    uint64_t now_ms; /**< Monotonic clock in milliseconds; see `host_wayland_windows_record_press`. */
+} host_wayland_press_input_t;
 
 /** @brief Compositor event sinks. Any member may be NULL; the event is then dropped. */
 typedef struct host_wayland_callbacks_t {
@@ -139,6 +164,9 @@ typedef struct host_wayland_press_t {
     uint64_t window; /**< Window the press landed on. */
     uint64_t generation; /**< Generation of that window. */
     uint64_t recorded_ms; /**< Caller clock at record time, milliseconds. */
+    uint64_t lease_epoch; /**< Input lease of the press. */
+    uint32_t kind; /**< A `host_wayland_press_kind_t` value. */
+    uint32_t button; /**< Evdev code; nonzero for a pointer press. */
     uint8_t live; /**< Nonzero for a used entry. */
 } host_wayland_press_t;
 
@@ -151,10 +179,12 @@ typedef struct host_wayland_t {
     host_wayland_record_t records[HostWindowMapMaxRealized]; /**< Object records, indexed by the table's slot. */
     host_wayland_press_t presses[64]; /**< Bounded press table. */
     uint64_t grab_counter; /**< Sequence source for `grab_sequence`. */
+    uint64_t last_clock_ms; /**< Last clock value seen; a smaller one clears the press table. */
+    struct wl_seat *seats[HostWaylandMaxSeats]; /**< Registered seats; a grab needs its press seat here. */
 } host_wayland_t;
 
 /** @brief Length of the press-table validity window, milliseconds (3.6.2 "300 ms rule"). */
-#define HOST_WAYLAND_PRESS_EXPIRY_MS 300u
+#define HostWaylandPressExpiryMs 300u
 
 /** @brief Number of realized windows the table can hold (`host_window_map.h` MaxRealized). */
 #define HOST_WAYLAND_MAX_WINDOWS 64u
@@ -205,27 +235,46 @@ bool host_wayland_windows_is_mapped(const host_wayland_t *ctx, uint64_t window, 
 /**
  * @brief Record a physical press that may justify a later popup grab (3.6.2).
  *
- * Entries older than HOST_WAYLAND_PRESS_EXPIRY_MS are removed first. A full table of live entries is never
- * evicted.
+ * Entries older than HostWaylandPressExpiryMs are removed first. A full table of live entries is never evicted.
+ * The clock is the caller's monotonic clock in milliseconds (for example CLOCK_MONOTONIC). If it ever moves
+ * backwards, every stored press is untrustworthy, so the table is cleared before the new press is recorded.
+ * The seat is registered on success; a press on a seat that was forgotten cannot be recorded until it is
+ * registered again by a new press.
  *
- * @param ctx Initialized context.
- * @param protocol_serial Host protocol input serial T of the press.
- * @param wayland_serial Wayland seat serial S of the press, used only at compositor requests.
- * @param seat Borrowed seat the press came from.
- * @param window Window the press landed on.
- * @param generation Generation of that window.
- * @param now_ms Caller clock in milliseconds.
- * @return HostWaylandOk or HostWaylandPressTableFull.
+ * @param ctx In/out. Initialized context.
+ * @param input In. The press. NULL, a zero protocol serial, a NULL seat, a zero window or generation, an unknown
+ *              kind, or a pointer press with a zero button gives HostWaylandInvalidArgument.
+ * @return HostWaylandOk; HostWaylandNotInitialized; HostWaylandInvalidArgument; HostWaylandDuplicateSerial when a
+ *         live press holds the same T; HostWaylandPressTableFull when all 64 entries are live (the caller must
+ *         fail the session, 3.6.2); or HostWaylandSeatTableFull when no seat slot is free.
  */
-host_wayland_status_t host_wayland_windows_record_press(host_wayland_t *ctx, uint32_t protocol_serial, uint32_t wayland_serial, struct wl_seat *seat, uint64_t window, uint64_t generation, uint64_t now_ms);
+host_wayland_status_t host_wayland_windows_record_press(host_wayland_t *ctx, const host_wayland_press_input_t *input);
 
 /**
  * @brief Remove the press entry for protocol serial T (release or cancel). Unknown serials are ignored.
  *
- * @param ctx Initialized context.
- * @param protocol_serial Host protocol input serial T.
+ * @param ctx In/out. Initialized context; NULL or uninitialized is a no-op.
+ * @param protocol_serial In. Host protocol input serial T.
  */
 void host_wayland_windows_release_press(host_wayland_t *ctx, uint32_t protocol_serial);
+
+/**
+ * @brief Keep only the presses of one input lease. Every other press is dropped: focus loss or a lease change
+ * makes its serials invalid for a grab.
+ *
+ * @param ctx In/out. Initialized context; NULL or uninitialized is a no-op.
+ * @param lease_epoch In. The lease epoch that stays valid.
+ */
+void host_wayland_windows_drop_presses(host_wayland_t *ctx, uint64_t lease_epoch);
+
+/**
+ * @brief Forget a seat that was destroyed. Its presses are dropped, and every popup grab on it is released so
+ * that no later popup can be granted on the destroyed seat.
+ *
+ * @param ctx In/out. Initialized context; NULL or uninitialized is a no-op.
+ * @param seat In. The destroyed seat; NULL is a no-op. The module never dereferences it.
+ */
+void host_wayland_windows_forget_seat(host_wayland_t *ctx, const struct wl_seat *seat);
 
 /**
  * @brief Change the host integer scale for windows realized from now on.

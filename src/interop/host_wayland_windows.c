@@ -80,34 +80,84 @@ bool host_wayland_windows_is_mapped(const host_wayland_t *ctx, uint64_t window, 
 
 /* ---- press table (3.6.2) ---------------------------------------------------------------------- */
 
-/** @brief Remove entries whose validity window has passed. A clock that moved backwards keeps entries. */
+/** @brief Advance the caller's monotonic clock. A clock that moved backwards makes stored presses untrustworthy. */
+static void observe_clock(host_wayland_t *ctx, uint64_t now_ms) {
+    if (now_ms < ctx->last_clock_ms) memset(ctx->presses, 0, sizeof ctx->presses);
+    ctx->last_clock_ms = now_ms;
+}
+
+/** @brief Remove entries whose validity window has passed. */
 static void press_expire(host_wayland_t *ctx, uint64_t now_ms) {
     for (size_t index = 0; index < PRESS_COUNT; ++index) {
         host_wayland_press_t *press = &ctx->presses[index];
-        if (press->live && now_ms >= press->recorded_ms && now_ms - press->recorded_ms > HOST_WAYLAND_PRESS_EXPIRY_MS) {
+        if (press->live && now_ms >= press->recorded_ms && now_ms - press->recorded_ms > HostWaylandPressExpiryMs) {
             press->live = 0;
         }
     }
 }
 
-host_wayland_status_t host_wayland_windows_record_press(host_wayland_t *ctx, uint32_t protocol_serial, uint32_t wayland_serial, struct wl_seat *seat, uint64_t window, uint64_t generation, uint64_t now_ms) {
-    if (!context_ready(ctx)) return HostWaylandNotInitialized;
-    if (protocol_serial == 0 || seat == NULL || window == 0 || generation == 0) return HostWaylandInvalidArgument;
-    press_expire(ctx, now_ms);
+/** @brief Whether `seat` is registered: recorded by a press and not forgotten since. */
+static bool seat_registered(const host_wayland_t *ctx, const struct wl_seat *seat) {
+    if (seat == NULL) return false;
+    for (size_t index = 0; index < HostWaylandMaxSeats; ++index) {
+        if (ctx->seats[index] == seat) return true;
+    }
+    return false;
+}
+
+/** @brief Register `seat` if it is not registered yet. Returns HostWaylandSeatTableFull when no slot is free. */
+static host_wayland_status_t seat_register(host_wayland_t *ctx, struct wl_seat *seat) {
+    if (seat_registered(ctx, seat)) return HostWaylandOk;
+    for (size_t index = 0; index < HostWaylandMaxSeats; ++index) {
+        if (ctx->seats[index] == NULL) {
+            ctx->seats[index] = seat;
+            return HostWaylandOk;
+        }
+    }
+    return HostWaylandSeatTableFull;
+}
+
+/** @brief Whether a press kind is one the table records. */
+static bool press_kind_valid(const host_wayland_press_input_t *input) {
+    if (input->kind == HostWaylandPressPointer) return input->button != 0;
+    return input->kind == HostWaylandPressTouch || input->kind == HostWaylandPressKey;
+}
+
+/** @brief Live entry holding protocol serial T, or NULL. Expiry is not applied here. */
+static host_wayland_press_t *press_by_serial(host_wayland_t *ctx, uint32_t protocol_serial) {
     for (size_t index = 0; index < PRESS_COUNT; ++index) {
         host_wayland_press_t *press = &ctx->presses[index];
-        if (press->live) continue;
-        press->protocol_serial = protocol_serial;
-        press->wayland_serial = wayland_serial;
-        press->seat = seat;
-        press->window = window;
-        press->generation = generation;
-        press->recorded_ms = now_ms;
-        press->live = 1;
-        return HostWaylandOk;
+        if (press->live && press->protocol_serial == protocol_serial) return press;
+    }
+    return NULL;
+}
+
+host_wayland_status_t host_wayland_windows_record_press(host_wayland_t *ctx, const host_wayland_press_input_t *input) {
+    if (!context_ready(ctx)) return HostWaylandNotInitialized;
+    if (input == NULL || input->protocol_serial == 0 || input->seat == NULL || input->window == 0 || input->generation == 0) return HostWaylandInvalidArgument;
+    if (!press_kind_valid(input)) return HostWaylandInvalidArgument;
+    observe_clock(ctx, input->now_ms);
+    press_expire(ctx, input->now_ms);
+    if (press_by_serial(ctx, input->protocol_serial) != NULL) return HostWaylandDuplicateSerial;
+    host_wayland_press_t *slot = NULL;
+    for (size_t index = 0; index < PRESS_COUNT && slot == NULL; ++index) {
+        if (!ctx->presses[index].live) slot = &ctx->presses[index];
     }
     /* Every entry is live. Evicting one would lose a grab a compositor may still need, so fail instead. */
-    return HostWaylandPressTableFull;
+    if (slot == NULL) return HostWaylandPressTableFull;
+    host_wayland_status_t status = seat_register(ctx, input->seat);
+    if (status != HostWaylandOk) return status;
+    slot->protocol_serial = input->protocol_serial;
+    slot->wayland_serial = input->wayland_serial;
+    slot->seat = input->seat;
+    slot->window = input->window;
+    slot->generation = input->generation;
+    slot->recorded_ms = input->now_ms;
+    slot->lease_epoch = input->lease_epoch;
+    slot->kind = input->kind;
+    slot->button = input->button;
+    slot->live = 1;
+    return HostWaylandOk;
 }
 
 void host_wayland_windows_release_press(host_wayland_t *ctx, uint32_t protocol_serial) {
@@ -118,14 +168,33 @@ void host_wayland_windows_release_press(host_wayland_t *ctx, uint32_t protocol_s
     }
 }
 
+void host_wayland_windows_drop_presses(host_wayland_t *ctx, uint64_t lease_epoch) {
+    if (!context_ready(ctx)) return;
+    for (size_t index = 0; index < PRESS_COUNT; ++index) {
+        host_wayland_press_t *press = &ctx->presses[index];
+        if (press->live && press->lease_epoch != lease_epoch) press->live = 0;
+    }
+}
+
+void host_wayland_windows_forget_seat(host_wayland_t *ctx, const struct wl_seat *seat) {
+    if (!context_ready(ctx) || seat == NULL) return;
+    for (size_t index = 0; index < HostWaylandMaxSeats; ++index) {
+        if (ctx->seats[index] == seat) ctx->seats[index] = NULL;
+    }
+    for (size_t index = 0; index < PRESS_COUNT; ++index) {
+        host_wayland_press_t *press = &ctx->presses[index];
+        if (press->live && press->seat == seat) press->live = 0;
+    }
+    for (size_t index = 0; index < HostWindowMapMaxRealized; ++index) {
+        host_wayland_record_t *rec = &ctx->records[index];
+        if (rec->generation != 0 && rec->grabbed && rec->grab_seat == seat) rec->grabbed = 0;
+    }
+}
+
 /** @brief Live entry for protocol serial T at `now_ms`, or NULL. */
 static host_wayland_press_t *press_find(host_wayland_t *ctx, uint32_t protocol_serial, uint64_t now_ms) {
     press_expire(ctx, now_ms);
-    for (size_t index = 0; index < PRESS_COUNT; ++index) {
-        host_wayland_press_t *press = &ctx->presses[index];
-        if (press->live && press->protocol_serial == protocol_serial) return press;
-    }
-    return NULL;
+    return press_by_serial(ctx, protocol_serial);
 }
 
 /* ---- records, bindings and events -------------------------------------------------------------- */
@@ -525,7 +594,8 @@ static void grab_pop_from(host_wayland_t *ctx, const host_wayland_record_t *rec)
 static void maybe_grab(host_wayland_t *ctx, host_wayland_record_t *rec, const announce_t *req, uint64_t now_ms) {
     if (rec->role != ROLE_MENU || !req->has_serial) return;
     host_wayland_press_t *press = press_find(ctx, req->serial, now_ms);
-    if (press == NULL || press->seat == NULL) return;
+    /* A press whose seat was forgotten is never a grab: the seat object may already be destroyed. */
+    if (press == NULL || !seat_registered(ctx, press->seat)) return;
     host_window_ref_t trigger_root = root_of(ctx, (host_window_ref_t){press->window, press->generation});
     host_window_ref_t popup_root = root_of(ctx, (host_window_ref_t){req->parent, req->parent_generation});
     if (trigger_root.window != popup_root.window || trigger_root.generation != popup_root.generation) return;
@@ -948,6 +1018,7 @@ host_wayland_status_t host_wayland_windows_reset(host_wayland_t *ctx) {
 host_wayland_status_t host_wayland_windows_handle_frame(host_wayland_t *ctx, const uint8_t *frame, size_t length, uint64_t now_ms) {
     if (ctx == NULL || frame == NULL) return HostWaylandInvalidArgument;
     if (!ctx->initialized) return HostWaylandNotInitialized;
+    observe_clock(ctx, now_ms);
     interop_header_t header;
     if (interop_header_decode(frame, length, &header) != InteropErrorNone) return HostWaylandMalformedFrame;
     if (length < InteropHeaderBytes || (size_t)header.length > length - InteropHeaderBytes) return HostWaylandMalformedFrame;
