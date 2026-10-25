@@ -246,7 +246,14 @@ static void decode_args(fake_request_t *request, const char *iface, uint32_t opc
         else if (opcode == XDG_POSITIONER_SET_ANCHOR_RECT) { ArgInt(0); ArgInt(1); ArgInt(2); ArgInt(3); }
         else if (opcode == XDG_POSITIONER_SET_ANCHOR || opcode == XDG_POSITIONER_SET_GRAVITY || opcode == XDG_POSITIONER_SET_CONSTRAINT_ADJUSTMENT) ArgUint(0);
     } else if (!strcmp(iface, "xdg_popup")) {
-        if (opcode == XDG_POPUP_GRAB) { ArgPtr(0); ArgUint(1); }
+        if (opcode == XDG_POPUP_GRAB) {
+            /* A seat the double issued is keyed by its record index; any other seat by its pointer value, so two
+             * borrowed seats never look like one seat to the grab model. */
+            void *seat = va_arg(*ap, void *);
+            unsigned index = seat ? fake_index(seat) : FakeNone;
+            request->a0 = !seat ? -1 : index != FakeNone ? (long long)index : (long long)(uintptr_t)seat;
+            ArgUint(1);
+        }
         else if (opcode == XDG_POPUP_REPOSITION) { ArgPtr(0); ArgUint(1); }
     } else if (!strcmp(iface, "zxdg_decoration_manager_v1")) {
         if (opcode == ZXDG_DECORATION_MANAGER_V1_GET_TOPLEVEL_DECORATION) { SkipNewId(); ArgPtr(0); }

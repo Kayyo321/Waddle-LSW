@@ -557,12 +557,18 @@ static int decode_announce(const uint8_t *payload, size_t length, announce_t *ou
     return 0;
 }
 
-/** @brief Protocol app id: "waddle.<device>.<app_key>", or "waddle.<device>.uac" for consent dialogs. */
-static bool build_app_id(const host_wayland_t *ctx, const announce_t *req, char *out, size_t capacity) {
-    int written = req->role == RoleUac
-        ? snprintf(out, capacity, "waddle.%s.uac", ctx->config.device)
-        : snprintf(out, capacity, "waddle.%s.%s", ctx->config.device, req->app_key);
-    return written > 0 && (size_t)written < capacity;
+/**
+ * @brief Protocol app id: "waddle.<device>.<app_key>", or "waddle.<device>.uac" for consent dialogs.
+ *
+ * The caller's buffer holds 7 + 64 + 1 + InteropMaxAppKeyBytes + 1 bytes. The device is at most 64 bytes (checked by
+ * init) and the app key at most InteropMaxAppKeyBytes (checked by decode_announce), so the text always fits.
+ */
+static void build_app_id(const host_wayland_t *ctx, const announce_t *req, char *out, size_t capacity) {
+    if (req->role == RoleUac) {
+        (void)snprintf(out, capacity, "waddle.%s.uac", ctx->config.device);
+    } else {
+        (void)snprintf(out, capacity, "waddle.%s.%s", ctx->config.device, req->app_key);
+    }
 }
 
 /* ---- popups (8.44, 3.6.2) -------------------------------------------------------------------- */
@@ -738,7 +744,7 @@ static host_wayland_status_t handle_announce(host_wayland_t *ctx, const uint8_t 
     if (decode_announce(payload, length, &req) != 0) return HostWaylandMalformedFrame;
     if (!role_is_popup(req.role) && !role_is_toplevel(req.role)) return HostWaylandMalformedFrame;
     char app_id[7 + 64 + 1 + InteropMaxAppKeyBytes + 1];
-    if (role_is_toplevel(req.role) && !build_app_id(ctx, &req, app_id, sizeof app_id)) return HostWaylandMalformedFrame;
+    if (role_is_toplevel(req.role)) build_app_id(ctx, &req, app_id, sizeof app_id);
 
     host_window_ref_t window_id;
     window_id.window = req.window;

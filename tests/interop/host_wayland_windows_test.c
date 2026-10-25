@@ -1588,6 +1588,385 @@ static int check_parent_size_rounds_down(void) {
     return 0;
 }
 
+/* ---- branch edges: decoders and paths the codec or the table never reaches through a frame ----------- */
+
+/** @brief An optional raw field: `bytes` NULL leaves the field out of the payload. */
+typedef struct raw_field_t {
+    const void *bytes;
+    uint16_t length;
+} raw_field_t;
+
+static const raw_field_t RawAbsent = {NULL, 0};
+
+/** @brief Little-endian rectangle encoding (x and y as i32, width and height as u32), 16 bytes. */
+static raw_field_t raw_rect(uint8_t *out, int32_t x, int32_t y, uint32_t width, uint32_t height) {
+    uint32_t values[4] = {(uint32_t)x, (uint32_t)y, width, height};
+    for (size_t index = 0; index < 4; ++index) {
+        for (size_t byte = 0; byte < 4; ++byte) out[index * 4 + byte] = (uint8_t)(values[index] >> (8 * byte));
+    }
+    raw_field_t field = {out, 16};
+    return field;
+}
+
+static void put_raw(interop_writer_t *w, uint16_t tag, raw_field_t field) {
+    if (field.bytes) interop_put_bytes(w, tag, field.bytes, field.length);
+}
+
+/**
+ * @brief Payload of an announce with explicit fields, written in ascending tag order as the codec requires. A zero
+ * window leaves the window field out. The state and dpi fields are always present, because the decoder requires them.
+ */
+static size_t raw_announce(uint8_t *buffer, size_t capacity, uint64_t window, uint64_t generation, uint64_t role, raw_field_t parent, raw_field_t parent_generation,
+                           raw_field_t rect, raw_field_t title, raw_field_t key, raw_field_t serial, raw_field_t min_size) {
+    interop_writer_t w;
+    interop_writer_init(&w, buffer, capacity);
+    if (window != 0) interop_put_uint(&w, InteropTagWindow, window);
+    interop_put_uint(&w, InteropTagGeneration, generation);
+    put_raw(&w, InteropTagParent, parent);
+    put_raw(&w, InteropTagParentGeneration, parent_generation);
+    interop_put_uint(&w, InteropTagRole, role);
+    put_raw(&w, InteropTagRect, rect);
+    put_raw(&w, InteropTagTitle, title);
+    put_raw(&w, InteropTagAppKey, key);
+    interop_put_uint(&w, InteropTagState, 0);
+    interop_put_uint(&w, InteropTagDpi, 96);
+    put_raw(&w, InteropTagSerial, serial);
+    put_raw(&w, InteropTagMinSize, min_size);
+    return w.length - InteropHeaderBytes;
+}
+
+/** @brief Payload of a WindowUpdate with explicit fields, in ascending tag order. A zero window leaves it out. */
+static size_t raw_update(uint8_t *buffer, size_t capacity, uint64_t window, uint64_t generation, raw_field_t parent, raw_field_t parent_generation,
+                         raw_field_t rect, raw_field_t title, raw_field_t min_size) {
+    interop_writer_t w;
+    interop_writer_init(&w, buffer, capacity);
+    if (window != 0) interop_put_uint(&w, InteropTagWindow, window);
+    interop_put_uint(&w, InteropTagGeneration, generation);
+    put_raw(&w, InteropTagParent, parent);
+    put_raw(&w, InteropTagParentGeneration, parent_generation);
+    put_raw(&w, InteropTagRect, rect);
+    put_raw(&w, InteropTagTitle, title);
+    put_raw(&w, InteropTagMinSize, min_size);
+    return w.length - InteropHeaderBytes;
+}
+
+/** @brief Start of a payload written by the codec writer: the bytes after the header. */
+static const uint8_t *raw_payload(const uint8_t *buffer) {
+    return buffer + InteropHeaderBytes;
+}
+
+/**
+ * @brief Append one raw field to a payload of `payload_length` bytes. The codec writer refuses a malformed field, so the
+ * decoder's own refusals are reached by writing the field bytes directly, in the codec's framing: tag, length (both
+ * little-endian u16), value, zero padding to four bytes.
+ */
+static size_t raw_append(uint8_t *buffer, size_t payload_length, uint16_t tag, const void *value, size_t value_length) {
+    uint8_t *at = buffer + InteropHeaderBytes + payload_length;
+    at[0] = (uint8_t)tag;
+    at[1] = (uint8_t)(tag >> 8);
+    at[2] = (uint8_t)value_length;
+    at[3] = (uint8_t)(value_length >> 8);
+    memcpy(at + 4, value, value_length);
+    size_t padded = (value_length + 3u) & ~(size_t)3u;
+    memset(at + 4 + value_length, 0, padded - value_length);
+    return payload_length + 4 + padded;
+}
+
+/** @brief Each malformed field is refused by the module's own decoder, which the codec has not checked here. */
+static int check_decode_edges(void) {
+    static uint8_t buffer[InteropMaxFrameBytes];
+    static uint8_t long_title[InteropMaxTitleBytes + 1];
+    static uint8_t long_key[InteropMaxAppKeyBytes + 1];
+    memset(long_title, 'x', sizeof long_title);
+    memset(long_key, 'k', sizeof long_key);
+    const uint8_t wide[4] = {1, 0, 0, 0};
+    const uint8_t eight[8] = {2, 0, 0, 0, 0, 0, 0, 0};
+    const uint8_t narrow[2] = {1, 0};
+    const uint8_t rect8[8] = {0};
+    uint8_t rect[16];
+    raw_field_t rect_field = raw_rect(rect, 1, 2, 3, 4);
+    announce_t announce;
+    update_t update;
+    size_t base = raw_announce(buffer, sizeof buffer, 1, 1, 1, RawAbsent, RawAbsent, RawAbsent, RawAbsent, RawAbsent, RawAbsent, RawAbsent);
+    size_t good = raw_append(buffer, raw_append(buffer, base, InteropTagRect, rect_field.bytes, 16), InteropTagAppKey, "a-app", 5);
+    Check(decode_announce(raw_payload(buffer), good, &announce) == 0);
+
+    size_t length = raw_append(buffer, base, InteropTagParent, wide, 4);
+    length = raw_append(buffer, length, InteropTagRect, rect, 16);
+    length = raw_append(buffer, length, InteropTagAppKey, "a-app", 5);
+    Check(decode_announce(raw_payload(buffer), length, &announce) != 0);
+    length = raw_append(buffer, base, InteropTagParent, eight, 8);
+    length = raw_append(buffer, length, InteropTagParentGeneration, wide, 4);
+    length = raw_append(buffer, length, InteropTagRect, rect, 16);
+    length = raw_append(buffer, length, InteropTagAppKey, "a-app", 5);
+    Check(decode_announce(raw_payload(buffer), length, &announce) != 0);
+    length = raw_append(buffer, base, InteropTagParent, eight, 8);
+    length = raw_append(buffer, length, InteropTagRect, rect, 16);
+    length = raw_append(buffer, length, InteropTagAppKey, "a-app", 5);
+    Check(decode_announce(raw_payload(buffer), length, &announce) != 0);
+    length = raw_append(buffer, base, InteropTagParentGeneration, eight, 8);
+    length = raw_append(buffer, length, InteropTagRect, rect, 16);
+    length = raw_append(buffer, length, InteropTagAppKey, "a-app", 5);
+    Check(decode_announce(raw_payload(buffer), length, &announce) != 0);
+
+    length = raw_append(buffer, base, InteropTagRect, rect8, 8);
+    length = raw_append(buffer, length, InteropTagAppKey, "a-app", 5);
+    Check(decode_announce(raw_payload(buffer), length, &announce) != 0);
+    length = raw_append(buffer, good, InteropTagTitle, long_title, sizeof long_title);
+    Check(decode_announce(raw_payload(buffer), length, &announce) != 0);
+    length = raw_append(buffer, base, InteropTagRect, rect, 16);
+    length = raw_append(buffer, length, InteropTagAppKey, long_key, sizeof long_key);
+    Check(decode_announce(raw_payload(buffer), length, &announce) != 0);
+    length = raw_append(buffer, good, InteropTagMinSize, wide, 4);
+    Check(decode_announce(raw_payload(buffer), length, &announce) != 0);
+    length = raw_append(buffer, good, InteropTagSerial, narrow, 2);
+    Check(decode_announce(raw_payload(buffer), length, &announce) != 0);
+
+    /* WindowUpdate: the same refusals for its own fields. */
+    base = raw_update(buffer, sizeof buffer, 1, 1, RawAbsent, RawAbsent, RawAbsent, RawAbsent, RawAbsent);
+    length = raw_append(buffer, base, InteropTagRect, rect, 16);
+    Check(decode_update(raw_payload(buffer), length, &update) == 0);
+    length = raw_append(buffer, base, InteropTagRect, rect8, 8);
+    Check(decode_update(raw_payload(buffer), length, &update) != 0);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandMalformedFrame);
+    length = raw_append(buffer, base, InteropTagRect, rect, 16);
+    length = raw_append(buffer, length, InteropTagTitle, long_title, sizeof long_title);
+    Check(decode_update(raw_payload(buffer), length, &update) != 0);
+    length = raw_append(buffer, base, InteropTagRect, rect, 16);
+    length = raw_append(buffer, length, InteropTagParent, wide, 4);
+    Check(decode_update(raw_payload(buffer), length, &update) != 0);
+    length = raw_append(buffer, base, InteropTagRect, rect, 16);
+    length = raw_append(buffer, length, InteropTagMinSize, wide, 4);
+    Check(decode_update(raw_payload(buffer), length, &update) != 0);
+    return 0;
+}
+
+/** @brief Direct calls to handlers the frame path only reaches through valid input. */
+static int check_direct_handlers(void) {
+    static uint8_t buffer[InteropMaxFrameBytes];
+    uint8_t rect[16];
+    raw_field_t rect_field = raw_rect(rect, 1, 2, 3, 4);
+    raw_field_t key = {"a-app", 5};
+    Check(begin_popup_session(5) == 0);
+
+    /* An Announce that names no window, and one with an unknown role, are refused before any record is made. */
+    size_t length = raw_announce(buffer, sizeof buffer, 0, 1, 1, RawAbsent, RawAbsent, rect_field, RawAbsent, key, RawAbsent, RawAbsent);
+    Check(handle_announce(&session_ctx, raw_payload(buffer), length, 1000) == HostWaylandMalformedFrame);
+    length = raw_announce(buffer, sizeof buffer, 1, 1, 9, RawAbsent, RawAbsent, rect_field, RawAbsent, key, RawAbsent, RawAbsent);
+    Check(handle_announce(&session_ctx, raw_payload(buffer), length, 1000) == HostWaylandMalformedFrame);
+    Check(host_wayland_windows_window_count(&session_ctx) == 0);
+
+    /* Null-safe helpers and invalid press input. */
+    Check(!seat_registered(&session_ctx, NULL));
+    Check(host_wayland_windows_record_press(&session_ctx, NULL) == HostWaylandInvalidArgument);
+    destroy_decoration(&session_ctx.records[0]);
+    Check(session_ctx.records[0].decoration == NULL);
+
+    /* A binding is valid only for the live record of its generation and only for the proxy that record owns. */
+    host_wayland_binding_t free_slot = {&session_ctx, 1, 0, HostWaylandKindXdgSurface};
+    Check(resolve(&free_slot, fake_object(0)) == NULL);
+    announce_spec_t live = toplevel_spec(1, 1, "a-app");
+    Check(announce_spec(&session_ctx, &live) == HostWaylandOk);
+    host_wayland_record_t *record = find_record(&session_ctx, 1, 1);
+    host_wayland_binding_t bound = record->bindings[HostWaylandKindXdgSurface];
+    Check(resolve(&bound, record->xdg_surface) == record);
+    Check(resolve(&bound, (struct xdg_surface *)(void *)&bound) == NULL);
+
+    /* Events through a binding that names no live context: each handler is a no-op. */
+    host_wayland_binding_t orphan;
+    memset(&orphan, 0, sizeof orphan);
+    struct wl_array states;
+    memset(&states, 0, sizeof states);
+    on_decoration_configure(&orphan, (struct zxdg_toplevel_decoration_v1 *)(void *)&orphan, DecorationModeClient);
+    on_toplevel_configure(&orphan, (struct xdg_toplevel *)(void *)&orphan, 1, 1, &states);
+    on_toplevel_close(&orphan, (struct xdg_toplevel *)(void *)&orphan);
+    on_popup_configure(&orphan, (struct xdg_popup *)(void *)&orphan, 0, 0, 1, 1);
+    on_popup_done(&orphan, (struct xdg_popup *)(void *)&orphan);
+    on_popup_repositioned(&orphan, (struct xdg_popup *)(void *)&orphan, 1);
+    Check(captured.configures == 0 && captured.closes == 0 && captured.dismissed == 0 && captured.repositioned == 0);
+    return 0;
+}
+
+/** @brief The topmost grab of a seat is the highest sequence, whatever the slot order. */
+static int check_topmost_order(void) {
+    Check(begin_popup_session(5) == 0);
+    static char seat_slots[2];
+    struct wl_seat *seat = (struct wl_seat *)(void *)&seat_slots[0];
+    host_wayland_record_t *low = &session_ctx.records[0];
+    host_wayland_record_t *high = &session_ctx.records[1];
+    low->generation = 1;
+    low->grabbed = 1;
+    low->grab_seat = seat;
+    low->grab_sequence = 5;
+    high->generation = 1;
+    high->grabbed = 1;
+    high->grab_seat = seat;
+    high->grab_sequence = 9;
+    Check(seat_top_grab(&session_ctx, seat) == high);
+    low->grab_sequence = 11;
+    Check(seat_top_grab(&session_ctx, seat) == low);
+    Check(seat_top_grab(&session_ctx, (struct wl_seat *)(void *)&seat_slots[1]) == NULL);
+    return 0;
+}
+
+/**
+ * @brief Grab guards and the release of other seats: a parent that is dismissed or not grabbing never grants, a trigger
+ * from another family or generation never grants, a trigger whose parent is not realized never grants, and dismissing a
+ * popup releases only the grabs of its own seat.
+ */
+static int check_grab_guards(void) {
+    static char seat_slots[2];
+    struct wl_seat *first = (struct wl_seat *)(void *)&seat_slots[0];
+    struct wl_seat *second = (struct wl_seat *)(void *)&seat_slots[1];
+
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 10, 100, first, 1, 1, 1100) == HostWaylandOk);
+    Check(menu_under(3, 1, 1, true, 10, 1100) == HostWaylandOk);
+    Check(fake_grants == 1);
+    find_record(&session_ctx, 3, 1)->dismissed = 1;
+    Check(record_press_at(&session_ctx, 11, 101, first, 3, 1, 1100) == HostWaylandOk);
+    Check(menu_under(4, 3, 1, true, 11, 1100) == HostWaylandOk);
+    Check(fake_grants == 1 && fake_invalid_grabs == 0);
+
+    Check(begin_popup_session(5) == 0);
+    root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 12, 102, first, 1, 2, 1100) == HostWaylandOk);
+    Check(menu_under(5, 1, 1, true, 12, 1100) == HostWaylandOk);
+    Check(fake_grants == 0);
+
+    /* A trigger whose root is not the popup's root, found by a direct call, never reaches the grab. */
+    host_wayland_record_t *probe = &session_ctx.records[0];
+    probe->role = RoleMenu;
+    announce_t request;
+    memset(&request, 0, sizeof request);
+    request.has_serial = true;
+    request.serial = 13;
+    request.parent = 55;
+    request.parent_generation = 1;
+    Check(record_press_at(&session_ctx, 13, 103, first, 55, 1, 1100) == HostWaylandOk);
+    maybe_grab(&session_ctx, probe, &request, 1100);
+    Check(fake_grants == 0);
+    probe->role = 0;
+
+    /* Dismissing a popup releases its own seat only: a grab on the other seat stays. */
+    Check(begin_popup_session(5) == 0);
+    root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    announce_spec_t other_root = toplevel_spec(6, 1, "a-second");
+    Check(announce_spec(&session_ctx, &other_root) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 20, 200, first, 1, 1, 1100) == HostWaylandOk);
+    Check(menu_under(3, 1, 1, true, 20, 1100) == HostWaylandOk);
+    Check(record_press_at(&session_ctx, 21, 201, second, 6, 1, 1100) == HostWaylandOk);
+    Check(menu_under(7, 6, 1, true, 21, 1100) == HostWaylandOk);
+    Check(fake_grants == 2 && fake_invalid_grabs == 0);
+    deliver_popup_done(fake_nth("xdg_popup", 0));
+    Check(find_record(&session_ctx, 3, 1)->grabbed == 0);
+    Check(find_record(&session_ctx, 7, 1)->grabbed == 1);
+    host_wayland_windows_forget_seat(&session_ctx, first);
+    Check(find_record(&session_ctx, 7, 1)->grabbed == 1);
+    host_wayland_windows_forget_seat(&session_ctx, second);
+    Check(find_record(&session_ctx, 7, 1)->grabbed == 0);
+    return 0;
+}
+
+/** @brief Reposition paths: a missing parent, an unrepresentable origin, a failed positioner, the token wrap, and each rectangle field. */
+static int check_reposition_edges(void) {
+    static uint8_t buffer[InteropMaxFrameBytes];
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    Check(menu_under(3, 1, 1, false, 0, 1100) == HostWaylandOk);
+    host_wayland_record_t *menu = find_record(&session_ctx, 3, 1);
+    unsigned before = fake_request_count;
+    Check(handle_update(&session_ctx, buffer, 0) == HostWaylandMalformedFrame);
+
+    /* Each rectangle field: unchanged sends nothing, every changed field sends one reposition. */
+    uint8_t rect[16];
+    size_t length = raw_update(buffer, sizeof buffer, 3, 1, RawAbsent, RawAbsent, raw_rect(rect, 30, 12, 40, 20), RawAbsent, RawAbsent);
+    unsigned repositions = fake_count_requests("xdg_popup", XDG_POPUP_REPOSITION);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandOk);
+    Check(fake_count_requests("xdg_popup", XDG_POPUP_REPOSITION) == repositions);
+    length = raw_update(buffer, sizeof buffer, 3, 1, RawAbsent, RawAbsent, raw_rect(rect, 31, 12, 40, 20), RawAbsent, RawAbsent);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandOk);
+    length = raw_update(buffer, sizeof buffer, 3, 1, RawAbsent, RawAbsent, raw_rect(rect, 31, 13, 40, 20), RawAbsent, RawAbsent);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandOk);
+    length = raw_update(buffer, sizeof buffer, 3, 1, RawAbsent, RawAbsent, raw_rect(rect, 31, 13, 41, 20), RawAbsent, RawAbsent);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandOk);
+    length = raw_update(buffer, sizeof buffer, 3, 1, RawAbsent, RawAbsent, raw_rect(rect, 31, 13, 41, 21), RawAbsent, RawAbsent);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandOk);
+    Check(fake_count_requests("xdg_popup", XDG_POPUP_REPOSITION) == repositions + 4);
+
+    /* The token wraps from the maximum to 1, never 0. */
+    menu->reposition_token = 0xFFFFFFFFu;
+    length = raw_update(buffer, sizeof buffer, 3, 1, RawAbsent, RawAbsent, raw_rect(rect, 32, 13, 41, 21), RawAbsent, RawAbsent);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandOk);
+    Check(menu->reposition_token == 1);
+
+    /* A popup whose parent record is gone is refused, and so is an origin the positioner cannot represent. */
+    menu->parent = 99;
+    length = raw_update(buffer, sizeof buffer, 3, 1, RawAbsent, RawAbsent, raw_rect(rect, 33, 13, 41, 21), RawAbsent, RawAbsent);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandRefused);
+    Check(captured.last_error_code == InteropErrorStaleWindow);
+    menu->parent = 1;
+    length = raw_update(buffer, sizeof buffer, 3, 1, RawAbsent, RawAbsent, raw_rect(rect, 0x7FFFFFFF, 13, 41, 21), RawAbsent, RawAbsent);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandRefused);
+    Check(captured.last_error_code == InteropErrorMalformedFrame && captured.last_refused_type == InteropMsgWindowUpdate);
+
+    /* A positioner that cannot be created refuses the move and leaves the rectangle unchanged. */
+    fake_fail_create = "xdg_positioner";
+    length = raw_update(buffer, sizeof buffer, 3, 1, RawAbsent, RawAbsent, raw_rect(rect, 50, 50, 41, 21), RawAbsent, RawAbsent);
+    Check(handle_update(&session_ctx, raw_payload(buffer), length) == HostWaylandRefused);
+    Check(captured.last_error_code == InteropErrorUnexpected);
+    fake_fail_create = NULL;
+    Check(menu->guest_x == 32 && menu->guest_width == 41);
+    Check(fake_request_count >= before);
+    return 0;
+}
+
+/** @brief A mirrored parent that is not realized unsets the parent; a window with no children sends nothing on note_mapped. */
+static int check_mirror_and_mapped_edges(void) {
+    Check(begin_popup_session(5) == 0);
+    announce_spec_t root = toplevel_spec(1, 1, "a-root");
+    Check(announce_spec(&session_ctx, &root) == HostWaylandOk);
+    announce_spec_t dialog = toplevel_spec(2, 1, "a-dialog");
+    dialog.role = 2;
+    dialog.has_parent = true;
+    dialog.parent = 1;
+    dialog.parent_generation = 1;
+    Check(announce_spec(&session_ctx, &dialog) == HostWaylandOk);
+    host_wayland_record_t *child = find_record(&session_ctx, 2, 1);
+    child->parent = 99;
+    unsigned before = fake_request_count;
+    mirror_parent(&session_ctx, child);
+    int unset = fake_find("xdg_toplevel", XDG_TOPLEVEL_SET_PARENT, before);
+    Check(unset >= 0 && fake_requests[unset].a0 == -1);
+    child->parent = 1;
+
+    /* note_mapped skips a popup child (no dialog role) and a dialog of another parent. */
+    Check(menu_under(3, 1, 1, false, 0, 1100) == HostWaylandOk);
+    announce_spec_t other = toplevel_spec(6, 1, "a-second");
+    Check(announce_spec(&session_ctx, &other) == HostWaylandOk);
+    dialog = toplevel_spec(7, 1, "a-dialog");
+    dialog.role = 2;
+    dialog.has_parent = true;
+    dialog.parent = 6;
+    dialog.parent_generation = 1;
+    Check(announce_spec(&session_ctx, &dialog) == HostWaylandOk);
+    before = fake_request_count;
+    Check(host_wayland_windows_note_mapped(&session_ctx, 3, 1) == HostWaylandOk);
+    Check(fake_request_count == before);
+    /* Window 1 re-sends only its own child dialog 2; dialog 7 belongs to window 6. */
+    unsigned parents = fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_PARENT);
+    Check(host_wayland_windows_note_mapped(&session_ctx, 1, 1) == HostWaylandOk);
+    Check(fake_count_requests("xdg_toplevel", XDG_TOPLEVEL_SET_PARENT) == parents + 1);
+    int resent = fake_find("xdg_toplevel", XDG_TOPLEVEL_SET_PARENT, before);
+    Check(resent >= 0 && fake_requests[resent].proxy == fake_nth("xdg_toplevel", 1));
+    return 0;
+}
+
 /** @brief Every request the module sent was accepted by the strict double. Runs last. */
 static int check_fake_protocol_clean(void) {
     Check(fake_dead_requests == 0);
@@ -1627,6 +2006,12 @@ int main(void) {
     if (check_press_table_rules() != 0) return 1;
     if (check_note_mapped_reparents_children() != 0) return 1;
     if (check_parent_size_rounds_down() != 0) return 1;
+    if (check_decode_edges() != 0) return 1;
+    if (check_direct_handlers() != 0) return 1;
+    if (check_topmost_order() != 0) return 1;
+    if (check_grab_guards() != 0) return 1;
+    if (check_reposition_edges() != 0) return 1;
+    if (check_mirror_and_mapped_edges() != 0) return 1;
     if (check_configure_is_latched() != 0) return 1;
     if (check_retire_invalid_reports() != 0) return 1;
     if (check_retire_order() != 0) return 1;
