@@ -11,6 +11,8 @@ pub const MaxEntries: usize = 32;
 pub const TtlMs: u64 = 30_000;
 /// Byte size of one token slot, including unused tail bytes.
 const TokenSlot: usize = 256;
+/// Caller buffer size for take_for_process: the token followed by a NUL terminator.
+pub const TokenBufferBytes: usize = MaxTokenBytes + 1;
 
 /// Token or process rejection. Every error leaves the store unchanged.
 pub const error_t = error{ InvalidToken, InvalidProcess };
@@ -74,16 +76,18 @@ pub const store_t = extern struct {
     /// @param self Store, mutated on success.
     /// @param process_id Nonzero process identifier.
     /// @param now Monotonic milliseconds from the caller clock.
-    /// @param out Caller buffer receiving the token bytes (up to 255 bytes).
+    /// @param out Caller buffer of TokenBufferBytes (256): the token, then a NUL
+    ///   terminator at index length. Bytes after the terminator are not written.
     /// @return Token length, or null when no live token matches.
     /// @note A returned token cannot be returned again.
-    pub fn take_for_process(self: *store_t, process_id: u32, now: u64, out: *[MaxTokenBytes]u8) error{InvalidProcess}!?usize {
+    pub fn take_for_process(self: *store_t, process_id: u32, now: u64, out: *[TokenBufferBytes]u8) error{InvalidProcess}!?usize {
         if (process_id == 0) return error.InvalidProcess;
         self.observe(now);
         _ = self.expire_stale(now);
         const index = self.newest_for(process_id) orelse return null;
         const length: usize = self.entries[index].token_length;
         @memcpy(out[0..length], self.entries[index].token[0..length]);
+        out[length] = 0;
         self.remove(index);
         return length;
     }
@@ -232,13 +236,14 @@ export fn interop_activation_put(store: ?*store_t, token: ?[*]const u8, token_le
 }
 
 /// C ABI: remove and copy the newest live token for a process identifier.
+/// The output is the token followed by a NUL terminator; bytes after it are not written.
 /// @param[in,out] store Nonnull store.
 /// @param[in] process_id Nonzero process identifier.
 /// @param[in] now_ms Monotonic milliseconds.
-/// @param[out] out Nonnull buffer of 255 bytes receiving the token.
+/// @param[out] out Nonnull buffer of 256 bytes: the token, then a NUL at index length.
 /// @param[out] length_out Nonnull; receives the token length on success.
 /// @return 0 Found; 1 InvalidArgument (NULL pointer); 2 NotFound; 3 InvalidProcess.
-export fn interop_activation_take(store: ?*store_t, process_id: u32, now_ms: u64, out: ?*[MaxTokenBytes]u8, length_out: ?*usize) c_int {
+export fn interop_activation_take(store: ?*store_t, process_id: u32, now_ms: u64, out: ?*[TokenBufferBytes]u8, length_out: ?*usize) c_int {
     const target = store orelse return 1;
     const destination = out orelse return 1;
     const length_ref = length_out orelse return 1;
@@ -306,7 +311,7 @@ fn put_at(store: *store_t, token: []const u8, process_id: u32, now: u64) error_t
     return store.put(opaque_value([]const u8, token), opaque_value(u32, process_id), opaque_value(u64, now));
 }
 
-fn take_at(store: *store_t, process_id: u32, now: u64, out: *[MaxTokenBytes]u8) error{InvalidProcess}!?usize {
+fn take_at(store: *store_t, process_id: u32, now: u64, out: *[TokenBufferBytes]u8) error{InvalidProcess}!?usize {
     return store.take_for_process(opaque_value(u32, process_id), opaque_value(u64, now), out);
 }
 
@@ -322,8 +327,8 @@ fn absent_bytes() ?[*]const u8 {
     return opaque_value(?[*]const u8, null);
 }
 
-fn absent_out() ?*[MaxTokenBytes]u8 {
-    return opaque_value(?*[MaxTokenBytes]u8, null);
+fn absent_out() ?*[TokenBufferBytes]u8 {
+    return opaque_value(?*[TokenBufferBytes]u8, null);
 }
 
 fn absent_length() ?*usize {
@@ -346,8 +351,8 @@ fn c_put(store: ?*store_t, token: ?[*]const u8, token_length: usize, process_id:
     return interop_activation_put(opaque_value(?*store_t, store), opaque_value(?[*]const u8, token), opaque_value(usize, token_length), opaque_value(u32, process_id), opaque_value(u64, now));
 }
 
-fn c_take(store: ?*store_t, process_id: u32, now: u64, out: ?*[MaxTokenBytes]u8, length_out: ?*usize) c_int {
-    return interop_activation_take(opaque_value(?*store_t, store), opaque_value(u32, process_id), opaque_value(u64, now), opaque_value(?*[MaxTokenBytes]u8, out), opaque_value(?*usize, length_out));
+fn c_take(store: ?*store_t, process_id: u32, now: u64, out: ?*[TokenBufferBytes]u8, length_out: ?*usize) c_int {
+    return interop_activation_take(opaque_value(?*store_t, store), opaque_value(u32, process_id), opaque_value(u64, now), opaque_value(?*[TokenBufferBytes]u8, out), opaque_value(?*usize, length_out));
 }
 
 const testing = std.testing;
@@ -397,7 +402,7 @@ test "pick_token prefers XDG then DESKTOP_STARTUP_ID and skips invalid candidate
 
 test "put and take return a token exactly once to the matching process" {
     var store = std.mem.zeroes(store_t);
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     try put_at(&store, "token-a", 42, 1000);
     try testing.expectEqual(@as(?usize, null), try take_at(&store, 43, 1001, &out));
     try testing.expectEqual(@as(u32, 1), store.count);
@@ -409,7 +414,7 @@ test "put and take return a token exactly once to the matching process" {
 
 test "invalid token or process leaves the store and clock untouched" {
     var store = std.mem.zeroes(store_t);
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     try testing.expectError(error.InvalidToken, put_at(&store, "", 1, 500));
     try testing.expectError(error.InvalidToken, put_at(&store, "bad token", 1, 500));
     try testing.expectError(error.InvalidProcess, put_at(&store, "ok", 0, 500));
@@ -421,7 +426,7 @@ test "invalid token or process leaves the store and clock untouched" {
 }
 
 test "entries are live strictly before inserted plus ttl and expire at the boundary" {
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     var live = std.mem.zeroes(store_t);
     try put_at(&live, "edge", 7, 5000);
     try testing.expect((try take_at(&live, 7, 5000 + TtlMs - 1, &out)) != null);
@@ -447,7 +452,7 @@ test "expire removes only stale pairs and reports the removed count" {
 
 test "duplicate token replaces the pid and refreshes the deadline" {
     var store = std.mem.zeroes(store_t);
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     try put_at(&store, "dup", 1, 0);
     try put_at(&store, "dup", 2, 20_000);
     try testing.expectEqual(@as(u32, 1), store.count);
@@ -465,7 +470,7 @@ test "full store expires stale pairs before evicting and evicts the oldest" {
     try testing.expectEqual(@as(u32, MaxEntries), store.count);
     try put_at(&store, "fresh-a", 99, 100);
     try testing.expectEqual(@as(u32, MaxEntries), store.count);
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     try testing.expectEqual(@as(?usize, null), try take_at(&store, 1, 100, &out));
     try testing.expect((try take_at(&store, 2, 100, &out)) != null);
 
@@ -481,7 +486,7 @@ test "full store expires stale pairs before evicting and evicts the oldest" {
 
 test "newest token wins when one process holds several live tokens" {
     var store = std.mem.zeroes(store_t);
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     try put_at(&store, "first", 5, 0);
     try put_at(&store, "second", 5, 1);
     const length = (try take_at(&store, 5, 2, &out)).?;
@@ -492,7 +497,7 @@ test "newest token wins when one process holds several live tokens" {
 
 test "clock rollback clears every pair and never returns an earlier token" {
     var store = std.mem.zeroes(store_t);
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     try put_at(&store, "before", 9, 1000);
     try testing.expectEqual(@as(?usize, null), try take_at(&store, 9, 500, &out));
     try testing.expectEqual(@as(u32, 1), store.rollbacks);
@@ -509,7 +514,7 @@ test "clock rollback clears every pair and never returns an earlier token" {
 
 test "rollback during put clears old pairs and still inserts the new token" {
     var store = std.mem.zeroes(store_t);
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     try put_at(&store, "old", 1, 9000);
     try put_at(&store, "new", 2, 3000);
     try testing.expectEqual(@as(u32, 1), store.rollbacks);
@@ -524,7 +529,7 @@ test "clock may move forward by any amount without rollback" {
     try testing.expectEqual(@as(usize, 1), expire_at(&store, std.math.maxInt(u64)));
     try testing.expectEqual(@as(u32, 0), store.rollbacks);
     try put_at(&store, "saturated", 4, std.math.maxInt(u64) - 5);
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     try testing.expect((try take_at(&store, 4, std.math.maxInt(u64) - 1, &out)) != null);
 }
 
@@ -544,7 +549,7 @@ test "seeded operation streams match a reference model step by step" {
     var model_order: u64 = 0;
     var now: u64 = 1000;
     var name_buffer: [8]u8 = undefined;
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     var model_out: [8]u8 = undefined;
 
     for (0..20000) |_| {
@@ -643,7 +648,7 @@ test "C ABI put take expire and clear map every status" {
     try testing.expectEqual(@as(c_int, 2), c_put(&store, "", 0, 1, 0));
     try testing.expectEqual(@as(c_int, 3), c_put(&store, "x", 1, 0, 0));
     try testing.expectEqual(@as(c_int, 0), c_put(&store, "abc", 3, 11, 100));
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     var length: usize = 0;
     try testing.expectEqual(@as(c_int, 1), c_take(absent_store(), 11, 101, &out, &length));
     try testing.expectEqual(@as(c_int, 1), c_take(&store, 11, 101, absent_out(), &length));
@@ -685,8 +690,20 @@ test "oldest scans past free slots and prefers the smallest sequence" {
     var store = std.mem.zeroes(store_t);
     try put_at(&store, "x", 1, 0);
     try put_at(&store, "y", 2, 0);
-    var out: [MaxTokenBytes]u8 = undefined;
+    var out: [TokenBufferBytes]u8 = undefined;
     _ = try take_at(&store, 1, 0, &out);
     try put_at(&store, "z", 3, 0);
     try testing.expectEqual(@as(usize, 1), store.oldest());
+}
+
+test "take writes a NUL terminator after the token and leaves the tail alone" {
+    var store = std.mem.zeroes(store_t);
+    var out: [TokenBufferBytes]u8 = [_]u8{0xaa} ** TokenBufferBytes;
+    try put_at(&store, "abc", 4, 0);
+    const length = (try take_at(&store, 4, 1, &out)).?;
+    try testing.expectEqual(@as(usize, 3), length);
+    try testing.expectEqualSlices(u8, "abc", out[0..length]);
+    try testing.expectEqual(@as(u8, 0), out[length]);
+    try testing.expectEqual(@as(u8, 0xaa), out[length + 1]);
+    try testing.expectEqual(@as(usize, 256), TokenBufferBytes);
 }

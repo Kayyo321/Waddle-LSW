@@ -16,12 +16,16 @@ static int put_text(interop_activation_store_t *store, const char *token, uint32
 
 /** @brief Take into a local buffer and compare; returns the status. */
 static int take_text(interop_activation_store_t *store, uint32_t process_id, uint64_t now_ms, const char *expected) {
-    uint8_t out[InteropActivationMaxTokenBytes];
+    uint8_t out[InteropActivationTokenBufferBytes];
     size_t length = 0;
+    memset(out, 0xa5, sizeof(out));
     int status = interop_activation_take(store, process_id, now_ms, out, &length);
     if (status == InteropActivationTakeFound) {
         assert(expected != NULL && length == strlen(expected));
         assert(memcmp(out, expected, length) == 0);
+        /* The buffer is NUL-terminated after the token; the tail is not written. */
+        assert(out[length] == '\0');
+        if (length + 1 < sizeof(out)) assert(out[length + 1] == 0xa5);
     }
     return status;
 }
@@ -30,6 +34,7 @@ static void check_layout(void) {
     assert(sizeof(interop_activation_store_t) == InteropActivationStoreBytes);
     assert(sizeof(interop_activation_store_t) % 8u == 0u);
     assert(InteropActivationMaxEntries == 32u && InteropActivationTtlMs == 30000u);
+    assert(InteropActivationTokenBufferBytes == InteropActivationMaxTokenBytes + 1u);
 }
 
 static void check_put_take(void) {
@@ -46,7 +51,7 @@ static void check_put_take(void) {
     assert(take_text(&store, 0, 1001, NULL) == InteropActivationTakeInvalidProcess);
     assert(take_text(&store, 42, 1001, "token-a") == InteropActivationTakeFound);
     assert(take_text(&store, 42, 1002, NULL) == InteropActivationTakeNotFound);
-    uint8_t out[InteropActivationMaxTokenBytes];
+    uint8_t out[InteropActivationTokenBufferBytes];
     size_t length = 0;
     assert(interop_activation_take(NULL, 42, 1003, out, &length) == InteropActivationTakeInvalidArgument);
     assert(interop_activation_take(&store, 42, 1003, NULL, &length) == InteropActivationTakeInvalidArgument);

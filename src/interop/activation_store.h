@@ -10,6 +10,8 @@
 #define InteropActivationMaxEntries 32u
 /** @brief Entry lifetime in milliseconds; live while now < inserted + this value. */
 #define InteropActivationTtlMs 30000u
+/** @brief Bytes of the take output buffer: the token plus a NUL terminator. */
+#define InteropActivationTokenBufferBytes 256u
 /** @brief Byte size of the store; must equal sizeof(interop_activation_store_t). */
 #define InteropActivationStoreBytes 8992u
 
@@ -70,11 +72,12 @@ int interop_activation_put(interop_activation_store_t *store, const uint8_t *tok
  * @param[in,out] store Nonnull store.
  * @param[in] process_id Nonzero process identifier.
  * @param[in] now_ms Monotonic milliseconds.
- * @param[out] out Nonnull buffer of InteropActivationMaxTokenBytes bytes; receives the token.
+ * @param[out] out Nonnull buffer of InteropActivationTokenBufferBytes (256) bytes. On success it
+ *            holds the token followed by a NUL at index length; bytes after the NUL are not written.
  * @param[out] length_out Nonnull; receives the token length when found.
  * @return An interop_activation_take_status_t value. A token is returned at most once.
  */
-int interop_activation_take(interop_activation_store_t *store, uint32_t process_id, uint64_t now_ms, uint8_t out[InteropActivationMaxTokenBytes], size_t *length_out);
+int interop_activation_take(interop_activation_store_t *store, uint32_t process_id, uint64_t now_ms, uint8_t out[InteropActivationTokenBufferBytes], size_t *length_out);
 
 /**
  * @brief Remove every expired pair.
