@@ -1,34 +1,43 @@
 /**
  * @file session_local_harness.c
- * @brief Harness that runs the real host control runtime with the local command handler.
+ * @brief End-to-end harness for `waddle open`: the real `waddle_session_main` with a fake daemon and guest.
  *
- * The runtime (interop_host_control_run, linked from the production sources) is driven
- * with a fake daemon socket and a fake guest. AF_VSOCK connects are answered by a socketpair
- * through the linker wrappers below; AF_UNIX connects (the handler's stale probe) are forwarded.
+ * The harness does not compose its own runtime. It writes the device profile (an [av] section
+ * pointing at a real, initialised 2 GiB mapping), serves the daemon protocol on the real device
+ * socket <XDG_RUNTIME_DIR>/waddle/<device>/daemon.sock, and then calls `waddle_session_main` (the
+ * supervised command, compiled in with WaddleSessionNoMain). That path performs the real admission,
+ * the real supervisor, the real builtin registry and the real launch handler. Only two things are
+ * fake: AF_VSOCK connects are answered by a socketpair whose far end is a fake guest (one per
+ * connection, through the linker wrappers below), and the daemon is a thread per connection.
+ *
  * The fake guest answers every LaunchRequest with a LaunchResult selected by --reply:
- *
  *   ok           status Ok, process id 4242
  *   status:N     status N (0..9), process id 4242
  *   error:TEXT   status GuestError (9), message TEXT
  *
- * Each LaunchRequest the guest receives is appended to --record as one JSON line,
- * {"frame": "<hex>"}, and the file <record>.ready is created once the handler is bound.
- * SIGTERM or SIGINT ends the run with a graceful local stop, so the socket is removed.
+ * Output files, all derived from --record PATH:
+ *   PATH            one JSON line per LaunchRequest the guest received: {"frame": "<hex>"}.
+ *   PATH.ready      present while the launch socket is bound (created 100 ms after bind, removed when
+ *                   the socket disappears), so a client never connects before listen().
+ *   PATH.connections one line per VSOCK connection the runtime opened (attempt count).
  *
- *   interop_session_local_harness --runtime-dir DIR --device NAME --reply REPLY --record PATH
+ * --drop-first-guest closes the first guest connection right after its HelloAck, which is a
+ * transport loss before any launch. The supervisor must reconnect and serve the second attempt.
  *
- * Test-only. The runtime composition used here (an adapter from session_handler_t to
- * interop_host_feature_ops_t) is a stand-in for the session application runtime.
+ * Signals: SIGINT and SIGTERM are blocked before any thread is created, so the runtime's signalfd
+ * is the only consumer. SIGTERM therefore ends the run through the real graceful stop, the handler
+ * removes session.sock, and the process exits 0. A LocalStop from a client does the same thing.
+ *
+ *   interop_session_local_harness --runtime-dir DIR --device NAME --reply REPLY --record PATH [--drop-first-guest]
+ *
+ * Test-only. Built with -DWaddleSessionNoMain and linked with --wrap=socket,--wrap=connect.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
-#include "../../src/interop/interop_mapping_init.h"
-#include "../../src/interop/session_control_host.h"
-#include "../../src/interop/session_handler.h"
-#include "../../src/interop/session_local_handler.h"
 #include "../../src/daemon/daemon_device.h"
 #include "../../src/daemon/daemon_wire.h"
+#include "../../src/interop/interop_mapping_init.h"
 #include "waddle/daemon_protocol.h"
 #include "waddle/interop_memory.h"
 #include "waddle/interop_protocol.h"
@@ -45,22 +54,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
-#include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 #include <linux/vm_sockets.h>
 
 #define HarnessMappingBytes UINT64_C(0x80000000)
 #define HarnessSessionEpoch UINT64_C(0x1020304050607080)
 #define HarnessGuestCid 33u
+#define HarnessGuestVsockPort 5242u
 #define HarnessGuestProcessId 4242u
 
 extern int __real_socket(int domain, int type, int protocol);
 extern int __real_connect(int fd, const struct sockaddr *address, socklen_t length);
+/* Defined in session_main.c (compiled with WaddleSessionNoMain). */
+int waddle_session_main(int argc, char **argv);
 
 typedef enum harness_reply_kind_t {
     HarnessReplyOk = 0,
@@ -69,39 +78,55 @@ typedef enum harness_reply_kind_t {
 } harness_reply_kind_t;
 
 typedef struct harness_guest_t {
-    pthread_mutex_t mutex;
-    pthread_cond_t condition;
-    int peer_fd; /* guest end of the vsock socketpair, or -1 */
     harness_reply_kind_t reply_kind;
     uint32_t reply_status;
     char reply_message[1025];
     char record_path[512];
-    uint32_t launch_requests;
+    char connections_path[520];
+    char ready_path[528];
+    char socket_path[256]; /* runtime/waddle/<device>/session.sock */
+    char daemon_socket[256];
+    int drop_first_guest;
+    uint32_t connections; /* guarded by connection_lock */
+    pthread_mutex_t connection_lock;
 } harness_guest_t;
 
 static harness_guest_t guest = {
-    .mutex = PTHREAD_MUTEX_INITIALIZER,
-    .condition = PTHREAD_COND_INITIALIZER,
-    .peer_fd = -1,
+    .connection_lock = PTHREAD_MUTEX_INITIALIZER,
 };
 
-static session_handler_t local_table;
-static session_local_handler_t local_handler;
+/* ---- Linker wrappers: each vsock control connection is a socketpair with a fake guest ---- */
 
-/* ---- Linker wrappers: the vsock control connection is a socketpair ---- */
+typedef struct harness_guest_arg_t {
+    int fd;
+    uint32_t index;
+} harness_guest_arg_t;
+
+static void *guest_thread(void *opaque);
 
 int __wrap_socket(int domain, int type, int protocol)
 {
     int descriptors[2];
+    harness_guest_arg_t *argument;
+    pthread_t thread;
     if (domain != AF_VSOCK) return __real_socket(domain, type, protocol);
     (void)protocol;
     assert((type & SOCK_STREAM) != 0);
     assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, descriptors) == 0);
-    assert(pthread_mutex_lock(&guest.mutex) == 0);
-    assert(guest.peer_fd == -1);
-    guest.peer_fd = descriptors[1];
-    assert(pthread_cond_broadcast(&guest.condition) == 0);
-    assert(pthread_mutex_unlock(&guest.mutex) == 0);
+    argument = malloc(sizeof(*argument));
+    assert(argument != NULL);
+    assert(pthread_mutex_lock(&guest.connection_lock) == 0);
+    argument->index = guest.connections++;
+    assert(pthread_mutex_unlock(&guest.connection_lock) == 0);
+    argument->fd = descriptors[1];
+    {
+        FILE *connections = fopen(guest.connections_path, "a");
+        assert(connections != NULL);
+        fprintf(connections, "connection %u\n", (unsigned)argument->index);
+        assert(fclose(connections) == 0);
+    }
+    assert(pthread_create(&thread, NULL, guest_thread, argument) == 0);
+    assert(pthread_detach(thread) == 0);
     return descriptors[0];
 }
 
@@ -204,6 +229,7 @@ static size_t make_launch_result(uint8_t *frame, size_t capacity, uint32_t reque
     return length;
 }
 
+
 static void append_record(const uint8_t *frame, size_t length)
 {
     static const char Digits[] = "0123456789abcdef";
@@ -218,27 +244,27 @@ static void append_record(const uint8_t *frame, size_t length)
     assert(fclose(record) == 0);
 }
 
-static void *guest_thread(void *unused)
+
+static void *guest_thread(void *opaque)
 {
+    harness_guest_arg_t *argument = opaque;
+    int fd = argument->fd;
+    uint32_t index = argument->index;
     uint8_t frame[InteropMaxFrameBytes];
     interop_header_t header;
     size_t length;
-    int fd;
-    (void)unused;
-    assert(pthread_mutex_lock(&guest.mutex) == 0);
-    while (guest.peer_fd < 0) assert(pthread_cond_wait(&guest.condition, &guest.mutex) == 0);
-    fd = guest.peer_fd;
-    assert(pthread_mutex_unlock(&guest.mutex) == 0);
-
+    free(argument);
     length = make_hello(frame, sizeof(frame));
     write_all(fd, frame, length);
     while (read_frame(fd, frame, sizeof(frame), &header)) {
-        if (header.type == InteropMsgHelloAck) continue;
+        if (header.type == InteropMsgHelloAck) {
+            if (guest.drop_first_guest && index == 0) break;
+            continue;
+        }
         if (header.type == InteropMsgPing) {
             length = make_pong(frame, sizeof(frame), header.request_id);
             write_all(fd, frame, length);
         } else if (header.type == InteropMsgLaunchRequest) {
-            ++guest.launch_requests;
             append_record(frame, InteropHeaderBytes + header.length);
             length = make_launch_result(frame, sizeof(frame), header.request_id);
             write_all(fd, frame, length);
@@ -247,13 +273,10 @@ static void *guest_thread(void *unused)
         }
     }
     close(fd);
-    assert(pthread_mutex_lock(&guest.mutex) == 0);
-    guest.peer_fd = -1;
-    assert(pthread_mutex_unlock(&guest.mutex) == 0);
     return NULL;
 }
 
-/* ---- Fake daemon ---- */
+/* ---- Fake daemon wire ---- */
 
 static void write_daemon_header(int fd, uint16_t message_type, uint32_t sequence, uint32_t payload_length)
 {
@@ -274,9 +297,37 @@ static void read_daemon_header(int fd, waddle_daemon_header_t *header)
     assert(daemon_wire_decode_header(bytes, sizeof(bytes), header) == 0);
 }
 
+
+static int parse_reply(const char *value)
+{
+    if (strcmp(value, "ok") == 0) {
+        guest.reply_kind = HarnessReplyOk;
+        return 0;
+    }
+    if (strncmp(value, "status:", 7) == 0) {
+        char *end = NULL;
+        unsigned long status = strtoul(value + 7, &end, 10);
+        if (end == value + 7 || *end != '\0' || status > InteropGuestError) return 1;
+        guest.reply_kind = HarnessReplyStatus;
+        guest.reply_status = (uint32_t)status;
+        return 0;
+    }
+    if (strncmp(value, "error:", 6) == 0) {
+        size_t length = strlen(value + 6);
+        if (length >= sizeof(guest.reply_message)) return 1;
+        guest.reply_kind = HarnessReplyError;
+        memcpy(guest.reply_message, value + 6, length + 1u);
+        return 0;
+    }
+    return 1;
+}
+
+
+
 static void *daemon_thread(void *opaque)
 {
     int fd = *(int *)opaque;
+    free(opaque);
     waddle_daemon_header_t request;
     waddle_daemon_status_resp_t status;
     waddle_daemon_guest_ready_resp_t ready = {.status = 0, .cid = HarnessGuestCid};
@@ -313,121 +364,82 @@ static void *daemon_thread(void *opaque)
     return NULL;
 }
 
-/* ---- Runtime composition: session_handler_t as interop_host_feature_ops_t ---- */
+/* ---- Fake daemon listener: one thread per accepted connection ---- */
 
-/** @brief Map a handler result to the runtime: the graceful stop becomes a SIGTERM to the pump thread. */
-static int map_handler_result(int result)
+static void *daemon_accept_thread(void *opaque)
 {
-    if (result == SessionHandlerRequestStop) {
-        /* SIGTERM is blocked on the pump thread and read through the stop signalfd, so this is
-         * exactly what the runtime sees for an external stop: HostControlCancelled and drain. */
-        assert(pthread_kill(pthread_self(), SIGTERM) == 0);
-        return 0;
+    int listener = *(int *)opaque;
+    for (;;) {
+        int client = accept(listener, NULL, NULL);
+        pthread_t thread;
+        int *argument;
+        if (client < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        argument = malloc(sizeof(*argument));
+        assert(argument != NULL);
+        *argument = client;
+        assert(pthread_create(&thread, NULL, daemon_thread, argument) == 0);
+        assert(pthread_detach(thread) == 0);
     }
-    return result;
+    return NULL;
 }
 
-static int adapter_on_ready(void *context, uint64_t negotiated, interop_host_feature_sender_t *sender)
+/* Creates <record>.ready while the launch socket is bound, after a short delay past bind+listen. */
+static void *ready_marker_thread(void *unused)
 {
-    session_handler_t *table = context;
-    session_local_handler_t *local = table->context;
-    int result;
-    /* The runtime sets the singleton lock proof after admission, before the handler binds. */
-    local->lock_held_proof = 1;
-    result = map_handler_result(table->on_ready(table->context, negotiated, sender));
-    if (result == 0 && guest.record_path[0] != '\0') {
-        char marker[sizeof(guest.record_path) + 8];
-        FILE *ready = NULL;
-        assert(snprintf(marker, sizeof(marker), "%s.ready", guest.record_path) > 0);
-        ready = fopen(marker, "w");
-        assert(ready != NULL);
-        assert(fclose(ready) == 0);
+    bool marked = false;
+    (void)unused;
+    for (;;) {
+        bool present = access(guest.socket_path, F_OK) == 0;
+        if (present && !marked) {
+            struct timespec pause = {.tv_sec = 0, .tv_nsec = 100000000L};
+            nanosleep(&pause, NULL);
+            FILE *marker = fopen(guest.ready_path, "w");
+            assert(marker != NULL);
+            assert(fclose(marker) == 0);
+            marked = true;
+        } else if (!present && marked) {
+            (void)unlink(guest.ready_path);
+            marked = false;
+        }
+        {
+            struct timespec pause = {.tv_sec = 0, .tv_nsec = 20000000L};
+            nanosleep(&pause, NULL);
+        }
     }
-    return result;
+    return NULL;
 }
 
-static int adapter_on_frame(void *context, uint32_t message_type, uint32_t request_id,
-    const uint8_t *frame, size_t length, interop_host_feature_sender_t *sender)
+static int make_directory_if_missing(const char *path, mode_t mode)
 {
-    session_handler_t *table = context;
-    if (!table->owns_type(table->context, message_type)) return 1;
-    return map_handler_result(table->on_frame(table->context, message_type, request_id, frame, length, sender));
+    if (mkdir(path, mode) == 0 || errno == EEXIST) return 0;
+    return -1;
 }
 
-static int adapter_poll_fds(void *context, struct pollfd *fds, size_t capacity, size_t *count)
+/* Writes the [av] and [subsystem] values the runtime needs; later keys override the lab profile. */
+static int append_profile(const char *config_root, const char *device, const char *mapping_path)
 {
-    session_handler_t *table = context;
-    return table->poll_fds(table->context, fds, capacity, count);
-}
-
-static int adapter_on_fds(void *context, const struct pollfd *fds, size_t count, uint64_t now_ms,
-    interop_host_feature_sender_t *sender)
-{
-    session_handler_t *table = context;
-    return map_handler_result(table->on_fds(table->context, fds, count, now_ms, sender));
-}
-
-static int adapter_on_tick(void *context, uint64_t now_ms, interop_host_feature_sender_t *sender)
-{
-    session_handler_t *table = context;
-    return map_handler_result(table->on_tick(table->context, now_ms, sender));
-}
-
-static uint64_t adapter_next_deadline(void *context, uint64_t now_ms)
-{
-    session_handler_t *table = context;
-    return table->next_deadline_ms(table->context, now_ms);
-}
-
-static void adapter_on_closing(void *context, uint32_t reason, interop_host_feature_sender_t *sender)
-{
-    session_handler_t *table = context;
-    table->on_closing(table->context, reason, sender);
-}
-
-/* ---- Main ---- */
-
-static int create_stop_signal_fd(sigset_t *prior_mask)
-{
-    sigset_t blocked;
-    int fd;
-    sigemptyset(&blocked);
-    assert(sigaddset(&blocked, SIGINT) == 0);
-    assert(sigaddset(&blocked, SIGTERM) == 0);
-    assert(pthread_sigmask(SIG_BLOCK, &blocked, prior_mask) == 0);
-    fd = signalfd(-1, &blocked, SFD_NONBLOCK | SFD_CLOEXEC);
-    assert(fd >= 0);
-    return fd;
-}
-
-static int parse_reply(const char *value)
-{
-    if (strcmp(value, "ok") == 0) {
-        guest.reply_kind = HarnessReplyOk;
-        return 0;
-    }
-    if (strncmp(value, "status:", 7) == 0) {
-        char *end = NULL;
-        unsigned long status = strtoul(value + 7, &end, 10);
-        if (end == value + 7 || *end != '\0' || status > InteropGuestError) return 1;
-        guest.reply_kind = HarnessReplyStatus;
-        guest.reply_status = (uint32_t)status;
-        return 0;
-    }
-    if (strncmp(value, "error:", 6) == 0) {
-        size_t length = strlen(value + 6);
-        if (length >= sizeof(guest.reply_message)) return 1;
-        guest.reply_kind = HarnessReplyError;
-        memcpy(guest.reply_message, value + 6, length + 1u);
-        return 0;
-    }
-    return 1;
+    char directory[512];
+    char path[640];
+    FILE *profile;
+    if (snprintf(directory, sizeof(directory), "%s/waddle", config_root) < 0) return -1;
+    if (make_directory_if_missing(directory, 0700) != 0) return -1;
+    if (snprintf(directory, sizeof(directory), "%s/waddle/devices", config_root) < 0) return -1;
+    if (make_directory_if_missing(directory, 0700) != 0) return -1;
+    if (snprintf(path, sizeof(path), "%s/%s.ini", directory, device) < 0) return -1;
+    profile = fopen(path, "a");
+    if (profile == NULL) return -1;
+    fprintf(profile, "\n[subsystem]\nvsock_cid = %u\nvsock_port = %u\n\n[av]\nenabled = 1\nshm_path = %s\n",
+        (unsigned)HarnessGuestCid, (unsigned)HarnessGuestVsockPort, mapping_path);
+    return fclose(profile) == 0 ? 0 : -1;
 }
 
 static int usage(void)
 {
     fprintf(stderr, "usage: interop_session_local_harness --runtime-dir DIR --device NAME "
-        "--reply ok|status:N|error:TEXT --record PATH\n");
+        "--reply ok|status:N|error:TEXT --record PATH [--drop-first-guest]\n");
     return 2;
 }
 
@@ -439,59 +451,58 @@ int main(int argc, char **argv)
     const char *record = NULL;
     char mapping_root[64];
     char mapping_path[128];
-    int daemon_pair[2];
+    char config_root[512];
+    char runtime_device[512];
+    char command[1024];
+    sigset_t blocked;
     int mapping_fd;
-    pthread_t guest_handle;
-    pthread_t daemon_handle;
-    sigset_t prior_mask;
-    int stop_fd;
-    session_local_config_t config;
-    device_info_t device;
-    interop_host_session_config_t admission;
-    interop_host_feature_ops_t ops;
-    interop_host_control_config_t control;
-    interop_host_control_owners_t owners;
-    interop_host_control_result_t result;
-    interop_mapping_init_status_t mapping_status;
+    int listener;
+    pthread_t thread;
     void *mapping;
-    int status_code = 1;
-    int mapping_ready = 0;
-    int threads_started = 0;
+    int status_code;
     static const uint8_t AgentVersion[] = "1.2.3";
+    (void)AgentVersion;
 
-    for (int index = 1; index + 1 < argc; index += 2) {
+    for (int index = 1; index < argc;) {
+        if (strcmp(argv[index], "--drop-first-guest") == 0) {
+            guest.drop_first_guest = 1;
+            index += 1;
+            continue;
+        }
+        if (index + 1 >= argc) return usage();
         if (strcmp(argv[index], "--runtime-dir") == 0) runtime_dir = argv[index + 1];
         else if (strcmp(argv[index], "--device") == 0) device_name = argv[index + 1];
         else if (strcmp(argv[index], "--reply") == 0) reply = argv[index + 1];
         else if (strcmp(argv[index], "--record") == 0) record = argv[index + 1];
         else return usage();
+        index += 2;
     }
-    if (runtime_dir == NULL || device_name == NULL || reply == NULL || record == NULL || argc % 2 == 0) return usage();
-    /* The daemon and session lease paths come from the environment; the socket from --runtime-dir.
-     * They must name the same directory or admission would lock a different session.lock. */
+    if (runtime_dir == NULL || device_name == NULL || reply == NULL || record == NULL) return usage();
+    if (daemon_device_validate_name(device_name) != 0) return usage();
+    /* The daemon, the session lease and the launch socket must share one runtime directory. */
     {
         const char *environment_runtime = getenv("XDG_RUNTIME_DIR");
-        if (environment_runtime == NULL || strcmp(environment_runtime, runtime_dir) != 0) {
-            fprintf(stderr, "session-local-harness: XDG_RUNTIME_DIR must equal --runtime-dir\n");
+        const char *config_home = getenv("XDG_CONFIG_HOME");
+        if (environment_runtime == NULL || strcmp(environment_runtime, runtime_dir) != 0 ||
+                config_home == NULL || config_home[0] != '/') {
+            fprintf(stderr, "session-local-harness: XDG_RUNTIME_DIR must equal --runtime-dir and XDG_CONFIG_HOME must be absolute\n");
             return 2;
         }
+        assert(snprintf(config_root, sizeof(config_root), "%s", config_home) > 0);
     }
-    if (strlen(record) >= sizeof(guest.record_path)) return usage();
+    if (strlen(record) + 16 >= sizeof(guest.record_path)) return usage();
     if (parse_reply(reply) != 0) return usage();
-    memcpy(guest.record_path, record, strlen(record) + 1u);
-    /* The record starts empty for each run; the ready marker is removed so a stale one is not seen. */
+    assert(snprintf(guest.record_path, sizeof(guest.record_path), "%s", record) > 0);
+    assert(snprintf(guest.connections_path, sizeof(guest.connections_path), "%s.connections", record) > 0);
+    assert(snprintf(guest.ready_path, sizeof(guest.ready_path), "%s.ready", record) > 0);
     (void)unlink(guest.record_path);
-    {
-        char marker[sizeof(guest.record_path) + 8];
-        assert(snprintf(marker, sizeof(marker), "%s.ready", guest.record_path) > 0);
-        (void)unlink(marker);
-    }
+    (void)unlink(guest.connections_path);
+    (void)unlink(guest.ready_path);
 
-    memset(&config, 0, sizeof(config));
-    config.runtime_dir = runtime_dir;
-    config.device_name = device_name;
-    if (session_local_handler_init(&local_handler, &config) != SessionLocalSuccess) return 1;
-    session_local_handler_table(&local_handler, &local_table);
+    /* Block SIGINT and SIGTERM before any thread exists, so every thread inherits the block. */
+    assert(sigemptyset(&blocked) == 0);
+    assert(sigaddset(&blocked, SIGINT) == 0 && sigaddset(&blocked, SIGTERM) == 0);
+    assert(pthread_sigmask(SIG_BLOCK, &blocked, NULL) == 0);
 
     memcpy(mapping_root, "/tmp/interop-session-local-XXXXXX", sizeof("/tmp/interop-session-local-XXXXXX"));
     if (mkdtemp(mapping_root) == NULL) return 1;
@@ -501,88 +512,48 @@ int main(int argc, char **argv)
     assert(ftruncate(mapping_fd, (off_t)HarnessMappingBytes) == 0);
     mapping = mmap(NULL, (size_t)HarnessMappingBytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_NORESERVE, mapping_fd, 0);
     assert(mapping != MAP_FAILED);
-    mapping_status = interop_mapping_initialize((uintptr_t)mapping, HarnessMappingBytes, HarnessSessionEpoch, 1);
-    assert(mapping_status == InteropMappingInitStatusOk);
+    assert(interop_mapping_initialize((uintptr_t)mapping, HarnessMappingBytes, HarnessSessionEpoch, 1) ==
+        InteropMappingInitStatusOk);
     assert(munmap(mapping, (size_t)HarnessMappingBytes) == 0);
-    mapping_ready = 1;
+    assert(close(mapping_fd) == 0);
 
-    assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, daemon_pair) == 0);
-    stop_fd = create_stop_signal_fd(&prior_mask);
+    if (append_profile(config_root, device_name, mapping_path) != 0) return 1;
+    assert(snprintf(runtime_device, sizeof(runtime_device), "%s/waddle", runtime_dir) > 0);
+    if (make_directory_if_missing(runtime_device, 0700) != 0) return 1;
+    assert(snprintf(runtime_device, sizeof(runtime_device), "%s/waddle/%s", runtime_dir, device_name) > 0);
+    if (make_directory_if_missing(runtime_device, 0700) != 0) return 1;
+    assert(chmod(runtime_device, 0700) == 0);
+    assert(snprintf(guest.socket_path, sizeof(guest.socket_path), "%s/session.sock", runtime_device) > 0);
+    assert(daemon_device_get_socket_path(device_name, guest.daemon_socket, sizeof(guest.daemon_socket)) == 0);
+    (void)unlink(guest.daemon_socket);
 
-    memset(&device, 0, sizeof(device));
-    assert(strlen(device_name) < sizeof(device.name));
-    memcpy(device.name, device_name, strlen(device_name) + 1u);
-    assert(daemon_device_get_state_dir(device.name, device.state_dir, sizeof(device.state_dir)) == 0);
-    assert(daemon_device_get_socket_path(device.name, device.socket_path, sizeof(device.socket_path)) == 0);
-    memcpy(device.config_path, "/tmp/session-local-harness.ini", sizeof("/tmp/session-local-harness.ini"));
-    memcpy(device.disk_image, "/tmp/session-local-harness.qcow2", sizeof("/tmp/session-local-harness.qcow2"));
-    device.vsock_cid = HarnessGuestCid;
-    device.vsock_port = 5242;
-    device.memory_mb = 4096;
-    device.vcpus = 4;
-    device.config_valid = 1;
-
-    memset(&ops, 0, sizeof(ops));
-    ops.context = &local_table;
-    ops.local_capabilities = local_table.capabilities;
-    ops.on_ready = adapter_on_ready;
-    ops.on_frame = adapter_on_frame;
-    ops.poll_fds = adapter_poll_fds;
-    ops.on_fds = adapter_on_fds;
-    ops.on_tick = adapter_on_tick;
-    ops.next_deadline_ms = adapter_next_deadline;
-    ops.on_closing = adapter_on_closing;
-
-    memset(&admission, 0, sizeof(admission));
-    admission.device = &device;
-    admission.daemon_fd = daemon_pair[0];
-    admission.agent_version = AgentVersion;
-    admission.agent_version_bytes = sizeof(AgentVersion) - 1;
-    admission.connection_token = UINT64_C(0x1122334455667788);
-    admission.local_capabilities = ops.local_capabilities;
-    admission.cancel_fd = stop_fd;
-    admission.guest_ready_timeout_ms = 5000;
-    admission.drain_timeout_ms = 5000;
+    listener = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    assert(listener >= 0);
     {
-        struct timespec now;
-        assert(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
-        admission.deadline_ms = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u + 30000u;
+        struct sockaddr_un address;
+        memset(&address, 0, sizeof(address));
+        address.sun_family = AF_UNIX;
+        assert(strlen(guest.daemon_socket) < sizeof(address.sun_path));
+        strcpy(address.sun_path, guest.daemon_socket);
+        assert(bind(listener, (const struct sockaddr *)&address, sizeof(address)) == 0);
+        assert(listen(listener, 8) == 0);
     }
+    assert(pthread_create(&thread, NULL, daemon_accept_thread, &listener) == 0);
+    assert(pthread_detach(thread) == 0);
+    assert(pthread_create(&thread, NULL, ready_marker_thread, NULL) == 0);
+    assert(pthread_detach(thread) == 0);
 
-    memset(&control, 0, sizeof(control));
-    control.admission = &admission;
-    control.mapping_fd = mapping_fd;
-    control.backing_kind = InteropMappingLinuxBackingRegularPrivateFile;
-    control.stop_fd = stop_fd;
-    control.run_for_ms = 0;
-    control.feature_ops = &ops;
-
-    assert(pthread_create(&daemon_handle, NULL, daemon_thread, &daemon_pair[1]) == 0);
-    assert(pthread_create(&guest_handle, NULL, guest_thread, NULL) == 0);
-    threads_started = 1;
-
-    memset(&owners, 0, sizeof(owners));
-    result = interop_host_control_run(&control, &owners);
-    if (result == HostControlCleanupRequired) {
-        result = interop_host_control_retry_cleanup(&owners);
-    }
-    if (result == HostControlCancelled) status_code = 0;
-    if (status_code != 0) fprintf(stderr, "session-local-harness: run ended with %d\n", (int)result);
-
-    /* Closing the runtime end lets the fake daemon observe end of stream before it is joined. */
-    close(daemon_pair[0]);
-    if (threads_started) {
-        assert(pthread_join(guest_handle, NULL) == 0);
-        assert(pthread_join(daemon_handle, NULL) == 0);
-    }
-    close(mapping_fd);
-    close(stop_fd);
-    assert(pthread_sigmask(SIG_SETMASK, &prior_mask, NULL) == 0);
-    (void)mapping_ready;
     {
-        char command[256];
-        assert(snprintf(command, sizeof(command), "rm -rf '%s'", mapping_root) > 0);
-        assert(system(command) == 0);
+        char *arguments[] = {(char *)"waddle-session", (char *)"--supervised", (char *)"--device",
+            (char *)device_name, (char *)"--max-retries", (char *)"3", (char *)"--run-for-ms", (char *)"120000"};
+        status_code = waddle_session_main((int)(sizeof(arguments) / sizeof(arguments[0])), arguments);
     }
+    if (status_code != 0) fprintf(stderr, "session-local-harness: run ended with %d\n", status_code);
+
+    (void)unlink(guest.daemon_socket);
+    (void)unlink(guest.ready_path);
+    close(listener);
+    assert(snprintf(command, sizeof(command), "rm -rf '%s'", mapping_root) > 0);
+    assert(system(command) == 0);
     return status_code;
 }
