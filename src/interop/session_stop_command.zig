@@ -159,6 +159,8 @@ fn request_stop(hooks: *const Hooks, fd: c_int) u8 {
     const payload = payload_buffer[0..header.length];
     if (read_failure(hooks, read_bounded(hooks, fd, payload, deadline))) |code| return code;
 
+    // An Error with request id 0 is the session refusing the connection because it is busy.
+    if (header.type == c.InteropMsgError and header.request_id == 0) return unconfirmed(hooks, "the session is busy");
     if (header.request_id != StopRequestId) return unconfirmed(hooks, "the session replied to a different request");
     if (header.type == c.InteropMsgError) {
         var text = local.Message{};
@@ -641,6 +643,13 @@ test "an Error frame for this request is a refusal, with its message when presen
     var bare = Fake{ .connect_script = &.{@as(c_int, 7)}, .incoming = build_error(&reply, StopRequestId, null) };
     try testing.expectEqual(ExitUnconfirmed, run_fake(&bare, &.{"stop"}));
     try testing.expectEqualSlices(u8, "waddle session stop: the session refused the stop: no message", bare.last_message());
+}
+
+test "a busy refusal from the session (Error with request id 0) is unconfirmed" {
+    var reply: [64]u8 = undefined;
+    var fake = Fake{ .connect_script = &.{@as(c_int, 7)}, .incoming = build_error(&reply, 0, "busy") };
+    try testing.expectEqual(ExitUnconfirmed, run_fake(&fake, &.{"stop"}));
+    try testing.expectEqualSlices(u8, "waddle session stop: the session is busy; the stop is unconfirmed", fake.last_message());
 }
 
 test "an unexpected frame type for this request is unconfirmed" {

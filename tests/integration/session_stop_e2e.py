@@ -12,6 +12,7 @@ already stopped.
 import fcntl
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -170,11 +171,32 @@ def case_harness_stop_ends_the_session(lab):
              ("second stop", again.returncode, again.stderr))
 
 
+def case_harness_stop_then_open(lab):
+    """`session stop && open`: the reply follows the cleanup, so the next open starts a fresh session."""
+    reset(lab)
+    target = lab.make_file("after-stop.txt")
+    lab.write_session_wrapper({"reply": "ok"}, delay=0.1, record=lab.root / "after-stop.jsonl")
+    server = oe.HarnessServer(lab, {"reply": "ok"})
+    stopped = stop(lab)
+    oe.check(stopped.returncode == 0 and "session stopped" in stopped.stderr,
+             ("first stop", stopped.returncode, stopped.stderr))
+    try:
+        server.process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        server.process.kill()
+        raise AssertionError("first harness did not exit after the stop reply")
+    opened = lab.run("open", "--wait", str(target), timeout=120)
+    oe.check(opened.returncode == 0, ("open after stop", opened.returncode, opened.stderr))
+    again = stop(lab)
+    oe.check(again.returncode == 0 and "session stopped" in again.stderr,
+             ("stop of the fresh session", again.returncode, again.stderr))
+
+
 FAKE_CASES = (case_stop_ok, case_refused_with_message, case_refused_status_only, case_error_frame,
               case_wrong_request_id, case_end_of_stream, case_partial_reply, case_silence_until_deadline,
               case_usage, case_unknown_device_uses_device_errors, case_no_session_is_already_stopped,
               case_held_lock_without_socket)
-HARNESS_CASES = (case_harness_stop_ends_the_session,)
+HARNESS_CASES = (case_harness_stop_ends_the_session, case_harness_stop_then_open)
 
 
 def main():
