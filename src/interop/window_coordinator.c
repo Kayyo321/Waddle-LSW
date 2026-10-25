@@ -326,20 +326,20 @@ static int encode_stale_error(window_coordinator_t *coordinator) {
 
 /** @brief Releases the adapter entry, leaving fullscreen first when the adapter refuses with Busy. */
 static void release_native(window_coordinator_t *coordinator, uint64_t window, uint64_t generation) {
-    window_state_adapter_status_t status = window_state_adapter_release(coordinator->adapter, window, (uint32_t)generation);
+    window_state_adapter_status_t status = window_state_adapter_release(coordinator->adapter, window, generation);
     if (status == WindowStateAdapterBusy) {
         waddle_window_state_action_t leave;
         uint64_t completed = 0;
         memset(&leave, 0, sizeof(leave));
         leave.kind = WaddleWindowStateActionGuestLeaveFullscreen;
-        (void)window_state_adapter_execute(coordinator->adapter, window, window, (uint32_t)generation, &leave, 1, &completed);
-        (void)window_state_adapter_release(coordinator->adapter, window, (uint32_t)generation);
+        (void)window_state_adapter_execute(coordinator->adapter, window, window, generation, &leave, 1, &completed);
+        (void)window_state_adapter_release(coordinator->adapter, window, generation);
     }
 }
 
 /** @brief Reads the current guest state through the adapter, or fails. */
 static int observe_native(window_coordinator_t *coordinator, uint64_t window, uint64_t generation, uint32_t *state) {
-    return window_state_adapter_observe(coordinator->adapter, window, window, (uint32_t)generation, state) ==
+    return window_state_adapter_observe(coordinator->adapter, window, window, generation, state) ==
            WindowStateAdapterOk ? 0 : 1;
 }
 
@@ -392,7 +392,7 @@ static int run_reducer_input(window_coordinator_t *coordinator, coord_entry_t *e
         coordinator->stats.reducer_failures = saturate_add(coordinator->stats.reducer_failures);
         return 1;
     }
-    status = window_state_adapter_execute(coordinator->adapter, entry->window, entry->window, (uint32_t)entry->generation,
+    status = window_state_adapter_execute(coordinator->adapter, entry->window, entry->window, entry->generation,
                                           plan.actions, plan.action_count, &completed);
     ok = status == WindowStateAdapterOk;
     if (waddle_window_state_complete(entry->reducer, &plan, ok ? 1u : 0u, completed) != WaddleWindowStateOk) {
@@ -449,6 +449,11 @@ static int handle_announce(window_coordinator_t *coordinator, const interop_wind
     int phantom = 0;
 
     if (find_pair(coordinator, event->window, event->generation) != NULL) return CoordEventDone;
+    if (event->generation > UINT32_MAX) {
+        /* The reducer and the capture seams take 32-bit generations: refuse, never truncate (the graph retires it untracked). */
+        coordinator->stats.admission_failures = saturate_add(coordinator->stats.admission_failures);
+        return CoordEventDone;
+    }
     if (retire_barrier_pending(coordinator) != 0u && coordinator->state == WindowCoordinatorStateRunning) {
         coordinator->stats.admissions_held = saturate_add(coordinator->stats.admissions_held);
         return CoordEventHold;
@@ -510,7 +515,7 @@ static int handle_announce(window_coordinator_t *coordinator, const interop_wind
             return CoordEventRetry;
         }
     }
-    if (window_state_adapter_admit(coordinator->adapter, event->window, event->window, (uint32_t)event->generation) !=
+    if (window_state_adapter_admit(coordinator->adapter, event->window, event->window, event->generation) !=
         WindowStateAdapterOk) {
         coordinator->stats.admission_failures = saturate_add(coordinator->stats.admission_failures);
         undo_admission(coordinator, entry, adapter_taken, reducer_taken, slots_taken);
