@@ -105,10 +105,26 @@ build/session_local_handler_test: tests/interop/session_local_handler_test.c src
 	$(CC) $(SessionLocalCFlags) $< build/interop_local_stream_abi.o build/interop_codec.o build/interop_activation_store.o $(LDFLAGS) -o $@
 
 .PHONY: interop-session-local-test interop-session-local-zig-test
-interop-session-local-test: build/session_local_handler_test
+interop-session-local-test: build/session_local_handler_test interop-session-local-zig-test
 	./build/session_local_handler_test
 
 interop-session-local-zig-test: build/interop_codec.o
 	$(ZIG) test src/interop/local_stream_abi.zig build/interop_codec.o -Iinclude -lc
 
 InteropLaneTests += interop-session-local-test interop-session-local-zig-test
+
+# Harness (TODO #7 end to end): the production control runtime with this handler, a fake daemon, and a
+# fake guest (tests/interop/session_local_harness.c). Its vsock socket is a socketpair through --wrap.
+build/session_local_handler.o: src/interop/session_local_handler.c src/interop/session_local_handler.h | build
+	$(CC) $(SessionLocalCFlags) -c $< -o $@
+
+build/interop_session_local_harness: tests/interop/session_local_harness.c build/session_local_handler.o build/interop_local_stream_abi.o build/interop_activation_store.o $(InteropHostControlSources) $(InteropHostControlObjects) | build
+	$(CC) $(SessionLocalCFlags) -Isubmodules/looking_glass/module -pthread tests/interop/session_local_harness.c build/session_local_handler.o build/interop_local_stream_abi.o build/interop_activation_store.o $(InteropHostControlSources) $(InteropHostControlObjects) -Wl,--wrap=socket -Wl,--wrap=connect $(LDFLAGS) -o $@
+
+# The built `waddle open` against the real session command handler (harness mode of open_e2e.py).
+# Cases that need a deliberately misbehaving server stay in interop-open-e2e-test (fake server).
+.PHONY: interop-session-local-e2e-test
+interop-session-local-e2e-test: build/waddle build/open_frame_dump build/interop_session_local_harness
+	WADDLE_TEST_SESSION_HARNESS=build/interop_session_local_harness python3 tests/integration/open_e2e.py
+
+InteropLaneTests += interop-session-local-e2e-test

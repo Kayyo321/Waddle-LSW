@@ -6,7 +6,9 @@ Decodes client LocalLaunch frames with a minimal TLV reader written from IMPL_DE
 bit 0x8000). Replies are encoded by the production codec through tests/interop/open_frame_dump
 so the server side never hand-rolls a reply. Also runnable as the fake `waddle-session`:
 `open_fake_session.py --socket PATH --record PATH --spawn-log PATH --dump PATH --scenario JSON
---delay SECONDS --idle-exit SECONDS`.
+--delay SECONDS --idle-exit SECONDS`. With `--exec HARNESS --exec-device NAME --exec-reply REPLY
+--exec-record PATH` it replaces itself with the real session command handler harness after the
+spawn log and delay (open_e2e.py harness mode).
 """
 import argparse
 import json
@@ -229,12 +231,22 @@ def main(argv=None):
     parser.add_argument("--scenario", default='{"reply": "ok"}')
     parser.add_argument("--delay", type=float, default=0.0)
     parser.add_argument("--idle-exit", type=float, default=20.0)
+    parser.add_argument("--exec", dest="exec_path",
+                        help="after the spawn log and delay, replace this process with the session harness")
+    parser.add_argument("--exec-device")
+    parser.add_argument("--exec-reply")
+    parser.add_argument("--exec-record")
     args = parser.parse_args(argv)
     if args.spawn_log:
         with open(args.spawn_log, "a", encoding="utf-8") as log:
             log.write(json.dumps({"pid": os.getpid(), "sid": os.getsid(0), "argv": sys.argv,
                                   "time": time.time()}) + "\n")
     time.sleep(args.delay)
+    if args.exec_path:
+        # Same pid and session as the spawn log entry, so the spawn checks still hold.
+        os.execv(args.exec_path, [args.exec_path, "--runtime-dir", os.environ["XDG_RUNTIME_DIR"],
+                                  "--device", args.exec_device, "--reply", args.exec_reply,
+                                  "--record", args.exec_record])
     server = FakeSession(args.socket, args.dump, json.loads(args.scenario), args.record, args.idle_exit)
     server.bind()
     server.serve_forever()
