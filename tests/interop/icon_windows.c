@@ -153,7 +153,7 @@ static void test_owned_gdi_fixtures(void)
                                   &error));
     assert(returned_color == NULL && returned_mask != NULL);
     const uint8_t *masked_pixels = destination_bits;
-    (void)fprintf(stderr, "monochrome mask alpha sample: %u %u %u %u; neighbors %u %u %u %u\n",
+    (void)fprintf(stderr, "monochrome mask RGBA: (%u,%u,%u,%u) (%u,%u,%u,%u)\n",
                   masked_pixels[0], masked_pixels[1], masked_pixels[2], masked_pixels[3],
                   masked_pixels[4], masked_pixels[5], masked_pixels[6], masked_pixels[7]);
     assert(masked_pixels[3] == 0u && masked_pixels[7] == 255u);
@@ -161,7 +161,7 @@ static void test_owned_gdi_fixtures(void)
     assert(DestroyIcon(monochrome_icon) != 0);
     assert(DeleteObject(monochrome_mask) != 0);
 
-    monochrome_mask_bits[64u] = 0x8000u;
+    monochrome_mask_bits[0u] = 0x8000u;
     HBITMAP inversion_mask = CreateBitmap((int)Dimension, (int)(Dimension * 2u),
                                            1u, 1u, monochrome_mask_bits);
     assert(inversion_mask != NULL);

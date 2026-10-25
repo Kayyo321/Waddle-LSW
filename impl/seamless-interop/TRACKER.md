@@ -1429,7 +1429,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     bounded native fixtures independently in the fast workflow and analyze
     genuine partial profile data even after failure; preserve hard90%gates.
 
-- **Commit `HEAD`**: `fix(interop): preserve validated Ready across idle guest drives`
+- **Commit `71eb5a8`**: `fix(interop): preserve validated Ready across idle guest drives`
   - **Task Impact**: +0% to TODO #6/#34 pending actual native rerun.
   - **Summary**: Native timeout traced to idle socket events clearing phase;
     retain Ready only after successful capability/header validation and publish
@@ -1437,3 +1437,10 @@ its uncompiled draft earns no credit until current acceptance passes.
     idle events and checks repeated, delayed heartbeat stores. Root independent
     99.33% lines/90.25% taken arcs and leak-enabled sanitizers pass. Correct
     diagnostic fields to the real public state ABI; strict Windows fixture links.
+
+- **Commit `HEAD`**: `test(interop): correct monochrome inversion fixture storage row`
+  - **Task Impact**: +0% to TODO #27/#34 pending actual Windows execution.
+  - **Summary**: Use the bottom-up XOR storage row paired with the corrected
+    logical AND row; retain independent transparent/opaque and inversion
+    assertions. Root strict native gcov fixture compilation/link passes. No
+    extraction credit from a cross-build or a failed native run.
