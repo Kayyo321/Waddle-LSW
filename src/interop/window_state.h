@@ -13,7 +13,8 @@
  *  - Boolean fields are uint32_t and must be exactly 0 or 1. Any other value is InvalidArgument.
  *  - Enum-typed fields are carried as uint32_t so that out-of-range values can be detected.
  *    An unknown input kind is InvalidArgument; an unknown plan or action kind is InvalidPlan.
- *  - Caller pointers may be misaligned for their type; the ABI reads them by value.
+ *  - Every pointer argument must be naturally aligned for its type. NULL is rejected only where
+ *    the function documents it.
  *  - Output storage is written only on the statuses documented for each function.
  */
 #ifndef WaddleWindowStateH

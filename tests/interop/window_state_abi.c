@@ -5,8 +5,8 @@
  * Links against the Zig ABI object only and sees nothing but the public header. Every test
  * returns 0 on success and 1 at the first failed Check. main() runs every test and exits
  * nonzero when any test fails. Every handle created here is destroyed, so the sanitizer build
- * reports no leak. Misaligned storage is produced with byte offsets and is only ever copied
- * with memcpy, so the C side never dereferences a misaligned pointer.
+ * reports no leak. Pointer arguments are always naturally aligned; the NULL and invalid-argument
+ * tests cover the cases the ABI rejects.
  */
 #include "window_state.h"
 
@@ -451,29 +451,6 @@ static int test_forged_and_foreign_plans(void) {
     return 0;
 }
 
-static int test_misaligned_storage(void) {
-    waddle_window_state_handle_t *handle = NULL;
-    waddle_window_state_input_t observed = observation(0);
-    unsigned char input_bytes[sizeof(waddle_window_state_input_t) + 1];
-    unsigned char plan_bytes[sizeof(waddle_window_state_plan_t) + 1];
-    waddle_window_state_plan_t plan;
-
-    Check(waddle_window_state_create(15, 1, 0, &handle) == WaddleWindowStateOk);
-    memcpy(input_bytes + 1, &observed, sizeof(observed));
-    memset(plan_bytes, 0xc3, sizeof(plan_bytes));
-
-    Check(waddle_window_state_plan(handle, 15, 1,
-        (const waddle_window_state_input_t *)(input_bytes + 1),
-        (waddle_window_state_plan_t *)(plan_bytes + 1)) == WaddleWindowStateOk);
-    memcpy(&plan, plan_bytes + 1, sizeof(plan));
-    Check(plan.action_count == 2);
-
-    memmove(plan_bytes + 1, &plan, sizeof(plan));
-    Check(waddle_window_state_complete(handle, (const waddle_window_state_plan_t *)(plan_bytes + 1), 1, 2) == WaddleWindowStateOk);
-    Check(waddle_window_state_destroy(&handle) == WaddleWindowStateOk);
-    return 0;
-}
-
 static int test_snapshot_is_read_only(void) {
     waddle_window_state_handle_t *handle = NULL;
     waddle_window_state_snapshot_t first;
@@ -508,7 +485,6 @@ int main(void) {
     failures += run("retirement", test_retirement);
     failures += run("destroy observation retires without native action", test_destroy_observation_retires_without_native_action);
     failures += run("forged and foreign plans", test_forged_and_foreign_plans);
-    failures += run("misaligned storage", test_misaligned_storage);
     failures += run("snapshot is read only", test_snapshot_is_read_only);
     if (failures != 0) {
         fprintf(stderr, "window_state_abi: %d test(s) failed\n", failures);

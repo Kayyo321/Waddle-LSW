@@ -302,7 +302,6 @@ Zig, `zig test src/interop/window_state_abi.zig -Iinclude -Isrc/interop -lc`
   restore with activation and geometry, and the zero-length plan.
 - Argument checks: NULL handle, input, output and plan; every bad kind and
   boolean word; plan output zeroed on every failure.
-- Misaligned caller storage read and written by value.
 - Every reducer action kind survives encode and decode; unknown action kinds are
   InvalidPlan.
 - Every status mapping, and every plan, completion, identity, sync, state,
@@ -324,8 +323,8 @@ C, `tests/interop/window_state_abi.c`, built with `-std=c11 -Wall -Wextra -Wpeda
 
 - Ten tests: invalid arguments, lifecycle and slot clearing, ticket flow and
   action order, partial failure with resynchronization, stale plans and identity,
-  the maximize capability gate, retirement, forged and foreign plans, misaligned
-  storage, and read-only snapshots.
+  the maximize capability gate, retirement, destroy observation without native
+  action, forged and foreign plans, and read-only snapshots.
 - Static assertions for every size, alignment and offset in section 2, and for
   the frozen status and kind values.
 

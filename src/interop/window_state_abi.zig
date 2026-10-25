@@ -3,9 +3,9 @@
 //! Each exported function is a thin wrapper around one public operation of `window_state.zig`.
 //! The wrapper adds only the work a C caller requires:
 //!
-//!  * Every caller pointer is declared `align(1)`. Its target is copied into an aligned local
-//!    before the reducer sees it, and every output is staged in an aligned local and copied to
-//!    the caller only on the statuses the header documents.
+//!  * Every caller pointer must be non-NULL where the header requires it and naturally aligned for
+//!    its type. Inputs are copied by value. Every output is staged in a local and copied to the
+//!    caller only on the statuses the header documents.
 //!  * Enum-typed fields arrive as raw `u32`. Unknown values are rejected before a Zig enum or
 //!    union is formed from them. Boolean fields accept exactly 0 and 1.
 //!  * A plan is a fixed-size struct, not a Zig value with a private completion payload. Plan
@@ -366,7 +366,7 @@ export fn waddle_window_state_create(
     window_id: u64,
     generation: u32,
     guest_state: u32,
-    out_handle: ?*align(1) ?*handle_t,
+    out_handle: ?*?*handle_t,
 ) status_t {
     const slot = out_handle orelse return c.WaddleWindowStateInvalidArgument;
     slot.* = null;
@@ -384,7 +384,7 @@ export fn waddle_window_state_create(
 /// @return Ok, or InvalidArgument when handle_slot is NULL.
 /// @note Ownership: releases the handle allocated by `create`. The slot is NULL after Ok.
 /// @note Thread safety: must not run concurrently with any other call on the same handle.
-export fn waddle_window_state_destroy(handle_slot: ?*align(1) ?*handle_t) status_t {
+export fn waddle_window_state_destroy(handle_slot: ?*?*handle_t) status_t {
     const slot = handle_slot orelse return c.WaddleWindowStateInvalidArgument;
     const storage = slot.* orelse return c.WaddleWindowStateOk;
     abi_allocator.destroy(storage);
@@ -409,8 +409,8 @@ export fn waddle_window_state_plan(
     handle: ?*const handle_t,
     window_id: u64,
     generation: u32,
-    input: ?*align(1) const c.waddle_window_state_input_t,
-    out_plan: ?*align(1) c.waddle_window_state_plan_t,
+    input: ?*const c.waddle_window_state_input_t,
+    out_plan: ?*c.waddle_window_state_plan_t,
 ) status_t {
     const out = out_plan orelse return c.WaddleWindowStateInvalidArgument;
     out.* = std.mem.zeroes(c.waddle_window_state_plan_t);
@@ -436,7 +436,7 @@ export fn waddle_window_state_plan(
 /// @note Thread safety: calls on one handle must be serialized by the caller.
 export fn waddle_window_state_complete(
     handle: ?*handle_t,
-    plan: ?*align(1) const c.waddle_window_state_plan_t,
+    plan: ?*const c.waddle_window_state_plan_t,
     succeeded: u32,
     completed_actions: u64,
 ) status_t {
@@ -458,7 +458,7 @@ export fn waddle_window_state_complete(
 /// @note Thread safety: must not run concurrently with complete or destroy on the same handle.
 export fn waddle_window_state_snapshot(
     handle: ?*const handle_t,
-    out_snapshot: ?*align(1) c.waddle_window_state_snapshot_t,
+    out_snapshot: ?*c.waddle_window_state_snapshot_t,
 ) status_t {
     const out = out_snapshot orelse return c.WaddleWindowStateInvalidArgument;
     const storage = handle orelse return c.WaddleWindowStateInvalidArgument;
@@ -486,23 +486,23 @@ const testing = std.testing;
 // Every test call to an export goes through a `never_inline` wrapper. Without it the optimizer
 // inlines an export into the test with constant arguments and folds its checks away, so the coverage
 // recorder would measure copies that the tests never execute. The wrappers keep the real bodies live.
-fn call_create(window_id: u64, generation: u32, guest_state: u32, out_handle: ?*align(1) ?*handle_t) status_t {
+fn call_create(window_id: u64, generation: u32, guest_state: u32, out_handle: ?*?*handle_t) status_t {
     return @call(.never_inline, waddle_window_state_create, .{ window_id, generation, guest_state, out_handle });
 }
 
-fn call_destroy(handle_slot: ?*align(1) ?*handle_t) status_t {
+fn call_destroy(handle_slot: ?*?*handle_t) status_t {
     return @call(.never_inline, waddle_window_state_destroy, .{handle_slot});
 }
 
-fn call_plan(handle: ?*const handle_t, window_id: u64, generation: u32, input: ?*align(1) const c.waddle_window_state_input_t, out_plan: ?*align(1) c.waddle_window_state_plan_t) status_t {
+fn call_plan(handle: ?*const handle_t, window_id: u64, generation: u32, input: ?*const c.waddle_window_state_input_t, out_plan: ?*c.waddle_window_state_plan_t) status_t {
     return @call(.never_inline, waddle_window_state_plan, .{ handle, window_id, generation, input, out_plan });
 }
 
-fn call_complete(handle: ?*handle_t, plan: ?*align(1) const c.waddle_window_state_plan_t, succeeded: u32, completed_actions: u64) status_t {
+fn call_complete(handle: ?*handle_t, plan: ?*const c.waddle_window_state_plan_t, succeeded: u32, completed_actions: u64) status_t {
     return @call(.never_inline, waddle_window_state_complete, .{ handle, plan, succeeded, completed_actions });
 }
 
-fn call_snapshot(handle: ?*const handle_t, out_snapshot: ?*align(1) c.waddle_window_state_snapshot_t) status_t {
+fn call_snapshot(handle: ?*const handle_t, out_snapshot: ?*c.waddle_window_state_snapshot_t) status_t {
     return @call(.never_inline, waddle_window_state_snapshot, .{ handle, out_snapshot });
 }
 
@@ -569,7 +569,7 @@ fn plan_ok(handle: *const handle_t, window_id: u64, generation: u32, raw: c.wadd
 }
 
 /// Completes through the ABI and returns the raw status.
-fn complete_abi(handle: *handle_t, plan: *align(1) const c.waddle_window_state_plan_t, succeeded: u32, completed: u64) status_t {
+fn complete_abi(handle: *handle_t, plan: *const c.waddle_window_state_plan_t, succeeded: u32, completed: u64) status_t {
     return call_complete(handle, plan, succeeded, completed);
 }
 
@@ -715,23 +715,6 @@ test "plan rejects NULL arguments and bad input kinds or boolean words with Inva
     bad_maximize.maximize = 2;
     try expect_status(c.WaddleWindowStateInvalidArgument, call_plan(handle, 13, 1, &bad_maximize, &out));
     try expect_zero_plan(&out);
-}
-
-test "plan and complete read and write misaligned caller storage by value" {
-    const handle = try create_for_test(14, 1, 0);
-    defer destroy_for_test(handle) catch {};
-
-    var input_buffer: [@sizeOf(c.waddle_window_state_input_t) + 1]u8 align(8) = undefined;
-    var plan_buffer: [@sizeOf(c.waddle_window_state_plan_t) + 1]u8 align(8) = undefined;
-    const input_slot: *align(1) c.waddle_window_state_input_t = @ptrCast(input_buffer[1..].ptr);
-    const plan_slot: *align(1) c.waddle_window_state_plan_t = @ptrCast(plan_buffer[1..].ptr);
-
-    input_slot.* = input_of(.GuestObservation, 0);
-    try expect_status(c.WaddleWindowStateOk, call_plan(handle, 14, 1, input_slot, plan_slot));
-    // Unsynchronized reconciliation of a non-minimized guest unmaximizes and unfullscreens.
-    try testing.expectEqual(@as(u64, 2), plan_slot.action_count);
-    try expect_status(c.WaddleWindowStateOk, complete_abi(handle, plan_slot, 1, 2));
-    try testing.expectEqual(@as(u32, 1), (try snapshot_of(handle)).synced);
 }
 
 test "every reducer action kind survives a plan encode and decode round trip" {
