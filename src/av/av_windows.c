@@ -554,14 +554,29 @@ static int point_owned(HWND handle, POINT point) {
     HWND hit = WindowFromPoint(point);
     return hit && GetAncestor(hit, GA_ROOT) == handle;
 }
+/* Typed pointer buttons (IMPL_DESC 3.6.4): 1 left, 2 right, 3 middle, 4 XBUTTON1
+ * (BTN_SIDE), 5 XBUTTON2 (BTN_EXTRA). XBUTTON events carry the button number in
+ * mouseData; every other width is rejected before any SendInput call. */
+enum { AvWinXButton1 = 1, AvWinXButton2 = 2 };
+static int button_input(const av_message_t *event, INPUT *input) {
+    static const DWORD Down[6] = {0, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_MIDDLEDOWN,
+        MOUSEEVENTF_XDOWN, MOUSEEVENTF_XDOWN};
+    static const DWORD Up[6] = {0, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_MIDDLEUP,
+        MOUSEEVENTF_XUP, MOUSEEVENTF_XUP};
+    if (event->width < 1 || event->width > 5) return -1;
+    input->mi.dwFlags = event->flags ? Down[event->width] : Up[event->width];
+    input->mi.mouseData = event->width == 4 ? AvWinXButton1 : event->width == 5 ? AvWinXButton2 : 0;
+    return 0;
+}
 /* Typed keyboard injection (IMPL_DESC 3.6.3). The translation kind selects the
  * INPUT form; the key-up flag is added for every class:
  * - ScanCode: KEYEVENTF_SCANCODE with the Set-1 byte; E0 keys add KEYEVENTF_EXTENDEDKEY.
  * - VirtualKey (Hangul 0x15, Hanja 0x19): wVk only, no scan code, no scan flag.
- * - Pause: SendInput has no E1 prefix flag, so the key is expressed as the virtual key
- *   VK_PAUSE with the scan code 0x45 and no scan flag. Windows derives the Pause scan
- *   sequence (make E1 1D 45, break E1 9D C5) from that virtual key. Make is the key-down
- *   form and break is the key-up form, exactly as the release path emits them.
+ * - Pause: SendInput never synthesizes E1 bytes. The form sent is VK_PAUSE (0x13)
+ *   with scan code 0x45 and no scan flag, for make (key down) and break (key up). The
+ *   bytes on the wire are therefore not E1 1D 45 / E1 9D C5. How Windows then reports
+ *   Pause, Raw Input, and Ctrl+Pause (Break) is not verified natively; see the open items
+ *   in keyboard_live_contract.md section 6.
  * - Suppressed and unsupported keys are never injected. */
 enum { AvWinVkPause = 0x13, AvWinScanPause = 0x45 };
 static int keyboard_input(const av_message_t *event, INPUT *input) {
@@ -613,13 +628,11 @@ static int legacy_input_emit(void *context, const av_message_t *event) {
             input.mi.dy = (LONG)((screen_y - top) * 65535 / (height - 1));
             input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
         } else if (event->type == MsgInputButton) {
-            static const DWORD Down[4] = {0, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_MIDDLEDOWN};
-            static const DWORD Up[4] = {0, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_MIDDLEUP};
             if (event->flags) {
                 POINT point;
                 if (!GetCursorPos(&point) || !point_owned(handle, point)) return -1;
             }
-            input.mi.dwFlags = event->flags ? Down[event->width] : Up[event->width];
+            if (button_input(event, &input) != 0) return -1;
         } else if (event->type == MsgInputWheel) {
             POINT point;
             if (!GetCursorPos(&point) || !point_owned(handle, point)) return -1;
@@ -723,14 +736,11 @@ static int lease_input_emit(void *context, const av_message_t *event) {
             input.mi.dy = (LONG)((y - top) * 65535 / (height - 1));
             input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
         } else if (event->type == MsgInputButton) {
-            static const DWORD Down[4] = {0, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_MIDDLEDOWN};
-            static const DWORD Up[4] = {0, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_MIDDLEUP};
-            if (event->width < 1 || event->width > 3) return -1;
             if (event->flags) {
                 POINT point;
                 if (!GetCursorPos(&point) || !point_owned(handle, point)) return -1;
             }
-            input.mi.dwFlags = event->flags ? Down[event->width] : Up[event->width];
+            if (button_input(event, &input) != 0) return -1;
         } else if (event->type == MsgInputWheel) {
             POINT point;
             if (!GetCursorPos(&point) || !point_owned(handle, point)) return -1;

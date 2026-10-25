@@ -169,10 +169,12 @@ static void test_legacy_admitted_bounds(void) {
     assert(av_input_apply_admitted(&state, &event, &ops, NULL) == -1 && emitted == 1);
     event.width = 0;
     assert(av_input_apply_admitted(&state, &event, &ops, NULL) == -1 && emitted == 1);
-    event.type = MsgInputButton; event.width = 4;
+    event.type = MsgInputButton; event.width = 6;
     assert(av_input_apply_admitted(&state, &event, &ops, NULL) == -1 && emitted == 1);
+    event.width = 4; /* XBUTTON1 is a valid typed pointer button (IMPL_DESC 3.6.4). */
+    assert(av_input_apply_admitted(&state, &event, &ops, NULL) == 0 && emitted == 2 && state.buttons[4] == 1);
     event.width = 0;
-    assert(av_input_apply_admitted(&state, &event, &ops, NULL) == -1 && emitted == 1);
+    assert(av_input_apply_admitted(&state, &event, &ops, NULL) == -1 && emitted == 2);
     assert(av_input_apply_admitted(NULL, &event, &ops, NULL) == -1);
     assert(av_input_apply_admitted(&state, NULL, &ops, NULL) == -1);
     assert(av_input_apply_admitted(&state, &event, NULL, NULL) == -1);

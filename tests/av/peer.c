@@ -24,8 +24,16 @@ int main(void) {
         assert(av_peer_pump(&receiver, receive_message, NULL) == 0);
         assert(notifications == (i + 1 == sizeof(bytes) ? 1 : 0));
     }
-    for (unsigned i = 0; i < AvPeerQueueFrames; ++i)
+    assert(av_peer_has_room(&sender) == 1);
+    for (unsigned i = 0; i < AvPeerQueueFrames; ++i) {
         assert(av_peer_send(&sender, &message) == 0);
+        assert(av_peer_has_room(&sender) == (i + 1 < AvPeerQueueFrames));
+    }
+    /* A full queue: the probe reports no room without failing the peer or changing the queue. */
+    assert(av_peer_has_room(&sender) == 0 && !sender.failed);
+    assert(av_peer_send(&sender, &message) == -1 && sender.failed);
+    assert(av_peer_has_room(&sender) == 0);
+    sender.failed = 0; /* restore the sender for the drain below, which exercises the normal path */
 
     for (unsigned i = 0; i < 64 && notifications < 129; ++i) {
         assert(av_peer_pump(&sender, receive_message, NULL) == 0);

@@ -29,6 +29,12 @@ typedef int (*av_peer_notify_t)(const av_message_t *message, void *context);
  * @note No allocation/ownership transfer; exactly one event thread.
  */
 int av_peer_send(av_peer_t *peer, const av_message_t *message);
+/** @brief Report whether one more control frame fits without failing the peer.
+ * @param[in] peer Nonnull initialized event-thread-owned peer; read only.
+ * @return 1 when the peer is not failed and fewer than AvPeerQueueFrames frames are queued, else 0.
+ * @note Never latches a failure and never changes the queue. Event thread only.
+ */
+int av_peer_has_room(const av_peer_t *peer);
 /** @brief Pump bounded nonblocking sends/receives and decode complete frames.
  * @param[in,out] peer Nonnull event-thread-owned peer, caller-owned socket.
  * @param[in] notify Nonnull callback retained only during call.

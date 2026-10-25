@@ -45,19 +45,34 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
  * Frames release ownership only on wl_buffer.release.
  */
 int av_wayland_message(av_wayland_t *client, const av_message_t *message);
-/** @brief Dispatch pending Wayland events after display FD becomes readable.
+/** @brief Dispatch Wayland events after the display FD became readable.
  * @param[in,out] client Nonnull initialized event-thread-owned client.
- * @return 0 on success, -1 on display disconnect. May invoke request callback.
- * @note Event thread only; blocks unless caller poll indicates readable FD.
+ * @return 0 on success, -1 on terminal failure. May invoke the request callback.
+ * @note Event thread only. Never blocks: it runs av_wayland_timeout(0), which drains the
+ * socket without blocking before it services repeats.
  */
 int av_wayland_dispatch(av_wayland_t *client);
-/** @brief Check the V3 handshake deadline and bound the next event-loop wait.
+/** @brief Drain the socket without blocking, service due input repeats, check the V3
+ * handshake deadline, and bound the next event-loop wait.
  * @param[in,out] client Nonnull event-thread-owned initialized instance.
  * @param[in] maximum Nonnegative requested maximum wait in milliseconds.
- * @return 0..maximum safe wait, -1 terminal/clock/deadline failure. No allocation.
- * @note Check before and after poll/dispatch/pump; EINTR never restarts a deadline.
+ * @return 0..maximum safe wait, -1 terminal, clock or deadline failure.
+ * @note Order: queued Wayland events are dispatched first, so a release already in the
+ * socket cancels a repeat that is due at the same instant. A due repeat is a key down
+ * that consumes a serial (it may inject input). Poll timeouts round a repeat's remaining
+ * time up to whole milliseconds. EINTR never restarts a deadline.
  */
 int av_wayland_timeout(av_wayland_t *client, int maximum);
+/** @brief Optional non-failing queue probe for input repeats.
+ * @param[in] context The request context passed to av_wayland_init. @return 1 when a frame fits, 0 when full.
+ */
+typedef int (*av_wayland_room_t)(void *context);
+/** @brief Install the queue probe used to drop, rather than fail on, a repeat when the queue is full.
+ * @param[in,out] client Nonnull event-thread-owned instance. @param[in] room NULL means room is always available.
+ */
+void av_wayland_set_room(av_wayland_t *client, av_wayland_room_t room);
+/** @brief Diagnostic count of input repeats dropped because the queue was full. @return count since init. */
+uint32_t av_wayland_repeats_dropped(const av_wayland_t *client);
 /** @brief Flush outgoing protocol bytes without blocking.
  * @param[in,out] client Nonnull event-thread-owned instance.
  * @return 0 flushed/would-block, -1 display error; no ownership transfer.

@@ -190,7 +190,7 @@ static void repeat_admission(void) {
 static void repeat_policy(void) {
     assert(av_input_key_repeatable(30) && av_input_key_repeatable(1) && av_input_key_repeatable(767));
     assert(av_input_key_repeatable(0) == 0 && av_input_key_repeatable(768) == 0);
-    static const uint32_t NotRepeatable[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 125, 126, 142};
+    static const uint32_t NotRepeatable[] = {29, 42, 54, 56, 58, 69, 70, 97, 100, 116, 119, 122, 123, 125, 126, 142};
     for (size_t index = 0; index < sizeof(NotRepeatable) / sizeof(NotRepeatable[0]); ++index)
         assert(av_input_key_repeatable(NotRepeatable[index]) == 0);
 }
@@ -219,6 +219,28 @@ static void typed_admission(void) {
     message = event(MsgInputRelease, 7, 0, AvInputReleaseKeys);
     assert(av_input_apply(&state, &message, &Ops, &fixture) == 0);
     assert(!state.keys[122] && !state.keys[123] && !state.keys[119] && fixture.emitted == count + 3);
+}
+static void xbutton_admission(void) {
+    fixture_t fixture = {.allowed_id = 7, .incarnation = 99};
+    av_input_state_t state = {0};
+    av_message_t message = event(MsgInputFocus, 1, 0, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0);
+    message = event(MsgInputButton, 2, 4, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && state.buttons[4] == 1);
+    message = event(MsgInputButton, 3, 5, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0 && state.buttons[5] == 1);
+    message = event(MsgInputButton, 4, 6, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == -1);
+    unsigned held = 0;
+    for (unsigned button = 0; button < sizeof(state.buttons); ++button) held += state.buttons[button];
+    assert(held == 2); /* the rejected width 6 left nothing held */
+    message = event(MsgInputButton, 5, 0, 1);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == -1);
+    /* Releasing all buttons clears both XBUTTONs with their up events. */
+    unsigned count = fixture.emitted;
+    message = event(MsgInputRelease, 6, 0, AvInputReleaseButtons);
+    assert(av_input_apply(&state, &message, &Ops, &fixture) == 0);
+    assert(!state.buttons[4] && !state.buttons[5] && fixture.emitted == count + 2);
 }
 static void transfer_and_partial_release(void) {
     fixture_t fixture = {.allowed_id = 7, .incarnation = 99};
@@ -253,7 +275,7 @@ static void transfer_and_partial_release(void) {
     assert(av_input_apply(&state, &message, &Ops, &fixture) == -1);
 }
 int main(void) {
-    invalid_arguments(); ownership(); repeat_admission(); repeat_policy(); typed_admission(); failures(); all_keys_and_stress(); transfer_and_partial_release();
+    invalid_arguments(); ownership(); repeat_admission(); repeat_policy(); typed_admission(); xbutton_admission(); failures(); all_keys_and_stress(); transfer_and_partial_release();
     puts("AV input ownership, replay, failure and release fixtures passed");
     return 0;
 }

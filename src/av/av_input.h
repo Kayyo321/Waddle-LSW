@@ -38,7 +38,7 @@ typedef struct av_input_state_t {
     uint64_t incarnation; /**< Current Create.sequence, zero if no focus. */
     uint32_t serial; /**< Last accepted wire serial; never wraps. */
     uint8_t keys[AvInputKeys]; /**< Successfully injected keys awaiting release. */
-    uint8_t buttons[4]; /**< Successfully injected button IDs 1..3. */
+    uint8_t buttons[6]; /**< Successfully injected button IDs 1..5 (4 XBUTTON1, 5 XBUTTON2). */
 } av_input_state_t;
 /** @brief Immutable translation category returned by av_input_translate_key().
  * Values have static table semantics, require no ownership or deallocation,

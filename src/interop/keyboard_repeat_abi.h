@@ -58,7 +58,7 @@ waddle_keyboard_repeat_status_t waddle_keyboard_repeat_configure(void *storage, 
  * @param storage inout, non-NULL. @param window in, nonzero. @param generation in, nonzero.
  * @return Ok, NullArgument, or InvalidFocus.
  */
-waddle_keyboard_repeat_status_t waddle_keyboard_repeat_focus(void *storage, uint64_t window, uint32_t generation);
+waddle_keyboard_repeat_status_t waddle_keyboard_repeat_focus(void *storage, uint64_t window, uint64_t generation);
 
 /**
  * @brief Cancel repeat, clear focus and held observations, keep timing. Idempotent.
@@ -91,5 +91,12 @@ waddle_keyboard_repeat_status_t waddle_keyboard_repeat_take_due(void *storage, u
  * @return Ok or NullArgument.
  */
 waddle_keyboard_repeat_status_t waddle_keyboard_repeat_next_deadline(void *storage, uint8_t *out_present, uint64_t *out_deadline);
+
+/**
+ * @brief Host repeat policy for one evdev code. Pure and stateless.
+ * @param code in; evdev code. @return 1 when the key may auto-repeat, 0 otherwise
+ *         (including every code outside 1..767). Must agree with av_input_key_repeatable.
+ */
+uint8_t waddle_keyboard_repeat_key_repeatable(uint16_t code);
 
 #endif

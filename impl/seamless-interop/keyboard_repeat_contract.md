@@ -11,7 +11,8 @@ leave, disconnect or failed event delivery. Focus requires nonzero IDs. Held
 physical keys occupy a fixed768bool array. The caller supplies already-decoded
 key events only after foreground/focus and translation admission. Repeatable
 is a borrowed scalar from the keymap/typed translation policy; the reducer also
-unconditionally excludes Shift/Ctrl/Alt/Meta, Caps/Num/ScrollLock, Pause,
+unconditionally excludes Shift/Ctrl/Alt/Meta, Caps/Num/ScrollLock, Pause, Hangul
+(122) and Hanja (123, make-only keys whose repeat would toggle an IME),
 power/sleep and unsupported numeric codes0or>767. No text or wire is parsed.
 
 A fresh down marks held and cancels the previous candidate, including when the

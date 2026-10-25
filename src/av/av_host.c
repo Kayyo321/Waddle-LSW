@@ -68,6 +68,11 @@ static int request_flash(host_av_t *host) {
     host->start_ns = host_time_ns();
     return host->start_ns && av_peer_send(&host->peer, &flash) == 0 ? 0 : -1;
 }
+/* Non-failing probe: a due input repeat is dropped while the peer queue is full. */
+static int host_has_room(void *context) {
+    host_av_t *host = context;
+    return av_peer_has_room(&host->peer);
+}
 static int host_request(const av_message_t *message, void *context) {
     host_av_t *host = context;
     return av_peer_send(&host->peer, message) == 0 ? 0 : -1;
@@ -178,6 +183,7 @@ start_clients:
     host.peer.socket = (uintptr_t)peer;
     if (av_wayland_init(&host.video, host_request, &host) != 0)
         goto cleanup;
+    av_wayland_set_room(host.video, host_has_room);
     uint8_t *base = host.mapping;
     if (av_pipewire_init(&host.audio, (audio_ring_header_t *)(base + AvAudioHeaderOffset),
                          base + AvPcmOffset, AvAudioCapacity * AvAudioFrameBytes) != 0)
