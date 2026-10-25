@@ -23,6 +23,9 @@
 
 #define Check(condition) assert((condition) && #condition)
 
+/* Reason value passed to on_closing by the scripted tests (any interop_host_control_result_t). */
+#define HostControlCancelledReason 7u
+
 static void test_init_rejects_bad_input(void)
 {
     session_local_handler_t handler;
@@ -1120,6 +1123,143 @@ static void test_local_stop_flush_bound_and_lost_client(void)
     free_handler(handler);
 }
 
+static void test_launch_timeout_and_late_result(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    int client = connect_path(handler->socket_path);
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = build_local_launch(frame, sizeof(frame), 41, InteropLaunchPath, "Z:\\slow.exe", NULL, NULL, NULL);
+    send_all(client, frame, length);
+    pump_once(&table, 1000);
+    Check(fake_sends == 1 && handler->pending[0].in_use == 1);
+    Check(table.next_deadline_ms(table.context, 1000) == 1000 + SessionLocalLaunchTimeoutMs);
+    uint32_t guest_id = handler->pending[0].guest_request_id;
+
+    Check(table.on_tick(table.context, 30999, FakeSender) == 0);
+    Check(handler->pending[0].in_use == 1 && handler->stats.timeouts == 0);
+    Check(table.on_tick(table.context, 31000, FakeSender) == 0);
+    Check(handler->stats.timeouts == 1 && handler->pending[0].in_use == 0);
+    Check(fake_released_count == 1 && fake_released[0] == guest_id);
+    interop_header_t reply;
+    uint8_t payload[InteropMaxPayloadBytes];
+    size_t payload_length = 0;
+    Check(recv_frame(client, &reply, payload, &payload_length));
+    uint64_t status = 0;
+    Check(reply.type == InteropMsgLaunchResult && reply.request_id == 41);
+    Check(interop_field_uint(payload, payload_length, InteropTagStatus, 4, &status) == 0 && status == InteropTimedOut);
+
+    uint8_t late[InteropMaxFrameBytes];
+    size_t late_length = build_guest_result(late, sizeof(late), guest_id, InteropOk, 5, NULL, NULL);
+    Check(table.on_frame(table.context, InteropMsgLaunchResult, guest_id, late, late_length, FakeSender) == 0);
+    Check(handler->stats.ignored_results == 1 && fake_released_count == 1);
+    Check(close(client) == 0);
+    session_local_handler_destroy(handler);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
+static void test_idle_limit_before_first_frame(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    Check(table.next_deadline_ms(table.context, 0) == UINT64_MAX);
+    int idle = connect_path(handler->socket_path);
+    pump_once(&table, 100);
+    Check(handler->clients[0].fd >= 0 && handler->clients[0].frame_seen == 0);
+    Check(table.next_deadline_ms(table.context, 100) == 100 + SessionLocalIdleTimeoutMs);
+    Check(table.on_tick(table.context, 10099, FakeSender) == 0);
+    Check(handler->clients[0].fd >= 0 && handler->stats.idle_closed == 0);
+    Check(table.on_tick(table.context, 10100, FakeSender) == 0);
+    Check(handler->clients[0].fd == -1 && handler->stats.idle_closed == 1);
+    uint8_t byte;
+    Check(recv(idle, &byte, 1, 0) == 0);
+    Check(close(idle) == 0);
+
+    /* A client that completed one frame is not idle-closed afterwards. */
+    int active = connect_path(handler->socket_path);
+    pump_once(&table, 20000);
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = build_local_launch(frame, sizeof(frame), 51, InteropLaunchPath, "Z:\\i.exe", NULL, NULL, NULL);
+    send_all(active, frame, length);
+    pump_once(&table, 20001);
+    Check(handler->clients[0].frame_seen == 1);
+    Check(table.on_tick(table.context, 900000, FakeSender) == 0);
+    Check(handler->clients[0].fd >= 0 && handler->stats.idle_closed == 1);
+    Check(close(active) == 0);
+    session_local_handler_destroy(handler);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
+static void test_on_closing_cancels_releases_and_unlinks(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    size_t descriptors_before = count_open_descriptors();
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    int client = connect_path(handler->socket_path);
+    int idle = connect_path(handler->socket_path);
+    uint8_t frame[InteropMaxFrameBytes];
+    size_t length = build_local_launch(frame, sizeof(frame), 61, InteropLaunchPath, "Z:\\c.exe", NULL, NULL, NULL);
+    send_all(client, frame, length);
+    pump_once(&table, 500);
+    Check(fake_sends == 1 && handler->pending[0].in_use == 1);
+    uint32_t guest_id = handler->pending[0].guest_request_id;
+    Check(table.next_deadline_ms(table.context, 500) != UINT64_MAX);
+
+    table.on_closing(table.context, HostControlCancelledReason, FakeSender);
+    Check(handler->closed == 1 && handler->bound == 0 && handler->socket_created == 0);
+    Check(handler->pending[0].in_use == 0);
+    Check(fake_released_count == 1 && fake_released[0] == guest_id);
+    interop_header_t reply;
+    uint8_t payload[InteropMaxPayloadBytes];
+    size_t payload_length = 0;
+    Check(recv_frame(client, &reply, payload, &payload_length));
+    uint64_t status = 0;
+    Check(reply.type == InteropMsgLaunchResult && reply.request_id == 61);
+    Check(interop_field_uint(payload, payload_length, InteropTagStatus, 4, &status) == 0 && status == InteropCancelled);
+    uint8_t byte;
+    Check(recv(client, &byte, 1, 0) == 0);
+    Check(close(client) == 0);
+    Check(close(idle) == 0);
+
+    /* Exactly once: a second notification changes nothing; the file is gone; no descriptor leaks. */
+    table.on_closing(table.context, HostControlCancelledReason, FakeSender);
+    Check(fake_released_count == 1);
+    char path[256];
+    Check(snprintf(path, sizeof(path), "%s/waddle/alpha/session.sock", test_runtime) > 0);
+    mode_t mode = 0;
+    Check(socket_path_mode(path, &mode) != 0);
+    Check(count_open_descriptors() == descriptors_before);
+    session_local_handler_destroy(handler);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
+static void test_on_closing_before_ready_is_inert(void)
+{
+    fake_reset();
+    session_local_handler_t *handler = new_handler();
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.next_deadline_ms(table.context, 0) == UINT64_MAX);
+    table.on_closing(table.context, HostControlCancelledReason, FakeSender);
+    Check(handler->closed == 1 && fake_released_count == 0);
+    free_handler(handler);
+}
+
 int main(void)
 {
     test_init_rejects_bad_input();
@@ -1146,6 +1286,10 @@ int main(void)
     test_max_clients_and_flush_order();
     test_local_stop_replies_then_requests_stop();
     test_local_stop_flush_bound_and_lost_client();
+    test_launch_timeout_and_late_result();
+    test_idle_limit_before_first_frame();
+    test_on_closing_cancels_releases_and_unlinks();
+    test_on_closing_before_ready_is_inert();
     Check(count_open_descriptors() == descriptors_before);
     printf("session_local_handler_test: passed\n");
     return 0;

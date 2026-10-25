@@ -829,16 +829,87 @@ static int local_on_fds(void *context, const struct pollfd *fds, size_t count, u
     return stop_ready(handler, now_ms) ? SessionHandlerRequestStop : 0;
 }
 
+/** @brief Time out every launch whose deadline passed: TimedOut to an attached client, then release. */
+static void expire_launches(session_local_handler_t *handler, interop_host_feature_sender_t *sender, uint64_t now_ms)
+{
+    for (uint32_t index = 0; index < SessionLocalMaxPending; ++index) {
+        session_local_pending_t *entry = &handler->pending[index];
+        if (!entry->in_use || now_ms < entry->deadline_ms) continue;
+        handler->stats.timeouts++;
+        (void)reply_launch_result(handler, entry->client_index, entry->client_serial, entry->local_request_id,
+            InteropTimedOut, 0, NULL, 0);
+        (void)interop_host_feature_release_request(sender, entry->guest_request_id);
+        memset(entry, 0, sizeof(*entry));
+    }
+}
+
+/** @brief Close every client that has not sent a complete frame within the idle limit. */
+static void expire_idle(session_local_handler_t *handler, uint64_t now_ms)
+{
+    for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
+        session_local_client_t *client = &handler->clients[index];
+        if (client->fd < 0 || client->frame_seen) continue;
+        if (now_ms < client->accepted_ms + SessionLocalIdleTimeoutMs) continue;
+        handler->stats.idle_closed++;
+        client_close(handler, index);
+    }
+}
+
 static int local_on_tick(void *context, uint64_t now_ms, interop_host_feature_sender_t *sender)
 {
     session_local_handler_t *handler = context;
-    (void)sender;
     handler->last_now_ms = now_ms;
     if (!handler->bound || handler->closed) return 0;
+    expire_launches(handler, sender, now_ms);
+    expire_idle(handler, now_ms);
     for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
         if (handler->clients[index].fd >= 0) flush_client(handler, index);
     }
     return stop_ready(handler, now_ms) ? SessionHandlerRequestStop : 0;
+}
+
+static uint64_t local_next_deadline(void *context, uint64_t now_ms)
+{
+    const session_local_handler_t *handler = context;
+    uint64_t next = UINT64_MAX;
+    (void)now_ms;
+    if (!handler->bound || handler->closed) return next;
+    for (uint32_t index = 0; index < SessionLocalMaxPending; ++index) {
+        if (handler->pending[index].in_use && handler->pending[index].deadline_ms < next) {
+            next = handler->pending[index].deadline_ms;
+        }
+    }
+    for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
+        const session_local_client_t *client = &handler->clients[index];
+        uint64_t idle_deadline = client->accepted_ms + SessionLocalIdleTimeoutMs;
+        if (client->fd >= 0 && !client->frame_seen && idle_deadline < next) next = idle_deadline;
+    }
+    if (handler->stopping && handler->stop_deadline_ms < next) next = handler->stop_deadline_ms;
+    return next;
+}
+
+/**
+ * @brief Final notification: answer waiting launches Cancelled, release every identifier, and close.
+ * @note Exactly once; later calls return at once. Replies are best effort (one nonblocking send).
+ */
+static void local_on_closing(void *context, uint32_t reason, interop_host_feature_sender_t *sender)
+{
+    session_local_handler_t *handler = context;
+    (void)reason;
+    if (handler->closed) return;
+    for (uint32_t index = 0; index < SessionLocalMaxPending; ++index) {
+        session_local_pending_t *entry = &handler->pending[index];
+        if (!entry->in_use) continue;
+        (void)reply_launch_result(handler, entry->client_index, entry->client_serial, entry->local_request_id,
+            InteropCancelled, 0, NULL, 0);
+        (void)interop_host_feature_release_request(sender, entry->guest_request_id);
+        memset(entry, 0, sizeof(*entry));
+    }
+    for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
+        if (handler->clients[index].fd >= 0) flush_client(handler, index);
+    }
+    release_descriptors(handler);
+    handler->closed = 1;
 }
 
 void session_local_handler_table(session_local_handler_t *handler, session_handler_t *out_table)
@@ -853,4 +924,6 @@ void session_local_handler_table(session_local_handler_t *handler, session_handl
     out_table->poll_fds = local_poll_fds;
     out_table->on_fds = local_on_fds;
     out_table->on_tick = local_on_tick;
+    out_table->next_deadline_ms = local_next_deadline;
+    out_table->on_closing = local_on_closing;
 }
