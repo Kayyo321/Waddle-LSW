@@ -2248,6 +2248,15 @@ test "release_request refuses liveness identifiers and transport loss retires fe
     try std_t.testing.expectError(error.WrongPhase, pair.host.enqueue_request(HostToken, ping_time, frame[0..request]));
 }
 
+test "each request type maps to its answering response and other types map to none" {
+    try std_t.testing.expectEqual(@as(?u16, c_t.InteropMsgLaunchResult), peer_t.response_for_request(c_t.InteropMsgLaunchRequest));
+    try std_t.testing.expectEqual(@as(?u16, c_t.InteropMsgPrinterResult), peer_t.response_for_request(c_t.InteropMsgPrinterSync));
+    try std_t.testing.expectEqual(@as(?u16, c_t.InteropMsgDisplayApplied), peer_t.response_for_request(c_t.InteropMsgDisplayConfig));
+    try std_t.testing.expectEqual(@as(?u16, c_t.InteropMsgDndResult), peer_t.response_for_request(c_t.InteropMsgDndDrop));
+    try std_t.testing.expectEqual(@as(?u16, null), peer_t.response_for_request(c_t.InteropMsgWindowClose));
+    try std_t.testing.expectEqual(@as(?u16, null), peer_t.response_for_request(c_t.InteropMsgLaunchResult));
+}
+
 /// Expect a received feature frame to drain the peer with ProtocolViolation, naming the frame.
 fn expect_protocol_violation(event: peer_t.event_result_t, message_type: u16, request_id: u32) !void {
     try std_t.testing.expectEqual(peer_t.event_kind_t.Draining, event.event.kind);

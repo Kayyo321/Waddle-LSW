@@ -197,13 +197,11 @@ pub const feature_class_t = enum { Unsolicited, Request, Response };
 /// @return The matching response type, or null.
 /// @ownership Pure function.
 pub fn response_for_request(message_type: u16) ?u16 {
-    return switch (message_type) {
-        c_t.InteropMsgLaunchRequest => c_t.InteropMsgLaunchResult,
-        c_t.InteropMsgPrinterSync => c_t.InteropMsgPrinterResult,
-        c_t.InteropMsgDisplayConfig => c_t.InteropMsgDisplayApplied,
-        c_t.InteropMsgDndDrop => c_t.InteropMsgDndResult,
-        else => null,
-    };
+    if (message_type == c_t.InteropMsgLaunchRequest) return c_t.InteropMsgLaunchResult;
+    if (message_type == c_t.InteropMsgPrinterSync) return c_t.InteropMsgPrinterResult;
+    if (message_type == c_t.InteropMsgDisplayConfig) return c_t.InteropMsgDisplayApplied;
+    if (message_type == c_t.InteropMsgDndDrop) return c_t.InteropMsgDndResult;
+    return null;
 }
 
 /// Return the request-identifier class of a feature type. Request types allocate an identifier
@@ -1195,8 +1193,9 @@ pub const peer_t = struct {
         var index: usize = 0;
         while (index < self.feature_request_count) : (index += 1) {
             if (self.feature_request_ids[index] != request_id) continue;
-            const answered = response_for_request(self.feature_request_types[index]) orelse return false;
-            return answered == response_type;
+            // Reservations hold only Request-class types (enqueue_request validates the class),
+            // so the mapping always exists.
+            return response_for_request(self.feature_request_types[index]).? == response_type;
         }
         return false;
     }
