@@ -303,12 +303,12 @@ reducer as a GuestObservation plan.
 
 ## 9. Verification
 
-Double suite (`tests/interop/window_state_adapter_suite.c`, 28 tests), built plain and
+Double suite (`tests/interop/window_state_adapter_suite.c`, 36 tests), built plain and
 under `-fsanitize=address,leak,undefined` with `ASAN_OPTIONS=detect_leaks=1`. It runs
 on every platform against `tests/interop/window_state_adapter_double.h`, which logs every
 native call and can fail any call by count or at random:
 
-- The NULL-member contract: each of the 19 table members, set to NULL in turn, makes
+- The NULL-member contract: each of the 20 table members, set to NULL in turn, makes
   `create` return InvalidArgument with no output.
 - Exact native call sequence of every action, including the fullscreen enter and leave
   sequences, the activation direct path, and the activation fallback.
@@ -320,11 +320,23 @@ native call and can fail any call by count or at random:
   applied.
 - Fullscreen: round trips, enter twice, leave without a saved state, rollback when the
   placement call fails, rollback when the rollback also fails, and a leave that fails
-  at each call while the record is kept.
+  at each call while the record is kept. The normal-state leave makes no placement
+  call and sets SWP_NOACTIVATE; a leave from a minimized window writes the placement.
+  Focus: with another window foreground, a round trip leaves that window foreground,
+  with no focus steal recorded by the double.
+- Geometry: the origin is kept (probe P2: 100,100 with configure 0,0,1024,768 gives
+  1024 by 768), SWP_NOMOVE is in the recorded flags, the DWM border is applied, and
+  each bound of the adjusted extent and a failed frame query are refused.
+- Destroy and release: destroy is Busy while any record is admitted; a Busy release
+  is sticky and retryable across a failed leave; no phantom record remains.
+- Generation: 2^32 and 2^32 + 1 (which truncates to an admitted 1) are InvalidArgument
+  in admit, release, observe and execute, with no native call.
+- Partial execution: action 2 of 3 fails with a native error or a validation error;
+  the completed count is 1, the status is not Ok, and the later action never runs.
 - Host-only and unknown kinds, count and NULL-array rules, and geometry bounds.
 - Admission: capacity of 64 (the 65th refused), duplicate pairs and HWNDs, zero
   identity components on their own, NULL adapter in every entry, release and destroy
-  while fullscreen, and destroy with a NULL slot.
+  while fullscreen or admitted, and destroy with a NULL slot.
 - Threading and re-entry: a call from another thread touches nothing; a call made from
   inside a native entry (ShowWindow) returns Reentrant for observe, destroy and execute.
 - Observation bits, including capabilities read from the saved style while fullscreen,
@@ -342,18 +354,31 @@ completed count; a failed completion is followed by a resynchronization from a f
 observation. A stale result caused by a fault is recovered by re-admitting the same
 window. The invariant, checked after every step with faults disabled: once the machine is
 synchronized, its applied guest window bits equal the adapter's observation. The run
-completes 287 guest actions, observes 183 native failures and 107 stale recoveries. The
+completes 248 guest actions, observes 208 native failures and 105 stale recoveries. The
+counts changed when geometry began making two more native queries and when the normal
+leave stopped making a placement call; the seeded faults land on different calls. The
 test found the LeaveFullscreen fault described in section 4, item 5.
 
 Coverage (`tests/interop/window_state_adapter_coverage.py`, run by
 `make interop-window-state-adapter-coverage`): gcov line and branch on the portable logic,
-driven by the double suite. Measured: line 100.00% (298 of 298), branch 100.00% (293 of
-293). The gate is 90 percent. The `_WIN32` table is outside this measure by design.
+driven by the double suite. Measured: line 100.00% (310 of 310), branch 100.00% (307 of
+307). The gate is 90 percent. The `_WIN32` table is outside this measure by design.
 
-Mutation checks, not committed, each run and restored: skipping the EnterFullscreen
-rollback; leaving fullscreen without a record; dropping the activation fallback; making
-Restore leave fullscreen; ignoring the thread id in the identity check; continuing after a
-failed action. Each fails the suite.
+Mutation checks, not committed. Each mutant was compiled from a copy of the adapter and
+run against the suite; the committed source was not changed. Each fails the suite:
+
+- Remove SWP_NOMOVE from SetGeometry: 2 tests fail.
+- Remove SWP_NOACTIVATE from the fullscreen leave: 1 test fails (the focus round trip).
+- Report the completed count as index + 1 on a failed action: 13 tests fail.
+- Report the whole plan completed on a failed action: 13 tests fail.
+- Accept generations above UINT32_MAX (truncation): 1 test fails.
+- Destroy ignores live records: 4 tests fail.
+- Activation trusts the retry return instead of the foreground: 3 tests fail.
+
+The earlier mutants of the first revision also fail the suite: skipping the EnterFullscreen
+rollback, leaving fullscreen without a record, dropping the activation fallback, making
+Restore leave fullscreen, ignoring the thread id in the identity check, continuing after a
+failed action.
 
 ## 10. Native smoke (Windows, executed by CI only)
 
@@ -370,7 +395,8 @@ thread, and asserts through `window_state_adapter_observe` and the real Win32 ca
    WS_THICKFRAME.
 5. LeaveFullscreen: observe no longer reports Fullscreen, the style and the
    rectangle equal their values before step 4.
-6. SetGeometry to 320 by 240 at a fixed position: `GetWindowRect` equals it.
+6. SetGeometry to 320 by 240 with x and y 0: the window origin is unchanged and the
+   visible frame (DWMWA_EXTENDED_FRAME_BOUNDS) is 320 by 240.
 7. Activate: `GetForegroundWindow` equals the window. This depends on the desktop
    granting foreground rights to the smoke process; a failure is reported as
    such and fails the smoke.
@@ -384,6 +410,13 @@ thread, and asserts through `window_state_adapter_observe` and the real Win32 ca
    not the admitted HWND. If the system reuses the old value for the second window,
    that step is printed as a note and not counted; the stale identity check cannot be
    told apart from a fresh admission within one process and thread.
+
+Second thread: a worker thread creates a second window, pumps its messages, and destroys
+it on exit. The main thread, the adapter owner, admits it under the pair (2, 2) and drives
+minimize, restore, fullscreen enter and leave, geometry (origin kept, visible frame size),
+activation (completes or reports NativeFailure, desktop-dependent), post close (the worker
+receives WM_CLOSE) and release. Every call crosses threads. Native probes run before the
+synchronous calls (section 2.1). The smoke releases its last record before destroy.
 
 The smoke requires per-monitor DPI awareness v2 on its thread; without it the
 rectangles are not comparable and the smoke fails at its first step.

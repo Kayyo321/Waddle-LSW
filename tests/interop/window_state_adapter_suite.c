@@ -495,6 +495,8 @@ static int test_geometry_keeps_origin_and_adds_frame(void) {
     waddle_window_state_action_t moved = geometry_of(300, 200, 640, 480);
     waddle_window_state_action_t small = geometry_of(0, 0, 1, 1);
     waddle_window_state_action_t largest = geometry_of(0, 0, WaddleWindowStateAdapterMaxExtent, 10);
+    waddle_window_state_action_t tall = geometry_of(0, 0, 10, WaddleWindowStateAdapterMaxExtent);
+    waddle_window_state_action_t short_tall = geometry_of(0, 0, 10, 1);
     int32_t visible_width;
     int32_t visible_height;
 
@@ -534,6 +536,13 @@ static int test_geometry_keeps_origin_and_adds_frame(void) {
     /* An adjusted extent above the maximum is refused: 16384 plus the border of 2 pixels per side. */
     f.d.windows[0].frame_inset = 1;
     Check(run(&f, &largest, 1, &completed) == WindowStateAdapterInvalidGeometry);
+    Check(f.d.set_window_pos_count == 0);
+
+    /* Each bound of the height is checked on its own: a width in range with a height out of range. */
+    Check(run(&f, &tall, 1, &completed) == WindowStateAdapterInvalidGeometry);
+    Check(f.d.set_window_pos_count == 0);
+    f.d.windows[0].frame_inset = -1;
+    Check(run(&f, &short_tall, 1, &completed) == WindowStateAdapterInvalidGeometry);
     Check(f.d.set_window_pos_count == 0);
 
     /* A failing frame query is a native failure with no window change. */
@@ -1159,6 +1168,55 @@ static int test_random_sequences_with_faults(void) {
     return 0;
 }
 
+/* ---- Partial execution is never reported as complete -------------------------------------------- */
+
+/**
+ * @brief When action 2 of 3 fails, the completed count is 1, the status is not Ok, and the later action is
+ *        never attempted. Each case is a different failure: a native failure and a validation failure.
+ */
+static int test_partial_execution_reports_completed_count(void) {
+    fixture_t f;
+    uint64_t completed = 99;
+    window_state_adapter_status_t status;
+    waddle_window_state_action_t minimize = action_of(WaddleWindowStateActionGuestMinimize);
+    waddle_window_state_action_t restore = action_of(WaddleWindowStateActionGuestRestore);
+    waddle_window_state_action_t maximize = action_of(WaddleWindowStateActionGuestMaximize);
+    waddle_window_state_action_t sequence[3];
+    waddle_window_state_action_t invalid = geometry_of(0, 0, 0, 240);
+    uint32_t bits = 0;
+
+    /* Native failure at action 2 (restore): minimize completed, maximize never ran. */
+    Check(fixture_open(&f) == 0);
+    sequence[0] = minimize;
+    sequence[1] = restore;
+    sequence[2] = maximize;
+    wsa_double_reset(&f.d);
+    wsa_double_arm(&f.d, WsaDoubleShowWindow, 2, 0);
+    status = run(&f, sequence, 3, &completed);
+    Check(status == WindowStateAdapterNativeFailure);
+    Check(completed == 1);
+    Check(f.d.calls[WsaDoubleShowWindow] == 2);
+    Check(f.d.windows[0].iconic == 1 && f.d.windows[0].zoomed == 0);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
+    Check((bits & WaddleWindowStateMinimized) != 0 && (bits & WaddleWindowStateMaximized) == 0);
+    wsa_double_disarm(&f.d);
+    fixture_close(&f);
+
+    /* Validation failure at action 2: the geometry is refused with no native call, and maximize never runs. */
+    Check(fixture_open(&f) == 0);
+    sequence[1] = invalid;
+    wsa_double_reset(&f.d);
+    completed = 99;
+    status = run(&f, sequence, 3, &completed);
+    Check(status == WindowStateAdapterInvalidGeometry);
+    Check(completed == 1);
+    Check(f.d.calls[WsaDoubleShowWindow] == 1);
+    Check(f.d.calls[WsaDoubleSetWindowPos] == 0);
+    Check(f.d.windows[0].zoomed == 0);
+    fixture_close(&f);
+    return 0;
+}
+
 /* ---- Argument, identity and failure forms not reached above ------------------------------------- */
 
 /**
@@ -1421,6 +1479,7 @@ int main(void) {
     failures += run_test("first fallback failure is kept", test_fallback_first_failure_is_kept);
     failures += run_test("geometry height above maximum", test_geometry_height_above_maximum);
     failures += run_test("generation must fit uint32", test_generation_must_fit_uint32);
+    failures += run_test("partial execution reports the completed count", test_partial_execution_reports_completed_count);
     if (failures != 0) {
         fprintf(stderr, "window_state_adapter_suite: %d test(s) failed\n", failures);
         return 1;
