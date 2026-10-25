@@ -273,6 +273,9 @@ const journal_t = struct {
 const owned_root_t = struct { kind: root_kind_t, canonical_path: []u8, fd: c_int };
 const parent_t = struct { fd: c_int, leaf: []const u8 };
 const file_info_t = struct { hash: [32]u8, mode: u32, device: u64, inode: u64 };
+/// Private artifact classification shared by `status` and `remove`. `Ok`
+/// carries the exact identity; the other states never authorize mutation.
+const artifact_state_t = union(enum) { Ok: file_info_t, Missing, Modified, Foreign };
 
 /// Exact identity of one regular artifact observed through the store's rooted
 /// descriptor walk. Callers may retain the value and supply it as a
@@ -374,6 +377,46 @@ pub const replace_receipt_t = struct {
 pub const restore_receipt_t = struct {
     /// Exact identity of the restored artifact.
     target: artifact_identity_t,
+};
+
+/// Read-only classification of one recorded artifact returned by `status`.
+pub const record_state_t = enum {
+    /// Owned regular file with mode 0644 or 0755 whose SHA-256 equals the record.
+    Ok,
+    /// No file exists at the recorded path, including a missing parent directory.
+    Missing,
+    /// Owned regular file whose SHA-256 differs from the record, or whose size
+    /// exceeds `MaxArtifactBytes` and therefore cannot match any valid artifact.
+    Modified,
+    /// The record is outside the authorized roots, or the object at the path is
+    /// not an owned single-link regular file with mode 0644/0755 and no
+    /// setuid/setgid/sticky bits (symlink, hardlink, directory, foreign owner).
+    Foreign,
+};
+
+/// One classified manifest record. `record_id` is owned by the containing list.
+pub const record_status_t = struct {
+    /// Owned copy of the schema record identifier.
+    record_id: []u8,
+    /// Classification of the recorded artifact at the time of the call.
+    state: record_state_t,
+};
+
+/// Caller-owned status snapshot. The list and every `record_id` are allocated
+/// from `allocator` and released by `deinit`; the snapshot is not a lock.
+pub const status_list_t = struct {
+    /// Allocator that owns `items` and every `record_id`.
+    allocator: std.mem.Allocator,
+    /// Classified records in manifest order; empty when no manifest exists.
+    items: []record_status_t,
+
+    /// Release all owned identifiers and the item array, then clear `items`.
+    /// Safe to call repeatedly.
+    pub fn deinit(self: *status_list_t) void {
+        for (self.items) |item| self.allocator.free(item.record_id);
+        self.allocator.free(self.items);
+        self.items = &.{};
+    }
 };
 
 /// Exclusive manifest lock and owned artifact roots.
@@ -546,6 +589,72 @@ pub const store_t = struct {
         const items = try allocator.alloc(backup_ref_t, count);
         @memcpy(items, found[0..count]);
         return .{ .allocator = allocator, .items = items };
+    }
+
+    /// Classify every recorded artifact without publishing, unlinking, or
+    /// rewriting any file. Runs the same recovery as `inspect_record` first;
+    /// with no pending journal it performs no filesystem writes. Records keep
+    /// manifest order. A malformed or newer-schema manifest fails before any
+    /// classification, and a missing manifest yields an empty list.
+    /// Parameters: `self` is an initialized, live mutable store owner;
+    /// `allocator` owns the returned list and is independent of the store allocator.
+    /// Returns: a snapshot owned by the caller and released with `deinit`.
+    /// Errors: Closed, RecoveryRequired, InvalidManifest, UnsupportedSchema,
+    /// ManifestMismatch, AccessDenied for an insecure manifest, OutOfMemory, or
+    /// an I/O error that cannot be classified as missing, modified, or foreign.
+    /// Thread safety: serialized owner-thread use only; do not call concurrently.
+    pub fn status(self: *store_t, allocator: std.mem.Allocator) !status_list_t {
+        if (!self.live) return error.Closed;
+        try self.recover_locked();
+        const manifest_bytes = self.read_manifest() catch |err| {
+            if (err == error.FileNotFound) return .{ .allocator = allocator, .items = try allocator.alloc(record_status_t, 0) };
+            return err;
+        };
+        defer self.allocator.free(manifest_bytes);
+        var parsed = try manifest.parse(self.allocator, manifest_bytes);
+        defer parsed.deinit();
+        try validate_global_paths(parsed.records);
+        const items = try allocator.alloc(record_status_t, parsed.records.len);
+        var built: usize = 0;
+        errdefer {
+            for (items[0..built]) |item| allocator.free(item.record_id);
+            allocator.free(items);
+        }
+        for (parsed.records, 0..) |record, index| {
+            const state: record_state_t = switch (try self.classify_artifact(record)) {
+                .Ok => .Ok,
+                .Missing => .Missing,
+                .Modified => .Modified,
+                .Foreign => .Foreign,
+            };
+            const record_id = try allocator.dupe(u8, record.id);
+            items[index] = .{ .record_id = record_id, .state = state };
+            built += 1;
+        }
+        return .{ .allocator = allocator, .items = items };
+    }
+
+    /// Classify one record's artifact through the rooted, no-follow walk.
+    /// Authorization failures and unsafe objects map to `.Foreign`; a missing
+    /// parent or leaf maps to `.Missing`; a regular owned file with an allowed
+    /// mode is `.Ok` only when its digest equals the record. Allocation and
+    /// unexpected I/O errors propagate. Mutates nothing.
+    fn classify_artifact(self: *store_t, record: manifest.record_t) !artifact_state_t {
+        const target = self.resolve_allowed(record) catch |err| return switch (err) {
+            error.InvalidPath, error.InvalidScope, error.UnsupportedArtifactKind => .Foreign,
+            else => err,
+        };
+        defer self.allocator.free(target.relative);
+        const info = self.inspect(target.root.fd, target.relative) catch |err| return switch (err) {
+            error.FileNotFound => .Missing,
+            error.AccessDenied => .Foreign,
+            error.FileTooLarge => .Modified,
+            else => err,
+        };
+        const current = info orelse return .Missing;
+        if (current.mode != 0o644 and current.mode != 0o755) return .Foreign;
+        if (!hash_text_equal(current.hash, record.sha256)) return .Modified;
+        return .{ .Ok = current };
     }
 
     fn checkpoint(self: *store_t) !void {
@@ -6463,6 +6572,277 @@ test "recovery enforces the configured transaction-directory bound" {
         if (c.mkdirat(transactions.fd, &name, 0o700) != 0) return error.IoError;
     }
     try std.testing.expectError(error.RecoveryRequired, store.recover());
+}
+
+const test_spec_t = struct { id: []const u8, kind: []const u8, path: []const u8, sha256: []const u8 };
+
+/// Build a schema document with `null` priors for the requested records.
+/// Fixture allocation and formatting failures are test bugs, so they panic
+/// instead of adding error-only branches to the test-only coverage denominator.
+fn test_document(allocator: std.mem.Allocator, schema: u32, specs: []const test_spec_t) []u8 {
+    var out = std.ArrayList(u8).init(allocator);
+    errdefer out.deinit();
+    out.writer().print("{{\"schema\":{d},\"waddle_version\":\"0.2.0\",\"updated\":\"2026-10-25T00:00:00Z\",\"records\":[", .{schema}) catch @panic("test fixture");
+    for (specs, 0..) |spec, index| {
+        if (index != 0) out.append(',') catch @panic("test fixture");
+        out.writer().print("{{\"id\":\"{s}\",\"kind\":\"{s}\",\"path\":\"{s}\",\"sha256\":\"{s}\",\"created_by\":\"0.2.0\",\"prior\":null}}", .{ spec.id, spec.kind, spec.path, spec.sha256 }) catch @panic("test fixture");
+    }
+    out.appendSlice("]}") catch @panic("test fixture");
+    return out.toOwnedSlice() catch @panic("test fixture");
+}
+
+/// Create a regular file under `dir` and set its exact permission bits.
+/// Failures panic because they indicate a broken test fixture, not a store result.
+fn write_status_file(dir: std.fs.Dir, sub_path: [:0]const u8, bytes: []const u8, mode: c_uint) void {
+    dir.writeFile(.{ .sub_path = sub_path, .data = bytes }) catch @panic("test fixture");
+    if (c.fchmodat(dir.fd, sub_path.ptr, mode, 0) != 0) @panic("test fixture");
+}
+
+test "status classifies each recorded artifact class without mutating any file" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    if (c.mkdirat(temporary.dir.fd, "state", @as(c_uint, 0o700)) != 0) return error.IoError;
+    try temporary.dir.makeDir("data");
+    var state = try temporary.dir.openDir("state", .{});
+    defer state.close();
+    var data = try temporary.dir.openDir("data", .{});
+    defer data.close();
+    try data.makeDir("applications");
+    const data_path = try data.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(data_path);
+    const roots = [_]root_t{.{ .kind = .Data, .canonical_path = data_path, .dir_fd = data.fd }};
+
+    write_status_file(data, "applications/ok.desktop", "ok bytes", 0o644);
+    write_status_file(data, "applications/bin.desktop", "bin bytes", 0o755);
+    write_status_file(data, "applications/changed.desktop", "changed bytes", 0o644);
+    write_status_file(data, "applications/mode.desktop", "mode bytes", 0o600);
+    write_status_file(data, "applications/group.desktop", "group bytes", 0o664);
+    write_status_file(data, "applications/setuid.desktop", "setuid bytes", 0o4644);
+    write_status_file(data, "applications/hard-source.desktop", "hard bytes", 0o644);
+    if (c.linkat(data.fd, "applications/hard-source.desktop", data.fd, "applications/hard.desktop", 0) != 0) return error.IoError;
+    if (c.symlinkat("ok.desktop", data.fd, "applications/link.desktop") != 0) return error.IoError;
+    if (c.symlinkat(".", data.fd, "applications/linkdir") != 0) return error.IoError;
+    write_status_file(data, "applications/plain", "not a directory", 0o644);
+    {
+        var huge = try data.createFile("applications/huge.desktop", .{});
+        defer huge.close();
+        try huge.setEndPos(MaxArtifactBytes + 1);
+    }
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const digest_ok = hash_hex("ok bytes");
+    const digest_bin = hash_hex("bin bytes");
+    const digest_original = hash_hex("original bytes");
+    const digest_mode = hash_hex("mode bytes");
+    const digest_group = hash_hex("group bytes");
+    const digest_setuid = hash_hex("setuid bytes");
+    const digest_hard = hash_hex("hard bytes");
+    const digest_absent = hash_hex("never written");
+    const specs = [_]test_spec_t{
+        .{ .id = "desktop:ok", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/ok.desktop", .{data_path}), .sha256 = &digest_ok },
+        .{ .id = "handler:bin", .kind = "handler_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/bin.desktop", .{data_path}), .sha256 = &digest_bin },
+        .{ .id = "desktop:changed", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/changed.desktop", .{data_path}), .sha256 = &digest_original },
+        .{ .id = "desktop:mode", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/mode.desktop", .{data_path}), .sha256 = &digest_mode },
+        .{ .id = "desktop:group", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/group.desktop", .{data_path}), .sha256 = &digest_group },
+        .{ .id = "desktop:setuid", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/setuid.desktop", .{data_path}), .sha256 = &digest_setuid },
+        .{ .id = "desktop:hard", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/hard.desktop", .{data_path}), .sha256 = &digest_hard },
+        .{ .id = "desktop:link", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/link.desktop", .{data_path}), .sha256 = &digest_ok },
+        .{ .id = "desktop:parent-link", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/linkdir/ok.desktop", .{data_path}), .sha256 = &digest_ok },
+        .{ .id = "desktop:parent-file", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/plain/x.desktop", .{data_path}), .sha256 = &digest_ok },
+        .{ .id = "desktop:missing-parent", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/nodir/x.desktop", .{data_path}), .sha256 = &digest_ok },
+        .{ .id = "desktop:missing", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/missing.desktop", .{data_path}), .sha256 = &digest_absent },
+        .{ .id = "desktop:huge", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/applications/huge.desktop", .{data_path}), .sha256 = &digest_absent },
+        .{ .id = "desktop:outside", .kind = "desktop_entry", .path = try std.fmt.allocPrint(scratch, "{s}/outside.desktop", .{data_path}), .sha256 = &digest_ok },
+        .{ .id = "autostart:no-config", .kind = "autostart", .path = "/unused-config/autostart/x.desktop", .sha256 = &digest_ok },
+        .{ .id = "binfmt:system", .kind = "binfmt", .path = "/etc/binfmt.d/waddle.conf", .sha256 = &digest_ok },
+    };
+    const expected = [_]record_state_t{ .Ok, .Ok, .Modified, .Foreign, .Foreign, .Foreign, .Foreign, .Foreign, .Foreign, .Foreign, .Missing, .Missing, .Modified, .Foreign, .Foreign, .Foreign };
+    const manifest_bytes = test_document(scratch, 1, &specs);
+    const manifest_fd = c.openat(state.fd, "manifest.json", c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_CLOEXEC | c.O_NOFOLLOW, @as(c_uint, 0o600));
+    if (manifest_fd < 0) return error.IoError;
+    try write_all(manifest_fd, manifest_bytes);
+    if (c.fsync(manifest_fd) != 0 or c.close(manifest_fd) != 0) return error.IoError;
+
+    var store = try store_t.init(std.testing.allocator, state.fd, &roots);
+    defer store.deinit();
+    for (0..2) |_| {
+        var list = try store.status(std.testing.allocator);
+        defer list.deinit();
+        try std.testing.expectEqual(expected.len, list.items.len);
+        for (expected, list.items, specs) |want, got, spec| {
+            try std.testing.expectEqualStrings(spec.id, got.record_id);
+            try std.testing.expectEqual(want, got.state);
+        }
+    }
+    const stored = try state.readFileAlloc(std.testing.allocator, "manifest.json", manifest.MaxManifestBytes);
+    defer std.testing.allocator.free(stored);
+    try std.testing.expectEqualStrings(manifest_bytes, stored);
+    const changed = try data.readFileAlloc(std.testing.allocator, "applications/changed.desktop", 4096);
+    defer std.testing.allocator.free(changed);
+    try std.testing.expectEqualStrings("changed bytes", changed);
+}
+
+test "status returns an empty snapshot without a manifest and rejects unsafe manifests unchanged" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    if (c.mkdirat(temporary.dir.fd, "state", @as(c_uint, 0o700)) != 0) return error.IoError;
+    try temporary.dir.makeDir("data");
+    var state = try temporary.dir.openDir("state", .{});
+    defer state.close();
+    var data = try temporary.dir.openDir("data", .{});
+    defer data.close();
+    const data_path = try data.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(data_path);
+    const roots = [_]root_t{.{ .kind = .Data, .canonical_path = data_path, .dir_fd = data.fd }};
+    var store = try store_t.init(std.testing.allocator, state.fd, &roots);
+    {
+        var empty = try store.status(std.testing.allocator);
+        defer empty.deinit();
+        try std.testing.expectEqual(@as(usize, 0), empty.items.len);
+        empty.deinit();
+        try std.testing.expectEqual(@as(usize, 0), empty.items.len);
+    }
+    const newer = "{\"schema\":2,\"waddle_version\":\"0.3.0\",\"updated\":\"2026-10-25T00:00:00Z\",\"records\":[]}";
+    try write_test_file(state.fd, "manifest.json", newer, 0o600);
+    try std.testing.expectError(error.UnsupportedSchema, store.status(std.testing.allocator));
+    const stored = try state.readFileAlloc(std.testing.allocator, "manifest.json", manifest.MaxManifestBytes);
+    defer std.testing.allocator.free(stored);
+    try std.testing.expectEqualStrings(newer, stored);
+
+    if (c.unlinkat(state.fd, "manifest.json", 0) != 0) return error.IoError;
+    try write_test_file(state.fd, "manifest.json", "{}", 0o644);
+    try std.testing.expectError(error.AccessDenied, store.status(std.testing.allocator));
+    if (c.unlinkat(state.fd, "manifest.json", 0) != 0) return error.IoError;
+    const duplicate_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/applications/dup.desktop", .{data_path});
+    defer std.testing.allocator.free(duplicate_path);
+    const digest = hash_hex("dup");
+    const duplicated = [_]test_spec_t{
+        .{ .id = "desktop:one", .kind = "desktop_entry", .path = duplicate_path, .sha256 = &digest },
+        .{ .id = "desktop:two", .kind = "desktop_entry", .path = duplicate_path, .sha256 = &digest },
+    };
+    const overlapping = test_document(std.testing.allocator, 1, &duplicated);
+    defer std.testing.allocator.free(overlapping);
+    try write_test_file(state.fd, "manifest.json", overlapping, 0o600);
+    try std.testing.expectError(error.ManifestMismatch, store.status(std.testing.allocator));
+    if (c.unlinkat(state.fd, "manifest.json", 0) != 0) return error.IoError;
+    store.deinit();
+    try std.testing.expectError(error.Closed, store.status(std.testing.allocator));
+}
+
+test "status retries after every selected injected I/O failure without mutating state" {
+    defer {
+        injected_io_at = 0;
+        injected_io_count = 0;
+    }
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    if (c.mkdirat(temporary.dir.fd, "state", @as(c_uint, 0o700)) != 0) return error.IoError;
+    try temporary.dir.makeDir("data");
+    var state = try temporary.dir.openDir("state", .{});
+    defer state.close();
+    var data = try temporary.dir.openDir("data", .{});
+    defer data.close();
+    try data.makeDir("applications");
+    const data_path = try data.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(data_path);
+    write_status_file(data, "applications/ok.desktop", "ok bytes", 0o644);
+    const target_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/applications/ok.desktop", .{data_path});
+    defer std.testing.allocator.free(target_path);
+    const digest = hash_hex("ok bytes");
+    const specs = [_]test_spec_t{.{ .id = "desktop:ok", .kind = "desktop_entry", .path = target_path, .sha256 = &digest }};
+    const manifest_bytes = test_document(std.testing.allocator, 1, &specs);
+    defer std.testing.allocator.free(manifest_bytes);
+    try write_test_file(state.fd, "manifest.json", manifest_bytes, 0o600);
+    const roots = [_]root_t{.{ .kind = .Data, .canonical_path = data_path, .dir_fd = data.fd }};
+    var store = try store_t.init(std.testing.allocator, state.fd, &roots);
+    defer store.deinit();
+
+    var observed_failures: usize = 0;
+    for (1..200) |failure_io| {
+        injected_io_at = failure_io;
+        injected_io_count = 0;
+        const outcome = store.status(std.testing.allocator);
+        injected_io_at = 0;
+        if (outcome) |list_value| {
+            var list = list_value;
+            defer list.deinit();
+            try std.testing.expectEqual(@as(usize, 1), list.items.len);
+            try std.testing.expectEqual(record_state_t.Ok, list.items[0].state);
+            break;
+        } else |err| {
+            // An injected fstat fault is mapped to AccessDenied by the existing
+            // read_manifest and open_private_dir fstat checks; every other
+            // injected fault is reported as IoError. Both must fail closed.
+            observed_failures += 1;
+            try std.testing.expect(err == error.IoError or err == error.AccessDenied);
+        }
+        const stored = try state.readFileAlloc(std.testing.allocator, "manifest.json", manifest.MaxManifestBytes);
+        defer std.testing.allocator.free(stored);
+        try std.testing.expectEqualStrings(manifest_bytes, stored);
+        const payload = try data.readFileAlloc(std.testing.allocator, "applications/ok.desktop", 4096);
+        defer std.testing.allocator.free(payload);
+        try std.testing.expectEqualStrings("ok bytes", payload);
+    }
+    try std.testing.expect(observed_failures > 0);
+}
+
+test "status allocation failures leave no leaks and every retry classifies the same records" {
+    var observed_failures: usize = 0;
+    for (0..512) |failure_offset| {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        if (c.mkdirat(temporary.dir.fd, "state", @as(c_uint, 0o700)) != 0) return error.IoError;
+        try temporary.dir.makeDir("data");
+        var state = try temporary.dir.openDir("state", .{});
+        defer state.close();
+        var data = try temporary.dir.openDir("data", .{});
+        defer data.close();
+        try data.makeDir("applications");
+        const data_path = try data.realpathAlloc(std.testing.allocator, ".");
+        defer std.testing.allocator.free(data_path);
+        write_status_file(data, "applications/ok.desktop", "ok bytes", 0o644);
+        write_status_file(data, "applications/changed.desktop", "changed bytes", 0o644);
+        const ok_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/applications/ok.desktop", .{data_path});
+        defer std.testing.allocator.free(ok_path);
+        const changed_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/applications/changed.desktop", .{data_path});
+        defer std.testing.allocator.free(changed_path);
+        const ok_digest = hash_hex("ok bytes");
+        const original_digest = hash_hex("original bytes");
+        const specs = [_]test_spec_t{
+            .{ .id = "desktop:ok", .kind = "desktop_entry", .path = ok_path, .sha256 = &ok_digest },
+            .{ .id = "desktop:changed", .kind = "desktop_entry", .path = changed_path, .sha256 = &original_digest },
+        };
+        const manifest_bytes = test_document(std.testing.allocator, 1, &specs);
+        defer std.testing.allocator.free(manifest_bytes);
+        try write_test_file(state.fd, "manifest.json", manifest_bytes, 0o600);
+        const roots = [_]root_t{.{ .kind = .Data, .canonical_path = data_path, .dir_fd = data.fd }};
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = std.math.maxInt(usize) });
+        var store = try store_t.init(failing.allocator(), state.fd, &roots);
+        failing.fail_index = failing.alloc_index + failure_offset;
+        const outcome = store.status(failing.allocator());
+        if (!failing.has_induced_failure) {
+            var list = try outcome;
+            list.deinit();
+            store.deinit();
+            try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+            break;
+        }
+        observed_failures += 1;
+        if (outcome) |_| {
+            return error.ExpectedOutOfMemory;
+        } else |err| if (err != error.OutOfMemory) return err;
+        failing.fail_index = std.math.maxInt(usize);
+        var list = try store.status(failing.allocator());
+        try std.testing.expectEqual(@as(usize, 2), list.items.len);
+        try std.testing.expectEqual(record_state_t.Ok, list.items[0].state);
+        try std.testing.expectEqual(record_state_t.Modified, list.items[1].state);
+        list.deinit();
+        store.deinit();
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+    try std.testing.expect(observed_failures > 0);
 }
 
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
