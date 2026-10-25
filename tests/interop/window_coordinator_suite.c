@@ -1541,6 +1541,36 @@ static int test_desktop_change_pauses_observation(void) {
     return 0;
 }
 
+/* ---- Review regressions (Opus review of the coordinator, P1-P6) --------------------------------- */
+
+/** @brief P1: a stale reply that cannot be queued is counted and dropped; the coordinator keeps running. */
+static int test_review_p1_stale_reply_under_full_outbound_drops(void) {
+    fixture_t *fp = &GlobalFixture;
+    uint8_t frame[WireFrameBytes];
+    size_t length = 0;
+    window_coordinator_stats_t stats;
+    uint32_t pass;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    fp->wire.backpressure_budget = 1000000u;
+    for (pass = 0; pass < 40u; ++pass) {
+        uint32_t index;
+        for (index = 0; index < 16u; ++index) {
+            Check(build_host(InteropMsgFrameRelease, frame, sizeof(frame), &length, 0x9999, 1, 1, 0, 1, 0, 0) == 0);
+            Check(wire_push_host(&fp->wire, frame, length) == 0);
+        }
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.stale_replies >= 1u);
+    fp->wire.backpressure_budget = 0u;
+    retire_one_window(fp, 0x1000);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -1983,6 +2013,7 @@ int main(void) {
         {"reentry and budgeted passes", test_reentry_and_budgeted_passes},
         {"minimum size is encoded", test_minimum_size_is_encoded},
         {"desktop change pauses observation", test_desktop_change_pauses_observation},
+        {"review P1: stale reply under full outbound is dropped", test_review_p1_stale_reply_under_full_outbound_drops},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},

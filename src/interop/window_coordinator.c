@@ -791,8 +791,13 @@ static int read_u32(const uint8_t *payload, size_t length, uint16_t tag, uint32_
 }
 
 /** @brief Replies Error{StaleWindow} to a host frame that names no exported generation. */
+/**
+ * @brief Counts a stale host frame and answers it with Error{StaleWindow}. A full outbound FIFO drops the answer:
+ *        the host frame is already rejected, and a missing error reply is not a fault.
+ */
 static void reply_stale(window_coordinator_t *coordinator) {
     coordinator->stats.stale_replies = saturate_add(coordinator->stats.stale_replies);
+    if (outbound_full(coordinator)) return;
     if (encode_stale_error(coordinator) != 0) coordinator->state = WindowCoordinatorStateFaulted;
 }
 
