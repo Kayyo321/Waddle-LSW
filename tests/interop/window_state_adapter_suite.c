@@ -953,6 +953,181 @@ static int test_random_sequences_with_faults(void) {
     return 0;
 }
 
+/* ---- Argument, identity and failure forms not reached above ------------------------------------- */
+
+/* calloc is wrapped (link flag --wrap=calloc) so the out-of-memory path of create can be taken. */
+extern void *__real_calloc(size_t count, size_t size);
+static int fail_next_calloc = 0;
+void *__wrap_calloc(size_t count, size_t size) {
+    if (fail_next_calloc != 0) {
+        fail_next_calloc = 0;
+        return NULL;
+    }
+    return __real_calloc(count, size);
+}
+
+static int test_create_out_of_memory(void) {
+    wsa_double_t d;
+    window_state_adapter_t *adapter = (window_state_adapter_t *)&d;
+    wsa_double_init(&d, OwnerThread);
+    fail_next_calloc = 1;
+    Check(window_state_adapter_create(wsa_double_api(), &d, &adapter) == WindowStateAdapterOutOfMemory);
+    Check(adapter == NULL);
+    fail_next_calloc = 0;
+    return 0;
+}
+
+static int test_native_api_is_null_off_windows(void) {
+#ifndef _WIN32
+    Check(window_state_native_api() == NULL);
+#endif
+    return 0;
+}
+
+static int test_zero_and_null_argument_forms(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t minimize = action_of(WaddleWindowStateActionGuestMinimize);
+    uint32_t bits = 0;
+    window_state_adapter_t *none = NULL;
+
+    Check(fixture_open(&f) == 0);
+    /* Each zero identity component on its own. */
+    Check(window_state_adapter_admit(f.a, HwndOther, 0, GenMain) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_admit(f.a, HwndOther, IdMain, 0) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_release(f.a, 0, GenMain) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_release(f.a, IdMain, 0) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_observe(f.a, HwndMain, 0, GenMain, &bits) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, 0, &bits) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, NULL) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_execute(f.a, HwndMain, 0, GenMain, &minimize, 1, &completed) ==
+          WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_execute(f.a, HwndMain, IdMain, 0, &minimize, 1, &completed) ==
+          WindowStateAdapterInvalidArgument);
+    /* A NULL adapter, in every entry that takes one. */
+    Check(window_state_adapter_admit(none, HwndOther, IdMain, GenMain) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_release(none, IdMain, GenMain) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_observe(none, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_execute(none, HwndMain, IdMain, GenMain, &minimize, 1, &completed) ==
+          WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_last_error(none) == 0);
+    /* Each identity component differing from the admitted pair is NotAdmitted, not a match. */
+    Check(window_state_adapter_observe(f.a, HwndMain, 2, GenMain, &bits) == WindowStateAdapterNotAdmitted);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, 2, &bits) == WindowStateAdapterNotAdmitted);
+    Check(window_state_adapter_execute(f.a, HwndMain, 2, GenMain, &minimize, 1, &completed) ==
+          WindowStateAdapterNotAdmitted);
+    Check(window_state_adapter_execute(f.a, HwndMain, IdMain, 2, &minimize, 1, &completed) ==
+          WindowStateAdapterNotAdmitted);
+    Check(completed == 0);
+    fixture_close(&f);
+    return 0;
+}
+
+static int test_observe_identity_and_query_failures(void) {
+    fixture_t f;
+    uint32_t bits = 0xbeefu;
+
+    Check(fixture_open(&f) == 0);
+    Check(window_state_adapter_observe(f.a, HwndOther, IdMain, GenMain, &bits) == WindowStateAdapterInvalidArgument);
+    Check(bits == 0xbeefu);
+
+    wsa_double_arm(&f.d, WsaDoubleIsIconic, 1, 0);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterNativeFailure);
+    Check(bits == 0xbeefu);
+    wsa_double_disarm(&f.d);
+
+    wsa_double_arm(&f.d, WsaDoubleIsZoomed, 1, 0);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterNativeFailure);
+    Check(bits == 0xbeefu);
+    wsa_double_disarm(&f.d);
+
+    /* A destroyed window is stale when observed, and the entry is removed. */
+    wsa_double_destroy_window(&f.d, HwndMain);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterStaleHandle);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterNotAdmitted);
+    fixture_close(&f);
+    return 0;
+}
+
+static int test_thread_zero_at_identity_and_foreground(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t minimize = action_of(WaddleWindowStateActionGuestMinimize);
+    waddle_window_state_action_t activate = action_of(WaddleWindowStateActionGuestActivate);
+    wsa_double_window_t *record;
+
+    /* The identity query reports thread 0 after admission: a native failure, not a match. */
+    Check(fixture_open(&f) == 0);
+    record = wsa_double_find(&f.d, HwndMain);
+    record->thread_id = 0;
+    Check(run(&f, &minimize, 1, &completed) == WindowStateAdapterNativeFailure);
+    Check(completed == 0);
+    record->thread_id = MainThread;
+    fixture_close(&f);
+
+    /* The foreground window's thread query fails during the fallback. */
+    Check(fixture_open(&f) == 0);
+    prepare_locked_foreground(&f.d, 77);
+    wsa_double_reset(&f.d);
+    wsa_double_arm(&f.d, WsaDoubleWindowThread, 2, 0);
+    Check(run(&f, &activate, 1, &completed) == WindowStateAdapterNativeFailure);
+    wsa_double_disarm(&f.d);
+    fixture_close(&f);
+
+    /* The foreground window reports thread 0: refused. */
+    Check(fixture_open(&f) == 0);
+    prepare_locked_foreground(&f.d, 77);
+    wsa_double_find(&f.d, HwndOther)->thread_id = 0;
+    Check(run(&f, &activate, 1, &completed) == WindowStateAdapterNativeFailure);
+    fixture_close(&f);
+    return 0;
+}
+
+static int test_fallback_first_failure_is_kept(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t activate = action_of(WaddleWindowStateActionGuestActivate);
+
+    /* The retry of SetForegroundWindow fails, and so does SetActiveWindow: the first failure stands and
+     * the attachment is still detached. */
+    Check(fixture_open(&f) == 0);
+    prepare_locked_foreground(&f.d, 77);
+    wsa_double_reset(&f.d);
+    wsa_double_arm(&f.d, WsaDoubleSetForegroundWindow, 2, 0);
+    wsa_double_arm(&f.d, WsaDoubleSetActiveWindow, 1, 0);
+    Check(run(&f, &activate, 1, &completed) == WindowStateAdapterNativeFailure);
+    Check(f.d.attached == 0);
+    wsa_double_disarm(&f.d);
+    fixture_close(&f);
+
+    /* The retry of SetForegroundWindow fails, and the detach also fails: detach is still attempted. */
+    Check(fixture_open(&f) == 0);
+    prepare_locked_foreground(&f.d, 77);
+    wsa_double_reset(&f.d);
+    wsa_double_arm(&f.d, WsaDoubleSetForegroundWindow, 2, 0);
+    wsa_double_arm(&f.d, WsaDoubleAttachThreadInput, 2, 0);
+    Check(run(&f, &activate, 1, &completed) == WindowStateAdapterNativeFailure);
+    Check(f.d.calls[WsaDoubleAttachThreadInput] == 2);
+    wsa_double_disarm(&f.d);
+    fixture_close(&f);
+    return 0;
+}
+
+static int test_geometry_height_above_maximum(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t tall = geometry_of(0, 0, 240, WaddleWindowStateAdapterMaxExtent + 1);
+    waddle_window_state_action_t largest = geometry_of(0, 0, WaddleWindowStateAdapterMaxExtent, WaddleWindowStateAdapterMaxExtent);
+
+    Check(fixture_open(&f) == 0);
+    wsa_double_reset(&f.d);
+    Check(run(&f, &tall, 1, &completed) == WindowStateAdapterInvalidGeometry);
+    Check(f.d.log_count == 0);
+    Check(run(&f, &largest, 1, &completed) == WindowStateAdapterOk);
+    fixture_close(&f);
+    return 0;
+}
+
 static int run_test(const char *name, int (*test)(void)) {
     int result = test();
     if (result != 0) {
@@ -986,6 +1161,13 @@ int main(void) {
     failures += run_test("last error and foreign thread", test_last_error_and_foreign_thread);
     failures += run_test("re-entry is refused", test_reentry_is_refused);
     failures += run_test("random sequences with faults", test_random_sequences_with_faults);
+    failures += run_test("create out of memory", test_create_out_of_memory);
+    failures += run_test("native table is NULL off Windows", test_native_api_is_null_off_windows);
+    failures += run_test("zero and NULL argument forms", test_zero_and_null_argument_forms);
+    failures += run_test("observe identity and query failures", test_observe_identity_and_query_failures);
+    failures += run_test("zero thread at identity and foreground", test_thread_zero_at_identity_and_foreground);
+    failures += run_test("first fallback failure is kept", test_fallback_first_failure_is_kept);
+    failures += run_test("geometry height above maximum", test_geometry_height_above_maximum);
     if (failures != 0) {
         fprintf(stderr, "window_state_adapter_suite: %d test(s) failed\n", failures);
         return 1;
