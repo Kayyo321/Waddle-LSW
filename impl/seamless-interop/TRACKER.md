@@ -1705,7 +1705,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     manifest_replace_evidence_2026_10_25. Zig allocator/OOM gate has zero leaks.
     Commands, all producers and comprehensive crash/native/full-removal stay open.
 
-- **Commit `HEAD`**: `feat(interop): generate bounded desktop artifacts with rooted recovery qualification`
+- **Commit `58eefbd`**: `feat(interop): generate bounded desktop artifacts with rooted recovery qualification`
   - **Task Impact**: +60% to TODO #28 (+2.40% overall; total30.95%).
   - **Summary**: Generate deterministic desktop/menu/directory and supplied-PNG
     artifacts with sorted cumulative manifests, exact bounds and sole ownership.
@@ -1716,3 +1716,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     Add mandatory test packages and default test/sanitizer/coverage wiring.
     Preserve immutable exact-source logs/recorder/report. Association/runtime,
     desktop mirroring and native installed-shell qualification remain open.
+
+- **Commit `HEAD`**: `docs(interop): record achieved 30 percent milestone and released ownership`
+  - **Task Impact**: +0% to all tasks (total30.95%).
+  - **Summary**: Save exact accepted code/evidence references, unchanged task
+    weights, worker ownership release, stopped native guest state and remaining
+    integration/qualification lanes. Previous6318a3d four workflows are green;
+    the milestone push requires its own latest-head CI verification. No feature
+    completion or PR/merge eligibility is claimed.

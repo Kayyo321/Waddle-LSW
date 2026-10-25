@@ -1,47 +1,46 @@
 {
   "phase_id": "resume_30_percent_2026_10_25",
-  "baseline": "7d4a01e",
+  "baseline": "58eefbd",
   "target_overall_percent": 30,
-  "active_workers": [
-    {
-      "agent": "luna_manifest_engine",
-      "owns": [
-        "src/interop/desktop_artifacts.zig",
-        "tests/interop/desktop_artifacts.zig",
-        "impl/seamless-interop/desktop_artifacts_contract.md"
-      ]
-    },
-    {
-      "agent": "luna_host_runtime",
-      "owns": [
-        "src/interop/icon_windows.c",
-        "src/interop/icon_windows.h",
-        "tests/interop/icon_windows.c",
-        "tests/interop/icon_windows_faults.inc",
-        "impl/seamless-interop/icon_pipeline_contract.md"
-      ]
-    },
-    {
-      "agent": "luna_fresh_guest",
-      "owns": [
-        "src/interop/manifest_store.zig",
-        "tests/interop/manifest_store*",
-        "tests/interop/manifest_replace*",
-        "impl/seamless-interop/manifest_replace_contract.md"
-      ]
-    }
-  ],
+  "reviewed_overall_percent": 30.95,
+  "milestone_status": "achieved; feature remains In Progress",
+  "active_workers": [],
+  "ownership": "All bounded Luna worker ownership released to root; no worker may edit, stage or commit without a new assignment.",
   "root_ownership": [
-    "shared contracts and ABI",
-    "build and CI",
-    "tracker and Git",
-    "native device/runner actions",
-    "critical review",
-    "daemon status codec",
-    "frozen catalog files/native provider",
-    "MIME editor",
-    "PNG encoder"
+    "all feature files, tracker, evidence and Git",
+    "critical review and independent qualification",
+    "native device/runner actions"
   ],
-  "no_worker_may_stage_or_commit": true,
-  "reviewed_overall_percent": 23.6
+  "completed_milestones": {
+    "13": "portable reducer50%",
+    "27": "PNG10%, portable snapshot/diff20%, native icon15%, native catalog20%",
+    "28": "bounded generation40% and actual rooted consumer20%",
+    "33": "schema15%, journal30%, rooted artifact/backup/restore API20%"
+  },
+  "latest_qualifications": {
+    "manifest_replace": "aac0e6e: root64+3tests,99.79%lines,90.02%taken arcs",
+    "desktop_artifacts": "58eefbd: root90tests,98.55%lines,90.03%taken arcs; real GLib C consumer ASan/LSan/UBSan detect_leaks=1",
+    "native_components": {
+      "run": 40225302430,
+      "commit": "6318a3d",
+      "conclusion": "all green",
+      "catalog_lines_percent": 100,
+      "catalog_taken_arcs_percent": 90.145985,
+      "icon_fixed_source_commit": "eb01019",
+      "icon_run": 40224183558,
+      "icon_lines_percent": 98.0969,
+      "icon_taken_arcs_percent": 90.4665
+    }
+  },
+  "next_work": [
+    "TODO #10 remaining20%: connect observer/graph to coordinator, capture/slots and wire without weakening retirement ownership",
+    "TODO #7 local command control and AV/Wayland integration; #11 native host window mapping",
+    "TODO #13 native adapter25%, wire/compositor15%, integrated native10%",
+    "TODO #27 watches/enrichment15%, wire/runtime10%, integrated native10%",
+    "TODO #28 association/runtime20%, desktop mirror10%, native installed-shell10%",
+    "TODO #33 commands/all producers20%, comprehensive process-crash/native/full-removal15%"
+  ],
+  "native_status": "Original Win11 and private assets untouched; fresh isolated installed guest ACPI stopped and QEMU/swtpm reaped; installed observer milestone already qualified separately. No driver install or native desktop acceptance newly claimed.",
+  "ci_at_checkpoint": "Previous6318a3d full interop, native interop, AV and graph workflows green. Push this checkpoint then inspect all latest-head workflows; local milestone gates already pass.",
+  "merge_policy": "No PR/merge until all tracker tasks100% and feature verification passes. This30% milestone does not authorize false completion."
 }
