@@ -121,6 +121,11 @@ pub const request_t = struct {
     menu_filter: menu_filter_t = .Installed,
     /// Whether to include the menu and desktop-directory artifacts.
     include_menu: bool = true,
+    /// True (default): each candidate is the cumulative snapshot of every earlier artifact, so the
+    /// output is quadratic in the artifact count. False: each candidate holds only its own record,
+    /// so the output is linear. Non-cumulative candidates are not store-ready on their own; the
+    /// caller composes the commit candidate from the base manifest and this record.
+    cumulative_candidates: bool = true,
 };
 
 const record_view_t = manifest.record_t;
@@ -269,8 +274,12 @@ pub fn build(allocator: std.mem.Allocator, request: request_t, output: *artifact
     for (generated.items, 0..) |*item, index| {
         item.digest = sha256_hex(item.bytes);
         const new_record = record_view_t{ .id = item.record_id, .kind = parse_kind(item.kind), .path = item.path, .sha256 = &item.digest, .device = item.device, .app_key = item.app_key, .created_by = request.waddle_version, .prior = .None, .mime = null };
-        try cumulative.append(new_record);
-        const candidate = try serialize_manifest(allocator, request, cumulative.items);
+        var single = [_]record_view_t{new_record};
+        const candidate_records: []const record_view_t = if (request.cumulative_candidates) blk: {
+            try cumulative.append(new_record);
+            break :blk cumulative.items;
+        } else &single;
+        const candidate = try serialize_manifest(allocator, request, candidate_records);
         var candidate_transferred = false;
         errdefer if (!candidate_transferred) allocator.free(candidate);
         output_total = try add_bounded(output_total, candidate.len, MaxOutputBytes, error.OutputTooLarge);
@@ -740,6 +749,55 @@ fn free_artifact(allocator: std.mem.Allocator, item: artifact_t) void {
 // Test-only fixtures.
 fn basic_request(items: []const item_input_t) request_t {
     return .{ .data_root = "/home/test/.local/share", .config_root = "/home/test/.config", .launcher_path = "/usr/bin/waddle", .device = "default", .waddle_version = "0.2.0", .updated = "2026-10-25T12:00:00Z", .items = items };
+}
+
+test "non-cumulative candidates hold exactly their own record and stay linear in size" {
+    const items = [_]item_input_t{
+        .{ .app_key = "a-Editor", .display_name = "Editor" },
+        .{ .app_key = "a-Viewer", .display_name = "Viewer" },
+        .{ .app_key = "a-Player", .display_name = "Player" },
+    };
+    var request = basic_request(&items);
+    request.cumulative_candidates = false;
+    request.include_menu = false;
+    var output = artifacts_t{ .allocator = std.testing.allocator, .items = &.{} };
+    try build(std.testing.allocator, request, &output);
+    defer output.deinit();
+    var total: usize = 0;
+    for (output.items) |artifact| {
+        var parsed = try manifest.parse(std.testing.allocator, artifact.candidate_manifest);
+        defer parsed.deinit();
+        try std.testing.expectEqual(@as(usize, 1), parsed.records.len);
+        try std.testing.expectEqualStrings(artifact.record_id, parsed.records[0].id);
+        total += artifact.candidate_manifest.len;
+    }
+    // Cumulative output for the same request grows quadratically; this one is the sum of single records.
+    var cumulative = artifacts_t{ .allocator = std.testing.allocator, .items = &.{} };
+    request.cumulative_candidates = true;
+    try build(std.testing.allocator, request, &cumulative);
+    defer cumulative.deinit();
+    var cumulative_total: usize = 0;
+    for (cumulative.items) |artifact| cumulative_total += artifact.candidate_manifest.len;
+    try std.testing.expect(total < cumulative_total);
+}
+
+test "linear candidates publish a menu for a catalog the cumulative cap refuses" {
+    var items: [600]item_input_t = undefined;
+    var keys: [600][16]u8 = undefined;
+    for (&items, 0..) |*item, i| {
+        const key = try std.fmt.bufPrint(&keys[i], "a-App{d:0>4}", .{i});
+        item.* = .{ .app_key = key, .display_name = "Application" };
+    }
+    var request = basic_request(&items);
+    request.cumulative_candidates = true;
+    var refused = artifacts_t{ .allocator = std.testing.allocator, .items = &.{} };
+    try std.testing.expectError(error.OutputTooLarge, build(std.testing.allocator, request, &refused));
+    try std.testing.expectEqual(@as(usize, 0), refused.items.len);
+    request.cumulative_candidates = false;
+    var linear = artifacts_t{ .allocator = std.testing.allocator, .items = &.{} };
+    try build(std.testing.allocator, request, &linear);
+    defer linear.deinit();
+    try std.testing.expect(linear.items.len >= items.len);
 }
 
 test "desktop output and cumulative manifests are deterministic and valid" {
