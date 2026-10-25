@@ -59,6 +59,8 @@ pub const slot_t = extern struct {
     parent: window_ref_t,
     /// Realization sequence number, unique per epoch and increasing with each realize.
     realize_seq: u64,
+    /// Opaque value owned by the adapter for this window. Zero when realized; set with `set_user_data`.
+    user_data: u64,
     /// Raw `interop_window_role_t` value, 1..6.
     role: u8,
     /// Nonzero while the slot holds a realized window.
@@ -73,6 +75,8 @@ pub const window_entry_t = extern struct {
     parent: window_ref_t,
     /// Realization sequence number.
     realize_seq: u64,
+    /// Adapter value stored for this window.
+    user_data: u64,
     /// Stable slot index of this window.
     slot: u32,
     /// Raw `interop_window_role_t` value, 1..6.
@@ -140,6 +144,16 @@ pub const reset_result_t = extern struct {
     status: reset_status_t,
     /// Realized windows written to the teardown list; zero unless Reset.
     count: u32,
+};
+
+/// Result code of `set_user_data` and `get_user_data`.
+pub const user_data_status_t = enum(c_int) {
+    /// The value was set or read.
+    Ok = 1,
+    /// The slot does not hold exactly this window. Nothing changed.
+    Stale = 2,
+    /// Zero identity, slot index outside the table, NULL output, overlap, or a corrupt table. Nothing changed.
+    RefuseInvalid = 3,
 };
 
 /// Result of `retire`. `count` is the number of entries written to the output list.
@@ -296,7 +310,7 @@ pub fn lookup(map: *const host_window_map_t, window: window_ref_t) ?window_entry
     if (!is_consistent(map)) return null;
     const index = find_exact(map, window) orelse return null;
     const slot = map.slots[index];
-    return .{ .window = slot.window, .parent = slot.parent, .realize_seq = slot.realize_seq, .slot = @intCast(index), .role = slot.role };
+    return .{ .window = slot.window, .parent = slot.parent, .realize_seq = slot.realize_seq, .user_data = slot.user_data, .slot = @intCast(index), .role = slot.role };
 }
 
 /// Whether the exact identity is currently realized.
@@ -314,6 +328,42 @@ pub fn is_current(map: *const host_window_map_t, window: window_ref_t) bool {
 /// @return The realized count when the table is consistent, otherwise 0.
 pub fn realized_count(map: *const host_window_map_t) u32 {
     return if (is_consistent(map)) map.realized_count else 0;
+}
+
+/// Set the adapter value of the window in `slot`, if that slot holds exactly `window`.
+///
+/// @param map Table; must not be null.
+/// @param slot Slot index from the announce or lookup that realized the window; must be below 64.
+/// @param window Identity the caller believes the slot holds; both fields nonzero.
+/// @param value Value to store.
+/// @return `Ok` when stored, `Stale` when the slot is free or holds another pair, `RefuseInvalid` for bad
+///         arguments or a corrupt table.
+pub fn set_user_data(map: *host_window_map_t, slot: u32, window: window_ref_t, value: u64) user_data_status_t {
+    const index = checked_slot(map, slot, window) orelse return .RefuseInvalid;
+    if (!same_ref(map.slots[index].window, window) or map.slots[index].occupied == 0) return .Stale;
+    map.slots[index].user_data = value;
+    return .Ok;
+}
+
+/// Read the adapter value of the window in `slot`, if that slot holds exactly `window`.
+///
+/// @param map Table, read only.
+/// @param slot Slot index; must be below 64.
+/// @param window Identity the caller believes the slot holds; both fields nonzero.
+/// @param value Out. Receives the stored value on Ok only.
+/// @return `Ok`, `Stale` or `RefuseInvalid` as for `set_user_data`.
+pub fn get_user_data(map: *const host_window_map_t, slot: u32, window: window_ref_t, value: *u64) user_data_status_t {
+    const index = checked_slot(map, slot, window) orelse return .RefuseInvalid;
+    if (!same_ref(map.slots[index].window, window) or map.slots[index].occupied == 0) return .Stale;
+    value.* = map.slots[index].user_data;
+    return .Ok;
+}
+
+/// Validate a slot index and identity for the user-data accessors. Returns the index, or null when the
+/// arguments or the table are invalid.
+fn checked_slot(map: *const host_window_map_t, slot: u32, window: window_ref_t) ?usize {
+    if (!valid_ref(window) or slot >= MaxRealized or !is_consistent(map)) return null;
+    return slot;
 }
 
 /// Realize one window if its parent, when named, is exactly realized.
@@ -350,7 +400,7 @@ pub fn announce(map: *host_window_map_t, window: window_ref_t, parent: window_re
 
     // A consistent table with fewer than MaxRealized occupied slots always has a free one.
     const index = find_free(map) orelse unreachable;
-    map.slots[index] = .{ .window = window, .parent = parent, .realize_seq = map.next_seq, .role = role, .occupied = 1 };
+    map.slots[index] = .{ .window = window, .parent = parent, .realize_seq = map.next_seq, .user_data = 0, .role = role, .occupied = 1 };
     map.next_seq += 1;
     map.realized_count += 1;
     return .{ .status = .Realize, .slot = @intCast(index) };
@@ -528,6 +578,32 @@ export fn host_window_map_realized_count(map: ?*const host_window_map_t) callcon
     return if (map) |target| realized_count(target) else 0;
 }
 
+/// C ABI: set the adapter value of the window in `slot`. See `set_user_data`.
+///
+/// @param map In/out. Table; NULL gives RefuseInvalid.
+/// @param slot In. Slot index from the announce that realized the window.
+/// @param window In. Identity by value; both fields nonzero.
+/// @param value In. Value to store.
+/// @return Status. Thread safety: owner thread only.
+export fn host_window_map_set_user_data(map: ?*host_window_map_t, slot: u32, window: window_ref_t, value: u64) callconv(.C) user_data_status_t {
+    const target = map orelse return .RefuseInvalid;
+    return set_user_data(target, slot, window, value);
+}
+
+/// C ABI: read the adapter value of the window in `slot`. See `get_user_data`.
+///
+/// @param map In. Table, read only; NULL gives RefuseInvalid.
+/// @param slot In. Slot index from the announce that realized the window.
+/// @param window In. Identity by value; both fields nonzero.
+/// @param value Out. Receives the stored value on Ok only; NULL gives RefuseInvalid. Must not overlap `map`.
+/// @return Status. Thread safety: owner thread only.
+export fn host_window_map_get_user_data(map: ?*const host_window_map_t, slot: u32, window: window_ref_t, value: ?*u64) callconv(.C) user_data_status_t {
+    const target = map orelse return .RefuseInvalid;
+    const destination = value orelse return .RefuseInvalid;
+    if (!regions_disjoint(&.{ region_of_value(target), region_of_value(destination) })) return .RefuseInvalid;
+    return get_user_data(target, slot, window, destination);
+}
+
 /// C ABI: protocol error code for an announce status. See `announce_error_code`.
 ///
 /// @param status In. Status returned by `host_window_map_announce`.
@@ -546,8 +622,8 @@ export fn host_window_map_retire_error_code(status: retire_status_t) callconv(.C
 
 comptime {
     // Layout frozen by src/interop/host_window_map.h (and checked there by _Static_assert).
-    if (@sizeOf(window_ref_t) != 16 or @sizeOf(slot_t) != 48 or @sizeOf(window_entry_t) != 48) @compileError("host window map slot layout changed");
-    if (@sizeOf(host_window_map_t) != 3088) @compileError("host window map table layout changed");
+    if (@sizeOf(window_ref_t) != 16 or @sizeOf(slot_t) != 56 or @sizeOf(window_entry_t) != 56) @compileError("host window map slot layout changed");
+    if (@sizeOf(host_window_map_t) != 3600) @compileError("host window map table layout changed");
 }
 
 // Test-only fixtures.
@@ -612,6 +688,14 @@ const abi_shim_t = struct {
 
     fn retire_error_code(status: retire_status_t) u32 {
         return @call(.never_inline, host_window_map_retire_error_code, .{status});
+    }
+
+    fn set_user_data(map: ?*host_window_map_t, slot: u32, window: window_ref_t, value: u64) user_data_status_t {
+        return @call(.never_inline, host_window_map_set_user_data, .{ map, slot, window, value });
+    }
+
+    fn get_user_data(map: ?*const host_window_map_t, slot: u32, window: window_ref_t, value: ?*u64) user_data_status_t {
+        return @call(.never_inline, host_window_map_get_user_data, .{ map, slot, window, value });
     }
 };
 
@@ -960,6 +1044,7 @@ const reference_model_t = struct {
         parent: window_ref_t,
         role: u8,
         seq: u64,
+        user_data: u64,
     };
 
     fn model_init() reference_model_t {
@@ -1003,7 +1088,7 @@ const reference_model_t = struct {
         if (self.model_count() == MaxRealized or self.next_seq == std.math.maxInt(u64)) return .{ .status = .RefuseExhausted, .slot = NoSlot };
         var free: usize = 0;
         while (self.entries[free] != null) free += 1;
-        self.entries[free] = .{ .window = window, .parent = parent, .role = role, .seq = self.next_seq };
+        self.entries[free] = .{ .window = window, .parent = parent, .role = role, .seq = self.next_seq, .user_data = 0 };
         self.next_seq += 1;
         return .{ .status = .Realize, .slot = @intCast(free) };
     }
@@ -1046,6 +1131,14 @@ const reference_model_t = struct {
     }
 
     /// Teardown: roots by descending sequence number, each subtree children first.
+    fn model_user_data(self: *reference_model_t, slot: u32, window: window_ref_t, set: ?u64) user_data_status_t {
+        if (window.window == 0 or window.generation == 0 or slot >= MaxRealized) return .RefuseInvalid;
+        const entry = &(self.entries[slot] orelse return .Stale);
+        if (!same_ref(entry.window, window)) return .Stale;
+        if (set) |value| entry.user_data = value;
+        return .Ok;
+    }
+
     fn model_reset(self: *reference_model_t, out: *std.ArrayList(window_ref_t)) !reset_status_t {
         out.clearRetainingCapacity();
         var roots = std.ArrayList(usize).init(testing.allocator);
@@ -1075,6 +1168,7 @@ fn expect_same_state(map: *const host_window_map_t, model: *const reference_mode
             try expect_ref(value.parent, map.slots[index].parent);
             try testing.expectEqual(value.role, map.slots[index].role);
             try testing.expectEqual(value.seq, map.slots[index].realize_seq);
+            try testing.expectEqual(value.user_data, map.slots[index].user_data);
         } else {
             try testing.expectEqual(@as(u8, 0), map.slots[index].occupied);
         }
@@ -1110,7 +1204,7 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
             const expected = model.model_announce(window, parent, role);
             try testing.expectEqual(expected.status, got.status);
             try testing.expectEqual(expected.slot, got.slot);
-        } else {
+        } else if (choice < 85) {
             const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
             const got = retire(&map, window, &out);
             const expected = try model.model_retire(window, &out_list);
@@ -1118,6 +1212,19 @@ fn run_random_sequence(seed: u64, windows: u64, operations: usize) !void {
             if (got.status == .Retired) {
                 try testing.expectEqual(@as(u32, @intCast(out_list.items.len)), got.count);
                 for (out_list.items, 0..) |pair, index| try expect_ref(pair, out[index]);
+            }
+        } else {
+            // User data by slot: slots past the table and mismatched windows are refused or stale.
+            const slot: u32 = random.uintLessThan(u32, MaxRealized + 2);
+            const window = ref(random.uintLessThan(u64, windows + 1), random.uintLessThan(u64, 4));
+            if (random.boolean()) {
+                const value = random.int(u64);
+                try testing.expectEqual(model.model_user_data(slot, window, value), set_user_data(&map, slot, window, value));
+            } else {
+                var got: u64 = 0xDEAD;
+                const status = get_user_data(&map, slot, window, &got);
+                try testing.expectEqual(model.model_user_data(slot, window, null), status);
+                if (status == .Ok) try testing.expectEqual(model.entries[slot].?.user_data, got) else try testing.expectEqual(@as(u64, 0xDEAD), got);
             }
         }
         try expect_same_state(&map, &model);
@@ -1130,6 +1237,64 @@ test "randomized sequences agree with the reference model over small and large u
     try run_random_sequence(3, 40, 4000);
     try run_random_sequence(4, 120, 6000);
     try run_random_sequence(0x9E3779B97F4A7C15, 200, 6000);
+}
+
+test "user data is stored per slot, validated by slot and window, and reset when the slot is reused" {
+    var map = new_map();
+    var out = new_out();
+    const a = announce(&map, ref(1, 1), none(), RoleToplevel);
+    const b = announce(&map, ref(2, 1), none(), RoleToplevel);
+    try testing.expectEqual(user_data_status_t.Ok, set_user_data(&map, a.slot, ref(1, 1), 0xAAAA));
+    try testing.expectEqual(user_data_status_t.Ok, set_user_data(&map, b.slot, ref(2, 1), 0xBBBB));
+    var value: u64 = 0;
+    try testing.expectEqual(user_data_status_t.Ok, get_user_data(&map, a.slot, ref(1, 1), &value));
+    try testing.expectEqual(@as(u64, 0xAAAA), value);
+    try testing.expectEqual(@as(u64, 0xAAAA), lookup(&map, ref(1, 1)).?.user_data);
+    // Retiring window 1 leaves window 2's slot and value alone.
+    _ = retire(&map, ref(1, 1), &out);
+    try testing.expectEqual(user_data_status_t.Ok, get_user_data(&map, b.slot, ref(2, 1), &value));
+    try testing.expectEqual(@as(u64, 0xBBBB), value);
+    // The freed slot is reused with user data zero.
+    const c = announce(&map, ref(3, 1), none(), RoleToplevel);
+    try testing.expectEqual(a.slot, c.slot);
+    try testing.expectEqual(user_data_status_t.Ok, get_user_data(&map, c.slot, ref(3, 1), &value));
+    try testing.expectEqual(@as(u64, 0), value);
+    // A stale generation or a free slot is Stale and leaves the value unchanged.
+    try testing.expectEqual(user_data_status_t.Stale, set_user_data(&map, c.slot, ref(3, 2), 1));
+    try testing.expectEqual(user_data_status_t.Stale, get_user_data(&map, a.slot + 60, ref(3, 1), &value));
+    try testing.expectEqual(user_data_status_t.Stale, set_user_data(&map, a.slot + 60, ref(3, 1), 1));
+    try testing.expectEqual(@as(u64, 0), lookup(&map, ref(3, 1)).?.user_data);
+}
+
+test "user data accessors refuse bad arguments and a corrupt table" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    var value: u64 = 5;
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, set_user_data(&map, MaxRealized, ref(1, 1), 1));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, set_user_data(&map, 0, ref(0, 1), 1));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, get_user_data(&map, 0, ref(1, 0), &value));
+    try testing.expectEqual(@as(u64, 5), value);
+    map.realized_count = 2;
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, set_user_data(&map, 0, ref(1, 1), 1));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, get_user_data(&map, 0, ref(1, 1), &value));
+    try testing.expectEqual(@as(u64, 5), value);
+    map.realized_count = 1;
+    try testing.expectEqual(user_data_status_t.Ok, set_user_data(&map, 0, ref(1, 1), 9));
+}
+
+test "C ABI user data accessors refuse NULL, overlapping and bad arguments without writing" {
+    var map = new_map();
+    _ = announce(&map, ref(1, 1), none(), RoleToplevel);
+    var value: u64 = 5;
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, abi_shim_t.set_user_data(null, 0, ref(1, 1), 1));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, abi_shim_t.get_user_data(null, 0, ref(1, 1), &value));
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, abi_shim_t.get_user_data(&map, 0, ref(1, 1), null));
+    // A value pointer inside the table is refused before any read or write.
+    const inside: *u64 = @ptrCast(&map.slots[0].user_data);
+    try testing.expectEqual(user_data_status_t.RefuseInvalid, abi_shim_t.get_user_data(&map, 0, ref(1, 1), inside));
+    try testing.expectEqual(user_data_status_t.Ok, abi_shim_t.set_user_data(&map, 0, ref(1, 1), 42));
+    try testing.expectEqual(user_data_status_t.Ok, abi_shim_t.get_user_data(&map, 0, ref(1, 1), &value));
+    try testing.expectEqual(@as(u64, 42), value);
 }
 
 test "C ABI counts and lookup accept NULL and report the table" {

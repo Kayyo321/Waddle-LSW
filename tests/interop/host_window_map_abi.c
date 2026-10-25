@@ -45,9 +45,9 @@ static host_window_map_announce_status_t announce(host_window_map_t *map, host_w
 
 static int check_layout(void) {
     Check(sizeof(host_window_ref_t) == 16);
-    Check(sizeof(host_window_slot_t) == 48);
-    Check(sizeof(host_window_entry_t) == 48);
-    Check(sizeof(host_window_map_t) == 3088);
+    Check(sizeof(host_window_slot_t) == 56);
+    Check(sizeof(host_window_entry_t) == 56);
+    Check(sizeof(host_window_map_t) == 3600);
     Check(HostWindowMapMaxRealized == 64);
     Check(HostWindowMapMaxOutput == 64);
     Check(HostWindowMapNoSlot == 64);
@@ -212,6 +212,37 @@ static int check_capacity_edges(host_window_map_t *map) {
     return 0;
 }
 
+static int check_user_data(host_window_map_t *map) {
+    host_window_map_announce_result_t a;
+    host_window_map_announce_result_t b;
+    host_window_ref_t out[64];
+    uint32_t count = 0;
+    uint64_t value = 0;
+
+    clear_table(map);
+    a = host_window_map_announce(map, ref(1, 1), none(), HostWindowMapRoleToplevel);
+    b = host_window_map_announce(map, ref(2, 1), none(), HostWindowMapRoleToplevel);
+    Check(host_window_map_set_user_data(map, a.slot, ref(1, 1), 0xAAAA) == HostWindowMapUserDataOk);
+    Check(host_window_map_set_user_data(map, b.slot, ref(2, 1), 0xBBBB) == HostWindowMapUserDataOk);
+    Check(host_window_map_get_user_data(map, a.slot, ref(1, 1), &value) == HostWindowMapUserDataOk && value == 0xAAAA);
+    /* Stale generation and out-of-range slot are refused without touching the value. */
+    Check(host_window_map_set_user_data(map, a.slot, ref(1, 2), 1) == HostWindowMapUserDataStale);
+    Check(host_window_map_get_user_data(map, 63, ref(1, 1), &value) == HostWindowMapUserDataStale);
+    Check(host_window_map_get_user_data(map, 64, ref(1, 1), &value) == HostWindowMapUserDataRefuseInvalid);
+    Check(host_window_map_get_user_data(map, a.slot, ref(0, 1), &value) == HostWindowMapUserDataRefuseInvalid);
+    Check(host_window_map_get_user_data(map, a.slot, ref(1, 1), NULL) == HostWindowMapUserDataRefuseInvalid);
+    Check(host_window_map_get_user_data(map, a.slot, ref(1, 1), &value) == HostWindowMapUserDataOk && value == 0xAAAA);
+    /* Retiring window 1 leaves window 2 alone; the freed slot is reused with zero user data. */
+    Check(host_window_map_retire(map, ref(1, 1), out, 64, &count) == HostWindowMapRetired);
+    Check(host_window_map_get_user_data(map, b.slot, ref(2, 1), &value) == HostWindowMapUserDataOk && value == 0xBBBB);
+    a = host_window_map_announce(map, ref(3, 1), none(), HostWindowMapRoleToplevel);
+    Check(a.slot == 0);
+    Check(host_window_map_get_user_data(map, a.slot, ref(3, 1), &value) == HostWindowMapUserDataOk && value == 0);
+    Check(host_window_map_lookup(map, ref(3, 1), NULL));
+    clear_table(map);
+    return 0;
+}
+
 static int check_aliasing(host_window_map_t *map) {
     host_window_ref_t *alias = (host_window_ref_t *)(void *)map;
     uint32_t *inside = &map->realized_count;
@@ -238,6 +269,7 @@ int main(void) {
     if (check_retire_cascade(&map) != 0) return 1;
     if (check_teardown(&map) != 0) return 1;
     if (check_stable_slots(&map) != 0) return 1;
+    if (check_user_data(&map) != 0) return 1;
     if (check_capacity_edges(&map) != 0) return 1;
     if (check_aliasing(&map) != 0) return 1;
     clear_table(&map);

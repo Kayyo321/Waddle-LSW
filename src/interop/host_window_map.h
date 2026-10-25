@@ -60,6 +60,7 @@ typedef struct host_window_slot_t {
     host_window_ref_t window; /**< Realized identity. */
     host_window_ref_t parent; /**< Requested direct parent, or none. Retire follows this field. */
     uint64_t realize_seq; /**< Realization sequence number, unique per epoch and increasing with each realize. */
+    uint64_t user_data; /**< Adapter value for this window; zero when realized. Set with `host_window_map_set_user_data`. */
     uint8_t role; /**< Raw `interop_window_role_t` value, 1..6. */
     uint8_t occupied; /**< Nonzero while the slot holds a realized window. */
 } host_window_slot_t;
@@ -69,6 +70,7 @@ typedef struct host_window_entry_t {
     host_window_ref_t window; /**< Realized identity. */
     host_window_ref_t parent; /**< Requested direct parent, or none. */
     uint64_t realize_seq; /**< Realization sequence number. */
+    uint64_t user_data; /**< Adapter value stored for this window. */
     uint32_t slot; /**< Stable slot index of this window. */
     uint8_t role; /**< Raw `interop_window_role_t` value, 1..6. */
 } host_window_entry_t;
@@ -95,6 +97,13 @@ typedef enum host_window_map_announce_status_t {
     HostWindowMapRefuseExhausted = 5, /**< The table already holds 64 realized windows. No change. */
     HostWindowMapRefuseInvalid = 6 /**< Zero identity, bad role or parent shape, or NULL map. No change. */
 } host_window_map_announce_status_t;
+
+/** @brief Result of `host_window_map_set_user_data` and `host_window_map_get_user_data`. */
+typedef enum host_window_map_user_data_status_t {
+    HostWindowMapUserDataOk = 1, /**< The value was set or read. */
+    HostWindowMapUserDataStale = 2, /**< The slot does not hold exactly this window. Nothing changed. */
+    HostWindowMapUserDataRefuseInvalid = 3 /**< Zero identity, slot out of range, NULL or overlapping output, or a corrupt table. Nothing changed. */
+} host_window_map_user_data_status_t;
 
 /** @brief Result of `host_window_map_reset`. */
 typedef enum host_window_map_reset_status_t {
@@ -192,6 +201,29 @@ host_window_map_announce_result_t host_window_map_announce(host_window_map_t *ma
 host_window_map_retire_status_t host_window_map_retire(host_window_map_t *map, host_window_ref_t window, host_window_ref_t *out, uint32_t out_capacity, uint32_t *out_count);
 
 /**
+ * @brief Set the adapter value of the window in a slot, if that slot holds exactly `window`.
+ *
+ * @param map In/out. Table; NULL gives `HostWindowMapUserDataRefuseInvalid`.
+ * @param slot In. Slot index from the announce that realized the window; must be below 64.
+ * @param window In. Identity; both fields nonzero.
+ * @param value In. Value to store.
+ * @return Status. Thread safety: owner thread only.
+ */
+host_window_map_user_data_status_t host_window_map_set_user_data(host_window_map_t *map, uint32_t slot, host_window_ref_t window, uint64_t value);
+
+/**
+ * @brief Read the adapter value of the window in a slot, if that slot holds exactly `window`.
+ *
+ * @param map In. Table, read only; NULL gives `HostWindowMapUserDataRefuseInvalid`.
+ * @param slot In. Slot index; must be below 64.
+ * @param window In. Identity; both fields nonzero.
+ * @param value Out. Receives the stored value on `HostWindowMapUserDataOk` only. NULL gives
+ *              `HostWindowMapUserDataRefuseInvalid`. Must not overlap `map`.
+ * @return Status. Thread safety: owner thread only.
+ */
+host_window_map_user_data_status_t host_window_map_get_user_data(const host_window_map_t *map, uint32_t slot, host_window_ref_t window, uint64_t *value);
+
+/**
  * @brief Look up a realized window by exact identity.
  *
  * @param map In. Table, read only. NULL gives false.
@@ -220,8 +252,8 @@ uint32_t host_window_map_realized_count(const host_window_map_t *map);
 
 /* Layout frozen with the Zig extern structs; a change in either breaks the build. */
 _Static_assert(sizeof(host_window_ref_t) == 16, "host_window_ref_t layout");
-_Static_assert(sizeof(host_window_slot_t) == 48, "host_window_slot_t layout");
-_Static_assert(sizeof(host_window_entry_t) == 48, "host_window_entry_t layout");
-_Static_assert(sizeof(host_window_map_t) == 3088, "host_window_map_t layout");
+_Static_assert(sizeof(host_window_slot_t) == 56, "host_window_slot_t layout");
+_Static_assert(sizeof(host_window_entry_t) == 56, "host_window_entry_t layout");
+_Static_assert(sizeof(host_window_map_t) == 3600, "host_window_map_t layout");
 
 #endif
