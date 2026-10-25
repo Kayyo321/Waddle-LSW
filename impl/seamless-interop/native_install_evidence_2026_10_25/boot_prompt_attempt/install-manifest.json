@@ -1,0 +1,31 @@
+{
+  "acpi_requested": true,
+  "answer_media_hash_recorded": false,
+  "deadline_reached": false,
+  "failure": null,
+  "forced_qemu_termination": true,
+  "guest_booted": false,
+  "install_deadline_seconds": 1800,
+  "native_acceptance_credit": false,
+  "owned_vhost_fd_closed": true,
+  "qemu_log_closed": true,
+  "qemu_reaped": true,
+  "qemu_started": true,
+  "qemu_terminate_requested": true,
+  "qmp_connected": true,
+  "run_root": "/home/dev/Waddle-LSW/build/fresh_native_guests/fresh-0ef763355e3b44cbac3c0fa3414f95fa",
+  "screenshots": [
+    "install-screen-001.ppm",
+    "install-screen-002.ppm",
+    "install-screen-003.ppm",
+    "install-screen-004.ppm",
+    "install-screen-005.ppm",
+    "install-screen-006.ppm"
+  ],
+  "secret_contents_recorded": false,
+  "started": true,
+  "stop_requested": true,
+  "swtpm_log_closed": true,
+  "swtpm_reaped": true,
+  "swtpm_started": true
+}

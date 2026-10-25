@@ -1243,10 +1243,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     C ABI consumer pass, including leak-enabled ASan/LSan/UBSan. Exact58/58
     production lines and36/36 metadata branches pass the existing coverage gate.
 
-- **Commit `HEAD`**: `test(interop): supervise fresh native installation with bounded ownership`
+- **Commit `8d24496`**: `test(interop): supervise fresh native installation with bounded ownership`
   - **Task Impact**: +0% to TODO #34; test tooling and new guest preparation.
   - **Summary**: Reviewed supervisor enforces exact child/fd ownership, bounded
     QMP/startup/shutdown, poisoned-stream reconnect, independent cleanup and
     private evidence. Sixteen supervisor and16 preparation tests pass and
     join CI hardware-free gates. Actual repaired preparation succeeds with
     CID52943 in a new private run; native acceptance remains unclaimed.
+
+- **Commit `HEAD`**: `fix(interop): enter installation media within its firmware input window`
+  - **Task Impact**: +0% to TODO #34; failed native attempt retained.
+  - **Summary**: First isolated KVM run missed the CD/DVD boot key and never
+    installed or exposed guest-exec. Controlled stop reaped both children and
+    joined the bounded probe; forced shutdown is recorded. Add opt-in finite
+    boot input for a new blank disk, disabled by default;17 supervisor tests pass.

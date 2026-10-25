@@ -336,7 +336,8 @@ def run_fresh_install(run_root: Path, manifest: dict[str, Any], source_vhost_fd:
                       monotonic: Callable[[], float] = time.monotonic,
                       sleep: Callable[[float], None] = time.sleep,
                       screenshot_interval_seconds: float = 60.0,
-                      stop_fd: int | None = None) -> dict[str, Any]:
+                      stop_fd: int | None = None,
+                      install_boot_key: bool = False) -> dict[str, Any]:
     """Install until guest exit or the 30-minute deadline, then reap owned children.
 
     The caller retains source_vhost_fd; this function owns and closes a
@@ -351,6 +352,8 @@ def run_fresh_install(run_root: Path, manifest: dict[str, Any], source_vhost_fd:
             not math.isfinite(screenshot_interval_seconds) or
             screenshot_interval_seconds <= 0 or screenshot_interval_seconds > 300):
         raise fresh_install_error_t("screenshot interval is outside supported bounds")
+    if not isinstance(install_boot_key, bool):
+        raise fresh_install_error_t("install boot key selection must be boolean")
     stop_poller = None
     if stop_fd is not None:
         if isinstance(stop_fd, bool) or not isinstance(stop_fd, int) or stop_fd < 0:
@@ -418,6 +421,22 @@ def run_fresh_install(run_root: Path, manifest: dict[str, Any], source_vhost_fd:
         if qmp is None:
             raise fresh_install_error_t("private QMP endpoint did not become available")
         record["qmp_connected"] = True
+        if install_boot_key:
+            # A newly prepared blank disk has no bootable installation. Windows
+            # media waits for a key; bound firmware input to this explicit test
+            # mode and the first twelve seconds, then let unattended Setup run.
+            boot_deadline = min(deadline, monotonic() + 12.0)
+            record["install_boot_keys"] = 0
+            while monotonic() < boot_deadline:
+                if qemu_child.poll() is not None:
+                    raise fresh_install_error_t("owned QEMU exited during install boot")
+                if stop_poller is not None and stop_poller.poll(0):
+                    record["stop_requested"] = True
+                    break
+                qmp.execute("send-key", {"keys": [{"type": "qcode", "data": "spc"}],
+                                        "hold-time": 100}, timeout_seconds=1.0)
+                record["install_boot_keys"] += 1
+                sleep(min(0.5, max(0.0, boot_deadline - monotonic())))
         while qemu_child.poll() is None and monotonic() < deadline:
             if tpm_child.poll() is not None:
                 raise fresh_install_error_t("owned swtpm child exited during installation")

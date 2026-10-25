@@ -191,6 +191,29 @@ class fresh_native_install_tests_t(unittest.TestCase):
         self.assertTrue(persisted["deadline_reached"])
         self.assertNotIn("password", json.dumps(persisted).lower())
 
+    def test_explicit_install_boot_key_is_finite_and_does_not_grant_acceptance(self) -> None:
+        children = [fake_child_t(), fake_child_t()]
+        qmp = fake_qmp_t()
+        clock = [0.0]
+        with (mock.patch.object(install, "_require_ordinary_uid"),
+              mock.patch.object(install.os.path, "exists", return_value=True),
+              mock.patch.object(install.os, "access", return_value=True),
+              mock.patch.object(install, "_duplicate_vhost_fd", return_value=77),
+              mock.patch.object(install, "_wait_for_swtpm_socket"),
+              mock.patch.object(install.os, "close"),
+              mock.patch.object(install, "InstallDeadlineSeconds", 13)):
+            result = install.run_fresh_install(
+                self.run_root, self._manifest(), 12,
+                popen=lambda _argv, **_kwargs: children.pop(0),
+                qmp_factory=lambda *_args: qmp,
+                monotonic=lambda: clock[0],
+                sleep=lambda delay: clock.__setitem__(0, clock[0]+delay),
+                install_boot_key=True)
+        self.assertEqual(result["install_boot_keys"], 24)
+        self.assertEqual(len([command for command, _ in qmp.calls if command == "send-key"]), 24)
+        self.assertFalse(result["native_acceptance_credit"])
+        self.assertFalse(result["guest_booted"])
+
     def test_requires_private_run_and_valid_descriptor_marker_before_launch(self) -> None:
         bad = dict(self._manifest())
         bad["qemu_argv_template"] = ["qemu", "-machine", "q35,accel=kvm"]

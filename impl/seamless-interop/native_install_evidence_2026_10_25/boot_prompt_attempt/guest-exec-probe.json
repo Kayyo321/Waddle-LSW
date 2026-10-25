@@ -1,0 +1,23 @@
+{
+  "guest_cid": 52943,
+  "port": 5242,
+  "run_root": "/home/dev/Waddle-LSW/build/fresh_native_guests/fresh-0ef763355e3b44cbac3c0fa3414f95fa",
+  "uid": 1001,
+  "attempts": 82,
+  "errors": {
+    "19": 1,
+    "None": 81
+  },
+  "reachable": false,
+  "execution": null,
+  "native_interop_acceptance": false,
+  "supervisor": {
+    "failure": null,
+    "stop_requested": true,
+    "deadline_reached": false,
+    "qemu_reaped": true,
+    "swtpm_reaped": true,
+    "forced_qemu_termination": true
+  },
+  "probe_joined": true
+}

@@ -158,3 +158,16 @@ shape has no `path` member and that `_validate_config` retains its canonical
 binary path separately. These tests establish software control flow only;
 they do not establish that KVM, VSOCK, QMP, Windows Setup, VirtIO, or guest
 acceptance works on a host.
+
+## Explicit installer firmware input (2026-10-25)
+
+Root's first live run reached the CD/DVD boot-key prompt and timed out before
+installing; the existing stop pipe requested cleanup, with forced QEMU stop
+recorded and both children reaped. Its secret-free receipts and screenshot are
+retained in native_install_evidence_2026_10_25/boot_prompt_attempt.
+`install_boot_key` is an opt-in boolean test mode for a newly prepared blank
+disk. After QMP connects, it sends Space at most24 times over12 seconds, each
+hold100ms and command deadline1s, checking stop/child exit between attempts.
+This enters Windows Setup on the new disk; it is disabled by default and grants
+no acceptance. The exact finite input sequence has an independent fake-clock
+unit. Normal installed-system boots do not use this mode.

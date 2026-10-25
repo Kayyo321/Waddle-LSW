@@ -1,0 +1,7 @@
+{
+  "result": "failed: firmware boot-key prompt expired before installation",
+  "credit": 0,
+  "existing_vm_or_credentials_touched": false,
+  "cleanup": "supervisor stop pipe -> ACPI attempt -> bounded forced exact QEMU termination; both QEMU/swtpm reaped; probe joined",
+  "files_included": "secret-free receipts, source launcher and screenshot only; no answer media/XML/secret files"
+}
