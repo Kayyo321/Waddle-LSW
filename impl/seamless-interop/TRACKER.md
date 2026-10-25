@@ -37,7 +37,7 @@ acceptance remain pending.
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 30% | Shared protocol25% + Linux connected-byte-owner5% accepted; Lease/VSOCK and GuestReady components qualified without entry credit; actual session entry, mapping/Wayland, module extraction and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
-| #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 35% | Pure graph25% + C ABI10% accepted after reviewed73bc833 import; snapshot/native fact fixes and full Linux/Windows CI40129670493 green. O5 observer preservation passes local full gates; exact updated Windows CI, coordinator and installed session remain open |
+| #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 65% | Pure graph25%, C ABI10%, portable observer15%, native adapter15% accepted. Reviewed O5 local leak/coverage gates and exact Linux/Windows CI40144415938 pass; coordinator/capture/slot/wire20% and installed-session15% remain open |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
 | #13 | Minimize/maximize/fullscreen/restore/close state machine | Pending | 3% | 0% | Waits on #11 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `18.00%`
+**Total Feature Completion**: `19.20%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -77,7 +77,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | Shared framing5%; owned queue5%; handshake10%; liveness5%; Linux connected-byte-owner5% with full local gates. Remaining transport: VSOCK admission/singleton10%, daemon/local-control10%. Integrated host client remains open |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
-| #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; O25 pruning corrected and Linux/Windows qualified. O5 delivered-destroy loss remains open; native identity/fullscreen guards corrected and actual Windows CI40129670493 green; no observer/native/session credit |
+| #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; portable observer15%; native adapter15%. O5 preservation qualified by89ff058 local coverage/sanitizers and exact Windows native smoke/failure guards at d77dcb3, CI40144415938; coordinator20% and installed-session15% remain open |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
 Execution resumed at the user's request from checkpoint4079560. Current
@@ -1220,3 +1220,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     Records all-green e4d42de CI separately from O5's pending updated Windows CI,
     retained native assets, the preparation KeyError, unapproved coordinator
     proposals, and secret/base-image safeguards. HEAD identifies this checkpoint.
+
+- **Commit `HEAD`**: `docs(interop): accept qualified observer and native adapter milestones`
+  - **Task Impact**: +30% to TODO #10 (+1.20% overall,18.00% ->19.20%).
+  - **Summary**: Accepts the existing portable observer15% and native adapter15%
+    allocations only after source89ff058 passed local full gates and exact
+    descendantd77dcb3 passed actual Windows CI40144415938. Saved job metadata
+    and raw compressed Windows log in ci_evidence_2026_10_25. All three exact
+    checkpoint workflows are green. No installed-session/coordinator credit.

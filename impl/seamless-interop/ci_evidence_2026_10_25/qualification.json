@@ -1,0 +1,30 @@
+{
+  "source_commit": "d77dcb3d80c25da2868a36390b581c82d1a9a8d1",
+  "runs": [
+    {
+      "id": 40144415938,
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40144415938",
+      "conclusion": "success"
+    },
+    {
+      "id": 40144415934,
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40144415934",
+      "conclusion": "success"
+    },
+    {
+      "id": 40144415916,
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40144415916",
+      "conclusion": "success"
+    }
+  ],
+  "observer_windows_log_sha256": "7dc44e2b38a44b4c6c3d5b58209f7b8999c20282228200456d35b99801fa012e",
+  "accepts": [
+    "TODO10 portable observer15%",
+    "TODO10 native adapter15%"
+  ],
+  "does_not_accept": [
+    "coordinator/capture/slot/wire integration20%",
+    "installed-session qualification15%"
+  ],
+  "local_evidence": "../o5_evidence_2026_10_24/qualification.json"
+}

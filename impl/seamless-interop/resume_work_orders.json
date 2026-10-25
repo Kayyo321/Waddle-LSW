@@ -1,21 +1,43 @@
 {
-  "phase_id": "night_checkpoint_2026_10_24",
-  "stopped_at_user_request": true,
-  "stopped_utc": "2026-10-24T23:51:22.656116+00:00",
-  "baseline_implementation_commit": "0965410",
-  "active_workers": [],
-  "released_agents": [
-    "luna_layout",
-    "luna_mounts",
-    "luna_qemu_build"
+  "phase_id": "resume_30_percent_2026_10_25",
+  "baseline": "d77dcb3",
+  "target_overall_percent": 30,
+  "active_workers": [
+    {
+      "agent": "luna_manifest_engine",
+      "owns": [
+        "src/interop/manifest_store.zig",
+        "tests/interop/manifest_store*",
+        "impl/seamless-interop/manifest_store_contract.md"
+      ]
+    },
+    {
+      "agent": "luna_host_runtime",
+      "owns": [
+        "src/interop/session_host.c",
+        "src/interop/session_host.h",
+        "tests/interop/session_host*",
+        "impl/seamless-interop/session_host_contract.md"
+      ]
+    },
+    {
+      "agent": "luna_fresh_guest",
+      "owns": [
+        "tests/interop/fresh_native_guest.py",
+        "tests/interop/fresh_native_guest_test.py",
+        "tests/interop/fresh_native_install.py",
+        "tests/interop/fresh_native_install_test.py",
+        "impl/seamless-interop/fresh_native_install_contract.md"
+      ]
+    }
   ],
-  "next_work_orders": "checkpoint_2026_10_24_night.md",
   "root_ownership": [
     "shared contracts and ABI",
     "build and CI",
     "tracker and Git",
     "native device/runner actions",
-    "critical review"
+    "critical review",
+    "daemon status codec"
   ],
-  "no_worker_may_resume_without_new_bounded_assignment": true
+  "no_worker_may_stage_or_commit": true
 }
