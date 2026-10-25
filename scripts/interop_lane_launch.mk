@@ -91,3 +91,24 @@ interop-open-e2e-slow: build/waddle build/open_frame_dump
 	WADDLE_OPEN_E2E_SLOW=1 python3 tests/integration/open_e2e.py
 
 InteropLaneTests += interop-open-e2e-test
+
+# Session command socket (TODO #7 socket side, TODO #29 29c/29f): the handler is tested with its
+# source included, and the Zig frame scanner is linked as a C-ABI object. Contract:
+# impl/seamless-interop/claude_45_percent/session_local_handler_contract.md.
+SessionLocalCFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -D_GNU_SOURCE -UNDEBUG -O1 -g -Iinclude -Isrc/interop -Isrc/daemon -Isrc/common
+SessionLocalSanitizeFlags = -fsanitize=address,leak,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
+
+build/interop_local_stream_abi.o: src/interop/local_stream_abi.zig include/waddle/interop_protocol.h | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/session_local_handler_test: tests/interop/session_local_handler_test.c src/interop/session_local_handler.c src/interop/session_local_handler.h build/interop_local_stream_abi.o build/interop_codec.o build/interop_activation_store.o | build
+	$(CC) $(SessionLocalCFlags) $< build/interop_local_stream_abi.o build/interop_codec.o build/interop_activation_store.o $(LDFLAGS) -o $@
+
+.PHONY: interop-session-local-test interop-session-local-zig-test
+interop-session-local-test: build/session_local_handler_test
+	./build/session_local_handler_test
+
+interop-session-local-zig-test: build/interop_codec.o
+	$(ZIG) test src/interop/local_stream_abi.zig build/interop_codec.o -Iinclude -lc
+
+InteropLaneTests += interop-session-local-test interop-session-local-zig-test
