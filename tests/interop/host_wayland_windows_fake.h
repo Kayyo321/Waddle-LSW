@@ -25,6 +25,11 @@ typedef struct fake_proxy_t {
     uint8_t live;
     const void *listener;
     void *data;
+    /* Dependencies for the destroy-order invariants. aux is the object this one was built on (an xdg_surface's
+     * wl_surface, a toplevel's or popup's xdg_surface, a decoration's toplevel); aux2 is a popup's parent
+     * xdg_surface. FAKE_NONE when not applicable. */
+    unsigned aux;
+    unsigned aux2;
 } fake_proxy_t;
 
 typedef struct fake_request_t {
@@ -40,6 +45,7 @@ static uintptr_t fake_storage[FAKE_PROXIES];
 static fake_proxy_t fake_proxies[FAKE_PROXIES];
 static unsigned fake_proxy_count;
 static unsigned fake_creates, fake_destroys, fake_double_destroys;
+static unsigned fake_order_violations; /* destroys that left a live dependent behind */
 static fake_request_t fake_requests[FAKE_REQUESTS];
 static unsigned fake_request_count;
 static const char *fake_fail_create; /* interface whose creation returns NULL */
@@ -66,13 +72,33 @@ static unsigned fake_new(const char *iface) {
     fake_proxies[index].live = 1;
     fake_proxies[index].listener = NULL;
     fake_proxies[index].data = NULL;
+    fake_proxies[index].aux = FAKE_NONE;
+    fake_proxies[index].aux2 = FAKE_NONE;
     ++fake_creates;
     return index;
+}
+
+/** @brief True when a live proxy depends on `index` in a way that forbids destroying it now. */
+static int fake_has_live_dependent(unsigned index) {
+    const char *iface = fake_proxies[index].iface;
+    for (unsigned other = 0; other < fake_proxy_count; ++other) {
+        if (!fake_proxies[other].live || other == index) continue;
+        const char *dependent = fake_proxies[other].iface;
+        if (!dependent) continue;
+        if (!strcmp(iface, "xdg_surface") && (!strcmp(dependent, "xdg_toplevel") || !strcmp(dependent, "xdg_popup")) && fake_proxies[other].aux == index) return 1;
+        if (!strcmp(iface, "xdg_surface") && !strcmp(dependent, "xdg_popup") && fake_proxies[other].aux2 == index) return 1;
+        if (!strcmp(iface, "wl_surface") && !strcmp(dependent, "xdg_surface") && fake_proxies[other].aux == index) return 1;
+        if (!strcmp(iface, "xdg_toplevel") && !strcmp(dependent, "zxdg_toplevel_decoration_v1") && fake_proxies[other].aux == index) return 1;
+        /* A child popup is built on its parent's xdg_surface, so the parent popup waits for it. */
+        if (!strcmp(iface, "xdg_popup") && !strcmp(dependent, "xdg_popup") && fake_proxies[other].aux2 == fake_proxies[index].aux) return 1;
+    }
+    return 0;
 }
 
 static void fake_destroy_index(unsigned index) {
     if (index == FAKE_NONE) return;
     if (!fake_proxies[index].live) { ++fake_double_destroys; return; }
+    if (fake_has_live_dependent(index)) ++fake_order_violations;
     fake_proxies[index].live = 0;
     ++fake_destroys;
 }
@@ -147,7 +173,20 @@ struct wl_proxy *__wrap_wl_proxy_marshal_flags(struct wl_proxy *proxy, uint32_t 
         if (fake_fail_create_skip == 0) return NULL;
         --fake_fail_create_skip;
     }
-    return (struct wl_proxy *)fake_object(fake_new(interface->name));
+    unsigned created = fake_new(interface->name);
+    /* Record what the new object was built on, from the arguments decoded above. */
+    if (iface && !strcmp(iface, "xdg_wm_base") && opcode == XDG_WM_BASE_GET_XDG_SURFACE && fake_request_count) {
+        fake_proxies[created].aux = (unsigned)fake_requests[fake_request_count - 1].a0;
+    }
+    if (iface && !strcmp(iface, "xdg_surface") && opcode == XDG_SURFACE_GET_TOPLEVEL) fake_proxies[created].aux = index;
+    if (iface && !strcmp(iface, "xdg_surface") && opcode == XDG_SURFACE_GET_POPUP) {
+        fake_proxies[created].aux = index;
+        fake_proxies[created].aux2 = (unsigned)fake_requests[fake_request_count - 1].a0;
+    }
+    if (iface && !strcmp(iface, "zxdg_decoration_manager_v1")) {
+        fake_proxies[created].aux = (unsigned)fake_requests[fake_request_count - 1].a0;
+    }
+    return (struct wl_proxy *)fake_object(created);
 }
 
 uint32_t __wrap_wl_proxy_get_version(struct wl_proxy *proxy) {
@@ -171,11 +210,13 @@ void __wrap_wl_proxy_destroy(struct wl_proxy *proxy) {
 /* ---- compositor events ------------------------------------------------------------------------- */
 
 static void deliver_surface_configure(unsigned index, uint32_t serial) {
+    if (fake_proxies[index].listener == NULL) return;
     const struct xdg_surface_listener *listener = fake_proxies[index].listener;
     listener->configure(fake_proxies[index].data, (struct xdg_surface *)fake_object(index), serial);
 }
 
 static void deliver_toplevel_configure(unsigned index, int32_t width, int32_t height, const uint32_t *states, size_t count) {
+    if (fake_proxies[index].listener == NULL) return;
     const struct xdg_toplevel_listener *listener = fake_proxies[index].listener;
     struct wl_array array;
     array.size = count * sizeof *states;
@@ -185,6 +226,7 @@ static void deliver_toplevel_configure(unsigned index, int32_t width, int32_t he
 }
 
 static void deliver_toplevel_close(unsigned index) {
+    if (fake_proxies[index].listener == NULL) return;
     const struct xdg_toplevel_listener *listener = fake_proxies[index].listener;
     listener->close(fake_proxies[index].data, (struct xdg_toplevel *)fake_object(index));
 }
@@ -201,16 +243,25 @@ static unsigned fake_nth(const char *iface, unsigned nth) {
 }
 
 static void deliver_decoration_configure(unsigned index, uint32_t mode) {
+    if (fake_proxies[index].listener == NULL) return;
     const struct zxdg_toplevel_decoration_v1_listener *listener = fake_proxies[index].listener;
     listener->configure(fake_proxies[index].data, (struct zxdg_toplevel_decoration_v1 *)fake_object(index), mode);
 }
 
 static void deliver_popup_configure(unsigned index, int32_t x, int32_t y, int32_t width, int32_t height) {
+    if (fake_proxies[index].listener == NULL) return;
     const struct xdg_popup_listener *listener = fake_proxies[index].listener;
     listener->configure(fake_proxies[index].data, (struct xdg_popup *)fake_object(index), x, y, width, height);
 }
 
+static void deliver_popup_repositioned(unsigned index, uint32_t token) {
+    if (fake_proxies[index].listener == NULL) return;
+    const struct xdg_popup_listener *listener = fake_proxies[index].listener;
+    listener->repositioned(fake_proxies[index].data, (struct xdg_popup *)fake_object(index), token);
+}
+
 static void deliver_popup_done(unsigned index) {
+    if (fake_proxies[index].listener == NULL) return;
     const struct xdg_popup_listener *listener = fake_proxies[index].listener;
     listener->popup_done(fake_proxies[index].data, (struct xdg_popup *)fake_object(index));
 }

@@ -20,9 +20,13 @@
 #define DECORATION_CLIENT ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
 #define DECORATION_SERVER ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
 
+/** @brief Session context shared by the tests; lives in static storage. */
+static host_wayland_t session_ctx;
+
 /* ---- callback capture -------------------------------------------------------------------------- */
 
 typedef struct capture_t {
+    unsigned stale_callbacks; /* callbacks for a window the table does not hold realized */
     unsigned configures, closes, repositioned, dismissed, errors;
     uint32_t last_bits, last_width, last_height, last_error_code;
     uint32_t last_popup_width, last_popup_height;
@@ -33,8 +37,17 @@ typedef struct capture_t {
 
 static capture_t captured;
 
+/** @brief Every success callback must name a window the table holds realized; anything else is a stale callback. */
+static void check_current(uint64_t window, uint64_t generation) {
+    host_window_ref_t id;
+    id.window = window;
+    id.generation = generation;
+    if (!host_window_map_is_current(&session_ctx.map, id)) ++captured.stale_callbacks;
+}
+
 static void cb_configure(void *user, uint64_t window, uint64_t generation, uint32_t bits, uint32_t width, uint32_t height) {
     (void)user;
+    check_current(window, generation);
     ++captured.configures;
     captured.last_window = window;
     captured.last_generation = generation;
@@ -45,6 +58,7 @@ static void cb_configure(void *user, uint64_t window, uint64_t generation, uint3
 
 static void cb_close(void *user, uint64_t window, uint64_t generation) {
     (void)user;
+    check_current(window, generation);
     ++captured.closes;
     captured.last_window = window;
     captured.last_generation = generation;
@@ -52,6 +66,7 @@ static void cb_close(void *user, uint64_t window, uint64_t generation) {
 
 static void cb_repositioned(void *user, uint64_t window, uint64_t generation, int32_t x, int32_t y, uint32_t width, uint32_t height) {
     (void)user;
+    check_current(window, generation);
     ++captured.repositioned;
     captured.last_window = window;
     captured.last_generation = generation;
@@ -62,7 +77,8 @@ static void cb_repositioned(void *user, uint64_t window, uint64_t generation, in
 }
 
 static void cb_dismissed(void *user, uint64_t window, uint64_t generation) {
-    (void)user; (void)window; (void)generation;
+    (void)user;
+    check_current(window, generation);
     ++captured.dismissed;
 }
 
@@ -283,8 +299,6 @@ static int check_presses(void) {
 
 /* ---- realization: toplevels --------------------------------------------------------------------- */
 
-/** @brief Fresh fake session with a live context; the context lives in static storage. */
-static host_wayland_t session_ctx;
 
 /* Proxies the fixture creates for compositor and wm_base are borrowed by the module and never destroyed by
  * it; leak accounting excludes them. */
@@ -978,7 +992,7 @@ static host_wayland_status_t retire_frame(uint64_t window, uint64_t generation) 
 /** @brief Borrowed fixture proxies (compositor, wm_base, decoration manager) that the module never destroys. */
 static bool is_fixture_proxy(unsigned index) {
     const char *iface = fake_proxies[index].iface;
-    return iface && (!strcmp(iface, "wl_compositor") || !strcmp(iface, "xdg_wm_base") || !strcmp(iface, "zxdg_decoration_manager_v1"));
+    return iface && (!strcmp(iface, "wl_compositor") || !strcmp(iface, "xdg_wm_base") || !strcmp(iface, "zxdg_decoration_manager_v1") || !strcmp(iface, "wl_seat"));
 }
 
 /** @brief Index of the destroy request sent on `proxy`, or -1. */
@@ -1161,6 +1175,8 @@ static int check_reset(void) {
 }
 
 #include "host_wayland_windows_fixtures.h"
+#include "host_wayland_windows_stress.h"
+#include "host_wayland_windows_defensive.h"
 
 int main(void) {
     if (check_init() != 0) return 1;
@@ -1192,6 +1208,18 @@ int main(void) {
     if (check_retire_releases_press() != 0) return 1;
     if (check_reset() != 0) return 1;
     if (check_codec_fixtures() != 0) return 1;
+    if (check_stress() != 0) return 1;
+    if (check_decoder_refusals() != 0) return 1;
+    if (check_frame_refusals() != 0) return 1;
+    if (check_binding_edges() != 0) return 1;
+    if (check_null_callbacks() != 0) return 1;
+    if (check_reposition_overflow() != 0) return 1;
+    if (check_dismiss_desync() != 0) return 1;
+    if (check_zero_parent_size() != 0) return 1;
+    if (check_mirror_to_popup_parent() != 0) return 1;
+    if (check_root_walk_bound() != 0) return 1;
+    if (check_missing_record() != 0) return 1;
+    if (check_retire_and_reset_paths() != 0) return 1;
     puts("host_wayland_windows_test: all checks passed");
     return 0;
 }
