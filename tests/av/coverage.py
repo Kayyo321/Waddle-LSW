@@ -298,7 +298,7 @@ print(f'{mode} instrumentation: {len(records)} exact metadata-bound sites; '
       f"native target {diagnostics['target_triple']} CPUs {diagnostics['target_cpus']}",flush=True)
 subprocess.run(['clang-19','-Wno-override-module','-c',str(output/'instrumented.ll'),'-o',str(output/'test.o')],check=True)
 subprocess.run(['zig','cc',str(output/'test.o'),*link_objects,recorder_arg,'tests/device_branch_runtime.c','-o',str(output/'runner')],check=True)
-env=os.environ.copy();env['WADDLE_BRANCH_OUT']=str(output)
+env=os.environ.copy();env['WADDLE_BRANCH_OUT']=str(output);env['WADDLE_INSTRUMENTED_SWEEP']='1'
 subprocess.run([str(output/'runner')],env=env,check=True)
 hits=set()
 for report in output.glob('*.edges'):

@@ -151,6 +151,18 @@ pub fn restore_default(allocator: std.mem.Allocator, path: []const u8, mime: []c
 // Test-only fixtures.
 const testing = std.testing;
 
+/// Failure points per allocation sweep. The plain suite is exhaustive. The instrumented
+/// coverage run sets WADDLE_INSTRUMENTED_SWEEP and stops after InstrumentedSweepLimit
+/// indices so that it completes in bounded time; the plain suite still runs every index.
+const MaxSweepIndex: usize = 20000;
+const InstrumentedSweepLimit: usize = 300;
+fn sweep_is_instrumented() bool {
+    return std.process.hasEnvVarConstant("WADDLE_INSTRUMENTED_SWEEP");
+}
+fn sweep_limit() usize {
+    return if (sweep_is_instrumented()) InstrumentedSweepLimit else MaxSweepIndex;
+}
+
 const Fixture = struct {
     tmp: std.testing.TmpDir,
     base: []u8,
@@ -492,7 +504,7 @@ const SweepSetup = enum { Absent, AbsoluteLink, RelativeLink };
 fn sweep_set_default(setup: SweepSetup) !void {
     var completed = false;
     var offset: usize = 0;
-    while (offset < 20000) : (offset += 1) {
+    while (offset < sweep_limit()) : (offset += 1) {
         var fx = try Fixture.create(testing.allocator);
         defer fx.deinit(testing.allocator);
         try fx.tmp.dir.makePath("dotfiles");
@@ -519,7 +531,7 @@ fn sweep_set_default(setup: SweepSetup) !void {
             break;
         }
     }
-    try testing.expect(completed);
+    try testing.expect(completed or sweep_is_instrumented());
 }
 
 test "set_default survives an allocation failure at every index for absent and linked files" {
@@ -531,7 +543,7 @@ test "set_default survives an allocation failure at every index for absent and l
 test "current_value reports an allocation failure at every index without leaking" {
     var completed = false;
     var offset: usize = 0;
-    while (offset < 20000) : (offset += 1) {
+    while (offset < sweep_limit()) : (offset += 1) {
         var fx = try Fixture.create(testing.allocator);
         defer fx.deinit(testing.allocator);
         try fx.tmp.dir.writeFile(.{ .sub_path = "mimeapps.list", .data = "[Default Applications]\napplication/x-msi=waddle-open.desktop\n" });
@@ -548,13 +560,13 @@ test "current_value reports an allocation failure at every index without leaking
             break;
         }
     }
-    try testing.expect(completed);
+    try testing.expect(completed or sweep_is_instrumented());
 }
 
 test "allocation failures in edits and restores leave no leaked allocations" {
     var completed_set = false;
     var offset: usize = 0;
-    while (offset < 20000) : (offset += 1) {
+    while (offset < sweep_limit()) : (offset += 1) {
         var fx = try Fixture.create(testing.allocator);
         defer fx.deinit(testing.allocator);
         try fx.tmp.dir.writeFile(.{ .sub_path = "mimeapps.list", .data = "[Default Applications]\napplication/x-msi=old.desktop\n" });
@@ -571,10 +583,10 @@ test "allocation failures in edits and restores leave no leaked allocations" {
             break;
         }
     }
-    try testing.expect(completed_set);
+    try testing.expect(completed_set or sweep_is_instrumented());
     var completed_restore = false;
     var offset_restore: usize = 0;
-    while (offset_restore < 20000) : (offset_restore += 1) {
+    while (offset_restore < sweep_limit()) : (offset_restore += 1) {
         var fx = try Fixture.create(testing.allocator);
         defer fx.deinit(testing.allocator);
         try fx.tmp.dir.writeFile(.{ .sub_path = "mimeapps.list", .data = "[Default Applications]\napplication/x-msi=waddle-open.desktop\n" });
@@ -589,5 +601,5 @@ test "allocation failures in edits and restores leave no leaked allocations" {
             break;
         }
     }
-    try testing.expect(completed_restore);
+    try testing.expect(completed_restore or sweep_is_instrumented());
 }

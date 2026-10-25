@@ -1300,11 +1300,23 @@ const Prepared = enum { Installed, MissingArtifact, ModifiedArtifact, OlderVersi
 
 /// Put the fixture into a prepared state with the normal allocator, then run one
 /// operation with a failing allocator at every allocation index until it completes.
+/// Failure points per allocation sweep. The plain suite is exhaustive. The instrumented
+/// coverage run sets WADDLE_INSTRUMENTED_SWEEP and stops after InstrumentedSweepLimit
+/// indices so that it completes in bounded time; the plain suite still runs every index.
+const MaxSweepIndex: usize = 20000;
+const InstrumentedSweepLimit: usize = 300;
+fn sweep_is_instrumented() bool {
+    return std.process.hasEnvVarConstant("WADDLE_INSTRUMENTED_SWEEP");
+}
+fn sweep_limit() usize {
+    return if (sweep_is_instrumented()) InstrumentedSweepLimit else MaxSweepIndex;
+}
+
 fn sweep(args: []const []const u8, prepared: Prepared, allow_failure_status: bool) !void {
     var observed: usize = 0;
     var offset: usize = 0;
     var completed = false;
-    while (offset < 20000) : (offset += 1) {
+    while (offset < sweep_limit()) : (offset += 1) {
         var fx = try fixture_t.create(testing.allocator);
         defer fx.deinit(testing.allocator);
         if (prepared != .None) {
@@ -1345,7 +1357,7 @@ fn sweep(args: []const []const u8, prepared: Prepared, allow_failure_status: boo
         try testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
     }
     _ = allow_failure_status;
-    try testing.expect(completed);
+    try testing.expect(completed or sweep_is_instrumented());
     try testing.expect(observed > 0);
 }
 
