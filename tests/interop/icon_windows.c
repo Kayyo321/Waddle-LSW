@@ -131,8 +131,8 @@ static void test_owned_gdi_fixtures(void)
 
     WORD monochrome_mask_bits[64u * 2u] = {0};
     for (size_t row = 0u; row < Dimension; ++row) {
-        /* CreateBitmap stores bottom-up rows; AND is the visual top half. */
-        monochrome_mask_bits[(row + Dimension) * 2u] = 0x8000u;
+        /* DDB input rows are top-down; little-endian WORD 0x0080 sets leftmost bit. */
+        monochrome_mask_bits[row * 2u] = 0x0080u;
     }
     HBITMAP monochrome_mask = CreateBitmap((int)Dimension, (int)(Dimension * 2u),
                                             1u, 1u, monochrome_mask_bits);
@@ -161,7 +161,7 @@ static void test_owned_gdi_fixtures(void)
     assert(DestroyIcon(monochrome_icon) != 0);
     assert(DeleteObject(monochrome_mask) != 0);
 
-    monochrome_mask_bits[0u] = 0x8000u;
+    monochrome_mask_bits[64u] = 0x0080u;
     HBITMAP inversion_mask = CreateBitmap((int)Dimension, (int)(Dimension * 2u),
                                            1u, 1u, monochrome_mask_bits);
     assert(inversion_mask != NULL);

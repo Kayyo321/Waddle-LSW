@@ -1445,10 +1445,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     assertions. Root strict native gcov fixture compilation/link passes. No
     extraction credit from a cross-build or a failed native run.
 
-- **Commit `HEAD`**: `test(interop): align native composition mapping without relaxing lease checks`
+- **Commit `b3b5a0e`**: `test(interop): align native composition mapping without relaxing lease checks`
   - **Task Impact**: +0% to TODO #6/#34; native rerun required.
   - **Summary**: Exact7f5775e Windows run40218079268 failed mapping before
     Hello. VirtualAlloc guarantees64KiB, while production requires2MiB.
     Fixture now exposes an aligned2GiB subrange of a real allocation and
     retains its original allocation base for exact VirtualFree. Keep all
     production alignment and proof-gated cleanup checks. Strict SDK/link pass.
+
+- **Commit `HEAD`**: `test(interop): use native DDB row and byte order for monochrome masks`
+  - **Task Impact**: +0% to TODO #27/#34; native rerun required.
+  - **Summary**: Real7f5775e run showed both sampled pixels opaque. CreateBitmap
+    DDB input is top scanline first; little-endian WORD0x0080 puts the leftmost
+    bit in the first byte. Correct AND/XOR fixtures while preserving transparent,
+    opaque and inversion expectations; strict native compile/link passes.
