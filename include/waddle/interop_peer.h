@@ -40,7 +40,11 @@ typedef enum interop_peer_result_t {
     InteropPeerNoQueuedFrame = 8, /**< Cannot acknowledge an empty TX queue. */
     InteropPeerInternalInvariant = 9, /**< Owned invariant failed; abort/quiesce. */
     InteropPeerMappingFailed = 10, /**< Guest initialization false; begin drain. */
-    InteropPeerClosed = 11 /**< Destroyed core; no further operation is valid. */
+    InteropPeerClosed = 11, /**< Destroyed core; no further operation is valid. */
+    InteropPeerInvalidFrame = 12, /**< Feature frame header, length or payload is malformed; nothing queued. */
+    InteropPeerUnsupportedFrame = 13, /**< Feature frame type is control, local-only, unknown or wrong for this role. */
+    InteropPeerFeatureNotNegotiated = 14, /**< Feature facility is absent from the negotiated capabilities. */
+    InteropPeerQueueFull = 15 /**< Outbound admission has no slot; retry after ack_tx drains the queue. */
 } interop_peer_result_t;
 /** @brief Local role, fixed at create; not a wire enum. */
 typedef enum interop_peer_role_t {
@@ -159,6 +163,21 @@ int interop_peer_next_event(interop_peer_t *peer, uint64_t token, uint64_t now_m
  * @note Operation chosen by configured role. No mapping pointer is accepted.
  */
 int interop_peer_mapping_result(interop_peer_t *peer, uint64_t token, uint64_t now_ms, uint64_t epoch, uint32_t layout_version, uint32_t succeeded, interop_peer_event_t *event);
+/** @brief Admit one complete caller-built outbound feature frame on a Ready connection.
+ * @param[in,out] peer Non-NULL live serialized owner; changed only on admission or deadline drain.
+ * @param[in] token Captured nonzero connection token.
+ * @param[in] now_ms Nondecreasing monotonic time; committed only when admission succeeds.
+ * @param[in] bytes Borrowed complete header plus payload; NULL is allowed only with length 0.
+ * @param[in] length Exact frame size in InteropHeaderBytes..InteropMaxFrameBytes; no peer alias.
+ * @param[out] event Non-NULL disjoint event, unchanged on API error. None after queueing; Draining
+ * when the Ready deadline expired at now_ms (frame not queued, connection terminal).
+ * @return InteropPeerSuccess; InvalidArgument for pointer, alias or range errors; WrongToken,
+ * TimeWentBackwards or WrongPhase (any phase other than Ready) with state unchanged;
+ * InvalidFrame, UnsupportedFrame, FeatureNotNegotiated, QueueFull or OutOfMemory with state unchanged.
+ * @note The frame is copied before return and the caller keeps its buffer. Feature request IDs are
+ * neither reserved nor checked by the peer; correlation belongs to the external dispatcher.
+ */
+int interop_peer_enqueue_feature(interop_peer_t *peer, uint64_t token, uint64_t now_ms, const uint8_t *bytes, size_t length, interop_peer_event_t *event);
 /** @brief Query remaining bytes offered for next OS send.
  * @param[in] peer Non-NULL live serialized owner; no mutation.
  * @param[in] token Captured token.

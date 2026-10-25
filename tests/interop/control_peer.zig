@@ -202,6 +202,12 @@ fn set_request_id(frame: []u8, request_id: u32) void {
 }
 
 fn complete_handshake(pair: *pair_t, now_ms: u64) !void {
+    const ready = try complete_handshake_event(pair, now_ms);
+    try std_t.testing.expectEqual(Capabilities, ready.capabilities);
+}
+
+/// Run the full handshake for any negotiated capability offer and return the guest Ready event.
+fn complete_handshake_event(pair: *pair_t, now_ms: u64) !peer_t.event_t {
     const initialized = try pair.guest.guest_mapping_initialized(GuestToken, now_ms, Epoch, true);
     try std_t.testing.expectEqual(peer_t.event_kind_t.None, initialized.kind);
     try std_t.testing.expectEqual(peer_t.phase_t.AwaitHelloSent, pair.guest.phase());
@@ -228,8 +234,8 @@ fn complete_handshake(pair: *pair_t, now_ms: u64) !void {
     const guest_ack_event = try pair.guest.next_event(GuestToken, now_ms, &output);
     try std_t.testing.expectEqual(peer_t.event_kind_t.Ready, guest_ack_event.event.kind);
     try std_t.testing.expectEqual(Epoch, guest_ack_event.event.epoch);
-    try std_t.testing.expectEqual(Capabilities, guest_ack_event.event.capabilities);
     try std_t.testing.expectEqual(peer_t.phase_t.Ready, pair.guest.phase());
+    return guest_ack_event.event;
 }
 
 fn transfer_front_fragmented(
@@ -1541,4 +1547,583 @@ test "valid HelloAck envelope with invalid SemVer drains as incompatible" {
     const rejected = try guest.next_event(GuestToken, 8003, &output);
     try std_t.testing.expectEqual(peer_t.event_kind_t.Draining, rejected.event.kind);
     try std_t.testing.expectEqual(peer_t.phase_t.Draining, guest.phase());
+}
+
+// ---------------------------------------------------------------------------
+// Outbound feature admission (enqueue_feature, IMPL_DESC 8.20 and 3.2.7).
+// ---------------------------------------------------------------------------
+
+/// Observable state that every refused feature admission must leave byte-identical.
+const snapshot_t = struct {
+    phase: peer_t.phase_t,
+    queued: usize,
+    pending_bytes: usize,
+    send_count: usize,
+    now_ms: u64,
+    request_ids: usize,
+    abort: bool,
+};
+
+/// Data-class admission limit: peer_t.QueueCapacity minus the 8 ReservedControlSlots of stream_send_queue.zig.
+const DataCapacity: usize = 504;
+
+fn snapshot(peer: *const peer_t.peer_t) snapshot_t {
+    return .{
+        .phase = peer.phase(),
+        .queued = peer.queue.count,
+        .pending_bytes = peer.queue.pending_bytes,
+        .send_count = peer.send_count,
+        .now_ms = peer.last_now_ms,
+        .request_ids = peer.request_ids.count,
+        .abort = peer.must_abort_transport(),
+    };
+}
+
+/// Assert that one admission attempt fails with `expected` and changes no observable state.
+fn expect_refused(peer: *peer_t.peer_t, token: u64, now_ms: u64, frame: []const u8, expected: anyerror) !void {
+    const before = snapshot(peer);
+    try std_t.testing.expectError(expected, peer.enqueue_feature(token, now_ms, frame));
+    try std_t.testing.expectEqualDeep(before, snapshot(peer));
+}
+
+fn init_pair_caps(allocator: std_t.mem.Allocator, accepted_at_ms: u64, caps: u64) !pair_t {
+    return .{
+        .host = try peer_t.peer_t.init(allocator, .{ .role = .Host, .connection_token = HostToken, .accepted_at_ms = accepted_at_ms, .local_version = Version, .local_capabilities = caps }),
+        .guest = try peer_t.peer_t.init(allocator, .{ .role = .Guest, .connection_token = GuestToken, .accepted_at_ms = accepted_at_ms, .local_version = Version, .local_capabilities = caps }),
+    };
+}
+
+/// Host-to-guest WindowClose (0x0104, Windows): required window and generation.
+fn make_window_close(buffer: []u8, request_id: u32, window: u64, generation: u64) !usize {
+    var writer = writer_for(buffer);
+    try write_uint(&writer, c_t.InteropTagWindow, window);
+    try write_uint(&writer, c_t.InteropTagGeneration, generation);
+    var length: usize = 0;
+    try finish(&writer, c_t.InteropMsgWindowClose, request_id, c_t.InteropFromHost, &length);
+    return length;
+}
+
+/// Guest-to-host WindowRetire (0x0102, Windows): required window and generation.
+fn make_window_retire(buffer: []u8, window: u64, generation: u64) !usize {
+    var writer = writer_for(buffer);
+    try write_uint(&writer, c_t.InteropTagWindow, window);
+    try write_uint(&writer, c_t.InteropTagGeneration, generation);
+    var length: usize = 0;
+    try finish(&writer, c_t.InteropMsgWindowRetire, 0, c_t.InteropFromGuest, &length);
+    return length;
+}
+
+/// Host-to-guest InputRelease (0x020E, Input): window, generation, serial, lease epoch.
+fn make_input_release(buffer: []u8, window: u64, generation: u64) !usize {
+    var writer = writer_for(buffer);
+    try write_uint(&writer, c_t.InteropTagWindow, window);
+    try write_uint(&writer, c_t.InteropTagGeneration, generation);
+    try write_uint(&writer, c_t.InteropTagSerial, 5);
+    try write_uint(&writer, c_t.InteropTagLeaseEpoch, 6);
+    var length: usize = 0;
+    try finish(&writer, c_t.InteropMsgInputRelease, 0, c_t.InteropFromHost, &length);
+    return length;
+}
+
+/// Host-to-guest DndLeave (0x0502, DragDrop): window and generation.
+fn make_dnd_leave(buffer: []u8, window: u64, generation: u64) !usize {
+    var writer = writer_for(buffer);
+    try write_uint(&writer, c_t.InteropTagWindow, window);
+    try write_uint(&writer, c_t.InteropTagGeneration, generation);
+    var length: usize = 0;
+    try finish(&writer, c_t.InteropMsgDndLeave, 0, c_t.InteropFromHost, &length);
+    return length;
+}
+
+/// Bidirectional ClipboardClear (0x0402, Clipboard): clipboard epoch.
+fn make_clipboard_clear(buffer: []u8, direction: c_t.interop_direction_t, epoch: u64) !usize {
+    var writer = writer_for(buffer);
+    try write_uint(&writer, c_t.InteropTagClipboardEpoch, epoch);
+    var length: usize = 0;
+    try finish(&writer, c_t.InteropMsgClipboardClear, 0, direction, &length);
+    return length;
+}
+
+/// Bidirectional TransferCancel (0x0F03): transfer id and status, facility-gated by origin.
+fn make_transfer_cancel(buffer: []u8, direction: c_t.interop_direction_t, transfer: u64) !usize {
+    var writer = writer_for(buffer);
+    try write_uint(&writer, c_t.InteropTagTransfer, transfer);
+    try write_uint(&writer, c_t.InteropTagStatus, c_t.InteropCancelled);
+    var length: usize = 0;
+    try finish(&writer, c_t.InteropMsgTransferCancel, 0, direction, &length);
+    return length;
+}
+
+/// Guest-to-host empty CatalogBegin (0x0600, Catalog).
+fn make_catalog_begin(buffer: []u8) !usize {
+    return make_empty(buffer, c_t.InteropMsgCatalogBegin, 0, c_t.InteropFromGuest);
+}
+
+/// Write a protocol-v2 header with an arbitrary type and payload length, bypassing the codec.
+fn write_raw_header(frame: []u8, frame_type: u16, request_id: u32, payload_length: u32) void {
+    std_t.mem.writeInt(u32, frame[0..4], c_t.InteropMagic, .little);
+    std_t.mem.writeInt(u16, frame[4..6], c_t.InteropVersion, .little);
+    std_t.mem.writeInt(u16, frame[6..8], frame_type, .little);
+    std_t.mem.writeInt(u32, frame[8..12], payload_length, .little);
+    std_t.mem.writeInt(u32, frame[12..16], request_id, .little);
+}
+
+/// Set the critical bit that every required frozen field carries on the wire.
+fn critical_tag(tag: u16) u16 {
+    return tag | @as(u16, @intCast(c_t.InteropCriticalTag));
+}
+
+/// Append one raw TLV (tag, u16 length, value, zero padding) and return the new payload offset.
+fn append_tlv(frame: []u8, offset: usize, tag: u16, value: []const u8) usize {
+    std_t.mem.writeInt(u16, frame[offset..][0..2], tag, .little);
+    std_t.mem.writeInt(u16, frame[offset + 2 ..][0..2], @intCast(value.len), .little);
+    @memcpy(frame[offset + 4 ..][0..value.len], value);
+    const padded = (value.len + 3) & ~@as(usize, 3);
+    @memset(frame[offset + 4 + value.len .. offset + 4 + padded], 0);
+    return offset + 4 + padded;
+}
+
+test "feature frames are admitted by producing role with exact bytes and no request ID reservation" {
+    var pair = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&pair);
+    try complete_handshake(&pair, 401);
+
+    var host_frame: [MaxTestFrame]u8 = undefined;
+    const host_length = try make_window_close(&host_frame, 77, 0x55, 2);
+    const host_event = try pair.host.enqueue_feature(HostToken, 402, host_frame[0..host_length]);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.None, host_event.kind);
+    try std_t.testing.expectEqual(peer_t.phase_t.Ready, host_event.phase);
+    try std_t.testing.expectEqual(@as(u64, 402), pair.host.last_now_ms);
+    try std_t.testing.expectEqual(@as(usize, 0), pair.host.request_ids.count);
+    try std_t.testing.expectEqualSlices(u8, host_frame[0..host_length], (try pair.host.peek_tx(HostToken)).?);
+
+    var guest_frame: [MaxTestFrame]u8 = undefined;
+    const guest_length = try make_window_retire(&guest_frame, 0x55, 2);
+    _ = try pair.guest.enqueue_feature(GuestToken, 402, guest_frame[0..guest_length]);
+    try std_t.testing.expectEqualSlices(u8, guest_frame[0..guest_length], (try pair.guest.peek_tx(GuestToken)).?);
+
+    _ = try transfer_front_fragmented(&pair.host, HostToken, &pair.guest, GuestToken, 402, &.{ 3, 5 });
+    var output: [MaxTestFrame]u8 = undefined;
+    const received = try pair.guest.next_event(GuestToken, 402, &output);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.FeatureFrame, received.event.kind);
+    try std_t.testing.expectEqual(c_t.InteropMsgWindowClose, received.event.message_type);
+    try std_t.testing.expectEqual(@as(u32, 77), received.event.request_id);
+    try std_t.testing.expectEqualSlices(u8, host_frame[0..host_length], output[0..received.event.copied_bytes]);
+
+    _ = try transfer_front_fragmented(&pair.guest, GuestToken, &pair.host, HostToken, 402, &.{7});
+    const back = try pair.host.next_event(HostToken, 402, &output);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.FeatureFrame, back.event.kind);
+    try std_t.testing.expectEqual(c_t.InteropMsgWindowRetire, back.event.message_type);
+    try std_t.testing.expectEqualSlices(u8, guest_frame[0..guest_length], output[0..back.event.copied_bytes]);
+}
+
+test "control local unknown and wrong-direction feature types are refused without changing state" {
+    var pair = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&pair);
+    try complete_handshake(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    const guest_only = try make_window_retire(&frame, 1, 1);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..guest_only], error.UnsupportedFrame);
+    const host_only = try make_window_close(&frame, 0, 1, 1);
+    try expect_refused(&pair.guest, GuestToken, 402, frame[0..host_only], error.UnsupportedFrame);
+    const catalog_guest = try make_catalog_begin(&frame);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..catalog_guest], error.UnsupportedFrame);
+
+    const hello = try make_hello(&frame, 9, Epoch, Version, Capabilities);
+    try expect_refused(&pair.guest, GuestToken, 402, frame[0..hello], error.UnsupportedFrame);
+    const ping = try make_empty(&frame, c_t.InteropMsgPing, 1, c_t.InteropFromHost);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..ping], error.UnsupportedFrame);
+    const pong = try make_empty(&frame, c_t.InteropMsgPong, 1, c_t.InteropFromGuest);
+    try expect_refused(&pair.guest, GuestToken, 402, frame[0..pong], error.UnsupportedFrame);
+    const error_length = try make_error(&frame, 0, c_t.InteropErrorUnexpected, c_t.InteropFromHost);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..error_length], error.UnsupportedFrame);
+    const goodbye = try make_goodbye(&frame, c_t.InteropFromGuest);
+    try expect_refused(&pair.guest, GuestToken, 402, frame[0..goodbye], error.UnsupportedFrame);
+    const local = try make_empty(&frame, c_t.InteropMsgLocalStop, 0, c_t.InteropFromLocal);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..local], error.UnsupportedFrame);
+
+    write_raw_header(&frame, 0x0FFF, 0, 0);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..c_t.InteropHeaderBytes], error.UnsupportedFrame);
+    write_raw_header(&frame, 0x0110, 0, 0);
+    try expect_refused(&pair.guest, GuestToken, 402, frame[0..c_t.InteropHeaderBytes], error.UnsupportedFrame);
+    try std_t.testing.expect((try pair.host.peek_tx(HostToken)) == null);
+}
+
+test "malformed feature headers payloads and oversize frames are InvalidFrame before any mutation" {
+    var pair = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&pair);
+    try complete_handshake(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    const valid = try make_window_close(&frame, 0, 3, 4);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..0], error.InvalidFrame);
+    try expect_refused(&pair.host, HostToken, 402, frame[0 .. c_t.InteropHeaderBytes - 1], error.InvalidFrame);
+    try expect_refused(&pair.host, HostToken, 402, frame[0 .. valid + 1], error.InvalidFrame);
+    try expect_refused(&pair.host, HostToken, 402, frame[0 .. valid - 4], error.InvalidFrame);
+
+    var corrupted = frame;
+    corrupted[0] ^= 0xff;
+    try expect_refused(&pair.host, HostToken, 402, corrupted[0..valid], error.InvalidFrame);
+    corrupted = frame;
+    corrupted[4] = 1;
+    try expect_refused(&pair.host, HostToken, 402, corrupted[0..valid], error.InvalidFrame);
+    corrupted = frame;
+    std_t.mem.writeInt(u32, corrupted[8..12], 6, .little);
+    try expect_refused(&pair.host, HostToken, 402, corrupted[0 .. valid + 2], error.InvalidFrame);
+
+    var oversize: [c_t.InteropMaxFrameBytes + 8]u8 = undefined;
+    write_raw_header(&oversize, c_t.InteropMsgWindowClose, 0, c_t.InteropMaxPayloadBytes);
+    @memset(oversize[c_t.InteropHeaderBytes..], 0);
+    try expect_refused(&pair.host, HostToken, 402, oversize[0..], error.InvalidFrame);
+
+    var payload: [MaxTestFrame]u8 = undefined;
+    var offset = append_tlv(&payload, 0, critical_tag(c_t.InteropTagWindow), &[_]u8{ 3, 0, 0, 0, 0, 0, 0, 0 });
+    var raw: [MaxTestFrame]u8 = undefined;
+    write_raw_header(&raw, c_t.InteropMsgWindowClose, 0, @intCast(offset));
+    @memcpy(raw[c_t.InteropHeaderBytes..][0..offset], payload[0..offset]);
+    try expect_refused(&pair.host, HostToken, 402, raw[0 .. c_t.InteropHeaderBytes + offset], error.InvalidFrame);
+
+    offset = append_tlv(&payload, 0, critical_tag(c_t.InteropTagWindow), &[_]u8{ 3, 0, 0, 0, 0, 0, 0, 0 });
+    offset = append_tlv(&payload, offset, critical_tag(c_t.InteropTagWindow), &[_]u8{ 3, 0, 0, 0, 0, 0, 0, 0 });
+    write_raw_header(&raw, c_t.InteropMsgWindowClose, 0, @intCast(offset));
+    @memcpy(raw[c_t.InteropHeaderBytes..][0..offset], payload[0..offset]);
+    try expect_refused(&pair.host, HostToken, 402, raw[0 .. c_t.InteropHeaderBytes + offset], error.InvalidFrame);
+
+    offset = append_tlv(&payload, 0, critical_tag(c_t.InteropTagWindow), &[_]u8{ 3, 0, 0, 0, 0, 0, 0, 0 });
+    offset = append_tlv(&payload, offset, critical_tag(c_t.InteropTagGeneration), &[_]u8{ 4, 0, 0, 0, 0, 0, 0, 0 });
+    offset = append_tlv(&payload, offset, 0x8000 | 0x7F00, &[_]u8{ 0, 0, 0, 0 });
+    write_raw_header(&raw, c_t.InteropMsgWindowClose, 0, @intCast(offset));
+    @memcpy(raw[c_t.InteropHeaderBytes..][0..offset], payload[0..offset]);
+    try expect_refused(&pair.host, HostToken, 402, raw[0 .. c_t.InteropHeaderBytes + offset], error.UnsupportedFrame);
+
+    var accepted: [MaxTestFrame]u8 = undefined;
+    offset = append_tlv(&payload, 0, critical_tag(c_t.InteropTagWindow), &[_]u8{ 3, 0, 0, 0, 0, 0, 0, 0 });
+    offset = append_tlv(&payload, offset, critical_tag(c_t.InteropTagGeneration), &[_]u8{ 4, 0, 0, 0, 0, 0, 0, 0 });
+    offset = append_tlv(&payload, offset, 0x7F00, &[_]u8{ 9, 9, 9, 9 });
+    write_raw_header(&accepted, c_t.InteropMsgWindowClose, 0, @intCast(offset));
+    @memcpy(accepted[c_t.InteropHeaderBytes..][0..offset], payload[0..offset]);
+    _ = try pair.host.enqueue_feature(HostToken, 402, accepted[0 .. c_t.InteropHeaderBytes + offset]);
+    try std_t.testing.expectEqual(@as(usize, 1), pair.host.queue.count);
+}
+
+test "every non-Ready phase refuses feature frames before validation or mutation" {
+    var frame: [MaxTestFrame]u8 = undefined;
+    const valid = try make_window_close(&frame, 0, 1, 1);
+
+    var host = try init_peer(std_t.testing.allocator, .Host, HostToken, 400);
+    defer host.deinit();
+    try expect_refused(&host, HostToken, 401, frame[0..valid], error.WrongPhase);
+    try expect_refused(&host, HostToken, 401, frame[0..0], error.WrongPhase);
+
+    var guest = try init_peer(std_t.testing.allocator, .Guest, GuestToken, 400);
+    defer guest.deinit();
+    try expect_refused(&guest, GuestToken, 401, frame[0..valid], error.WrongPhase);
+    _ = try guest.guest_mapping_initialized(GuestToken, 401, Epoch, true);
+    try std_t.testing.expectEqual(peer_t.phase_t.AwaitHelloSent, guest.phase());
+    try expect_refused(&guest, GuestToken, 402, frame[0..valid], error.WrongPhase);
+    const hello = (try guest.peek_tx(GuestToken)).?;
+    _ = try guest.ack_tx(GuestToken, 403, hello.len);
+    try std_t.testing.expectEqual(peer_t.phase_t.AwaitHelloAck, guest.phase());
+    try expect_refused(&guest, GuestToken, 404, frame[0..valid], error.WrongPhase);
+
+    var incoming: [MaxTestFrame]u8 = undefined;
+    const hello_length = try make_hello(&incoming, 7, Epoch, Version, Capabilities);
+    var output: [MaxTestFrame]u8 = undefined;
+    var awaiting = try init_peer(std_t.testing.allocator, .Host, HostToken, 400);
+    defer awaiting.deinit();
+    _ = try awaiting.feed(HostToken, incoming[0..hello_length]);
+    _ = try awaiting.next_event(HostToken, 401, &output);
+    try std_t.testing.expectEqual(peer_t.phase_t.AwaitMapping, awaiting.phase());
+    try expect_refused(&awaiting, HostToken, 402, frame[0..valid], error.WrongPhase);
+    _ = try awaiting.host_mapping_validated(HostToken, 402, Epoch, c_t.InteropLayoutVersion, true);
+    try std_t.testing.expectEqual(peer_t.phase_t.AwaitHelloAckSent, awaiting.phase());
+    try expect_refused(&awaiting, HostToken, 403, frame[0..valid], error.WrongPhase);
+
+    var draining = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&draining);
+    try complete_handshake(&draining, 401);
+    _ = try draining.host.begin_drain(HostToken, 402);
+    try expect_refused(&draining.host, HostToken, 403, frame[0..valid], error.WrongPhase);
+    _ = try draining.host.transport_lost(HostToken);
+    try expect_refused(&draining.host, HostToken, 404, frame[0..valid], error.WrongPhase);
+
+    draining.host.deinit();
+    try std_t.testing.expectError(error.PeerClosed, draining.host.enqueue_feature(HostToken, 405, frame[0..valid]));
+}
+
+test "token time and Ready deadline boundaries are exact for feature admission" {
+    var pair = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&pair);
+    try complete_handshake(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    const valid = try make_window_close(&frame, 0, 1, 1);
+    try expect_refused(&pair.host, GuestToken, 402, frame[0..valid], error.WrongConnectionToken);
+    try expect_refused(&pair.host, 0, 402, frame[0..valid], error.InvalidConnectionToken);
+    try expect_refused(&pair.host, HostToken, 400, frame[0..valid], error.TimeWentBackwards);
+
+    const expiry = 401 + c_t.InteropPingTimeoutMs;
+    _ = try pair.host.enqueue_feature(HostToken, expiry - 1, frame[0..valid]);
+    try std_t.testing.expectEqual(@as(usize, 1), pair.host.queue.count);
+
+    const drained = try pair.host.enqueue_feature(HostToken, expiry, frame[0..valid]);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.Draining, drained.kind);
+    try std_t.testing.expectEqual(peer_t.phase_t.Draining, drained.phase);
+    try std_t.testing.expectEqual(@as(usize, 1), pair.host.queue.count);
+    try std_t.testing.expect(!pair.host.must_abort_transport());
+    try std_t.testing.expectError(error.WrongPhase, pair.host.enqueue_feature(HostToken, expiry + 1, frame[0..valid]));
+}
+
+test "data reservation refuses at the exact boundary and recovers after acknowledgements" {
+    var pair = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&pair);
+    try complete_handshake(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    for (0..DataCapacity) |index| {
+        const length = try make_window_close(&frame, 0, index + 1, 1);
+        _ = try pair.host.enqueue_feature(HostToken, 402, frame[0..length]);
+    }
+    try std_t.testing.expectEqual(DataCapacity, pair.host.queue.count);
+    const full_length = try make_window_close(&frame, 0, 9999, 3);
+    try expect_refused(&pair.host, HostToken, 402, frame[0..full_length], error.QueueFull);
+
+    const ping_at = 401 + c_t.InteropPingIntervalMs;
+    _ = try pair.host.tick(HostToken, ping_at);
+    try std_t.testing.expectEqual(DataCapacity + 1, pair.host.queue.count);
+    try expect_refused(&pair.host, HostToken, ping_at + 1, frame[0..full_length], error.QueueFull);
+
+    var front = (try pair.host.peek_tx(HostToken)).?;
+    _ = try pair.host.ack_tx(HostToken, ping_at + 2, front.len);
+    try expect_refused(&pair.host, HostToken, ping_at + 3, frame[0..full_length], error.QueueFull);
+    front = (try pair.host.peek_tx(HostToken)).?;
+    _ = try pair.host.ack_tx(HostToken, ping_at + 4, front.len);
+    _ = try pair.host.enqueue_feature(HostToken, ping_at + 5, frame[0..full_length]);
+    try std_t.testing.expectEqual(DataCapacity, pair.host.queue.count);
+
+    // Windows 1..504 were admitted in order, the Ping followed them, and Window 9999 came last.
+    var next_data_window: u64 = 3;
+    var expected: [MaxTestFrame]u8 = undefined;
+    var saw_ping = false;
+    var now: u64 = ping_at + 6;
+    while (pair.host.queue.count > 0) : (now += 1) {
+        const bytes = (try pair.host.peek_tx(HostToken)).?;
+        var header: c_t.interop_header_t = undefined;
+        try std_t.testing.expectEqual(c_t.InteropErrorNone, c_t.interop_header_decode(bytes.ptr, bytes.len, &header));
+        if (header.type == c_t.InteropMsgPing) {
+            try std_t.testing.expect(!saw_ping);
+            saw_ping = true;
+        } else if (next_data_window <= 504) {
+            const length = try make_window_close(&expected, 0, next_data_window, 1);
+            try std_t.testing.expectEqualSlices(u8, expected[0..length], bytes);
+            next_data_window += 1;
+        } else {
+            try std_t.testing.expectEqualSlices(u8, frame[0..full_length], bytes);
+        }
+        _ = try pair.host.ack_tx(HostToken, now, bytes.len);
+    }
+    try std_t.testing.expectEqual(@as(u64, 505), next_data_window);
+    try std_t.testing.expect(saw_ping);
+    try std_t.testing.expectEqual(@as(usize, 0), pair.host.queue.pending_bytes);
+}
+
+test "feature frames keep FIFO order around Ping and Pong liveness traffic" {
+    var pair = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&pair);
+    try complete_handshake(&pair, 401);
+
+    var first: [MaxTestFrame]u8 = undefined;
+    const first_length = try make_window_close(&first, 0, 101, 1);
+    _ = try pair.host.enqueue_feature(HostToken, 402, first[0..first_length]);
+    const ping_event = try pair.host.tick(HostToken, 401 + c_t.InteropPingIntervalMs);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.None, ping_event.kind);
+    var second: [MaxTestFrame]u8 = undefined;
+    const second_length = try make_window_close(&second, 0, 202, 1);
+    _ = try pair.host.enqueue_feature(HostToken, 401 + c_t.InteropPingIntervalMs + 1, second[0..second_length]);
+    try std_t.testing.expectEqual(@as(usize, 3), pair.host.queue.count);
+
+    var output: [MaxTestFrame]u8 = undefined;
+    _ = try transfer_front_fragmented(&pair.host, HostToken, &pair.guest, GuestToken, 2403, &.{ 5, 9 });
+    const delivered_first = try pair.guest.next_event(GuestToken, 2403, &output);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.FeatureFrame, delivered_first.event.kind);
+    try std_t.testing.expectEqualSlices(u8, first[0..first_length], output[0..delivered_first.event.copied_bytes]);
+
+    _ = try transfer_front_fragmented(&pair.host, HostToken, &pair.guest, GuestToken, 2404, &.{ 4, 2 });
+    const delivered_ping = try pair.guest.next_event(GuestToken, 2404, &output);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.None, delivered_ping.event.kind);
+
+    _ = try transfer_front_fragmented(&pair.host, HostToken, &pair.guest, GuestToken, 2405, &.{ 6, 3 });
+    const delivered_second = try pair.guest.next_event(GuestToken, 2405, &output);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.FeatureFrame, delivered_second.event.kind);
+    try std_t.testing.expectEqualSlices(u8, second[0..second_length], output[0..delivered_second.event.copied_bytes]);
+
+    _ = try transfer_front_fragmented(&pair.guest, GuestToken, &pair.host, HostToken, 2406, &.{5});
+    const pong = try pair.host.next_event(HostToken, 2406, &output);
+    try std_t.testing.expectEqual(peer_t.event_kind_t.None, pong.event.kind);
+    try std_t.testing.expectEqual(peer_t.phase_t.Ready, pair.host.phase());
+    try std_t.testing.expectEqual(@as(usize, 0), pair.host.queue.count);
+}
+
+test "drain queues Goodbye behind admitted feature bytes and transport loss closes admission" {
+    var pair = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&pair);
+    try complete_handshake(&pair, 401);
+
+    var frame: [MaxTestFrame]u8 = undefined;
+    const admitted = try make_window_close(&frame, 0, 7, 1);
+    _ = try pair.host.enqueue_feature(HostToken, 402, frame[0..admitted]);
+    _ = try pair.host.begin_drain(HostToken, 403);
+    try expect_refused(&pair.host, HostToken, 404, frame[0..admitted], error.WrongPhase);
+    try std_t.testing.expect(!pair.host.must_abort_transport());
+
+    const front = (try pair.host.peek_tx(HostToken)).?;
+    try std_t.testing.expectEqualSlices(u8, frame[0..admitted], front);
+    _ = try pair.host.ack_tx(HostToken, 404, front.len);
+    const goodbye = (try pair.host.peek_tx(HostToken)).?;
+    var header: c_t.interop_header_t = undefined;
+    try std_t.testing.expectEqual(c_t.InteropErrorNone, c_t.interop_header_decode(goodbye.ptr, goodbye.len, &header));
+    try std_t.testing.expectEqual(c_t.InteropMsgGoodbye, header.type);
+    _ = try pair.host.ack_tx(HostToken, 405, goodbye.len);
+    try std_t.testing.expect((try pair.host.peek_tx(HostToken)) == null);
+
+    _ = try pair.host.transport_lost(HostToken);
+    try expect_refused(&pair.host, HostToken, 406, frame[0..admitted], error.WrongPhase);
+}
+
+test "allocation failure at feature admission preserves every observable field" {
+    var frame: [MaxTestFrame]u8 = undefined;
+    const length = try make_window_close(&frame, 0, 12, 1);
+    for ([_]bool{ false, true }) |inject| {
+        var failing = std_t.testing.FailingAllocator.init(std_t.testing.allocator, .{ .fail_index = std_t.math.maxInt(usize) });
+        var pair = pair_t{
+            .host = try peer_t.peer_t.init(failing.allocator(), .{ .role = .Host, .connection_token = HostToken, .accepted_at_ms = 400, .local_version = Version, .local_capabilities = Capabilities }),
+            .guest = try init_peer(std_t.testing.allocator, .Guest, GuestToken, 400),
+        };
+        defer deinit_pair(&pair);
+        try complete_handshake(&pair, 401);
+        const before = snapshot(&pair.host);
+        if (inject) {
+            failing.fail_index = failing.alloc_index;
+            try std_t.testing.expectError(error.OutOfMemory, pair.host.enqueue_feature(HostToken, 402, frame[0..length]));
+            try std_t.testing.expect(failing.has_induced_failure);
+            try std_t.testing.expectEqualDeep(before, snapshot(&pair.host));
+            failing.fail_index = std_t.math.maxInt(usize);
+        } else {
+            const event = try pair.host.enqueue_feature(HostToken, 402, frame[0..length]);
+            try std_t.testing.expectEqual(peer_t.event_kind_t.None, event.kind);
+            try std_t.testing.expectEqual(before.queued + 1, pair.host.queue.count);
+        }
+    }
+}
+
+test "negotiated facilities gate each feature family and any-of transfers" {
+    var narrow = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&narrow);
+    try complete_handshake(&narrow, 401);
+    var frame: [MaxTestFrame]u8 = undefined;
+    const clipboard = try make_clipboard_clear(&frame, c_t.InteropFromHost, 4);
+    try expect_refused(&narrow.host, HostToken, 402, frame[0..clipboard], error.FeatureNotNegotiated);
+    const transfer = try make_transfer_cancel(&frame, c_t.InteropFromHost, 9);
+    try expect_refused(&narrow.host, HostToken, 402, frame[0..transfer], error.FeatureNotNegotiated);
+    const release = try make_input_release(&frame, 3, 3);
+    _ = try narrow.host.enqueue_feature(HostToken, 402, frame[0..release]);
+
+    var wide = try init_pair_caps(std_t.testing.allocator, 400, Capabilities | c_t.InteropCapClipboard | c_t.InteropCapCatalog);
+    defer deinit_pair(&wide);
+    const ready = try complete_handshake_event(&wide, 401);
+    try std_t.testing.expectEqual(Capabilities | c_t.InteropCapClipboard | c_t.InteropCapCatalog, ready.capabilities);
+    const host_clear = try make_clipboard_clear(&frame, c_t.InteropFromHost, 4);
+    _ = try wide.host.enqueue_feature(HostToken, 402, frame[0..host_clear]);
+    const guest_clear = try make_clipboard_clear(&frame, c_t.InteropFromGuest, 5);
+    _ = try wide.guest.enqueue_feature(GuestToken, 402, frame[0..guest_clear]);
+    const guest_transfer = try make_transfer_cancel(&frame, c_t.InteropFromGuest, 11);
+    _ = try wide.guest.enqueue_feature(GuestToken, 402, frame[0..guest_transfer]);
+    const catalog = try make_catalog_begin(&frame);
+    _ = try wide.guest.enqueue_feature(GuestToken, 402, frame[0..catalog]);
+    const dnd = try make_dnd_leave(&frame, 1, 1);
+    try expect_refused(&wide.host, HostToken, 402, frame[0..dnd], error.FeatureNotNegotiated);
+    try std_t.testing.expectEqual(@as(usize, 3), wide.guest.queue.count);
+}
+
+// Deterministic random sequence of admissions, partial acknowledgements, Ping ticks and
+// refused frames. The model tracks FIFO window IDs for WindowClose frames and counts Pings.
+test "randomized admission and partial acknowledgement sequences preserve FIFO accounting" {
+    var pair = try init_pair(std_t.testing.allocator, 400);
+    defer deinit_pair(&pair);
+    try complete_handshake(&pair, 401);
+
+    var prng = std_t.rand.DefaultPrng.init(0x5eed_1234);
+    const random = prng.random();
+    var expected_ids: [peer_t.QueueCapacity]u64 = undefined;
+    var expected_head: usize = 0;
+    var expected_count: usize = 0;
+    var pings_pending: usize = 0;
+    var next_window: u64 = 1;
+    var now: u64 = 402;
+    var current: [64]u8 = undefined;
+    var current_length: usize = 0;
+    var current_offset: usize = 0;
+    var refused_count: usize = 0;
+
+    for (0..3000) |_| {
+        const choice = random.uintLessThan(u32, 100);
+        if (choice < 40 and pair.host.queue.count < peer_t.QueueCapacity) {
+            var admitted: [64]u8 = undefined;
+            const length = try make_window_close(&admitted, 0, next_window, 1);
+            const admission = pair.host.enqueue_feature(HostToken, now, admitted[0..length]);
+            if (admission) |event| {
+                try std_t.testing.expectEqual(peer_t.event_kind_t.None, event.kind);
+                expected_ids[(expected_head + expected_count) % peer_t.QueueCapacity] = next_window;
+                expected_count += 1;
+                next_window += 1;
+            } else |err| {
+                try std_t.testing.expectEqual(error.QueueFull, err);
+            }
+        } else if (choice < 45) {
+            try expect_refused(&pair.host, HostToken, now, current[0..0], error.InvalidFrame);
+            refused_count += 1;
+        } else if (choice < 50) {
+            const event = try pair.host.tick(HostToken, now);
+            try std_t.testing.expect(event.kind != .Draining);
+            if (pair.host.queue.count > expected_count + pings_pending) pings_pending += 1;
+        } else {
+            if (try pair.host.peek_tx(HostToken)) |front| {
+                if (current_offset == 0) current_length = front.len;
+                const count = random.uintAtMost(usize, front.len);
+                @memcpy(current[current_offset..][0..count], front[0..count]);
+                current_offset += count;
+                _ = try pair.host.ack_tx(HostToken, now, count);
+                if (current_offset == current_length) {
+                    var header: c_t.interop_header_t = undefined;
+                    try std_t.testing.expectEqual(c_t.InteropErrorNone, c_t.interop_header_decode(&current, current_length, &header));
+                    if (header.type == c_t.InteropMsgPing) {
+                        pings_pending -= 1;
+                    } else {
+                        try std_t.testing.expectEqual(c_t.InteropMsgWindowClose, header.type);
+                        try std_t.testing.expect(expected_count > 0);
+                        const window = std_t.mem.readInt(u64, current[20..28], .little);
+                        try std_t.testing.expectEqual(expected_ids[expected_head], window);
+                        expected_head = (expected_head + 1) % peer_t.QueueCapacity;
+                        expected_count -= 1;
+                    }
+                    current_offset = 0;
+                }
+            }
+        }
+        try std_t.testing.expectEqual(pair.host.queue.count, pair.host.send_count);
+        try std_t.testing.expectEqual(expected_count + pings_pending, pair.host.queue.count);
+        now += random.uintAtMost(u64, 2);
+        try std_t.testing.expect(now < 401 + c_t.InteropPingTimeoutMs);
+    }
+
+    while (try pair.host.peek_tx(HostToken)) |front| {
+        const count = front.len;
+        _ = try pair.host.ack_tx(HostToken, now, count);
+        now += 1;
+        if (pair.host.queue.count == 0) break;
+    }
+    try std_t.testing.expectEqual(@as(usize, 0), pair.host.queue.count);
+    try std_t.testing.expectEqual(@as(usize, 0), pair.host.send_count);
+    try std_t.testing.expect(refused_count > 0);
 }

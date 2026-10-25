@@ -151,6 +151,27 @@ fn map_create_error(err: anyerror) c_int {
     };
 }
 
+/// Map an outbound admission error to its frozen C result; unknown errors are internal faults.
+/// @param[in] err Error from control_peer.enqueue_feature.
+/// @return Stable interop_peer_result_t value.
+/// @ownership Scalar mapping only.
+/// @thread_safety Pure function.
+fn map_feature_error(err: anyerror) c_int {
+    return switch (err) {
+        error.InvalidFrame => c_t.InteropPeerInvalidFrame,
+        error.UnsupportedFrame => c_t.InteropPeerUnsupportedFrame,
+        error.FeatureNotNegotiated => c_t.InteropPeerFeatureNotNegotiated,
+        error.QueueFull => c_t.InteropPeerQueueFull,
+        error.OutOfMemory => c_t.InteropPeerOutOfMemory,
+        error.WrongPhase => c_t.InteropPeerWrongPhase,
+        error.WrongConnectionToken => c_t.InteropPeerWrongToken,
+        error.InvalidConnectionToken => c_t.InteropPeerInvalidArgument,
+        error.TimeWentBackwards => c_t.InteropPeerTimeWentBackwards,
+        error.PeerClosed => c_t.InteropPeerClosed,
+        else => c_t.InteropPeerInternalInvariant,
+    };
+}
+
 fn read_config(address: usize) ?peer_mod_t.config_t {
     if (!valid_range(address, @sizeOf(c_t.struct_interop_peer_config_t), @alignOf(c_t.struct_interop_peer_config_t))) return null;
     const source: *const c_t.struct_interop_peer_config_t = @ptrFromInt(address);
@@ -333,6 +354,28 @@ export fn interop_peer_mapping_result(owner_address: usize, token: u64, now_ms: 
     else
         owner.peer.guest_mapping_initialized(token, now_ms, epoch, succeeded == 1);
     const event = result catch return c_t.InteropPeerInternalInvariant;
+    const output: *c_t.struct_interop_peer_event_t = @ptrFromInt(event_address);
+    output.* = copy_event(owner, event);
+    return c_t.InteropPeerSuccess;
+}
+
+/// Admit one complete outbound feature frame; the caller keeps its input buffer.
+/// @param[in,out] owner_address Raw owner pointer word; operation is serialized.
+/// @param[in] token/now_ms captured connection token and monotonic admission time.
+/// @param[in] bytes_address/length borrowed complete frame; NULL is valid only with length zero.
+/// @param[out] event_address Aligned disjoint event, unchanged on API error.
+/// @return Fixed C result; every error leaves the queue, clock and request IDs unchanged.
+/// @ownership Copies the frame into peer-owned queue storage before return.
+/// @thread_safety Caller serializes admission with every other peer operation.
+export fn interop_peer_enqueue_feature(owner_address: usize, token: u64, now_ms: u64, bytes_address: usize, length: usize, event_address: usize) c_int {
+    const owner = resolve_owner(owner_address) orelse return c_t.InteropPeerInvalidArgument;
+    if (!valid_byte_range(bytes_address, length) or
+        !valid_output(owner, event_address, @sizeOf(c_t.struct_interop_peer_event_t), @alignOf(c_t.struct_interop_peer_event_t)) or
+        owner_overlaps(owner, bytes_address, length) or
+        !valid_disjoint_ranges(bytes_address, length, event_address, @sizeOf(c_t.struct_interop_peer_event_t))) return c_t.InteropPeerInvalidArgument;
+    if (preflight_token(owner, token)) |result| return result;
+    if (preflight_time(owner, now_ms)) |result| return result;
+    const event = owner.peer.enqueue_feature(token, now_ms, const_byte_slice(bytes_address, length)) catch |err| return map_feature_error(err);
     const output: *c_t.struct_interop_peer_event_t = @ptrFromInt(event_address);
     output.* = copy_event(owner, event);
     return c_t.InteropPeerSuccess;
@@ -1339,6 +1382,75 @@ test "ABI Ready dispatch contains a closed liveness observer" {
 
 // The C fixture is compiled with main renamed only for test/coverage linkage.
 extern fn interop_peer_c_fixture_main() c_int;
+test "outbound feature ABI guards pointers and maps every admission error to a fixed result" {
+    const owner = try create_owner(std_t.testing.allocator, .{
+        .role = .Host,
+        .connection_token = 0x7733,
+        .accepted_at_ms = 0,
+        .local_version = "1.2.3",
+        .local_capabilities = 0,
+    });
+    defer destroy_owner(owner);
+    var event = std_t.mem.zeroes(c_t.struct_interop_peer_event_t);
+    const before = event;
+    const owner_address = @intFromPtr(owner);
+    const event_address = @intFromPtr(&event);
+    var frame = [_]u8{0} ** c_t.InteropHeaderBytes;
+    const frame_address = @intFromPtr(&frame);
+    var length_value: usize = c_t.InteropHeaderBytes;
+    const length_pointer: *volatile usize = &length_value;
+
+    try std_t.testing.expectEqual(c_t.InteropPeerInvalidArgument, @call(.never_inline, interop_peer_enqueue_feature, .{
+        owner_address, 0x7733, 0, 0, length_pointer.*, event_address,
+    }));
+    try std_t.testing.expectEqual(c_t.InteropPeerInvalidArgument, @call(.never_inline, interop_peer_enqueue_feature, .{
+        owner_address, 0x7733, 0, frame_address, length_pointer.*, 0,
+    }));
+    try std_t.testing.expectEqual(c_t.InteropPeerInvalidArgument, @call(.never_inline, interop_peer_enqueue_feature, .{
+        owner_address, 0x7733, 0, owner_address, @sizeOf(owner_t), event_address,
+    }));
+    try std_t.testing.expectEqual(c_t.InteropPeerInvalidArgument, @call(.never_inline, interop_peer_enqueue_feature, .{
+        owner_address, 0x7733, 0, frame_address, length_pointer.*, frame_address,
+    }));
+    try std_t.testing.expectEqual(c_t.InteropPeerInvalidArgument, @call(.never_inline, interop_peer_enqueue_feature, .{
+        0, 0x7733, 0, frame_address, length_pointer.*, event_address,
+    }));
+    try std_t.testing.expectEqual(before, event);
+    try std_t.testing.expectEqual(c_t.InteropPeerWrongToken, @call(.never_inline, interop_peer_enqueue_feature, .{
+        owner_address, 0x7734, 0, frame_address, length_pointer.*, event_address,
+    }));
+    try std_t.testing.expectEqual(c_t.InteropPeerInvalidArgument, @call(.never_inline, interop_peer_enqueue_feature, .{
+        owner_address, 0, 0, frame_address, length_pointer.*, event_address,
+    }));
+    try std_t.testing.expectEqual(c_t.InteropPeerWrongPhase, @call(.never_inline, interop_peer_enqueue_feature, .{
+        owner_address, 0x7733, 0, 0, 0, event_address,
+    }));
+    try std_t.testing.expectEqual(before, event);
+
+    owner.peer.last_now_ms = 50;
+    try std_t.testing.expectEqual(c_t.InteropPeerTimeWentBackwards, @call(.never_inline, interop_peer_enqueue_feature, .{
+        owner_address, 0x7733, 10, frame_address, length_pointer.*, event_address,
+    }));
+    owner.peer.last_now_ms = 0;
+    try std_t.testing.expectEqual(before, event);
+
+    const admission_errors = [_]anyerror{
+        error.InvalidFrame,        error.UnsupportedFrame,      error.FeatureNotNegotiated,
+        error.QueueFull,           error.OutOfMemory,           error.WrongPhase,
+        error.WrongConnectionToken, error.InvalidConnectionToken, error.TimeWentBackwards,
+        error.PeerClosed,          error.ReaderFailed,
+    };
+    const expected_results = [_]c_int{
+        c_t.InteropPeerInvalidFrame,   c_t.InteropPeerUnsupportedFrame, c_t.InteropPeerFeatureNotNegotiated,
+        c_t.InteropPeerQueueFull,      c_t.InteropPeerOutOfMemory,      c_t.InteropPeerWrongPhase,
+        c_t.InteropPeerWrongToken,     c_t.InteropPeerInvalidArgument,  c_t.InteropPeerTimeWentBackwards,
+        c_t.InteropPeerClosed,         c_t.InteropPeerInternalInvariant,
+    };
+    for (admission_errors, expected_results) |admission_error, expected| {
+        try std_t.testing.expectEqual(expected, @call(.never_inline, map_feature_error, .{admission_error}));
+    }
+}
+
 test "independent C client crosses the opaque pointer ABI" {
     try std_t.testing.expectEqual(@as(c_int, 0), interop_peer_c_fixture_main());
 }

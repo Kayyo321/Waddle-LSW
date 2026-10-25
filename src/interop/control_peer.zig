@@ -143,7 +143,27 @@ pub const control_peer_error_t = error{
     InternalState,
 };
 
-const send_kind_t = enum { None, Hello, HelloAck, Ping, Pong, Error, Goodbye };
+/// Errors returned by outbound feature admission. Each error leaves peer, queue and caller
+/// state unchanged. Ready-deadline expiry is not an error: it is reported as a Draining event.
+/// @ownership Compile-time error set; no runtime storage.
+/// @thread_safety Serialized with every other peer method by the connection owner.
+pub const feature_send_error_t = error{
+    /// Frame is shorter than a header, longer than MaxFrameBytes, has an invalid header,
+    /// a header length that disagrees with the frame size, or a malformed TLV payload.
+    InvalidFrame,
+    /// Frame type is control (0x0001-0x0006), local-only (0x7Fxx), absent from the message
+    /// table, unknown, or not legal in this peer's producer direction.
+    UnsupportedFrame,
+    /// The frame's facility is not in the negotiated Ready capability intersection.
+    FeatureNotNegotiated,
+    /// Data-class admission has no slot: all 512 ring entries are used, or only the
+    /// ReservedControlSlots remain. Retry after acknowledgements drain the queue.
+    QueueFull,
+    /// The owned copy of the frame could not be allocated.
+    OutOfMemory,
+};
+
+const send_kind_t = enum { None, Hello, HelloAck, Ping, Pong, Error, Goodbye, Feature };
 const send_record_t = struct {
     kind: send_kind_t = .None,
     request_id: u32 = 0,
@@ -593,6 +613,46 @@ pub const peer_t = struct {
         return self.event(.None);
     }
 
+    /// Admit one complete caller-built feature frame to the outbound FIFO of a Ready connection.
+    /// Validation order is pure and runs before any state change: (1) token, then monotonic
+    /// time, then phase must be Ready; (2) frame length in [16, MaxFrameBytes] and a valid v2
+    /// header whose length field matches the frame size; (3) type is not control or local-only
+    /// and is present in the facility table; (4) the codec payload validator accepts the type
+    /// and payload for this role's producer direction; (5) the type's facility is negotiated.
+    /// Only then is the Ready deadline checked: if the 6 s liveness window has expired at
+    /// now_ms, the peer enters Draining (reason TransportLost) and the frame is not queued.
+    /// Otherwise the frame is copied into the Data admission class, which keeps the
+    /// ReservedControlSlots free for Ping, Pong, Error and Goodbye.
+    /// @param[in,out] self Live Ready peer; changed only on successful admission or deadline drain.
+    /// @param[in] connection_token Captured token identifying this connection instance.
+    /// @param[in] now_ms Monotonic admission time; committed as last_now_ms only on success.
+    /// @param[in] frame Borrowed complete header plus payload bytes, copied before return.
+    /// @return None after the frame is queued; Draining when the Ready deadline expired at
+    /// now_ms (frame not queued). event.phase is the phase after the call.
+    /// @errors WrongConnectionToken, InvalidConnectionToken, PeerClosed, TimeWentBackwards and
+    /// WrongPhase (every phase other than Ready, including Draining and Closed), plus
+    /// feature_send_error_t. Every error leaves peer, queue, ID and clock state unchanged.
+    /// @ownership The caller keeps `frame`. The queue owns one copy until its full
+    /// acknowledgement or deinit. No request ID is reserved or released here: feature request
+    /// correlation is owned by the external dispatcher (IMPL_DESC 8.20).
+    /// @thread_safety Caller serializes with feed, next_event, tick, peek_tx, ack_tx and lifecycle calls.
+    pub fn enqueue_feature(self: *peer_t, connection_token: u64, now_ms: u64, frame: []const u8) (control_peer_error_t || feature_send_error_t)!event_t {
+        try self.check_live_token(connection_token);
+        try self.check_time(now_ms);
+        if (self.connection_phase != .Ready) return error.WrongPhase;
+        const header = try self.validate_feature_frame(frame);
+        if (self.deadline_expired(now_ms)) {
+            self.enter_draining_at(now_ms, .TransportLost);
+            return self.event(.Draining);
+        }
+        self.queue.enqueue(frame, .Data) catch |err| return map_admission_error(err);
+        const index = (self.send_head + self.send_count) % QueueCapacity;
+        self.send_records[index] = .{ .kind = .Feature, .request_id = header.request_id, .total_bytes = frame.len, .remaining_bytes = frame.len };
+        self.send_count += 1;
+        self.last_now_ms = now_ms;
+        return self.event(.None);
+    }
+
     /// Begin local orderly protocol drain and best-effort queue Goodbye(status Cancelled, ID zero).
     /// @param[in,out] self Live peer whose negotiation and future admissions stop.
     /// @param[in] connection_token Captured local stop token.
@@ -949,6 +1009,31 @@ pub const peer_t = struct {
         for (released) |request_id| try self.request_ids.release(request_id);
     }
 
+    /// Run the pure admission checks for one outbound feature frame; mutates nothing.
+    /// @param[in] self Peer whose role supplies the producer direction and negotiated facilities.
+    /// @param[in] frame Borrowed candidate frame bytes.
+    /// @return Decoded header of an admissible frame.
+    /// @errors InvalidFrame, UnsupportedFrame or FeatureNotNegotiated in the order documented on enqueue_feature.
+    /// @ownership No allocation; the returned header is a scalar copy.
+    /// @thread_safety Serialized with every other peer method.
+    fn validate_feature_frame(self: *const peer_t, frame: []const u8) feature_send_error_t!c_t.interop_header_t {
+        if (frame.len < c_t.InteropHeaderBytes or frame.len > queue_mod_t.MaxFrameBytes) return error.InvalidFrame;
+        var header: c_t.interop_header_t = undefined;
+        if (c_t.interop_header_decode(frame.ptr, c_t.InteropHeaderBytes, &header) != c_t.InteropErrorNone) return error.InvalidFrame;
+        if (@as(usize, header.length) + c_t.InteropHeaderBytes != frame.len) return error.InvalidFrame;
+        if (is_control_type(header.type) or is_local_type(header.type)) return error.UnsupportedFrame;
+        const requirement = feature_requirement(header.type) orelse return error.UnsupportedFrame;
+        const payload = frame[c_t.InteropHeaderBytes..];
+        const payload_pointer: [*c]const u8 = if (payload.len == 0) null else payload.ptr;
+        switch (c_t.interop_payload_validate(header.type, self.outgoing_direction(), payload_pointer, payload.len)) {
+            c_t.InteropErrorNone => {},
+            c_t.InteropErrorUnsupportedType, c_t.InteropErrorUnsupportedField => return error.UnsupportedFrame,
+            else => return error.InvalidFrame,
+        }
+        if (!requirement.satisfied_by(self.handshake.negotiated_capabilities)) return error.FeatureNotNegotiated;
+        return header;
+    }
+
     fn outgoing_direction(self: *const peer_t) c_t.interop_direction_t {
         return if (self.role == .Host) c_t.InteropFromHost else c_t.InteropFromGuest;
     }
@@ -984,6 +1069,96 @@ fn ranges_overlap(left_start: usize, left_end: usize, right_start: usize, right_
 
 fn is_control_type(message_type: u16) bool {
     return message_type >= c_t.InteropMsgHello and message_type <= c_t.InteropMsgError;
+}
+
+/// Local-only session.sock types occupy the 0x7Fxx range and are never sent over VSOCK.
+fn is_local_type(message_type: u16) bool {
+    return (message_type & 0xFF00) == 0x7F00;
+}
+
+/// Negotiated facility mask bits, mirrored from interop_capability_t for table entries.
+const CapWindows: u64 = @intCast(c_t.InteropCapWindows);
+const CapInput: u64 = @intCast(c_t.InteropCapInput);
+const CapCursor: u64 = @intCast(c_t.InteropCapCursor);
+const CapRelativePointer: u64 = @intCast(c_t.InteropCapRelativePointer);
+const CapTouch: u64 = @intCast(c_t.InteropCapTouch);
+const CapTablet: u64 = @intCast(c_t.InteropCapTablet);
+const CapGestures: u64 = @intCast(c_t.InteropCapGestures);
+const CapTextInput: u64 = @intCast(c_t.InteropCapTextInput);
+const CapClipboard: u64 = @intCast(c_t.InteropCapClipboard);
+const CapDragDrop: u64 = @intCast(c_t.InteropCapDragDrop);
+const CapCatalog: u64 = @intCast(c_t.InteropCapCatalog);
+const CapLaunch: u64 = @intCast(c_t.InteropCapLaunch);
+const CapAudio: u64 = @intCast(c_t.InteropCapAudio);
+const CapPrinters: u64 = @intCast(c_t.InteropCapPrinters);
+const CapUacNative: u64 = @intCast(c_t.InteropCapUacNative);
+const CapDisplay: u64 = @intCast(c_t.InteropCapDisplay);
+const CapKeyboardLayout: u64 = @intCast(c_t.InteropCapKeyboardLayout);
+
+/// Facility requirement of one feature message type, checked against the negotiated set.
+/// A type is admissible only when every `all` bit is negotiated and, if `any` is nonzero,
+/// at least one `any` bit is negotiated.
+const feature_requirement_t = struct {
+    /// Every bit in this mask must be negotiated; zero requires nothing.
+    all: u64 = 0,
+    /// When nonzero, at least one bit in this mask must be negotiated.
+    any: u64 = 0,
+
+    /// Decide whether a negotiated intersection satisfies this requirement.
+    /// @param[in] self Requirement from feature_requirement.
+    /// @param[in] negotiated Ready-session capability intersection.
+    /// @return True when the frame's facility may be used on this connection.
+    fn satisfied_by(self: feature_requirement_t, negotiated: u64) bool {
+        if ((negotiated & self.all) != self.all) return false;
+        return self.any == 0 or (negotiated & self.any) != 0;
+    }
+};
+
+/// Facility table for every feature message in IMPL_DESC 3.2.5. Window messages require
+/// Windows; transfers are gated by the facility whose request created them (3.2.6), so any
+/// one of those facilities satisfies them. Control and local-only types return null.
+/// @param[in] message_type Frozen type from a validated header.
+/// @return Requirement for an admissible feature type, or null for any other type.
+fn feature_requirement(message_type: u16) ?feature_requirement_t {
+    return switch (message_type) {
+        c_t.InteropMsgWindowAnnounce, c_t.InteropMsgWindowUpdate, c_t.InteropMsgWindowRetire, c_t.InteropMsgWindowConfigure, c_t.InteropMsgWindowClose, c_t.InteropMsgWindowMoveRequest, c_t.InteropMsgWindowResizeRequest, c_t.InteropMsgWindowStateRequest, c_t.InteropMsgFrameReady, c_t.InteropMsgFrameRelease, c_t.InteropMsgWindowIconChanged, c_t.InteropMsgPopupRepositioned, c_t.InteropMsgPopupDismissed => .{ .all = CapWindows },
+        c_t.InteropMsgInputFocus, c_t.InteropMsgInputKey, c_t.InteropMsgInputPointerMotion, c_t.InteropMsgInputPointerButton, c_t.InteropMsgInputPointerAxis, c_t.InteropMsgInputRelease, c_t.InteropMsgInputLockState, c_t.InteropMsgInputRepeatInfo, c_t.InteropMsgLeaseRevoked, c_t.InteropMsgLeaseAck, c_t.InteropMsgLeaseReady => .{ .all = CapInput },
+        c_t.InteropMsgInputPointerRelative => .{ .all = CapInput | CapRelativePointer },
+        c_t.InteropMsgInputTouch, c_t.InteropMsgInputTouchFrame, c_t.InteropMsgInputTouchCancel => .{ .all = CapInput | CapTouch },
+        c_t.InteropMsgInputTablet, c_t.InteropMsgInputTabletProximity => .{ .all = CapInput | CapTablet },
+        c_t.InteropMsgInputGesturePinch => .{ .all = CapInput | CapGestures },
+        c_t.InteropMsgInputTextCommit, c_t.InteropMsgInputTextPreedit => .{ .all = CapInput | CapTextInput },
+        c_t.InteropMsgCaretRect => .{ .all = CapTextInput },
+        c_t.InteropMsgKeyboardLayout => .{ .all = CapKeyboardLayout },
+        c_t.InteropMsgCursorShape => .{ .all = CapCursor },
+        c_t.InteropMsgCursorConstraint => .{ .all = CapCursor | CapRelativePointer },
+        c_t.InteropMsgClipboardOffer, c_t.InteropMsgClipboardRequest, c_t.InteropMsgClipboardClear => .{ .all = CapClipboard },
+        c_t.InteropMsgDndEnter, c_t.InteropMsgDndMotion, c_t.InteropMsgDndLeave, c_t.InteropMsgDndDrop, c_t.InteropMsgDndResult, c_t.InteropMsgDndSourceStart, c_t.InteropMsgDndSourceRequest, c_t.InteropMsgDndSourceFinished => .{ .all = CapDragDrop },
+        c_t.InteropMsgCatalogBegin, c_t.InteropMsgCatalogAdd, c_t.InteropMsgCatalogUpdate, c_t.InteropMsgCatalogRemove, c_t.InteropMsgCatalogEnd, c_t.InteropMsgIconRequest => .{ .all = CapCatalog },
+        c_t.InteropMsgLaunchRequest, c_t.InteropMsgLaunchResult => .{ .all = CapLaunch },
+        c_t.InteropMsgElevationNotice, c_t.InteropMsgUacPrompt, c_t.InteropMsgUacDecision, c_t.InteropMsgDesktopSwitch => .{ .all = CapUacNative },
+        c_t.InteropMsgAudioStreamOpen, c_t.InteropMsgAudioStreamClose => .{ .all = CapAudio },
+        c_t.InteropMsgPrinterSync, c_t.InteropMsgPrinterResult => .{ .all = CapPrinters },
+        c_t.InteropMsgDisplayConfig, c_t.InteropMsgDisplayApplied => .{ .all = CapDisplay },
+        c_t.InteropMsgTransferBegin, c_t.InteropMsgTransferChunk, c_t.InteropMsgTransferEnd, c_t.InteropMsgTransferCancel => .{ .any = CapClipboard | CapDragDrop | CapCatalog | CapCursor | CapUacNative },
+        else => null,
+    };
+}
+
+/// Map a queue admission error to the outbound feature error set. Queue validation is
+/// already performed by validate_feature_frame, so its invalid-frame arms are defensive.
+/// @param[in] err Error returned by stream_send_queue enqueue.
+/// @return Feature admission error with the same meaning; OutOfMemory stays OutOfMemory.
+/// @ownership Scalar mapping only.
+/// @thread_safety Pure function.
+fn map_admission_error(err: anyerror) (feature_send_error_t || error{PeerClosed}) {
+    return switch (err) {
+        error.DataCapacityReserved, error.QueueFull => error.QueueFull,
+        error.OutOfMemory => error.OutOfMemory,
+        error.QueueClosed => error.PeerClosed,
+        error.UnsupportedFrame => error.UnsupportedFrame,
+        else => error.InvalidFrame,
+    };
 }
 
 fn field_uint(payload: []const u8, tag: u16, width: u32) error{MalformedField}!u64 {
@@ -2133,6 +2308,43 @@ fn test_private_bounded_helper_edges() !void {
     try std_t.testing.expectEqual(event_kind_t.Draining, deadline_result.kind);
 }
 
+/// Test the facility table for every frozen feature type and the admission-error mapping.
+/// @return No value after control, local and unknown types are null and each facility rule holds.
+/// @errors Test assertion failure.
+/// @ownership Pure scalar checks; no allocation.
+/// @thread_safety Synchronous test-only probe.
+fn test_private_feature_requirement_table() !void {
+    // Sweep every u16 through the never-inlined table so each prong runs at runtime with a
+    // non-folded selector. IMPL_DESC 3.2.5 lists 70 feature types (6 control, 3 local excluded).
+    var feature_types: usize = 0;
+    for (0..0x1_0000) |value| {
+        if (@call(.never_inline, feature_requirement, .{@as(u16, @intCast(value))})) |_| feature_types += 1;
+    }
+    try std_t.testing.expectEqual(@as(usize, 70), feature_types);
+    const control_types = [_]u16{ c_t.InteropMsgHello, c_t.InteropMsgHelloAck, c_t.InteropMsgGoodbye, c_t.InteropMsgPing, c_t.InteropMsgPong, c_t.InteropMsgError, 0x7F00, 0x7F01, 0x7F02, 0x0000 };
+    for (control_types) |message_type| try std_t.testing.expectEqual(@as(?feature_requirement_t, null), @call(.never_inline, feature_requirement, .{message_type}));
+    try std_t.testing.expect(is_local_type(0x7F01));
+    try std_t.testing.expect(!is_local_type(0x0700));
+    const window = feature_requirement(c_t.InteropMsgWindowClose).?;
+    try std_t.testing.expect(window.satisfied_by(CapWindows));
+    try std_t.testing.expect(!window.satisfied_by(CapInput));
+    const pointer = feature_requirement(c_t.InteropMsgInputPointerRelative).?;
+    try std_t.testing.expect(!pointer.satisfied_by(CapInput));
+    try std_t.testing.expect(pointer.satisfied_by(CapInput | CapRelativePointer));
+    const transfer = feature_requirement(c_t.InteropMsgTransferCancel).?;
+    try std_t.testing.expect(!transfer.satisfied_by(CapWindows | CapInput));
+    try std_t.testing.expect(transfer.satisfied_by(CapCatalog));
+    try std_t.testing.expect(transfer.satisfied_by(CapUacNative | CapWindows));
+    try std_t.testing.expect(!feature_requirement(c_t.InteropMsgCatalogBegin).?.satisfied_by(CapWindows));
+    try std_t.testing.expectEqual(error.QueueFull, @call(.never_inline, map_admission_error, .{error.DataCapacityReserved}));
+    try std_t.testing.expectEqual(error.QueueFull, @call(.never_inline, map_admission_error, .{error.QueueFull}));
+    try std_t.testing.expectEqual(error.OutOfMemory, @call(.never_inline, map_admission_error, .{error.OutOfMemory}));
+    try std_t.testing.expectEqual(error.PeerClosed, @call(.never_inline, map_admission_error, .{error.QueueClosed}));
+    try std_t.testing.expectEqual(error.UnsupportedFrame, @call(.never_inline, map_admission_error, .{error.UnsupportedFrame}));
+    try std_t.testing.expectEqual(error.InvalidFrame, @call(.never_inline, map_admission_error, .{error.InvalidPayload}));
+    try std_t.testing.expectEqual(error.InvalidFrame, @call(.never_inline, map_admission_error, .{error.InvalidFrame}));
+}
+
 /// Test-only entry point exposing private production-boundary probes to named test roots.
 /// @ownership This type and its methods exist only when Zig is compiling tests.
 /// @thread_safety Tests call the probes synchronously on their current test thread.
@@ -2161,6 +2373,7 @@ pub const test_support_t = if (@import("builtin").is_test) struct {
         try test_private_handshake_dispatch_faults();
         try test_private_terminal_builder_guards();
         try test_private_bounded_helper_edges();
+        try test_private_feature_requirement_table();
     }
 } else struct {};
 
