@@ -471,6 +471,25 @@ pub const migrate_request_t = struct {
     candidate_manifest: []const u8,
 };
 
+/// Explicit recreation request for one recorded artifact whose file is absent.
+pub const recreate_request_t = struct {
+    /// Existing record identifier; borrowed for this call.
+    record_id: []const u8,
+    /// Borrowed complete candidate manifest. Only the record digest and creator may
+    /// differ from the current record; the target identity must be unchanged.
+    candidate_manifest: []const u8,
+    /// Borrowed artifact bytes to publish; the candidate record digest must match them.
+    artifact_bytes: []const u8,
+    /// Mode of the published artifact, 0644 or 0755.
+    artifact_mode: u9 = 0o644,
+};
+
+/// Result of one recreation: the published identity.
+pub const recreate_receipt_t = struct {
+    /// Exact identity of the newly published artifact.
+    target: artifact_identity_t,
+};
+
 /// Result of one migration request.
 pub const migrate_receipt_t = struct {
     /// True when a new manifest was published; false for an identical candidate.
@@ -1075,7 +1094,7 @@ pub const store_t = struct {
             .Foreign => return .{ .outcome = .KeptForeign, .record_found = true, .prior = prior },
         };
         try validate_removal(parsed.records, candidate.records, request.record_id);
-        try self.run_manifest_transaction(.{
+        _ = try self.run_manifest_transaction(.{
             .operation = "remove",
             .record_id = request.record_id,
             .root = target.root,
@@ -1122,7 +1141,7 @@ pub const store_t = struct {
         if (find_record(parsed.records, request.record_id) == null) return error.FileNotFound;
         try validate_metadata_only(parsed.records, candidate.records);
         if (std.mem.eql(u8, snapshot.bytes, request.candidate_manifest)) return .{ .changed = false };
-        try self.run_manifest_transaction(.{
+        _ = try self.run_manifest_transaction(.{
             .operation = "migrate",
             .record_id = request.record_id,
             .old_manifest = snapshot.bytes,
@@ -1132,27 +1151,149 @@ pub const store_t = struct {
         return .{ .changed = true };
     }
 
+    /// Publish an absent artifact for an existing record through the journaled
+    /// engine. The target must not exist; a file of any kind yields ArtifactConflict
+    /// before mutation. The record keeps its target identity; the candidate may
+    /// change only its digest and creator, which must match the new bytes.
+    /// Parameters: `self` is an initialized, live mutable store owner; `request` and
+    /// its slices are borrowed only for the call.
+    /// Returns: the published artifact identity by value.
+    /// Errors: Closed, InvalidArgument (also for a candidate byte-identical to the
+    /// current manifest), InvalidManifest, UnsupportedSchema,
+    /// ManifestMismatch, FileNotFound (no manifest or record, or missing parent),
+    /// ArtifactConflict, RecoveryRequired, AccessDenied, OutOfMemory, or filesystem
+    /// errors. Errors before the PREPARED journal change nothing published.
+    /// Thread safety: serialized owner-thread use only; do not call concurrently.
+    pub fn recreate(self: *store_t, request: recreate_request_t) !recreate_receipt_t {
+        if (!self.live) return error.Closed;
+        try self.recover_locked();
+        if (!valid_record_id(request.record_id) or request.artifact_bytes.len == 0 or
+            request.artifact_bytes.len > MaxArtifactBytes or request.candidate_manifest.len == 0 or
+            request.candidate_manifest.len > manifest.MaxManifestBytes or
+            (request.artifact_mode != 0o644 and request.artifact_mode != 0o755)) return error.InvalidArgument;
+        var candidate = try manifest.parse(self.allocator, request.candidate_manifest);
+        defer candidate.deinit();
+        try validate_global_paths(candidate.records);
+        const snapshot = try self.read_manifest_snapshot();
+        defer self.allocator.free(snapshot.bytes);
+        var parsed = try manifest.parse(self.allocator, snapshot.bytes);
+        defer parsed.deinit();
+        try validate_global_paths(parsed.records);
+        if (std.mem.eql(u8, snapshot.bytes, request.candidate_manifest)) return error.InvalidArgument;
+        const old_record = find_record(parsed.records, request.record_id) orelse return error.FileNotFound;
+        const new_record = find_record(candidate.records, request.record_id) orelse return error.ManifestMismatch;
+        if (!same_recreate_identity(old_record.*, new_record.*)) return error.ManifestMismatch;
+        const digest_text = hash_hex(request.artifact_bytes);
+        if (!std.ascii.eqlIgnoreCase(new_record.sha256, &digest_text)) return error.ManifestMismatch;
+        try validate_recreate_delta(parsed.records, candidate.records, request.record_id);
+        const target = (try self.resolve_for_record(old_record.*)) orelse return error.InvalidPath;
+        defer self.allocator.free(target.relative);
+        if ((try self.inspect(target.root.fd, target.relative)) != null) return error.ArtifactConflict;
+        const staged = (try self.run_manifest_transaction(.{
+            .operation = "recreate",
+            .record_id = request.record_id,
+            .root = target.root,
+            .relative = target.relative,
+            .old_manifest = snapshot.bytes,
+            .old_info = snapshot.info,
+            .candidate = request.candidate_manifest,
+            .new_artifact_bytes = request.artifact_bytes,
+            .new_artifact_mode = request.artifact_mode,
+        })) orelse return error.RecoveryRequired;
+        return .{ .target = identity_from_info(staged) };
+    }
+
+    /// Create every missing directory component of `relative_dir` below the root of
+    /// `kind`, walking each component with no-follow descriptors. Existing components
+    /// must be current-user-owned directories without group or other write permission.
+    /// Missing directories are created with mode 0755. Not journaled: a directory is
+    /// not an artifact and an interrupted call leaves only ordinary empty directories.
+    /// Errors: Closed, InvalidScope, InvalidPath, AccessDenied, OutOfMemory, or I/O.
+    /// Thread safety: serialized owner-thread use only.
+    pub fn ensure_directory(self: *store_t, kind: root_kind_t, relative_dir: []const u8) !void {
+        if (!self.live) return error.Closed;
+        const root = self.find_root(kind) orelse return error.InvalidScope;
+        try validate_relative(relative_dir);
+        var current = dup_cloexec(root.fd);
+        if (current < 0) return native_error();
+        errdefer _ = c.close(current);
+        var parts = std.mem.splitScalar(u8, relative_dir, '/');
+        while (parts.next()) |part| {
+            const name = try self.allocator.dupeZ(u8, part);
+            defer self.allocator.free(name);
+            if (io_mkdirat(current, name, 0o755) != 0 and errno_value() != c.EEXIST) return native_error();
+            const next = io_openat3(current, name, c.O_RDONLY | c.O_DIRECTORY | c.O_CLOEXEC | c.O_NOFOLLOW);
+            if (next < 0) return native_error();
+            var st: c.struct_stat = undefined;
+            if (io_fstat(next, &st) != 0 or st.st_mode & c.S_IFMT != c.S_IFDIR or st.st_uid != c.getuid() or st.st_mode & 0o022 != 0) {
+                _ = c.close(next);
+                return error.AccessDenied;
+            }
+            _ = c.close(current);
+            current = next;
+        }
+        defer _ = c.close(current);
+        if (io_fsync(current) != 0 or io_fsync(root.fd) != 0) return native_error();
+    }
+
+    /// Copy the current manifest bytes into `allocator`, or return null when no manifest
+    /// exists. The method runs the same recovery as the other read paths first and never
+    /// writes. The returned bytes are caller-owned.
+    /// Errors: Closed, RecoveryRequired, AccessDenied, OutOfMemory, or an I/O error.
+    /// Thread safety: serialized owner-thread use only.
+    pub fn manifest_snapshot(self: *store_t, allocator: std.mem.Allocator) !?[]u8 {
+        if (!self.live) return error.Closed;
+        try self.recover_locked();
+        const snapshot = self.read_manifest_snapshot() catch |err| {
+            if (err == error.FileNotFound) return null;
+            return err;
+        };
+        defer self.allocator.free(snapshot.bytes);
+        return try allocator.dupe(u8, snapshot.bytes);
+    }
+
+    /// Verify a recreate journal's staged manifests and record delta rules, then
+    /// the record resolves to the journal's root and relative path with the digest
+    /// that the journal recorded for the artifact. Every failure is RecoveryRequired.
+    fn validate_recreate_evidence(self: *store_t, journal: journal_v3_t, old_records: []const manifest.record_t, new_records: []const manifest.record_t) !void {
+        validate_recreate_delta(old_records, new_records, journal.record_id) catch return error.RecoveryRequired;
+        const new_record = find_record(new_records, journal.record_id) orelse return error.RecoveryRequired;
+        const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
+        const target = self.resolve_for_record(new_record.*) catch |err| return if (err == error.OutOfMemory) error.OutOfMemory else error.RecoveryRequired;
+        const resolved = target orelse return error.RecoveryRequired;
+        defer self.allocator.free(resolved.relative);
+        if (resolved.root.kind != root.kind or !std.mem.eql(u8, resolved.relative, journal.relative_path.?) or
+            !std.ascii.eqlIgnoreCase(new_record.sha256, journal.new_artifact_hash.?)) return error.RecoveryRequired;
+    }
+
     /// Shared journaled engine for version-3 operations. `spec.artifact` is set
     /// only for removal, where the target must stay unchanged until COMMITTED.
     /// PREPARED publishes the candidate manifest; COMMITTED unlinks a removed
     /// artifact only after the manifest is durable. Any error after the journal
     /// is written is left to `recover` and the journal stays as evidence.
-    fn run_manifest_transaction(self: *store_t, spec: transaction_spec_t) !void {
+    fn run_manifest_transaction(self: *store_t, spec: transaction_spec_t) !?file_info_t {
         const transaction_id = try random_id();
         var has_journal = false;
         var staged_manifest: ?file_info_t = null;
+        var staged_artifact: ?file_info_t = null;
         errdefer if (!has_journal) {
+            if (spec.root) |root| if (staged_artifact) |info| self.remove_target_temp(root.fd, spec.relative.?, transaction_id, info) catch {};
             if (staged_manifest) |info| self.remove_state_temp(transaction_id, info) catch {};
             self.remove_tx_tree(transaction_id) catch {};
         };
         try self.create_tx_dir(transaction_id);
         try self.write_tx_file(transaction_id, "new-manifest", spec.candidate, 0o600);
         try self.write_tx_file(transaction_id, "old-manifest", spec.old_manifest, 0o600);
+        if (spec.new_artifact_bytes) |bytes| {
+            const root = spec.root orelse return error.InvalidArgument;
+            staged_artifact = try self.create_target_temp(root.fd, spec.relative.?, bytes, spec.new_artifact_mode, transaction_id);
+        }
         staged_manifest = try self.create_state_temp(spec.candidate, 0o600, transaction_id);
 
         const new_hash = hash_hex(spec.candidate);
         const old_hash = hash_hex_from_array(spec.old_info.hash);
         const artifact_hash: [64]u8 = if (spec.artifact) |info| hash_hex_from_array(info.hash) else [_]u8{'0'} ** 64;
+        const new_artifact_hash: [64]u8 = if (staged_artifact) |info| hash_hex_from_array(info.hash) else [_]u8{'0'} ** 64;
         const journal = journal_v3_t{
             .version = 3,
             .transaction_id = &transaction_id,
@@ -1171,6 +1312,10 @@ pub const store_t = struct {
             .new_manifest_hash = new_hash[0..],
             .new_manifest_device = staged_manifest.?.device,
             .new_manifest_inode = staged_manifest.?.inode,
+            .new_artifact_hash = if (staged_artifact != null) new_artifact_hash[0..] else null,
+            .new_artifact_mode = if (staged_artifact) |info| info.mode else 0,
+            .new_artifact_device = if (staged_artifact) |info| info.device else null,
+            .new_artifact_inode = if (staged_artifact) |info| info.inode else null,
         };
         try self.write_journal(transaction_id, journal);
         has_journal = true;
@@ -1181,7 +1326,9 @@ pub const store_t = struct {
         try self.checkpoint();
         try self.apply_committed_v3(journal);
         try self.remove_displaced_manifest_temp(transaction_id, v3_old_manifest_info(journal));
+        if (v3_is_recreate(journal)) try self.remove_target_temp(spec.root.?.fd, spec.relative.?, transaction_id, v3_new_artifact_info(journal));
         try self.remove_tx_tree(transaction_id);
+        return staged_artifact;
     }
 
     /// Publish the candidate manifest for a PREPARED version-3 journal. The
@@ -1191,6 +1338,7 @@ pub const store_t = struct {
     fn apply_prepared_v3(self: *store_t, journal: journal_v3_t) !void {
         const txid = try txid_array(journal.transaction_id);
         if (v3_is_remove(journal)) try self.expect_v3_artifact(journal);
+        if (v3_is_recreate(journal)) try self.publish_v3_artifact(txid, journal);
         const old_info = v3_old_manifest_info(journal);
         const new_info = v3_new_manifest_info(journal);
         const current = (try self.inspect_manifest()) orelse return error.ArtifactConflict;
@@ -1210,10 +1358,40 @@ pub const store_t = struct {
     fn rollback_prepared_v3(self: *store_t, journal: journal_v3_t) !void {
         const txid = try txid_array(journal.transaction_id);
         if (v3_is_remove(journal)) try self.expect_v3_artifact(journal);
+        const recreated_present = if (v3_is_recreate(journal)) try self.expect_recreated_artifact_or_absent(journal) else false;
         switch (try self.classify_v3_manifest(journal)) {
             .Candidate => try self.restore_displaced_manifest(txid, journal),
             .Original => {},
         }
+        if (recreated_present) try self.unpublish_v3_artifact(journal);
+    }
+
+    /// Validate a PREPARED recreate journal's artifact before any mutation. Returns
+    /// true when the recorded identity is live (it must be unlinked), false when
+    /// absent (the publish never happened), and ArtifactConflict for any other file.
+    fn expect_recreated_artifact_or_absent(self: *store_t, journal: journal_v3_t) !bool {
+        const current = (try self.inspect_v3_artifact(journal)) orelse return false;
+        if (!same_file_info(current, v3_new_artifact_info(journal))) return error.ArtifactConflict;
+        return true;
+    }
+
+    /// Publish a staged recreate artifact with no-clobber semantics. The target
+    /// must be absent or already carry the recorded identity (an earlier attempt).
+    fn publish_v3_artifact(self: *store_t, txid: [32]u8, journal: journal_v3_t) !void {
+        const root = self.find_root_by_name(journal.root.?) orelse return error.ArtifactConflict;
+        const relative = journal.relative_path.?;
+        const info = v3_new_artifact_info(journal);
+        if (try self.inspect_v3_artifact(journal)) |current| {
+            if (!same_file_info(current, info)) return error.ArtifactConflict;
+            return;
+        }
+        try self.publish_file(root.fd, relative, txid, info);
+    }
+
+    /// Unlink a recreated artifact during rollback when its recorded identity is live.
+    fn unpublish_v3_artifact(self: *store_t, journal: journal_v3_t) !void {
+        const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
+        try self.unlink_owned_artifact(root.fd, journal.relative_path.?, v3_new_artifact_info(journal));
     }
 
     /// Identify the live manifest as the recorded candidate or the recorded old
@@ -1244,6 +1422,10 @@ pub const store_t = struct {
         if (!same_file_info(current_manifest, v3_new_manifest_info(journal))) return error.RecoveryRequired;
         try self.validate_displaced_manifest_temp(txid, v3_old_manifest_info(journal));
         if (v3_is_remove(journal)) try self.retire_v3_artifact(journal);
+        if (v3_is_recreate(journal)) {
+            const current = (try self.inspect_v3_artifact(journal)) orelse return error.RecoveryRequired;
+            if (!same_file_info(current, v3_new_artifact_info(journal))) return error.RecoveryRequired;
+        }
 
         const transactions_fd = try self.open_private_dir("transactions");
         defer _ = c.close(transactions_fd);
@@ -1256,8 +1438,8 @@ pub const store_t = struct {
         if (journal_fd < 0) return error.RecoveryRequired;
         defer _ = c.close(journal_fd);
         if (io_fsync(journal_fd) != 0 or io_fsync(tx_fd) != 0 or io_fsync(self.dir_fd) != 0) return native_error();
-        if (v3_is_remove(journal)) {
-            const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
+        if (journal.root) |name| {
+            const root = self.find_root_by_name(name) orelse return error.RecoveryRequired;
             const parent = try self.open_parent(root.fd, journal.relative_path.?);
             defer _ = c.close(parent.fd);
             if (io_fsync(parent.fd) != 0 or io_fsync(root.fd) != 0) return native_error();
@@ -1327,6 +1509,10 @@ pub const store_t = struct {
             try self.apply_committed_v3(journal);
             try self.remove_displaced_manifest_temp(txid, v3_old_manifest_info(journal));
         }
+        if (v3_is_recreate(journal)) {
+            const root = self.find_root_by_name(journal.root.?) orelse return error.RecoveryRequired;
+            try self.remove_target_temp(root.fd, journal.relative_path.?, txid, v3_new_artifact_info(journal));
+        }
         try self.remove_tx_tree(txid);
     }
 
@@ -1348,6 +1534,10 @@ pub const store_t = struct {
         validate_global_paths(old.records) catch return error.RecoveryRequired;
         validate_global_paths(candidate.records) catch return error.RecoveryRequired;
         const old_record = find_record(old.records, journal.record_id) orelse return error.RecoveryRequired;
+        if (v3_is_recreate(journal)) {
+            try self.validate_recreate_evidence(journal, old.records, candidate.records);
+            return;
+        }
         if (!v3_is_remove(journal)) {
             validate_metadata_only(old.records, candidate.records) catch return error.RecoveryRequired;
             return;
@@ -2452,6 +2642,14 @@ const journal_v3_t = struct {
     new_manifest_device: u64,
     /// Inode number of the staged candidate manifest.
     new_manifest_inode: u64,
+    /// SHA-256 hex of a recreated artifact; null unless the operation is `recreate`.
+    new_artifact_hash: ?[]const u8 = null,
+    /// Permission bits of a recreated artifact; zero unless the operation is `recreate`.
+    new_artifact_mode: u32 = 0,
+    /// Device number of a recreated artifact; null unless the operation is `recreate`.
+    new_artifact_device: ?u64 = null,
+    /// Inode number of a recreated artifact; null unless the operation is `recreate`.
+    new_artifact_inode: ?u64 = null,
 };
 
 /// Live manifest state observed during version-3 recovery.
@@ -2477,7 +2675,21 @@ const transaction_spec_t = struct {
     old_info: file_info_t,
     /// Borrowed candidate manifest bytes.
     candidate: []const u8,
+    /// Bytes of an absent artifact to publish (`recreate`); null for other operations.
+    new_artifact_bytes: ?[]const u8 = null,
+    /// Mode of the artifact published by `recreate`.
+    new_artifact_mode: u9 = 0o644,
 };
+
+/// True for a version-3 recreate journal, which publishes an absent artifact.
+fn v3_is_recreate(journal: journal_v3_t) bool {
+    return std.mem.eql(u8, journal.operation, "recreate");
+}
+
+/// Identity of the artifact staged or published by a recreate journal.
+fn v3_new_artifact_info(journal: journal_v3_t) file_info_t {
+    return .{ .hash = hash_from_text(journal.new_artifact_hash.?), .mode = journal.new_artifact_mode, .device = journal.new_artifact_device.?, .inode = journal.new_artifact_inode.? };
+}
 
 fn v3_old_manifest_info(journal: journal_v3_t) file_info_t {
     return .{ .hash = hash_from_text(journal.old_manifest_hash), .mode = 0o600, .device = journal.old_manifest_device, .inode = journal.old_manifest_inode };
@@ -2541,10 +2753,20 @@ fn validate_journal_v3(journal: journal_v3_t, entry_name: []const u8) !void {
         const artifact_inode = journal.old_artifact_inode orelse return error.RecoveryRequired;
         if (journal.root == null or journal.relative_path == null or !valid_hash_text(artifact_hash) or
             (journal.old_artifact_mode != 0o644 and journal.old_artifact_mode != 0o755) or
-            artifact_device == 0 or artifact_inode == 0) return error.RecoveryRequired;
+            artifact_device == 0 or artifact_inode == 0 or journal.new_artifact_hash != null or
+            journal.new_artifact_mode != 0 or journal.new_artifact_device != null or journal.new_artifact_inode != null) return error.RecoveryRequired;
+    } else if (v3_is_recreate(journal)) {
+        const artifact_hash = journal.new_artifact_hash orelse return error.RecoveryRequired;
+        const artifact_device = journal.new_artifact_device orelse return error.RecoveryRequired;
+        const artifact_inode = journal.new_artifact_inode orelse return error.RecoveryRequired;
+        if (journal.root == null or journal.relative_path == null or !valid_hash_text(artifact_hash) or
+            (journal.new_artifact_mode != 0o644 and journal.new_artifact_mode != 0o755) or
+            artifact_device == 0 or artifact_inode == 0 or journal.old_artifact_hash != null or
+            journal.old_artifact_mode != 0 or journal.old_artifact_device != null or journal.old_artifact_inode != null) return error.RecoveryRequired;
     } else if (std.mem.eql(u8, journal.operation, "migrate")) {
         if (journal.root != null or journal.relative_path != null or journal.old_artifact_hash != null or
-            journal.old_artifact_mode != 0 or journal.old_artifact_device != null or journal.old_artifact_inode != null)
+            journal.old_artifact_mode != 0 or journal.old_artifact_device != null or journal.old_artifact_inode != null or
+            journal.new_artifact_hash != null or journal.new_artifact_mode != 0 or journal.new_artifact_device != null or journal.new_artifact_inode != null)
             return error.RecoveryRequired;
     } else return error.RecoveryRequired;
 }
@@ -2553,6 +2775,27 @@ fn validate_journal_v3(journal: journal_v3_t, entry_name: []const u8) !void {
 /// fields exactly when the operation is a removal.
 fn v3_is_remove(journal: journal_v3_t) bool {
     return std.mem.eql(u8, journal.operation, "remove");
+}
+
+/// True when a recreated record keeps its target identity. The digest and creator
+/// may change, because the artifact bytes are being regenerated.
+fn same_recreate_identity(old: manifest.record_t, new: manifest.record_t) bool {
+    return old.kind == new.kind and std.mem.eql(u8, old.id, new.id) and std.mem.eql(u8, old.path, new.path) and
+        optional_text_equal(old.device, new.device) and optional_text_equal(old.app_key, new.app_key) and
+        optional_text_equal(old.mime, new.mime) and same_prior(old.prior, new.prior);
+}
+
+/// Verify that a recreate candidate changes only the target digest and creator:
+/// equal record counts, the same identity for the target, and every other record
+/// equal by schema fields.
+fn validate_recreate_delta(old_records: []const manifest.record_t, new_records: []const manifest.record_t, target_id: []const u8) !void {
+    if (old_records.len != new_records.len) return error.ManifestMismatch;
+    for (old_records) |old| {
+        const candidate = find_record(new_records, old.id) orelse return error.ManifestMismatch;
+        if (std.mem.eql(u8, old.id, target_id)) {
+            if (!same_recreate_identity(old, candidate.*)) return error.ManifestMismatch;
+        } else if (!same_record(old, candidate.*)) return error.ManifestMismatch;
+    }
 }
 
 /// Verify that a migration changes no record: the record counts match and every
@@ -8795,6 +9038,263 @@ test "migrate journal rejects removal fields and rewritten metadata before recov
     defer std.testing.allocator.free(on_disk);
     try std.testing.expectEqualStrings(docs.original, on_disk);
     try std.testing.expect(target_exists(fixture.data));
+}
+
+/// Recreate fixture: one handler record whose artifact is absent, a candidate that
+/// changes only the root `updated` value, and the artifact bytes it describes.
+const recreate_docs_t = struct { original: []u8, candidate: []u8, bytes: []const u8 };
+
+fn recreate_documents(arena: std.mem.Allocator, data_path: []const u8) recreate_docs_t {
+    const bytes = "[Desktop Entry]\nType=Application\n";
+    const digest = hash_hex(bytes);
+    const path = std.fmt.allocPrint(arena, "{s}/applications/handler.desktop", .{data_path}) catch @panic("fixture path");
+    const spec = test_spec_t{ .id = "handler:waddle-open", .kind = "handler_entry", .path = path, .sha256 = &digest };
+    const specs = [_]test_spec_t{spec};
+    const original = test_document(arena, 1, &specs);
+    const candidate = std.mem.replaceOwned(u8, arena, original, "2026-10-25T00:00:00Z", "2026-10-26T00:00:00Z") catch @panic("fixture candidate");
+    return .{ .original = original, .candidate = candidate, .bytes = bytes };
+}
+
+/// Assert that the artifact and manifest are in one of the two legal recreate states:
+/// absent with the original manifest, or present with the candidate manifest.
+fn expect_recreate_converged(fixture: *remove_fixture_t, docs: recreate_docs_t) !void {
+    const present = blk: {
+        fixture.data.access("applications/handler.desktop", .{}) catch break :blk false;
+        break :blk true;
+    };
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    if (present) {
+        try std.testing.expectEqualStrings(docs.candidate, on_disk);
+        const bytes = try fixture.data.readFileAlloc(std.testing.allocator, "applications/handler.desktop", 4096);
+        defer std.testing.allocator.free(bytes);
+        try std.testing.expectEqualStrings(docs.bytes, bytes);
+    } else {
+        try std.testing.expectEqualStrings(docs.original, on_disk);
+    }
+}
+
+test "recreate publishes an absent artifact, keeps the record identity, and then refuses a live target" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = recreate_documents(arena.allocator(), fixture.data_path);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+
+    const receipt = try store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes });
+    try std.testing.expectEqual(@as(u32, 0o644), receipt.target.mode);
+    try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
+    var listed = try store.status(std.testing.allocator);
+    defer listed.deinit();
+    try std.testing.expectEqual(record_state_t.Ok, listed.items[0].state);
+
+    try std.testing.expectError(error.InvalidArgument, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes }));
+    const again = std.mem.replaceOwned(u8, arena.allocator(), docs.candidate, "2026-10-26T00:00:00Z", "2026-10-27T00:00:00Z") catch @panic("fixture candidate");
+    try std.testing.expectError(error.ArtifactConflict, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = again, .artifact_bytes = docs.bytes }));
+    try std.testing.expectError(error.InvalidArgument, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = "" }));
+}
+
+test "recreate rejects every invalid candidate and absent-state violation before mutation" {
+    for (0..8) |case_index| {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const scratch = arena.allocator();
+        const docs = recreate_documents(scratch, fixture.data_path);
+        try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+        const roots = fixture.roots();
+        var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+        defer store.deinit();
+        const other_path = std.fmt.allocPrint(scratch, "{s}/applications/other.desktop", .{fixture.data_path}) catch @panic("fixture path");
+        const other_digest = hash_hex("other");
+        const moved = test_spec_t{ .id = "handler:waddle-open", .kind = "handler_entry", .path = other_path, .sha256 = &other_digest };
+        const moved_list = [_]test_spec_t{moved};
+        const extra_list = [_]test_spec_t{ moved, .{ .id = "desktop:extra", .kind = "desktop_entry", .path = other_path, .sha256 = &other_digest } };
+        const bad_digest = hash_hex("different bytes");
+        const bad_path = std.fmt.allocPrint(scratch, "{s}/applications/handler.desktop", .{fixture.data_path}) catch @panic("fixture path");
+        const digest_changed = test_spec_t{ .id = "handler:waddle-open", .kind = "handler_entry", .path = bad_path, .sha256 = &bad_digest };
+        const changed_list = [_]test_spec_t{digest_changed};
+        const candidate: []const u8 = switch (case_index) {
+            0 => test_document(scratch, 1, &moved_list),
+            1 => test_document(scratch, 1, &extra_list),
+            2 => docs.original,
+            3 => test_document(scratch, 1, &changed_list),
+            4 => "{",
+            else => docs.candidate,
+        };
+        const record_id: []const u8 = if (case_index == 5) "handler:missing" else if (case_index == 6) "" else "handler:waddle-open";
+        const expected: anyerror = switch (case_index) {
+            0, 1, 3 => error.ManifestMismatch,
+            2 => error.InvalidArgument,
+            4 => error.InvalidManifest,
+            5 => error.FileNotFound,
+            6 => error.InvalidArgument,
+            else => error.InvalidArgument,
+        };
+        const artifact: []const u8 = if (case_index == 7) "" else docs.bytes;
+        try std.testing.expectError(expected, store.recreate(.{ .record_id = record_id, .candidate_manifest = candidate, .artifact_bytes = artifact }));
+        const on_disk = read_stored_manifest(fixture.state);
+        defer std.testing.allocator.free(on_disk);
+        try std.testing.expectEqualStrings(docs.original, on_disk);
+        try std.testing.expectError(error.FileNotFound, fixture.data.access("applications/handler.desktop", .{}));
+    }
+}
+
+test "recreate recovers after every injected durable checkpoint and a second recovery is a no-op" {
+    var completed = false;
+    var observed_failures: usize = 0;
+    for (1..48) |step| {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const docs = recreate_documents(arena.allocator(), fixture.data_path);
+        try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+        const roots = fixture.roots();
+        var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+        defer store.deinit();
+        store.fail_after.store(store.checkpoint_count.load(.monotonic) + step, .monotonic);
+        const outcome = store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes });
+        store.fail_after.store(0, .monotonic);
+        if (outcome) |_| {
+            completed = true;
+        } else |err| {
+            observed_failures += 1;
+            try std.testing.expectEqual(error.InjectedFailure, err);
+            try store.recover();
+        }
+        try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
+        try store.recover();
+        try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
+        if (completed) break;
+    }
+    try std.testing.expect(completed);
+    try std.testing.expect(observed_failures > 0);
+}
+
+test "recreate retries after every selected injected I/O failure and allocation failure without leaks" {
+    defer {
+        injected_io_at = 0;
+        injected_io_count = 0;
+    }
+    var observed_failures: usize = 0;
+    for (1..200) |failure_io| {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const docs = recreate_documents(arena.allocator(), fixture.data_path);
+        try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+        const roots = fixture.roots();
+        var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+        defer store.deinit();
+        injected_io_at = failure_io;
+        injected_io_count = 0;
+        const outcome = store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes });
+        injected_io_at = 0;
+        injected_io_count = 0;
+        if (outcome) |_| {
+            try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
+            break;
+        } else |err| {
+            observed_failures += 1;
+            try std.testing.expect(err != error.InvalidArgument and err != error.OutOfMemory and err != error.InjectedFailure);
+        }
+        try store.recover();
+        try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
+    }
+    try std.testing.expect(observed_failures > 0);
+    var failure_offset: usize = 0;
+    while (failure_offset < 512) : (failure_offset += 1) {
+        var fixture = remove_fixture_t.create(std.testing.allocator);
+        defer fixture.destroy(std.testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const docs = recreate_documents(arena.allocator(), fixture.data_path);
+        try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+        const roots = fixture.roots();
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = std.math.maxInt(usize) });
+        var store = try store_t.init(failing.allocator(), fixture.state.fd, &roots);
+        failing.fail_index = failing.alloc_index + failure_offset;
+        const outcome = store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes });
+        if (!failing.has_induced_failure) {
+            _ = try outcome;
+            store.deinit();
+            try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+            break;
+        }
+        if (outcome) |_| return error.ExpectedOutOfMemory else |err| if (err != error.OutOfMemory) return err;
+        failing.fail_index = std.math.maxInt(usize);
+        try store.recover();
+        try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
+        store.deinit();
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+    }
+}
+
+test "recreate refuses a foreign file that appears during a prepared publish and rolls back cleanly" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const docs = recreate_documents(arena.allocator(), fixture.data_path);
+    try write_test_file(fixture.state.fd, "manifest.json", docs.original, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    store.fail_after.store(store.checkpoint_count.load(.monotonic) + 8, .monotonic);
+    try std.testing.expectError(error.InjectedFailure, store.recreate(.{ .record_id = "handler:waddle-open", .candidate_manifest = docs.candidate, .artifact_bytes = docs.bytes }));
+    store.fail_after.store(0, .monotonic);
+    const txid = optional_transaction_id(fixture.state) orelse return error.TestExpectedEqual;
+    const journal_text = try store.read_tx_file(txid, "journal.json", MaxJournalBytes);
+    defer std.testing.allocator.free(journal_text);
+    var parsed = try parse_journal_v3(std.testing.allocator, journal_text);
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("recreate", parsed.value.operation);
+    try std.testing.expectEqualStrings("prepared", parsed.value.phase);
+
+    write_status_file(fixture.data, "applications/handler.desktop", "foreign bytes", 0o644);
+    try std.testing.expectError(error.ArtifactConflict, store.recover());
+    if (c.unlinkat(fixture.data.fd, "applications/handler.desktop", 0) != 0) @panic("fixture unlink");
+    try store.recover();
+    try expect_recreate_converged(&fixture, .{ .original = docs.original, .candidate = docs.candidate, .bytes = docs.bytes });
+}
+
+test "ensure_directory creates missing components and refuses unsafe existing components" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    try store.ensure_directory(.Data, "nested/one/two");
+    try fixture.data.access("nested/one/two", .{});
+    try store.ensure_directory(.Data, "nested/one");
+    try std.testing.expectError(error.InvalidScope, store.ensure_directory(.Config, "x"));
+    try std.testing.expectError(error.InvalidPath, store.ensure_directory(.Data, "../escape"));
+    if (c.symlinkat("nested", fixture.data.fd, "link") != 0) @panic("fixture symlink");
+    try std.testing.expectError(error.AccessDenied, store.ensure_directory(.Data, "link/child"));
+    if (c.mkdirat(fixture.data.fd, "loose", 0o775) != 0) @panic("fixture mkdir");
+    if (c.fchmodat(fixture.data.fd, "loose", 0o775, 0) != 0) @panic("fixture chmod");
+    try std.testing.expectError(error.AccessDenied, store.ensure_directory(.Data, "loose/child"));
+    try std.testing.expectError(error.AccessDenied, store.ensure_directory(.Data, "loose"));
+}
+
+test "manifest_snapshot returns caller-owned bytes or null without writing" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    try std.testing.expect((try store.manifest_snapshot(std.testing.allocator)) == null);
+    try write_test_file(fixture.state.fd, "manifest.json", "{\"schema\":1}", 0o600);
+    const bytes = (try store.manifest_snapshot(std.testing.allocator)) orelse return error.TestExpectedEqual;
+    defer std.testing.allocator.free(bytes);
+    try std.testing.expectEqualStrings("{\"schema\":1}", bytes);
 }
 
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
