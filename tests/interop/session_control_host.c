@@ -1627,7 +1627,7 @@ static int probe_on_frame(void *context, uint32_t message_type, uint32_t request
     if (message_type == InteropMsgWindowAnnounce) {
         ++probe->announce_frames;
         if (probe->announce_fail_at != 0 && probe->announce_frames == probe->announce_fail_at)
-            return 1;
+            return 2;
     } else if (message_type == InteropMsgLaunchResult) {
         ++probe->launch_results;
         if (request_id == probe->request_id) ++probe->launch_matched;
@@ -1847,7 +1847,7 @@ static void session_control_host_feature_tests(void)
 
     /* 3. on_ready failure is the same failure path before any traffic. */
     memset(&probe, 0, sizeof(probe));
-    probe.ready_status = 1;
+    probe.ready_status = 2;
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.ready_calls == 1 && probe.closing_calls == 1);
@@ -1855,7 +1855,7 @@ static void session_control_host_feature_tests(void)
 
     /* 4. on_tick failure drains; tick cadence stays bounded before the failure. */
     memset(&probe, 0, sizeof(probe));
-    probe.tick_status = 1;
+    probe.tick_status = 2;
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
     assert(probe.tick_calls == 1 && probe.closing_calls == 1);
@@ -1877,7 +1877,7 @@ static void session_control_host_feature_tests(void)
     memset(&probe, 0, sizeof(probe));
     probe.use_pipe = true;
     probe.tick_writes_pipe = true;
-    probe.fds_status = 1;
+    probe.fds_status = 2;
     reset_probe_pipe(&probe);
     result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
     assert(result == HostControlFeatureFailed);
@@ -1963,9 +1963,27 @@ static void session_control_host_feature_tests(void)
     assert(heartbeat >= 3);
     assert(probe.closing_calls == 1);
 
-    /* 15. Run bounds that the feature runtime must reject before admission. */
+    /* 15. A graceful stop request from a feature callback ends the run as Cancelled, not failed. */
     memset(&probe, 0, sizeof(probe));
-    (void)probe;
+    probe.tick_status = InteropHostFeatureStopRequested;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlCancelled);
+    assert(probe.tick_calls == 1 && probe.closing_calls == 1);
+    assert(probe.closing_reason == HostControlCancelled);
+
+    /* 16. A stop request from on_ready is the same graceful path before any traffic. */
+    memset(&probe, 0, sizeof(probe));
+    probe.ready_status = InteropHostFeatureStopRequested;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlCancelled);
+    assert(probe.ready_calls == 1 && probe.closing_calls == 1);
+    assert(probe.closing_reason == HostControlCancelled);
+
+    /* 17. Any other nonzero status from a callback still fails the run. */
+    memset(&probe, 0, sizeof(probe));
+    probe.tick_status = 2;
+    result = run_feature_case(&probe, WindowsInput, WindowsInput, WindowsInput, 2000, 0, NULL);
+    assert(result == HostControlFeatureFailed);
 }
 
 #endif

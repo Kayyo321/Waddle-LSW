@@ -62,6 +62,12 @@ typedef enum interop_host_feature_result_t {
     HostFeatureTransportFailed = 13 /**< Internal failure; the run ends with PeerFailed. */
 } interop_host_feature_result_t;
 
+/** @brief Feature callback return value requesting a graceful local stop.
+ * The runtime begins drain and the run ends with HostControlCancelled. Other handlers are not
+ * failed; every ops callback still receives on_closing exactly once. Other nonzero values fail the run.
+ */
+enum { InteropHostFeatureStopRequested = 1 };
+
 /** @brief Feature module callbacks and capability offer; every callback except the pair
  *         poll_fds/on_fds and next_deadline_ms is optional, and NULL is never called.
  * @note The runtime invokes callbacks only on the creating pthread, from inside its pump,

@@ -226,6 +226,25 @@ static bool host_control_fail_and_drain(
     return true;
 }
 
+/** @brief Apply one feature callback status.
+ * Zero continues. InteropHostFeatureStopRequested ends the run as HostControlCancelled after a
+ * graceful drain; no other handler is failed. Any other nonzero value is HostControlFeatureFailed.
+ * @return False when the drain itself failed and the pump must stop.
+ */
+static bool host_feature_settle(
+    int status,
+    interop_host_control_result_t *outcome,
+    interop_linux_socket_t *socket_owner,
+    uint64_t token,
+    uint64_t now_ms,
+    bool *draining)
+{
+    if (status == 0) return true;
+    return host_control_fail_and_drain(outcome,
+        status == InteropHostFeatureStopRequested ? HostControlCancelled : HostControlFeatureFailed,
+        socket_owner, token, now_ms, draining);
+}
+
 /** @brief Map one socket owner result to the sender result space. */
 static const interop_host_feature_result_t SocketToFeatureResult[InteropLinuxSocketRequestRetired + 1] = {
     [InteropLinuxSocketSuccess] = HostFeatureSuccess,
@@ -547,8 +566,7 @@ interop_host_control_result_t interop_host_control_run(
         if (ready && !draining && feature_ops != NULL) {
             int tick_status = host_feature_call_tick(feature_ops, now_ms, &sender);
             host_feature_observe_drain(&sender, &outcome, &draining);
-            if (tick_status != 0 && !host_control_fail_and_drain(&outcome,
-                    HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+            if (!host_feature_settle(tick_status, &outcome, socket_owner, token, now_ms, &draining))
                 break;
         }
         if (interop_linux_socket_poll_events(socket_owner, token, now_ms,
@@ -735,8 +753,7 @@ interop_host_control_result_t interop_host_control_run(
                 int fds_status = host_feature_call_fds(feature_ops,
                     &descriptors[feature_base], feature_count, now_ms, &sender);
                 host_feature_observe_drain(&sender, &outcome, &draining);
-                if (fds_status != 0 && !host_control_fail_and_drain(&outcome,
-                        HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                if (!host_feature_settle(fds_status, &outcome, socket_owner, token, now_ms, &draining))
                     break;
             }
         }
@@ -770,8 +787,7 @@ interop_host_control_result_t interop_host_control_run(
                     int ready_status = host_feature_call_ready(feature_ops,
                         work.event.capabilities, now_ms, &sender);
                     host_feature_observe_drain(&sender, &outcome, &draining);
-                    if (ready_status != 0 && !host_control_fail_and_drain(&outcome,
-                            HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                    if (!host_feature_settle(ready_status, &outcome, socket_owner, token, now_ms, &draining))
                         break;
                 }
             }
@@ -787,8 +803,7 @@ interop_host_control_result_t interop_host_control_run(
                     work.event.message_type, work.event.request_id, frame,
                     work.event.copied_bytes, now_ms, &sender);
                 host_feature_observe_drain(&sender, &outcome, &draining);
-                if (frame_status != 0 && !host_control_fail_and_drain(&outcome,
-                        HostControlFeatureFailed, socket_owner, token, now_ms, &draining))
+                if (!host_feature_settle(frame_status, &outcome, socket_owner, token, now_ms, &draining))
                     break;
             }
         } else if (work.event.kind == InteropPeerEventError ||
