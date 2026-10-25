@@ -24,10 +24,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/** @brief Table limit and output capacity. */
+/** @brief Table limit, output capacity and the slot index reported by a refused announce. */
 enum host_window_map_limits_t {
-    HostWindowMapMaxRealized = 64, /**< Realized windows per session epoch. */
-    HostWindowMapMaxOutput = 64 /**< Minimum output capacity for retire. */
+    HostWindowMapMaxRealized = 64, /**< Realized windows per session epoch, and the number of slots. */
+    HostWindowMapMaxOutput = 64, /**< Minimum output capacity for retire. */
+    HostWindowMapNoSlot = 64 /**< Slot value reported by a refused announce. */
 };
 
 /** @brief Frozen `interop_window_role_t` values accepted by announce. */
@@ -54,21 +55,35 @@ typedef struct host_window_ref_t {
     uint64_t generation; /**< Protocol generation, never reused in an epoch. Zero means no generation. In and out. */
 } host_window_ref_t;
 
-/** @brief One realized window; copied out by `host_window_map_lookup`. */
+/** @brief One fixed slot. `occupied` is zero for a free slot; the other fields are then meaningless. */
+typedef struct host_window_slot_t {
+    host_window_ref_t window; /**< Realized identity. */
+    host_window_ref_t parent; /**< Requested direct parent, or none. Retire follows this field. */
+    uint64_t realize_seq; /**< Realization sequence number, unique per epoch and increasing with each realize. */
+    uint8_t role; /**< Raw `interop_window_role_t` value, 1..6. */
+    uint8_t occupied; /**< Nonzero while the slot holds a realized window. */
+} host_window_slot_t;
+
+/** @brief Copy of an occupied slot, returned by `host_window_map_lookup`. */
 typedef struct host_window_entry_t {
     host_window_ref_t window; /**< Realized identity. */
-    host_window_ref_t parent; /**< Requested direct parent, or none. A nested popup names its popup parent. Retire and positioning follow this field. */
+    host_window_ref_t parent; /**< Requested direct parent, or none. */
+    uint64_t realize_seq; /**< Realization sequence number. */
+    uint32_t slot; /**< Stable slot index of this window. */
     uint8_t role; /**< Raw `interop_window_role_t` value, 1..6. */
 } host_window_entry_t;
 
 /**
  * @brief Complete table state, caller-owned. Zero-filled storage equals a reset table.
  *
- * `realized_count` and `realized` are owned by the table and must not be written by the caller.
+ * `realized_count`, `next_seq` and `slots` are owned by the table and must not be written by the caller.
+ * A table whose `realized_count` is above 64 or disagrees with the occupied slots is corrupt; every call
+ * refuses it with its refusal status instead of using it.
  */
 typedef struct host_window_map_t {
-    uint32_t realized_count; /**< Initialized entries at the front of `realized`, at most 64. */
-    host_window_entry_t realized[64]; /**< Realized windows in realization order. */
+    uint32_t realized_count; /**< Number of occupied slots, at most 64. */
+    uint64_t next_seq; /**< Sequence number the next realize takes; never wraps. */
+    host_window_slot_t slots[64]; /**< Fixed slots. A slot keeps its index while its window stays realized. */
 } host_window_map_t;
 
 /** @brief Result of `host_window_map_announce`. Only `Realize` changes the table. */
@@ -119,20 +134,26 @@ uint32_t host_window_map_retire_error_code(host_window_map_retire_status_t statu
  */
 void host_window_map_reset(host_window_map_t *map);
 
+/** @brief Result of `host_window_map_announce`. `slot` is the stable slot index on Realize and `HostWindowMapNoSlot` otherwise. */
+typedef struct host_window_map_announce_result_t {
+    host_window_map_announce_status_t status; /**< Outcome of the announce. */
+    uint32_t slot; /**< Slot of the realized window, or `HostWindowMapNoSlot`. */
+} host_window_map_announce_result_t;
+
 /**
  * @brief Realize one window if its parent, when named, is exactly realized.
  *
- * A child whose parent pair is not realized is refused as a stale parent. The table never defers the
- * announcement; the guest resends it after the parent is exported.
+ * The window takes the lowest free slot. A child whose parent pair is not realized is refused as a stale
+ * parent. The table never defers the announcement; the guest resends it after the parent is exported.
  *
- * @param map In/out. Table. NULL gives `HostWindowMapRefuseInvalid`.
+ * @param map In/out. Table. NULL gives `HostWindowMapRefuseInvalid` with `HostWindowMapNoSlot`.
  * @param window In. Identity to realize; both fields nonzero.
  * @param parent In. Exact parent, or none (both fields zero). Menu, Tooltip and ImePreedit need a realized
  *               parent; Toplevel and UacConsent need none.
  * @param role In. `host_window_map_role_t` value 1..6. Other values are refused.
- * @return Announce status. Thread safety: owner thread only.
+ * @return Announce status and slot. Thread safety: owner thread only.
  */
-host_window_map_announce_status_t host_window_map_announce(host_window_map_t *map, host_window_ref_t window, host_window_ref_t parent, uint8_t role);
+host_window_map_announce_result_t host_window_map_announce(host_window_map_t *map, host_window_ref_t window, host_window_ref_t parent, uint8_t role);
 
 /**
  * @brief Retire a realized window and its realized subtree.
@@ -182,7 +203,8 @@ uint32_t host_window_map_realized_count(const host_window_map_t *map);
 
 /* Layout frozen with the Zig extern structs; a change in either breaks the build. */
 _Static_assert(sizeof(host_window_ref_t) == 16, "host_window_ref_t layout");
-_Static_assert(sizeof(host_window_entry_t) == 40, "host_window_entry_t layout");
-_Static_assert(sizeof(host_window_map_t) == 2568, "host_window_map_t layout");
+_Static_assert(sizeof(host_window_slot_t) == 48, "host_window_slot_t layout");
+_Static_assert(sizeof(host_window_entry_t) == 48, "host_window_entry_t layout");
+_Static_assert(sizeof(host_window_map_t) == 3088, "host_window_map_t layout");
 
 #endif

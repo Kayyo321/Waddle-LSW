@@ -33,6 +33,22 @@ static int same(host_window_ref_t left, host_window_ref_t right) {
     return left.window == right.window && left.generation == right.generation;
 }
 
+static host_window_map_announce_status_t announce(host_window_map_t *map, host_window_ref_t window, host_window_ref_t parent, uint8_t role) {
+    return host_window_map_announce(map, window, parent, role).status;
+}
+
+static int check_layout(void) {
+    Check(sizeof(host_window_ref_t) == 16);
+    Check(sizeof(host_window_slot_t) == 48);
+    Check(sizeof(host_window_entry_t) == 48);
+    Check(sizeof(host_window_map_t) == 3088);
+    Check(HostWindowMapMaxRealized == 64);
+    Check(HostWindowMapMaxOutput == 64);
+    Check(HostWindowMapNoSlot == 64);
+    Check(HostWindowMapRoleImePreedit == 6);
+    return 0;
+}
+
 static int check_error_codes(void) {
     Check(host_window_map_announce_error_code(HostWindowMapRealize) == InteropErrorNone);
     Check(host_window_map_announce_error_code(HostWindowMapRefuseDuplicate) == InteropErrorProtocolViolation);
@@ -46,25 +62,17 @@ static int check_error_codes(void) {
     return 0;
 }
 
-static int check_layout(void) {
-    Check(sizeof(host_window_ref_t) == 16);
-    Check(sizeof(host_window_entry_t) == 40);
-    Check(sizeof(host_window_map_t) == 2568);
-    Check(HostWindowMapMaxRealized == 64);
-    Check(HostWindowMapMaxOutput == 64);
-    Check(HostWindowMapRoleImePreedit == 6);
-    return 0;
-}
-
 static int check_null_and_refusals(host_window_map_t *map) {
     host_window_ref_t out[64];
     uint32_t count = 77;
+    host_window_map_announce_result_t result;
 
-    Check(host_window_map_announce(NULL, ref(1, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRefuseInvalid);
-    Check(host_window_map_announce(map, ref(0, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRefuseInvalid);
-    Check(host_window_map_announce(map, ref(1, 1), none(), 0) == HostWindowMapRefuseInvalid);
-    Check(host_window_map_announce(map, ref(1, 1), none(), 7) == HostWindowMapRefuseInvalid);
-    Check(host_window_map_announce(map, ref(1, 1), none(), HostWindowMapRoleMenu) == HostWindowMapRefuseInvalid);
+    result = host_window_map_announce(NULL, ref(1, 1), none(), HostWindowMapRoleToplevel);
+    Check(result.status == HostWindowMapRefuseInvalid && result.slot == HostWindowMapNoSlot);
+    Check(announce(map, ref(0, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRefuseInvalid);
+    Check(announce(map, ref(1, 1), none(), 0) == HostWindowMapRefuseInvalid);
+    Check(announce(map, ref(1, 1), none(), 7) == HostWindowMapRefuseInvalid);
+    Check(announce(map, ref(1, 1), none(), HostWindowMapRoleMenu) == HostWindowMapRefuseInvalid);
     Check(host_window_map_realized_count(map) == 0);
 
     Check(host_window_map_retire(NULL, ref(1, 1), out, 64, &count) == HostWindowMapRetireRefuseInvalid);
@@ -80,13 +88,17 @@ static int check_null_and_refusals(host_window_map_t *map) {
 }
 
 static int check_realize_and_stale_parents(host_window_map_t *map) {
-    Check(host_window_map_announce(map, ref(11, 1), ref(20, 1), HostWindowMapRoleDialog) == HostWindowMapRefuseStaleParent);
+    host_window_map_announce_result_t result;
+
+    Check(announce(map, ref(11, 1), ref(20, 1), HostWindowMapRoleDialog) == HostWindowMapRefuseStaleParent);
     Check(host_window_map_realized_count(map) == 0);
-    Check(host_window_map_announce(map, ref(20, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
-    Check(host_window_map_announce(map, ref(11, 1), ref(20, 1), HostWindowMapRoleDialog) == HostWindowMapRealize);
-    Check(host_window_map_announce(map, ref(11, 1), ref(20, 1), HostWindowMapRoleDialog) == HostWindowMapRefuseDuplicate);
-    Check(host_window_map_announce(map, ref(11, 2), ref(20, 1), HostWindowMapRoleDialog) == HostWindowMapRefuseWindowConflict);
-    Check(host_window_map_announce(map, ref(12, 1), ref(20, 2), HostWindowMapRoleDialog) == HostWindowMapRefuseStaleParent);
+    result = host_window_map_announce(map, ref(20, 1), none(), HostWindowMapRoleToplevel);
+    Check(result.status == HostWindowMapRealize && result.slot == 0);
+    result = host_window_map_announce(map, ref(11, 1), ref(20, 1), HostWindowMapRoleDialog);
+    Check(result.status == HostWindowMapRealize && result.slot == 1);
+    Check(announce(map, ref(11, 1), ref(20, 1), HostWindowMapRoleDialog) == HostWindowMapRefuseDuplicate);
+    Check(announce(map, ref(11, 2), ref(20, 1), HostWindowMapRoleDialog) == HostWindowMapRefuseWindowConflict);
+    Check(announce(map, ref(12, 1), ref(20, 2), HostWindowMapRoleDialog) == HostWindowMapRefuseStaleParent);
     Check(host_window_map_realized_count(map) == 2);
     return 0;
 }
@@ -94,12 +106,13 @@ static int check_realize_and_stale_parents(host_window_map_t *map) {
 static int check_popups_and_lookup(host_window_map_t *map) {
     host_window_entry_t entry;
 
-    Check(host_window_map_announce(map, ref(30, 1), ref(20, 1), HostWindowMapRoleMenu) == HostWindowMapRealize);
-    Check(host_window_map_announce(map, ref(31, 1), ref(30, 1), HostWindowMapRoleTooltip) == HostWindowMapRealize);
-    Check(host_window_map_announce(map, ref(32, 1), ref(31, 1), HostWindowMapRoleImePreedit) == HostWindowMapRealize);
+    Check(announce(map, ref(30, 1), ref(20, 1), HostWindowMapRoleMenu) == HostWindowMapRealize);
+    Check(announce(map, ref(31, 1), ref(30, 1), HostWindowMapRoleTooltip) == HostWindowMapRealize);
+    Check(announce(map, ref(32, 1), ref(31, 1), HostWindowMapRoleImePreedit) == HostWindowMapRealize);
 
     Check(host_window_map_lookup(map, ref(32, 1), &entry));
     Check(same(entry.parent, ref(31, 1)));
+    Check(entry.slot == 4);
     Check(entry.role == HostWindowMapRoleImePreedit);
     Check(host_window_map_lookup(map, ref(20, 1), NULL));
     Check(!host_window_map_lookup(map, ref(20, 2), &entry));
@@ -115,7 +128,7 @@ static int check_retire_cascade(host_window_map_t *map) {
     Check(host_window_map_retire(map, ref(20, 9), out, 64, &count) == HostWindowMapStale);
     Check(count == 0);
     Check(host_window_map_retire(map, ref(20, 1), out, 64, &count) == HostWindowMapRetired);
-    /* Realized order 20, 11, 30, 31, 32: reverse realization order, target last. */
+    /* Children first: the popup chain, then the dialog, then the root. */
     Check(count == 5);
     Check(same(out[0], ref(32, 1)));
     Check(same(out[1], ref(31, 1)));
@@ -128,15 +141,43 @@ static int check_retire_cascade(host_window_map_t *map) {
     return 0;
 }
 
+static int check_stable_slots(host_window_map_t *map) {
+    host_window_ref_t out[64];
+    uint32_t count = 0;
+    host_window_map_announce_result_t a;
+    host_window_map_announce_result_t b;
+    host_window_map_announce_result_t c;
+    host_window_entry_t entry;
+
+    host_window_map_reset(map);
+    a = host_window_map_announce(map, ref(1, 1), none(), HostWindowMapRoleToplevel);
+    b = host_window_map_announce(map, ref(2, 1), none(), HostWindowMapRoleToplevel);
+    c = host_window_map_announce(map, ref(3, 1), none(), HostWindowMapRoleToplevel);
+    Check(a.slot == 0 && b.slot == 1 && c.slot == 2);
+    Check(host_window_map_retire(map, ref(1, 1), out, 64, &count) == HostWindowMapRetired);
+    /* Retiring window 1 does not move windows 2 and 3. */
+    Check(host_window_map_lookup(map, ref(2, 1), &entry) && entry.slot == 1);
+    Check(host_window_map_lookup(map, ref(3, 1), &entry) && entry.slot == 2);
+    /* The freed lowest slot is reused, and the sequence keeps increasing. */
+    a = host_window_map_announce(map, ref(4, 1), none(), HostWindowMapRoleToplevel);
+    Check(a.status == HostWindowMapRealize && a.slot == 0);
+    Check(host_window_map_lookup(map, ref(4, 1), &entry) && entry.realize_seq == 3);
+    Check(host_window_map_lookup(map, ref(3, 1), &entry) && entry.realize_seq == 2);
+    return 0;
+}
+
 static int check_capacity_edges(host_window_map_t *map) {
     uint64_t index;
+    host_window_map_announce_result_t result;
 
     host_window_map_reset(map);
     for (index = 1; index <= HostWindowMapMaxRealized; index++) {
-        Check(host_window_map_announce(map, ref(index, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
+        result = host_window_map_announce(map, ref(index, 1), none(), HostWindowMapRoleToplevel);
+        Check(result.status == HostWindowMapRealize);
     }
     Check(host_window_map_realized_count(map) == 64);
-    Check(host_window_map_announce(map, ref(100, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRefuseExhausted);
+    result = host_window_map_announce(map, ref(100, 1), none(), HostWindowMapRoleToplevel);
+    Check(result.status == HostWindowMapRefuseExhausted && result.slot == HostWindowMapNoSlot);
     Check(host_window_map_realized_count(map) == 64);
     return 0;
 }
@@ -148,7 +189,7 @@ static int check_aliasing(host_window_map_t *map) {
     host_window_ref_t out[64];
 
     host_window_map_reset(map);
-    Check(host_window_map_announce(map, ref(1, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
+    Check(announce(map, ref(1, 1), none(), HostWindowMapRoleToplevel) == HostWindowMapRealize);
     Check(host_window_map_retire(map, ref(1, 1), alias, 64, &count) == HostWindowMapRetireRefuseInvalid);
     Check(host_window_map_retire(map, ref(1, 1), out, 64, inside) == HostWindowMapRetireRefuseInvalid);
     Check(host_window_map_realized_count(map) == 1);
@@ -166,6 +207,7 @@ int main(void) {
     if (check_realize_and_stale_parents(&map) != 0) return 1;
     if (check_popups_and_lookup(&map) != 0) return 1;
     if (check_retire_cascade(&map) != 0) return 1;
+    if (check_stable_slots(&map) != 0) return 1;
     if (check_capacity_edges(&map) != 0) return 1;
     if (check_aliasing(&map) != 0) return 1;
     host_window_map_reset(&map);
