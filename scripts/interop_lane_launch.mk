@@ -4,7 +4,20 @@
 
 InteropOpenRequestSanitize = -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -O1 -g -fno-omit-frame-pointer -fsanitize=address,leak,undefined -fno-sanitize-recover=undefined
 
-.PHONY: interop-open-request-test interop-open-request-abi-test interop-open-request-sanitizers interop-open-request-coverage interop-activation-store-test interop-activation-store-abi-test interop-activation-store-sanitizers interop-activation-store-coverage
+# waddle open client (#29b, #29d): its tests link the C pieces it calls.
+OpenCommandObjects = build/interop_codec.o build/daemon_config.o build/daemon_fs.o build/path_filesystem.o build/path_rules.o build/arguments.o
+OpenCommandFlags = -Iinclude -Isrc/daemon -Isrc/common
+
+build/daemon_fs.o: src/daemon/daemon_fs.c src/daemon/daemon_fs.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+build/path_filesystem.o: src/common/path_filesystem.c src/common/path_rules.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+build/arguments.o: src/common/arguments.c src/common/path_rules.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+.PHONY: interop-open-command-test interop-open-command-coverage interop-open-request-test interop-open-request-abi-test interop-open-request-sanitizers interop-open-request-coverage interop-activation-store-test interop-activation-store-abi-test interop-activation-store-sanitizers interop-activation-store-coverage
 
 build/interop_open_request.o: src/interop/open_request.zig src/interop/open_request.h src/interop/pe_header.zig src/interop/pe_header.h | build
 	$(ZIG) build-obj $< -Iinclude -Isrc/interop -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
@@ -53,6 +66,13 @@ interop-activation-store-sanitizers: build/activation_store_abi_asan
 interop-activation-store-coverage:
 	python3 tests/av/coverage.py activation_store
 
-InteropLaneTests += interop-open-request-test interop-activation-store-test
+# Client orchestration: Zig suite linked with the C objects it calls and the PE fixture.
+interop-open-command-test: build/interop_pe_header_c_fixture.o $(OpenCommandObjects)
+	$(ZIG) test src/interop/open_command.zig $(OpenCommandObjects) build/interop_pe_header_c_fixture.o $(OpenCommandFlags) -lc
+
+interop-open-command-coverage: $(OpenCommandObjects)
+	python3 tests/av/coverage.py open_command
+
+InteropLaneTests += interop-open-request-test interop-activation-store-test interop-open-command-test
 InteropLaneSanitizers += interop-open-request-sanitizers interop-activation-store-sanitizers
-InteropLaneCoverage += interop-open-request-coverage interop-activation-store-coverage
+InteropLaneCoverage += interop-open-request-coverage interop-activation-store-coverage interop-open-command-coverage
