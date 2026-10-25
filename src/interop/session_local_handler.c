@@ -12,6 +12,8 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
+#include <poll.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -160,6 +162,9 @@ session_local_send_outcome_t session_local_send_outcome(int send_result)
     }
 }
 
+/** @brief Close a held stop-reply descriptor without sending, if one is held. */
+static void drop_held_stop_reply(session_local_handler_t *handler);
+
 /** @brief Close every descriptor the handler owns and remove the socket file it created. */
 static void release_descriptors(session_local_handler_t *handler)
 {
@@ -181,8 +186,10 @@ static void release_descriptors(session_local_handler_t *handler)
 void session_local_handler_destroy(session_local_handler_t *handler)
 {
     if (handler == NULL) return;
+    drop_held_stop_reply(handler);
     release_descriptors(handler);
     handler->closed = 1;
+    handler->destroyed = 1;
 }
 
 /* ---- Reply construction -------------------------------------------------------------------- */
@@ -302,21 +309,6 @@ static int reply_error(session_local_handler_t *handler, uint32_t client_index, 
     built = interop_put_bytes(&writer, InteropTagMessage, message, (uint16_t)strlen(message)) == InteropErrorNone &&
         interop_put_uint(&writer, InteropTagErrorCode, error_code) == InteropErrorNone &&
         interop_writer_finish(&writer, InteropMsgError, request_id, InteropFromHost, &length) == InteropErrorNone;
-    return reply_commit(handler, client_index, built, length);
-}
-
-/** @brief Queue LocalStopResult with status Ok (local direction) and the echoed request id. */
-static int reply_stop_ok(session_local_handler_t *handler, uint32_t client_index, uint64_t serial, uint32_t request_id)
-{
-    uint8_t *frame = NULL;
-    size_t room = 0;
-    interop_writer_t writer;
-    size_t length = 0;
-    int built;
-    if (!reply_target(handler, client_index, serial, &frame, &room)) return 0;
-    interop_writer_init(&writer, frame, room);
-    built = interop_put_uint(&writer, InteropTagStatus, InteropOk) == InteropErrorNone &&
-        interop_writer_finish(&writer, InteropMsgLocalStopResult, request_id, InteropFromLocal, &length) == InteropErrorNone;
     return reply_commit(handler, client_index, built, length);
 }
 
@@ -575,12 +567,39 @@ static int bind_listener(session_local_handler_t *handler)
     return 0;
 }
 
+/**
+ * @brief Reset the per-session state of a handler whose previous session was closed by on_closing.
+ * @note Keeps the configuration, the activation token store, and the cumulative statistics. Every
+ *       descriptor was already released by release_descriptors.
+ */
+static void rearm(session_local_handler_t *handler)
+{
+    drop_held_stop_reply(handler);
+    memset(handler->pending, 0, sizeof(handler->pending));
+    for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
+        handler->clients[index].fd = -1;
+        handler->clients[index].serial = 0;
+        handler->clients[index].rx_length = 0;
+        handler->clients[index].tx_length = 0;
+        handler->clients[index].tx_offset = 0;
+    }
+    handler->listen_fd = -1;
+    handler->epoll_fd = -1;
+    handler->socket_created = 0;
+    handler->stopping = 0;
+    handler->stop_client_index = 0;
+    handler->stop_client_serial = 0;
+    handler->stop_deadline_ms = 0;
+    handler->closed = 0;
+}
+
 static int local_on_ready(void *context, uint64_t negotiated_capabilities, interop_host_feature_sender_t *sender)
 {
     session_local_handler_t *handler = context;
     (void)negotiated_capabilities;
     (void)sender;
-    if (handler->bound || handler->closed) return SessionLocalCallbackFailure;
+    if (handler->bound || handler->destroyed) return SessionLocalCallbackFailure;
+    if (handler->closed) rearm(handler);
     if (ensure_directory(handler->parent_path, handler->expected_uid) != 0) return SessionLocalCallbackFailure;
     if (ensure_directory(handler->directory_path, handler->expected_uid) != 0) return SessionLocalCallbackFailure;
     if (prepare_socket_path(handler) != 0) return SessionLocalCallbackFailure;
@@ -632,6 +651,27 @@ static void flush_client(session_local_handler_t *handler, uint32_t client_index
 }
 
 /** @brief Accept every pending connection, enforcing the peer uid and the four-slot limit. */
+/**
+ * @brief Tell an accepted connection the session cannot take it, then close it.
+ * @note Best effort: one nonblocking send of an unsolicited Error (request id 0, code Busy) before the
+ *       close. Clients treat that frame as "not ready" and retry, instead of seeing a silent close.
+ * @param[in] descriptor Accepted descriptor; this call closes it.
+ */
+static void refuse_busy(int descriptor)
+{
+    static const char text[] = "session busy";
+    uint8_t frame[InteropHeaderBytes + 64];
+    interop_writer_t writer;
+    size_t length = 0;
+    interop_writer_init(&writer, frame, sizeof(frame));
+    if (interop_put_bytes(&writer, InteropTagMessage, text, (uint16_t)(sizeof(text) - 1u)) == InteropErrorNone &&
+        interop_put_uint(&writer, InteropTagErrorCode, InteropBusy) == InteropErrorNone &&
+        interop_writer_finish(&writer, InteropMsgError, 0, InteropFromHost, &length) == InteropErrorNone) {
+        (void)send(descriptor, frame, length, MSG_DONTWAIT | MSG_NOSIGNAL);
+    }
+    (void)close(descriptor);
+}
+
 static void accept_clients(session_local_handler_t *handler, uint64_t now_ms)
 {
     for (uint32_t attempt = 0; attempt < SessionLocalMaxClients + 1u; ++attempt) {
@@ -653,7 +693,7 @@ static void accept_clients(session_local_handler_t *handler, uint64_t now_ms)
         }
         if (handler->stopping) {
             handler->stats.refused_capacity++;
-            (void)close(descriptor);
+            refuse_busy(descriptor);
             continue;
         }
         for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
@@ -664,7 +704,7 @@ static void accept_clients(session_local_handler_t *handler, uint64_t now_ms)
         }
         if (slot == SessionLocalMaxClients) {
             handler->stats.refused_capacity++;
-            (void)close(descriptor);
+            refuse_busy(descriptor);
             continue;
         }
         session_local_client_t *client = &handler->clients[slot];
@@ -680,6 +720,7 @@ static void accept_clients(session_local_handler_t *handler, uint64_t now_ms)
         client->fd = descriptor;
         client->serial = handler->next_serial++;
         client->accepted_ms = now_ms;
+        client->last_frame_ms = now_ms;
         client->frame_seen = 0;
         client->epoll_writable = 0;
         client->rx_length = 0;
@@ -690,41 +731,36 @@ static void accept_clients(session_local_handler_t *handler, uint64_t now_ms)
 }
 
 /**
- * @brief Accept a LocalStop: queue its reply, stop reading from every client, and start the flush bound.
- * @param[in] client_index Client that sent the stop; its reply is the only one flushed for the stop.
+ * @brief Accept a LocalStop: record the requester, stop reading from every client, and let the run end.
+ * @note The LocalStopResult is not queued here. IMPL_DESC 3.12.5 requires it after the session has
+ *       drained and released its locks, so on_closing holds the requester's descriptor and
+ *       session_local_handler_send_stop_reply sends the reply once the owners are released.
+ * @param[in] client_index Client that sent the stop.
  * @param[in] request_id Nonzero identifier to echo.
- * @param[in] now_ms Monotonic time of the frame.
+ * @param[in] now_ms Monotonic time of the frame (unused: the stop is ready at once).
  */
 static void begin_stop(session_local_handler_t *handler, uint32_t client_index, uint32_t request_id, uint64_t now_ms)
 {
     session_local_client_t *client = &handler->clients[client_index];
+    (void)now_ms;
     handler->stats.stop_requests++;
     handler->stopping = 1;
     handler->stop_client_index = client_index;
     handler->stop_client_serial = client->serial;
-    handler->stop_deadline_ms = now_ms + SessionLocalStopFlushMs;
-    (void)reply_stop_ok(handler, client_index, client->serial, request_id);
+    handler->stop_request_id = request_id;
     for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
         if (handler->clients[index].fd >= 0) update_interest(handler, index);
     }
 }
 
 /**
- * @brief Whether the stop may now end the run: the LocalStopResult is fully written, the client is
- *        gone, or the flush bound expired (counted).
+ * @brief Whether the run may end: an accepted LocalStop is enough, because its reply waits for cleanup.
  * @return Nonzero when SessionHandlerRequestStop may be returned.
  */
 static int stop_ready(session_local_handler_t *handler, uint64_t now_ms)
 {
-    const session_local_client_t *client = &handler->clients[handler->stop_client_index];
-    if (!handler->stopping) return 0;
-    if (client->fd < 0 || client->serial != handler->stop_client_serial) return 1;
-    if (client->tx_offset == client->tx_length) return 1;
-    if (now_ms >= handler->stop_deadline_ms) {
-        handler->stats.stop_deadline_expired++;
-        return 1;
-    }
-    return 0;
+    (void)now_ms;
+    return handler->stopping ? 1 : 0;
 }
 
 /**
@@ -752,6 +788,7 @@ static int process_frames(session_local_handler_t *handler, uint32_t client_inde
             return 0;
         }
         client->frame_seen = 1;
+        client->last_frame_ms = now_ms;
         if (header.type != InteropMsgLocalLaunch && header.type != InteropMsgLocalStop) {
             handler->stats.closed_unknown_type++;
             client_close(handler, client_index);
@@ -886,8 +923,13 @@ static void expire_idle(session_local_handler_t *handler, uint64_t now_ms)
 {
     for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
         session_local_client_t *client = &handler->clients[index];
-        if (client->fd < 0 || client->frame_seen) continue;
-        if (now_ms < client->accepted_ms + SessionLocalIdleTimeoutMs) continue;
+        if (client->fd < 0) continue;
+        if (!client->frame_seen) {
+            if (now_ms < client->accepted_ms + SessionLocalIdleTimeoutMs) continue;
+        } else {
+            if (pending_outstanding(handler, index, client->serial) != 0) continue;
+            if (now_ms < client->last_frame_ms + SessionLocalIdleAfterFrameMs) continue;
+        }
         handler->stats.idle_closed++;
         client_close(handler, index);
     }
@@ -919,11 +961,92 @@ static uint64_t local_next_deadline(void *context, uint64_t now_ms)
     }
     for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
         const session_local_client_t *client = &handler->clients[index];
-        uint64_t idle_deadline = client->accepted_ms + SessionLocalIdleTimeoutMs;
-        if (client->fd >= 0 && !client->frame_seen && idle_deadline < next) next = idle_deadline;
+        if (client->fd < 0) continue;
+        if (!client->frame_seen) {
+            uint64_t idle_deadline = client->accepted_ms + SessionLocalIdleTimeoutMs;
+            if (idle_deadline < next) next = idle_deadline;
+        } else if (pending_outstanding(handler, index, client->serial) == 0) {
+            uint64_t idle_deadline = client->last_frame_ms + SessionLocalIdleAfterFrameMs;
+            if (idle_deadline < next) next = idle_deadline;
+        }
     }
-    if (handler->stopping && handler->stop_deadline_ms < next) next = handler->stop_deadline_ms;
     return next;
+}
+
+/**
+ * @brief Keep the stop requester's descriptor open for the post-cleanup reply.
+ * @note Removes it from the epoll set and from the client table, so release_descriptors leaves it open.
+ */
+static void hold_stop_requester(session_local_handler_t *handler)
+{
+    session_local_client_t *client = &handler->clients[handler->stop_client_index];
+    if (client->fd < 0 || client->serial != handler->stop_client_serial) return;
+    if (handler->epoll_fd >= 0) (void)epoll_ctl(handler->epoll_fd, EPOLL_CTL_DEL, client->fd, NULL);
+    handler->stop_reply_fd = client->fd;
+    handler->stop_reply_pending = 1;
+    client->fd = -1;
+    client->serial = 0;
+    client->rx_length = 0;
+    client->tx_length = 0;
+    client->tx_offset = 0;
+}
+
+/** @brief Milliseconds elapsed on the monotonic clock since start, or UINT64_MAX when the clock fails. */
+static uint64_t elapsed_since(const struct timespec *start)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return UINT64_MAX;
+    return (uint64_t)(now.tv_sec - start->tv_sec) * 1000u + (uint64_t)(now.tv_nsec - start->tv_nsec) / 1000000u;
+}
+
+/**
+ * @brief Write the whole frame to a nonblocking descriptor, waiting for writability within the bound.
+ * @return 1 when every byte was written, 0 on a failure or when SessionLocalStopFlushMs elapsed.
+ */
+static int send_bounded(int fd, const uint8_t *bytes, size_t length)
+{
+    struct timespec start;
+    size_t sent = 0;
+    if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) return 0;
+    while (sent < length) {
+        ssize_t written = send(fd, bytes + sent, length - sent, MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (written > 0) {
+            sent += (size_t)written;
+            continue;
+        }
+        if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) return 0;
+        uint64_t elapsed = elapsed_since(&start);
+        if (elapsed >= SessionLocalStopFlushMs) return 0;
+        struct pollfd wait = {.fd = fd, .events = POLLOUT, .revents = 0};
+        (void)poll(&wait, 1, (int)(SessionLocalStopFlushMs - elapsed));
+    }
+    return 1;
+}
+
+static void drop_held_stop_reply(session_local_handler_t *handler)
+{
+    if (handler->stop_reply_pending) (void)close(handler->stop_reply_fd);
+    handler->stop_reply_pending = 0;
+    handler->stop_reply_fd = -1;
+}
+
+int session_local_handler_send_stop_reply(session_local_handler_t *handler)
+{
+    uint8_t frame[InteropHeaderBytes + 64];
+    interop_writer_t writer;
+    size_t length = 0;
+    int sent;
+    if (handler == NULL || !handler->stop_reply_pending) return 0;
+    interop_writer_init(&writer, frame, sizeof(frame));
+    if (interop_put_uint(&writer, InteropTagStatus, InteropOk) != InteropErrorNone ||
+        interop_writer_finish(&writer, InteropMsgLocalStopResult, handler->stop_request_id, InteropFromLocal, &length) != InteropErrorNone) {
+        drop_held_stop_reply(handler);
+        return 0;
+    }
+    sent = send_bounded(handler->stop_reply_fd, frame, length);
+    if (!sent) handler->stats.stop_deadline_expired++;
+    drop_held_stop_reply(handler);
+    return sent;
 }
 
 /**
@@ -943,6 +1066,7 @@ static void local_on_closing(void *context, uint32_t reason, interop_host_featur
         (void)interop_host_feature_release_request(sender, entry->guest_request_id);
         memset(entry, 0, sizeof(*entry));
     }
+    if (handler->stopping) hold_stop_requester(handler);
     for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) {
         if (handler->clients[index].fd >= 0) flush_client(handler, index);
     }
