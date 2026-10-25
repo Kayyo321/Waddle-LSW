@@ -1,0 +1,35 @@
+{
+  "status": "qualified journal/API milestone only",
+  "attempt": "build/coverage/interop/manifest_store/run-20261025T194220419489Z-309845",
+  "source_sha256": "7d42b9bd3ef84f481596d28e868ec89fa792b9d1633e88dd19bce8848de7e2c1",
+  "input_sha256": {
+    "src/interop/manifest_store.zig": "7d42b9bd3ef84f481596d28e868ec89fa792b9d1633e88dd19bce8848de7e2c1",
+    "tests/interop/manifest_store.zig": "364ff21849ef28fb0dc645b0c47bc221b406050b78cfa56a796656e99759e9c3",
+    "tests/interop/manifest_replace.zig": "8d7a9b82eb6ed007b2b3492cef815d541e5a6a502e2a239dcf18ed99887161cb",
+    "tests/av/coverage.py": "e414092daa5337b0e04c38a88c6d1c783abea89750b14c1b30326bc29d5cd5e4"
+  },
+  "commands": [
+    "make interop-manifest-store-test",
+    "python3 tests/av/coverage.py manifest_store"
+  ],
+  "tests": {
+    "module_and_imports": 64,
+    "public_limits": 1,
+    "public_replacement_flow": 2
+  },
+  "line": {
+    "covered": 1409,
+    "total": 1412
+  },
+  "taken_arcs": {
+    "covered": 1587,
+    "total": 1763
+  },
+  "compiler_panic_stack_guards_excluded": 283,
+  "ownership": "Zig 0.13 testing allocator with allocation-failure sweeps; no Zig ASan/LSan claim",
+  "scope": "Actual rooted filesystem replacement, persistent backup inventory, reopen and explicit restore; v1/v2 recovery, checkpoint and selected syscall failures; no comprehensive child-kill/command/full-removal claim",
+  "task_impact": {
+    "33": 25,
+    "overall": 0.75
+  }
+}

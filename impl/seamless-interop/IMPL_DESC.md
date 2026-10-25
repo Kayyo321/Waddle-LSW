@@ -3857,3 +3857,24 @@ app_catalog_evidence_2026_10_25/native_provider_6318a3d. This earns only the
 20%native enumeration allocation of#27; enrichment/watch15%, wire/runtime10%
 and integrated native10%remain open. Linux sanitizer evidence belongs to the
 portable core and does not claim Windows provider sanitizer execution.
+
+
+### 8.42 Rooted replacement and retained-backup milestone (2026-10-25)
+
+[manifest_replace_contract.md](manifest_replace_contract.md) extends the shared
+store with exact manifest/target preconditions, verified inode exchange, private
+durable retained backup metadata/inventory and explicit restore. Version2
+journals require old artifact and manifest identity; legacy version1 recovery
+authenticates old bytes before staging its compatibility restore. Unknown
+objects preserve recovery evidence. The original absent-only commit API remains
+unchanged. Identical manifest/bytes/mode is a verified no-op; changing artifact
+bytes or mode requires a distinct candidate manifest. No backup garbage
+collection or whole-install atomicity is implied.
+
+The source-bound whole-module gate qualifies replacement journal15% and
+replacement/backup API10% of TODO #33, in addition to the prior40%. Command
+integration/all producers20% and comprehensive process-crash/native/full-removal
+qualification15% remain open. Real rooted-filesystem checkpoint and selected
+syscall failures plus allocation-failure tests are recorded in
+manifest_replace_evidence_2026_10_25. Zig0.13 uses its leak-detecting test
+allocator; native C adapters have independent ASan/LSan requirements.

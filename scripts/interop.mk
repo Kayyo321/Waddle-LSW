@@ -343,6 +343,7 @@ interop-windows-socket-coverage: build/interop_control_peer_abi.o build/interop_
 interop-manifest-store-test:
 	$(ZIG) test src/interop/manifest_store.zig -lc
 	$(ZIG) test -lc --dep manifest_store -Mroot=tests/interop/manifest_store.zig -Mmanifest_store=src/interop/manifest_store.zig
+	$(ZIG) test -lc --dep manifest_store -Mroot=tests/interop/manifest_replace.zig -Mmanifest_store=src/interop/manifest_store.zig
 
 
 # Production Windows controller; trusted freshness/detach provider remains external.

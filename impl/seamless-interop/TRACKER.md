@@ -60,10 +60,10 @@ acceptance remain pending.
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
 | #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | In Progress | 2% | 40% | PE classifier20% and preserving MIME editor20% accepted with root whole-module gates. Artifacts/configuration/routes and native integration remain open; waits on #29/#33 for complete flow |
 | #32 | binfmt_misc system artifacts, `install --system`, status/conflict reporting | Pending | 1% | 0% | Waits on #31 |
-| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 40% | Schema15%, absent-add journal/recovery15% and rooted absent artifact API10% accepted. Replacement/backup/restore, commands/producers and full-removal qualification remain open |
+| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 65% | Schema15%, complete journal milestone30% and rooted ownership/backup/restore API20% accepted. Root64+3 tests; whole module99.79%lines/90.02%taken arcs. Commands/all producers20% and comprehensive crash/native/full-removal15% remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `27.80%`
+**Total Feature Completion**: `28.55%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -82,7 +82,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #15 | Typed full translation10%; native injection15%; host repeat20%(pure timing10%,live composition10%); lock sync15%; layout sync20%; shortcut inhibit10%; integrated/native qualification10% | Typed translation10% and portable repeat timing10% accepted; root repeat five tests/2000lifecycles/3000runtime events,95.24%lines/100%arcs. Live repeat10%, typed injection and other milestones remain open |
 | #27 | Source snapshot/diff20%; native enumeration20%; watch/enrichment15%; PNG encoder10%; native icon extraction15%; wire/integration10%; integrated/native qualification10% | PNG encoder10%, snapshot/diff20%, fixed native icon15% and native enumeration20% accepted. Exact6318a3d Windows source100%lines/90.15%arcs and real system smoke pass; workflow all green. Icon fixed-source98.10%lines/90.47%arcs with exact ownership/sanitizers. Watches/enrichment15%, wire/runtime10%, integrated qualification10% remain open |
 | #31 | Bounded classifier20%; preserving MIME editor20%; journaled handler artifacts20%; configuration/route integration20%; integrated/native qualification20% | Classifier20% and preserving MIME editor20% accepted; editor six tests,2000 prefixes, all publication-shape OOM tests,100%lines/93.28%arcs. Artifact/config/route/native integration remain open |
-| #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec15%; absent-add journal15%/30% and rooted absent API10%/20%, root-reviewed43 tests,90.03% taken arcs/99.77% lines. Replacement journal15% and replacement/backup API10% remain open |
+| #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Schema15%, journal30% and rooted API20% accepted. Root64 module/imported +3 public tests; whole source1409/1412lines and1587/1763taken arcs. Retained backups, explicit restore, legacy recovery and failure sweeps qualified; commands/producers20% and comprehensive crash/native/full-removal15% open |
 
 Execution resumed at the user's request from checkpoint4079560. Current
 exclusive Luna/high work orders and phase allocation are recorded in
@@ -1682,7 +1682,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     SDK profile compile/link passes; keep native enumeration20%unaccepted until
     the actual whole-source taken-arc gate passes.
 
-- **Commit `HEAD`**: `test(interop): qualify native catalog enumeration with exact Windows profiles`
+- **Commit `91b6d29`**: `test(interop): qualify native catalog enumeration with exact Windows profiles`
   - **Task Impact**: +20% to TODO #27 (+0.80% overall; total27.80%).
   - **Summary**: Exact6318a3d native workflow40225302430 is all green. Real
     Windows provider414/414lines and494/548taken arcs, temporary shortcut/deep
@@ -1691,3 +1691,15 @@ its uncompiled draft earns no credit until current acceptance passes.
     report and native logs. SDK-result/COM error seams are explicit; no Linux
     sanitizer claim for Windows-only provider. Portable core ownership gates
     remain independently qualified. Watches, runtime and integrated native stay open.
+
+- **Commit `HEAD`**: `feat(interop): add recoverable replacement and retained backup APIs`
+  - **Task Impact**: +25% to TODO #33 (+0.75% overall; total28.55%).
+  - **Summary**: Extend the held-lock rooted store with verified inode exchange,
+    exact expected identities, private durable backup metadata and bounded
+    inventory, explicit restore and v1/v2 retryable recovery. Root review fixed
+    legacy staging, manifest identity preservation and cleanup retries before
+    acceptance. Independent64 module/imported plus3 public tests pass; exact
+    whole-module99.79%lines/90.02%taken arcs with existing compiler guards only.
+    Preserve source-bound recorder, complete branch report and test logs in
+    manifest_replace_evidence_2026_10_25. Zig allocator/OOM gate has zero leaks.
+    Commands, all producers and comprehensive crash/native/full-removal stay open.
