@@ -1,0 +1,16 @@
+{
+  "attempt": "build/coverage/interop/mimeapps/run-20261025T174827522432Z-248473",
+  "tests": 6,
+  "fuzz_prefixes": 2000,
+  "line": {
+    "covered": 79,
+    "total": 79
+  },
+  "taken_arcs": {
+    "covered": 125,
+    "total": 134
+  },
+  "compiler_panic_stack_guards_excluded": 25,
+  "ownership": "std.testing.allocator and every allocation failure across insert, replace, remove and unchanged shapes passed; no filesystem operations",
+  "source_sha256": "8ffc9bfcdf71b7af131cf4587147b3a883d702c549179ef876835ca110ac4118"
+}

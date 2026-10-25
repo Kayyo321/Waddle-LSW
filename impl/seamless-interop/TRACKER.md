@@ -58,12 +58,12 @@ acceptance remain pending.
 | #28 | Host desktop-entry/icon/menu materialization, app_id matching, toplevel icon, desktop-shortcut mirroring | Pending | 4% | 0% | Waits on #27 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
 | #29 | `waddle open` launch path, activation tokens, cold-boot feedback, File Explorer seed | Pending | 3% | 0% | Waits on #7, #27 |
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
-| #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | In Progress | 2% | 20% | Bounded PE32/PE32+ classifier20% accepted with exact Zig/C gates. MIME editor/artifacts/configuration/routes and native integration remain open; waits on #29/#33 for complete flow |
+| #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | In Progress | 2% | 40% | PE classifier20% and preserving MIME editor20% accepted with root whole-module gates. Artifacts/configuration/routes and native integration remain open; waits on #29/#33 for complete flow |
 | #32 | binfmt_misc system artifacts, `install --system`, status/conflict reporting | Pending | 1% | 0% | Waits on #31 |
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 40% | Schema15%, absent-add journal/recovery15% and rooted absent artifact API10% accepted. Replacement/backup/restore, commands/producers and full-removal qualification remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `23.20%`
+**Total Feature Completion**: `23.60%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -80,7 +80,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; portable observer15%; native adapter15%. O5 preservation qualified by89ff058 local coverage/sanitizers and exact Windows native smoke/failure guards at d77dcb3, CI40144415938; installed-session15% accepted by the hash-bound fresh Windows guest run; coordinator20% remains open |
 | #15 | Typed full translation10%; native injection15%; host repeat20%; lock sync15%; layout sync20%; shortcut inhibit10%; integrated/native qualification10% | Typed translation10% accepted; full1..767/gaps/inverse, correct VKs, legacy bounds, root100%lines/94.53%taken arcs and leak-enabled ASan/LSan/UBSan. No widened wire or typed injection credit |
 | #27 | Source snapshot/diff20%; native enumeration20%; watch/enrichment15%; PNG encoder10%; native icon extraction15%; wire/integration10%; integrated/native qualification10% | PNG encoder10% and source snapshot/diff20% accepted. Core root97.40%lines/90.15%taken arcs, validator100%lines/93.94%arcs and leak-enabled sanitizers. Native Shell/catalog and integrated qualification remain open |
-| #31 | Bounded classifier20%; preserving MIME editor20%; journaled handler artifacts20%; configuration/route integration20%; integrated/native qualification20% | Classifier20% accepted; five Zig/C tests,20k prefixes,100%lines/96.43%arcs and real C consumer ASan/LSan/UBSan; Windows execution and launch/file-read binding remain open |
+| #31 | Bounded classifier20%; preserving MIME editor20%; journaled handler artifacts20%; configuration/route integration20%; integrated/native qualification20% | Classifier20% and preserving MIME editor20% accepted; editor six tests,2000 prefixes, all publication-shape OOM tests,100%lines/93.28%arcs. Artifact/config/route/native integration remain open |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec15%; absent-add journal15%/30% and rooted absent API10%/20%, root-reviewed43 tests,90.03% taken arcs/99.77% lines. Replacement journal15% and replacement/backup API10% remain open |
 
 Execution resumed at the user's request from checkpoint4079560. Current
@@ -1460,7 +1460,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     bit in the first byte. Correct AND/XOR fixtures while preserving transparent,
     opaque and inversion expectations; strict native compile/link passes.
 
-- **Commit `HEAD`**: `feat(interop): build bounded owned application catalog snapshots and diffs`
+- **Commit `200b9aa`**: `feat(interop): build bounded owned application catalog snapshots and diffs`
   - **Task Impact**: +20% to TODO #27 (+0.80% overall; total23.20%).
   - **Summary**: Deterministic complete-candidate precedence, exact AUMID or
     trusted final-path identity, bounded Zig UTF validation, stable owned
@@ -1469,3 +1469,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     Normal build/CI gates include core tests. Add read-only Windows provider,
     exact close-failure quarantine and native profile fixture as unaccepted
     scaffolding; SDK/link alone earns no native enumeration credit.
+
+- **Commit `HEAD`**: `feat(interop): preserve unrelated MIME defaults while editing one key`
+  - **Task Impact**: +20% to TODO #31 (+0.40% overall; total23.60%).
+  - **Summary**: Pure bounded Zig read/rewrite with exact prior list, duplicate
+    refusal, byte-preserved other groups/comments/newlines, removal, restoration
+    and produced-file quota validation. Root six tests,2000 random prefixes,
+    every allocation failure across publication shapes,100%lines/93.28%arcs
+    pass; default tests/sanitizer allocation suite/CI coverage include it.
+    No desktop defaults are written and no launch/registration credit is claimed.

@@ -1,0 +1,36 @@
+{
+  "schema": 2,
+  "sites": 194,
+  "max_edges": 255,
+  "storage_budget_bytes": 524288,
+  "validation": "validated",
+  "source_sha256": "8ffc9bfcdf71b7af131cf4587147b3a883d702c549179ef876835ca110ac4118",
+  "compile_command": [
+    "zig",
+    "test",
+    "src/interop/mimeapps.zig",
+    "-Iinclude",
+    "-lc",
+    "-O",
+    "ReleaseSafe",
+    "--test-no-exec",
+    "-femit-llvm-ir=/home/dev/Waddle-LSW/build/coverage/interop/mimeapps/run-20261025T174827522432Z-248473/test.ll",
+    "-femit-bin=/home/dev/Waddle-LSW/build/coverage/interop/mimeapps/run-20261025T174827522432Z-248473/test"
+  ],
+  "zig_version": "0.13.0",
+  "clang_version": "Debian clang version 19.1.7 (3+b1)",
+  "target_triple": "x86_64-unknown-linux-gnu",
+  "target_cpus": [
+    "x86-64"
+  ],
+  "target_features": [
+    "-16bit-mode,-32bit-mode,-3dnow,-3dnowa,+64bit,+adx,+aes,-allow-light-256-bit,-amx-bf16,-amx-complex,-amx-fp16,-amx-int8,-amx-tile,+avx,-avx10.1-256,-avx10.1-512,+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,-avx512er,+avx512f,-avx512fp16,+avx512ifma,-avx512pf,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vp2intersect,+avx512vpopcntdq,-avxifma,-avxneconvert,-avxvnni,-avxvnniint16,-avxvnniint8,+bmi,+bmi2,-branchfusion,-ccmp,-cf,-cldemote,+clflushopt,+clwb,+clzero,+cmov,-cmpccxadd,-crc32,+cx16,+cx8,-egpr,-enqcmd,-ermsb,-evex512,+f16c,-false-deps-getmant,-false-deps-lzcnt-tzcnt,-false-deps-mulc,-false-deps-mullq,-false-deps-perm,-false-deps-popcnt,-false-deps-range,-fast-11bytenop,-fast-15bytenop,-fast-7bytenop,-fast-bextr,-fast-gather,-fast-hops,-fast-lzcnt,-fast-movbe,-fast-scalar-fsqrt,-fast-scalar-shift-masks,-fast-shld-rotate,-fast-variable-crosslane-shuffle,-fast-variable-perlane-shuffle,-fast-vector-fsqrt,-fast-vector-shift-masks,-faster-shift-than-shuffle,+fma,-fma4,+fsgsbase,-fsrm,+fxsr,+gfni,-harden-sls-ijmp,-harden-sls-ret,-hreset,-idivl-to-divb,+idivq-to-divl,+invpcid,-kl,-lea-sp,-lea-uses-ag,-lvi-cfi,-lvi-load-hardening,-lwp,+lzcnt,+macrofusion,+mmx,+movbe,+movdir64b,+movdiri,+mwaitx,-ndd,-no-bypass-delay,-no-bypass-delay-blend,-no-bypass-delay-mov,-no-bypass-delay-shuffle,+nopl,-pad-short-functions,+pclmul,-pconfig,+pku,+popcnt,-ppx,-prefer-128-bit,-prefer-256-bit,-prefer-mask-registers,-prefer-movmsk-over-vtest,-prefer-no-gather,-prefer-no-scatter,-prefetchi,-prefetchwt1,+prfchw,-ptwrite,-push2pop2,-raoint,+rdpid,-rdpru,+rdrnd,-rdseed,-retpoline,-retpoline-external-thunk,-retpoline-indirect-branches,-retpoline-indirect-calls,-rtm,+sahf,-sbb-dep-breaking,-serialize,-seses,-sgx,+sha,-sha512,+shstk,+slow-3ops-lea,+slow-incdec,-slow-lea,-slow-pmaddwd,-slow-pmulld,-slow-shld,-slow-two-mem-ops,-slow-unaligned-mem-16,-slow-unaligned-mem-32,-sm3,-sm4,-soft-float,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,-sse-unaligned-mem,+ssse3,-tagged-globals,-tbm,-tsxldtrk,-tuning-fast-imm-vector-shift,-uintr,-use-glm-div-sqrt-costs,-use-slm-arith-costs,-usermsr,+vaes,+vpclmulqdq,+vzeroupper,-waitpkg,+wbnoinvd,-widekl,+x87,-xop,+xsave,+xsavec,+xsaveopt,+xsaves"
+  ],
+  "estimated_storage_bytes": 972,
+  "wide_sites": 0,
+  "extra_mask_words": 0,
+  "records_sha256": "e20b4c6946ca53008db1c16ffce1fe2d9d522a351f679a5c0ab06bd1f8faf4d4",
+  "ir_sha256": "35df0435a6cf6934f39d438e58ddcd098963b70ba86e349106829ee248a9fe74",
+  "binding_sha256": "9427c3070da89b82504411d84899f9f508ede8afa5508ff1157c21f28ee8e3df",
+  "recorder_symbol": "waddle_branch_hit_9427c3070da89b82504411d84899f9f508ede8afa5508ff1157c21f28ee8e3df"
+}
