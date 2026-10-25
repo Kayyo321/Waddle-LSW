@@ -166,8 +166,15 @@ installing; the existing stop pipe requested cleanup, with forced QEMU stop
 recorded and both children reaped. Its secret-free receipts and screenshot are
 retained in native_install_evidence_2026_10_25/boot_prompt_attempt.
 `install_boot_key` is an opt-in boolean test mode for a newly prepared blank
-disk. After QMP connects, it sends Space at most24 times over12 seconds, each
+disk. After QMP connects, it sends Enter at most24 times over12 seconds, each
 hold100ms and command deadline1s, checking stop/child exit between attempts.
 This enters Windows Setup on the new disk; it is disabled by default and grants
 no acceptance. The exact finite input sequence has an independent fake-clock
 unit. Normal installed-system boots do not use this mode.
+
+The second live run entered Windows Boot Manager but Space paused its entry
+selection. Disk allocation stayed200704bytes and no installation/guest command
+occurred. Retained evidence is boot_manager_attempt; explicit private FIFO stop
+reaped both children (forced QEMU recorded) and joined the probe. Enter now
+selects Windows Setup as well as satisfying firmware's any-key prompt; the
+regression asserts the exact QMP qcode `ret`. Both failed attempts earn0%.

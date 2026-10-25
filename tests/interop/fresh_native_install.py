@@ -433,7 +433,7 @@ def run_fresh_install(run_root: Path, manifest: dict[str, Any], source_vhost_fd:
                 if stop_poller is not None and stop_poller.poll(0):
                     record["stop_requested"] = True
                     break
-                qmp.execute("send-key", {"keys": [{"type": "qcode", "data": "spc"}],
+                qmp.execute("send-key", {"keys": [{"type": "qcode", "data": "ret"}],
                                         "hold-time": 100}, timeout_seconds=1.0)
                 record["install_boot_keys"] += 1
                 sleep(min(0.5, max(0.0, boot_deadline - monotonic())))

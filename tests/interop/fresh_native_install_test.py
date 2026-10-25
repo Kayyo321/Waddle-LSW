@@ -211,6 +211,8 @@ class fresh_native_install_tests_t(unittest.TestCase):
                 install_boot_key=True)
         self.assertEqual(result["install_boot_keys"], 24)
         self.assertEqual(len([command for command, _ in qmp.calls if command == "send-key"]), 24)
+        self.assertTrue(all(arguments["keys"] == [{"type": "qcode", "data": "ret"}]
+                            for command, arguments in qmp.calls if command == "send-key"))
         self.assertFalse(result["native_acceptance_credit"])
         self.assertFalse(result["guest_booted"])
 

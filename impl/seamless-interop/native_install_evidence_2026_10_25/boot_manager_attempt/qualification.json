@@ -1,0 +1,7 @@
+{
+  "result": "failed: Space entered installer media but paused Windows Boot Manager; disk still blank",
+  "credit": 0,
+  "protected_vm_or_existing_credentials_touched": false,
+  "cleanup": "explicit private FIFO requested bounded stop; exact QEMU/swtpm reaped, forced QEMU termination, probe joined",
+  "followup": "use finite Enter input, preserving both failed run directories"
+}

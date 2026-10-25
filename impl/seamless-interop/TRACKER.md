@@ -1266,10 +1266,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     97.69% lines/93.62% taken arcs and fail-fast ASan/LSan/UBSan all pass.
     Coverage and sanitizer evidence is retained and wired into CI.
 
-- **Commit `HEAD`**: `feat(interop): compose bounded daemon and one-shot session admission`
+- **Commit `a8ca421`**: `feat(interop): compose bounded daemon and one-shot session admission`
   - **Task Impact**: +0% to TODO #7; actual product entry remains a separate gate.
   - **Summary**: Connect reviewed singleton/readiness/VSOCK components with
     cancellable partial I/O, one absolute deadline, selected-device validation
     and explicit recoverable cleanup ownership. Normal make, leak-enabled
     ASan/LSan/UBSan and exact359/362lines,341/374taken-arcs pass. CI now runs
     the production-object guard/real-socket fixture and coverage gate.
+
+- **Commit `HEAD`**: `fix(interop): select Windows Setup after installation boot prompt`
+  - **Task Impact**: +0% to TODO #34; failed attempt accurately retained.
+  - **Summary**: Space entered media but paused its boot menu; no installation
+    or guest command ran. The exact owned VM/TPM/probe were cleaned up and all
+    receipts retained. Use bounded Enter input and assert its exact QMP qcode;
+    all17 supervisor tests pass. No preserved VM or legacy credential use.
