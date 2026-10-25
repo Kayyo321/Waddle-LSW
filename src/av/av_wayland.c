@@ -1,3 +1,4 @@
+#include "../interop/keyboard_repeat_abi.h"
 #include "av_wayland.h"
 #include "av_dmabuf.h"
 #include "av_input.h"
@@ -65,6 +66,8 @@ struct av_wayland_t {
     struct wl_pointer *pointer;
     video_window_t *keyboard_window, *pointer_window;
     uint32_t seat_global, input_serial;
+    /* Host-owned typematic repeat: caller storage for the keyboard_repeat reducer. */
+    waddle_keyboard_repeat_t repeat;
     uint8_t suppressed_keys[AvInputKeys];
     uint8_t observed_keys[AvInputKeys], observed_buttons[4], suppressed_buttons[4];
     av_lease_host_t lease;
@@ -108,6 +111,7 @@ static int lease_ready(const av_wayland_t *client) {
     return !client->shutting_down && !client->delivery_failed &&
         (client->lease.phase == AvLeaseHostUnfocusedReady || client->lease.phase == AvLeaseForwarding);
 }
+static void repeat_cancel(av_wayland_t *client);
 static void suppress_observed(av_wayland_t *client, uint32_t mask) {
     if (!lease_mode(client)) return;
     if (mask & AvInputReleaseKeys)
@@ -123,6 +127,7 @@ static void cancel_lease_sync(av_wayland_t *client) {
     client->lease_sync_epoch = 0;
 }
 static void disable_routes(av_wayland_t *client) {
+    repeat_cancel(client);
     suppress_observed(client, AvInputReleaseKeys | AvInputReleaseButtons);
     client->keyboard_window = NULL;
     client->pointer_window = NULL;
@@ -136,6 +141,7 @@ static int fail_input(av_wayland_t *client) {
     return -1;
 }
 static void mark_delivery_failed(av_wayland_t *client) {
+    repeat_cancel(client);
     if (lease_mode(client)) fail_input(client);
     else client->delivery_failed = 1;
 }
@@ -161,7 +167,24 @@ static int send_input(av_wayland_t *client, video_window_t *window, uint32_t typ
     }
     return 0;
 }
+static uint64_t monotonic_ns(void);
+/* Stop any armed typematic repeat. Idempotent; safe on every route teardown. */
+static void repeat_cancel(av_wayland_t *client) {
+    waddle_keyboard_repeat_cancel(&client->repeat);
+}
+static void repeat_focus(av_wayland_t *client, const video_window_t *window) {
+    if (window->geometry.window_id && window->incarnation)
+        waddle_keyboard_repeat_focus(&client->repeat, window->geometry.window_id, (uint32_t)window->incarnation);
+}
+/* Feed one forwarded key event to the reducer. Only events actually delivered to the
+ * guest reach here, so keys suppressed at enter never arm a repeat. */
+static void repeat_key(av_wayland_t *client, uint32_t key, int pressed) {
+    uint64_t now = monotonic_ns();
+    if (!now) { repeat_cancel(client); return; }
+    waddle_keyboard_repeat_key(&client->repeat, (uint16_t)key, pressed ? 1 : 0, 1, now);
+}
 static void clear_keyboard_focus(av_wayland_t *client) {
+    repeat_cancel(client);
     send_input(client, client->keyboard_window, MsgInputFocus, 0, 0, 0, 0);
     client->keyboard_window = NULL;
     if (lease_mode(client)) {
@@ -224,10 +247,12 @@ static void keyboard_enter(void *context, struct wl_keyboard *keyboard, uint32_t
         }
         client->keyboard_window = window;
         send_input(client, window, MsgInputFocus, 1, 0, 0, 0);
+        repeat_focus(client, window);
     } else {
         if (send_input(client, window, MsgInputFocus, 1, 0, 0, 0) != 0) return;
         client->keyboard_window = window;
         client->lease.phase = AvLeaseForwarding;
+        repeat_focus(client, window);
     }
     forward_pointer(client);
 }
@@ -260,7 +285,11 @@ static void keyboard_key(void *context, struct wl_keyboard *keyboard, uint32_t s
             return;
         }
     }
-    send_input(client, client->keyboard_window, MsgInputKey, state, key, 0, 0);
+    if (send_input(client, client->keyboard_window, MsgInputKey, state, key, 0, 0) != 0) {
+        repeat_cancel(client);
+        return;
+    }
+    repeat_key(client, key, state == WL_KEYBOARD_KEY_STATE_PRESSED);
 }
 static void keyboard_modifiers(void *context, struct wl_keyboard *keyboard, uint32_t serial,
                                uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group) {
@@ -269,7 +298,13 @@ static void keyboard_modifiers(void *context, struct wl_keyboard *keyboard, uint
     // Modifier physical key events are forwarded; XKB state/text is not translated.
 }
 static void keyboard_repeat(void *context, struct wl_keyboard *keyboard, int32_t rate, int32_t delay) {
-    (void)context; (void)keyboard; (void)rate; (void)delay;
+    (void)keyboard;
+    av_wayland_t *client = context;
+    /* Negative values are rejected without changing the stored timing. A rate of
+     * zero disables repeat; the ABI rejects out-of-range values, which also leave
+     * the stored timing unchanged. */
+    if (rate < 0 || delay < 0) return;
+    (void)waddle_keyboard_repeat_configure(&client->repeat, rate > 0 ? 1 : 0, rate, delay);
 }
 static const struct wl_keyboard_listener KeyboardEvents = {.keymap = keyboard_keymap,
     .enter = keyboard_enter, .leave = keyboard_leave, .key = keyboard_key,
@@ -667,6 +702,7 @@ static void retire_window(video_window_t *window) {
             window->client->watch_window = 0;
         }
         if (window->client->keyboard_window == window) {
+            repeat_cancel(window->client);
             window->client->keyboard_window = NULL;
             if (lease_mode(window->client)) {
                 suppress_observed(window->client, AvInputReleaseKeys | AvInputReleaseButtons);
@@ -763,6 +799,7 @@ int av_wayland_init(av_wayland_t **client_pointer, av_host_request_t request, vo
     *client_pointer = client;
     client->request = request;
     client->request_context = context;
+    if (waddle_keyboard_repeat_init(&client->repeat) != WaddleKeyboardRepeatOk) goto fail;
     client->display = wl_display_connect(NULL);
     if (!client->display)
         goto fail;
@@ -966,12 +1003,41 @@ int av_wayland_dispatch(av_wayland_t *client) {
         av_wayland_timeout(client, 0) < 0) return fail_input(client);
     return 0;
 }
+static int repeat_service(av_wayland_t *client, uint64_t now) {
+    for (;;) {
+        uint16_t code = 0;
+        int status = waddle_keyboard_repeat_take_due(&client->repeat, now, &code);
+        if (status != WaddleKeyboardRepeatOk) return 0; /* Clock discontinuity already disarmed repeat. */
+        if (!code) return 0;
+        if (!client->keyboard_window || !controls_enabled(client->keyboard_window) ||
+            (lease_mode(client) && client->lease.phase != AvLeaseForwarding)) {
+            repeat_cancel(client);
+            return 0;
+        }
+        /* A repeat is a key down: it consumes a serial and goes through the same path as a real key. */
+        if (send_input(client, client->keyboard_window, MsgInputKey, 1, code, 0, 0) != 0) return -1;
+    }
+}
+static int repeat_timeout(av_wayland_t *client, uint64_t now, int maximum) {
+    uint8_t present = 0;
+    uint64_t deadline = 0;
+    if (waddle_keyboard_repeat_next_deadline(&client->repeat, &present, &deadline) != WaddleKeyboardRepeatOk || !present)
+        return maximum;
+    /* Round the remaining time up to whole milliseconds so the poll never wakes early and misses the deadline. */
+    uint64_t remaining_ns = deadline > now ? deadline - now : 0;
+    uint64_t remaining_ms = (remaining_ns + 999999) / 1000000;
+    return remaining_ms < (uint64_t)maximum ? (int)remaining_ms : maximum;
+}
 int av_wayland_timeout(av_wayland_t *client, int maximum) {
     if (client->shutting_down || client->delivery_failed || maximum < 0) return -1;
-    if (!lease_mode(client)) return maximum;
+    uint64_t now_ns = monotonic_ns();
+    if (now_ns && repeat_service(client, now_ns) != 0) return fail_input(client);
+    if (!lease_mode(client)) return now_ns ? repeat_timeout(client, now_ns, maximum) : maximum;
     uint64_t now = monotonic_ms();
     if (av_lease_host_check(&client->lease, now) != 0) return fail_input(client);
-    return av_lease_timeout(client->lease.deadline, now, maximum);
+    int timeout = av_lease_timeout(client->lease.deadline, now, maximum);
+    if (timeout < 0 || !now_ns) return timeout;
+    return repeat_timeout(client, now_ns, timeout);
 }
 int av_wayland_fd(av_wayland_t *client) { return wl_display_get_fd(client->display); }
 int av_wayland_flush(av_wayland_t *client) {
@@ -980,6 +1046,12 @@ int av_wayland_flush(av_wayland_t *client) {
     return result < 0 && !client->writable ? -1 : 0;
 }
 int av_wayland_writable(const av_wayland_t *client) { return client->writable; }
+static uint64_t monotonic_ns(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0 || now.tv_sec < 0 || now.tv_nsec < 0 ||
+        now.tv_nsec >= 1000000000 || (uint64_t)now.tv_sec > UINT64_MAX / 1000000000u - 1) return 0;
+    return (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
+}
 static uint64_t monotonic_ms(void) {
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0 || now.tv_sec < 0 || now.tv_nsec < 0 ||

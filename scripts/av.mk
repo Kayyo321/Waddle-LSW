@@ -102,8 +102,8 @@ build/waddle-guest-av.exe: src/av/av_guest.c src/av/av_peer.c $(AvWindowsSources
 av-windows: build/waddle-guest-av.exe
 
 AvHostSources = src/av/av_lease.c src/av/av_identity.c src/av/av_input.c src/av/av_host.c src/av/av_peer.c src/av/av_video.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_dmabuf.c
-build/waddle-av-host: $(AvHostSources) $(AvProtocolHeaders) $(AvProtocolCode) build/av_audio.o build/av_codec.o build/av_layout.o | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) $(AvHostSources) $(AvProtocolCode) build/av_audio.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
+build/waddle-av-host: $(AvHostSources) $(AvProtocolHeaders) $(AvProtocolCode) build/av_audio.o build/av_codec.o build/av_layout.o build/interop_keyboard_repeat_abi.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) $(AvHostSources) $(AvProtocolCode) build/av_audio.o build/interop_keyboard_repeat_abi.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
 .PHONY: av
 av: build/waddle-av-host build/waddle-av-setup av-windows
 
@@ -128,8 +128,8 @@ build/vendor/av/ivshmem/ivshmem.inf: | build/vendor
 .PHONY: av-drivers
 av-drivers: build/vendor/av/ivshmem/ivshmem.inf
 
-build/av_platform_test: tests/av/platform.c tests/av/platform_requests.h src/av/av_lease.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c $(AvProtocolHeaders) $(AvProtocolCode) build/av_audio.o build/av_codec.o build/av_layout.o | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/platform.c src/av/av_lease.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c $(AvProtocolCode) build/av_audio.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
+build/av_platform_test: tests/av/platform.c tests/av/platform_requests.h src/av/av_lease.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c $(AvProtocolHeaders) $(AvProtocolCode) build/av_audio.o build/av_codec.o build/av_layout.o build/interop_keyboard_repeat_abi.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/platform.c src/av/av_lease.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c $(AvProtocolCode) build/av_audio.o build/interop_keyboard_repeat_abi.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
 .PHONY: av-native-platform-test
 av-native-platform-test: build/av_platform_test
 	./build/av_platform_test
@@ -150,8 +150,8 @@ build/av_setup_test.o: src/av/av_setup.c | build
 build/av_setup_test: tests/av/setup.c src/av/av_gpu.c build/av_setup_test.o build/av_codec.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -Wl,--wrap=geteuid,--wrap=open,--wrap=ioctl,--wrap=lseek,--wrap=close,--wrap=fork,--wrap=waitpid -o $@
 
-build/av_wayland_state_test: tests/av/wayland_state.c src/av/av_lease.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_video.c src/av/av_dmabuf.c $(AvProtocolHeaders) $(AvProtocolCode) build/av_codec.o build/av_audio.o | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/wayland_state.c src/av/av_lease.c src/av/av_identity.c src/av/av_input.c src/av/av_video.c src/av/av_dmabuf.c $(AvProtocolCode) build/av_codec.o build/av_audio.o $(LDFLAGS) $(shell pkg-config --libs wayland-client) -Wl,--wrap=wl_proxy_marshal_flags,--wrap=wl_proxy_get_version,--wrap=wl_proxy_add_listener,--wrap=wl_display_flush,--wrap=wl_proxy_destroy,--wrap=clock_gettime,--wrap=wl_display_dispatch_pending,--wrap=wl_display_disconnect -o $@
+build/av_wayland_state_test: tests/av/wayland_state.c src/av/av_lease.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_video.c src/av/av_dmabuf.c $(AvProtocolHeaders) $(AvProtocolCode) build/av_codec.o build/av_audio.o build/interop_keyboard_repeat_abi.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/wayland_state.c src/av/av_lease.c src/av/av_identity.c src/av/av_input.c src/av/av_video.c src/av/av_dmabuf.c $(AvProtocolCode) build/av_codec.o build/av_audio.o build/interop_keyboard_repeat_abi.o $(LDFLAGS) $(shell pkg-config --libs wayland-client) -Wl,--wrap=wl_proxy_marshal_flags,--wrap=wl_proxy_get_version,--wrap=wl_proxy_add_listener,--wrap=wl_display_flush,--wrap=wl_proxy_destroy,--wrap=clock_gettime,--wrap=wl_display_dispatch_pending,--wrap=wl_display_disconnect -o $@
 
 build/av_deploy_test: tests/av/deploy.c src/av/av_deploy.c src/av/av_deploy.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av tests/av/deploy.c src/av/av_deploy.c $(LDFLAGS) -o $@

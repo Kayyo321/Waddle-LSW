@@ -55,3 +55,54 @@ Each flag byte is validated before use. A status other than Ok changes no state.
 A repeat returned by `take_due` is consumed. The caller queues it or cancels focus;
 it is never retried. `take_due` returns at most one repeat per call, matching the
 reducer.
+
+## 4. Wayland host adapter (`src/av/av_wayland.c`)
+
+- **Storage.** `av_wayland_t` owns one `waddle_keyboard_repeat_t` (1024 bytes),
+  initialized in `av_wayland_init`. It is freed with the client. Nothing else allocates.
+- **repeat_info.** `keyboard_repeat` rejects negative rate or delay without changing
+  stored timing. A valid pair is passed to `configure(enabled = rate > 0, rate, delay)`.
+  A rate of zero disables repeat. A rate above 1000 Hz or a delay above 60000 ms is
+  rejected by the ABI and leaves the stored timing unchanged. A successful configure
+  disarms an active candidate, as the reducer specifies.
+- **Feeding the reducer.** `keyboard_key` calls `repeat_key` only after `send_input`
+  has delivered the key to the guest. A suppressed key (held at focus enter, or not
+  yet released after a snapshot) never reaches the reducer, so it never arms a repeat.
+  `repeatable` is always passed as 1. The reducer owns the modifier, lock, Pause and
+  suppressed-key exclusions; the adapter does not duplicate them. If delivery of a key
+  fails, the repeat is cancelled.
+- **Focus.** `keyboard_enter` calls `focus(window_id, incarnation)` after the focus
+  message is delivered, in both legacy and lease modes. Zero identities are skipped.
+- **Cancel.** `repeat_cancel` runs on every route teardown: `clear_keyboard_focus`
+  (leave, keymap change, seat loss), `disable_routes` (lease revocation, terminal
+  failure, lease-mode fail), `mark_delivery_failed`, retirement of the focused window,
+  and a failed repeat delivery. A repeat that fires while the lease is not in the
+  forwarding phase, or while the window is not controllable, cancels instead of sending.
+- **Firing.** `av_wayland_timeout` runs first on every call, including the
+  `maximum = 0` calls around the host poll. It takes each due repeat with
+  `take_due(now_ns)` and sends it as a key down through `send_input`. This uses a
+  serial exactly like a physical key. The loop stops when `take_due` returns 0.
+  A failed send returns -1 (the same failure path as any input).
+- **Poll timeout.** The poll timeout is the minimum of the caller's maximum, the
+  lease deadline (lease mode), and the time to the next repeat. The repeat time is
+  the remaining nanoseconds rounded up to whole milliseconds, so the poll never wakes
+  early and misses the deadline. The fake clock in the tests is whole milliseconds,
+  so the ceiling is exercised exactly.
+- **Clock.** `monotonic_ns` reads `CLOCK_MONOTONIC`. A read failure yields 0, which
+  cancels nothing and fires nothing for that call.
+
+## 5. Verification (`tests/av/wayland_state.c`)
+
+- Timing: delay 100 ms (`timeout = 100`), first repeat at exactly the delay, then
+  period `ceil(1e9/25)` = 40 ms. Rate 3 uses 333333334 ns, so the poll waits 334 ms
+  and does not fire at 333 ms. A key up stops the repeat.
+- repeat_info: negative rate and delay, rate 1001, and delay 60001 each leave the
+  stored timing unchanged; rate zero disables.
+- Cancel: leave, keymap format change, failed repeat delivery, and lease revocation
+  (`disable_routes`) each leave no repeat armed and send no further key event.
+- Suppression and rollback: a key held at enter never arms a repeat; a clock moving
+  backward disarms the repeat, so no repeat is delivered afterwards.
+- Randomized: 2000 steps of key down and up, focus enter and leave, repeat_info
+  changes, and time advances. Each step's key events are compared with a reference
+  model in order, and the poll timeout is compared after every advance. At least 20
+  repeats fired (34 in the committed seed).
