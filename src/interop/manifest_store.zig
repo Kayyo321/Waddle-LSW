@@ -1179,6 +1179,7 @@ pub const store_t = struct {
         try validate_global_paths(parsed.records);
         if (find_record(parsed.records, request.record_id) == null) return error.FileNotFound;
         try validate_metadata_only(parsed.records, candidate.records);
+        if ((try version_order(candidate.waddle_version, parsed.waddle_version)) == .lt) return error.VersionDowngrade;
         if (std.mem.eql(u8, snapshot.bytes, request.candidate_manifest)) return .{ .changed = false };
         _ = try self.run_manifest_transaction(.{
             .operation = "migrate",
@@ -2864,6 +2865,34 @@ fn validate_journal_v3(journal: journal_v3_t, entry_name: []const u8) !void {
     } else return error.RecoveryRequired;
 }
 
+/// Compare two dotted numeric Waddle versions component by component; a missing
+/// component counts as zero. Any non-numeric component or an empty component is
+/// InvalidManifest, so a root version that cannot be ordered never passes a migration.
+fn version_order(candidate: []const u8, current: []const u8) !std.math.Order {
+    var left = std.mem.splitScalar(u8, candidate, '.');
+    var right = std.mem.splitScalar(u8, current, '.');
+    while (true) {
+        const left_part = left.next();
+        const right_part = right.next();
+        if (left_part == null and right_part == null) return .eq;
+        const left_value = if (left_part) |text| try version_part(text) else 0;
+        const right_value = if (right_part) |text| try version_part(text) else 0;
+        const order = std.math.order(left_value, right_value);
+        if (order != .eq) return order;
+    }
+}
+
+/// Parse one numeric version component of at most nine decimal digits.
+fn version_part(text: []const u8) !u64 {
+    if (text.len == 0 or text.len > 9) return error.InvalidManifest;
+    var value: u64 = 0;
+    for (text) |byte| {
+        if (!std.ascii.isDigit(byte)) return error.InvalidManifest;
+        value = value * 10 + (byte - '0');
+    }
+    return value;
+}
+
 /// True for a version-3 removal journal. Validated journals carry artifact
 /// fields exactly when the operation is a removal.
 fn v3_is_remove(journal: journal_v3_t) bool {
@@ -2896,6 +2925,7 @@ fn validate_recreate_delta(old_records: []const manifest.record_t, new_records: 
 /// (`waddle_version`, `updated`) is outside this check and may differ.
 fn validate_metadata_only(old_records: []const manifest.record_t, new_records: []const manifest.record_t) !void {
     if (old_records.len != new_records.len) return error.ManifestMismatch;
+    for (old_records, new_records) |old, new| if (!std.mem.eql(u8, old.id, new.id)) return error.ManifestMismatch;
     for (old_records) |old| {
         const candidate = find_record(new_records, old.id) orelse return error.ManifestMismatch;
         if (!same_record(old, candidate.*)) return error.ManifestMismatch;
@@ -9685,6 +9715,42 @@ test "committed remove refuses a displaced manifest with a foreign identity befo
     if (c.renameat(fixture.state.fd, saved_temp.ptr, fixture.state.fd, temp.ptr) != 0) @panic("fixture rename");
     try store.recover();
     try std.testing.expect(!target_exists(fixture.data));
+}
+
+test "migrate refuses version downgrades, reordered records, and unparsable versions before mutation" {
+    var fixture = remove_fixture_t.create(std.testing.allocator);
+    defer fixture.destroy(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const docs = remove_documents(scratch, fixture.data_path);
+    install_remove_artifacts(&fixture);
+    const current = std.mem.replaceOwned(u8, scratch, docs.original, "\"waddle_version\":\"0.2.0\"", "\"waddle_version\":\"0.3.0\"") catch @panic("fixture current");
+    try write_test_file(fixture.state.fd, "manifest.json", current, 0o600);
+    const roots = fixture.roots();
+    var store = try store_t.init(std.testing.allocator, fixture.state.fd, &roots);
+    defer store.deinit();
+    try std.testing.expectError(error.VersionDowngrade, store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = docs.original }));
+    const reversed_text = std.mem.replaceOwned(u8, scratch, current, "\"waddle_version\":\"0.3.0\"", "\"waddle_version\":\"0.3.1\"") catch @panic("fixture");
+    const target_digest = hash_hex("target bytes");
+    const keep_digest = hash_hex("keep bytes");
+    const target_path = std.fmt.allocPrint(scratch, "{s}/applications/target.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const keep_path = std.fmt.allocPrint(scratch, "{s}/applications/keep.desktop", .{fixture.data_path}) catch @panic("fixture path");
+    const target = test_spec_t{ .id = "desktop:target", .kind = "desktop_entry", .path = target_path, .sha256 = &target_digest };
+    const keep = test_spec_t{ .id = "desktop:keep", .kind = "desktop_entry", .path = keep_path, .sha256 = &keep_digest };
+    const reordered = test_document(scratch, 1, &[_]test_spec_t{ keep, target });
+    const newer = std.mem.replaceOwned(u8, scratch, current, "\"waddle_version\":\"0.3.0\"", "\"waddle_version\":\"0.10.0\"") catch @panic("fixture");
+    try std.testing.expectError(error.ManifestMismatch, store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = reordered }));
+    _ = reversed_text;
+    const unparsable = std.mem.replaceOwned(u8, scratch, current, "\"waddle_version\":\"0.3.0\"", "\"waddle_version\":\"0.3.0-rc1\"") catch @panic("fixture");
+    try std.testing.expectError(error.InvalidManifest, store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = unparsable }));
+    const same_content = try store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = std.mem.replaceOwned(u8, scratch, current, "2026-10-25T00:00:00Z", "2026-10-26T00:00:00Z") catch @panic("fixture") });
+    try std.testing.expect(same_content.changed);
+    const upgraded = try store.migrate_record(.{ .record_id = "desktop:target", .candidate_manifest = newer });
+    try std.testing.expect(upgraded.changed);
+    const on_disk = read_stored_manifest(fixture.state);
+    defer std.testing.allocator.free(on_disk);
+    try std.testing.expectEqualStrings(newer, on_disk);
 }
 
 fn write_test_file(dir_fd: c_int, name: [*:0]const u8, bytes: []const u8, mode: c_uint) !void {
