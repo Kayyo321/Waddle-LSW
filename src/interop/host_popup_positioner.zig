@@ -128,6 +128,63 @@ pub noinline fn restore(logical: rect_t, scale: u32) positioner_error_t!rect_t {
     return .{ .x = x, .y = y, .width = width, .height = height };
 }
 
+// ---- C ABI ------------------------------------------------------------------------------------
+
+/// Map a pure-function error to its C ABI status.
+fn status_of(err: positioner_error_t) status_t {
+    return switch (err) {
+        error.InvalidScale => .InvalidScale,
+        error.OutOfRange => .OutOfRange,
+        error.Overflow => .Overflow,
+    };
+}
+
+/// C ABI: integer host scale for a fractional scale. See `integer_scale`.
+///
+/// @param numerator In. Fraction numerator.
+/// @param denominator In. Fraction denominator; zero gives HostPopupInvalidScale.
+/// @param out_scale Out. Receives the integer scale on success only. NULL gives HostPopupInvalidArgument.
+/// @return Status. Thread safety: pure; any thread.
+export fn host_popup_positioner_integer_scale(numerator: u32, denominator: u32, out_scale: ?*u32) callconv(.C) status_t {
+    const destination = out_scale orelse return .InvalidArgument;
+    const scale = integer_scale(numerator, denominator) catch |err| return status_of(err);
+    destination.* = scale;
+    return .Ok;
+}
+
+/// C ABI: logical popup request for a guest rectangle. See `request`.
+///
+/// @param guest In. Guest physical rectangle. NULL gives HostPopupInvalidArgument.
+/// @param scale In. Integer host scale, 1..8.
+/// @param out Out. Receives the logical request on success only. NULL gives HostPopupInvalidArgument.
+/// @return Status. Thread safety: pure; any thread.
+export fn host_popup_positioner_request(guest: ?*const rect_t, scale: u32, out: ?*rect_t) callconv(.C) status_t {
+    const input = (guest orelse return .InvalidArgument).*;
+    const destination = out orelse return .InvalidArgument;
+    const result = request(input, scale) catch |err| return status_of(err);
+    destination.* = result;
+    return .Ok;
+}
+
+/// C ABI: guest rectangle for a compositor-adjusted logical rectangle. See `restore`.
+///
+/// @param logical In. Logical rectangle. NULL gives HostPopupInvalidArgument.
+/// @param scale In. Integer host scale, 1..8.
+/// @param out Out. Receives the guest rectangle on success only. NULL gives HostPopupInvalidArgument.
+/// @return Status. Thread safety: pure; any thread.
+export fn host_popup_positioner_restore(logical: ?*const rect_t, scale: u32, out: ?*rect_t) callconv(.C) status_t {
+    const input = (logical orelse return .InvalidArgument).*;
+    const destination = out orelse return .InvalidArgument;
+    const result = restore(input, scale) catch |err| return status_of(err);
+    destination.* = result;
+    return .Ok;
+}
+
+comptime {
+    // Layout frozen by src/interop/host_popup_positioner.h (checked there by _Static_assert).
+    if (@sizeOf(rect_t) != 16) @compileError("host popup rect layout changed");
+}
+
 // Test-only fixtures.
 const testing = std.testing;
 
@@ -275,4 +332,52 @@ test "restore of a request at the same scale returns the floor-rounded origin" {
             try testing.expectEqual(@as(u32, scale), guest.width);
         }
     }
+}
+
+/// The C ABI exports are called through `never_inline` shims so that the optimized wrapper bodies keep
+/// their own branches; a call with constant arguments would otherwise fold the NULL checks away.
+const abi = struct {
+    fn integer_scale(numerator: u32, denominator: u32, out_scale: ?*u32) status_t {
+        return @call(.never_inline, host_popup_positioner_integer_scale, .{ numerator, denominator, out_scale });
+    }
+
+    fn request(guest: ?*const rect_t, scale: u32, out: ?*rect_t) status_t {
+        return @call(.never_inline, host_popup_positioner_request, .{ guest, scale, out });
+    }
+
+    fn restore(logical: ?*const rect_t, scale: u32, out: ?*rect_t) status_t {
+        return @call(.never_inline, host_popup_positioner_restore, .{ logical, scale, out });
+    }
+};
+
+test "C ABI maps every error to its status and writes output only on success" {
+    var scale: u32 = 99;
+    try testing.expectEqual(status_t.InvalidArgument, abi.integer_scale(1, 1, null));
+    try testing.expectEqual(status_t.InvalidScale, abi.integer_scale(1, 0, &scale));
+    try testing.expectEqual(status_t.Ok, abi.integer_scale(150, 120, &scale));
+    try testing.expectEqual(@as(u32, 2), scale);
+
+    var guest = make_rect(0, 0, 1, 1);
+    var logical = make_rect(0, 0, 1, 1);
+    var result = make_rect(7, 7, 7, 7);
+    try testing.expectEqual(status_t.InvalidArgument, abi.request(null, 1, &result));
+    try testing.expectEqual(status_t.InvalidArgument, abi.request(&guest, 1, null));
+    try testing.expectEqual(status_t.InvalidScale, abi.request(&guest, 9, &result));
+    try testing.expectEqual(make_rect(7, 7, 7, 7), result);
+    guest = make_rect(40000, 0, 1, 1);
+    try testing.expectEqual(status_t.OutOfRange, abi.request(&guest, 1, &result));
+    try testing.expectEqual(make_rect(7, 7, 7, 7), result);
+    guest = make_rect(-8, 16, 9, 17);
+    try testing.expectEqual(status_t.Ok, abi.request(&guest, 8, &result));
+    try testing.expectEqual(make_rect(-1, 2, 2, 3), result);
+
+    try testing.expectEqual(status_t.InvalidArgument, abi.restore(null, 1, &result));
+    try testing.expectEqual(status_t.InvalidArgument, abi.restore(&logical, 1, null));
+    try testing.expectEqual(status_t.InvalidScale, abi.restore(&logical, 0, &result));
+    logical = make_rect(268435456, 0, 1, 1);
+    try testing.expectEqual(status_t.Overflow, abi.restore(&logical, 8, &result));
+    try testing.expectEqual(make_rect(-1, 2, 2, 3), result);
+    logical = make_rect(-3, 4, 5, 6);
+    try testing.expectEqual(status_t.Ok, abi.restore(&logical, 2, &result));
+    try testing.expectEqual(make_rect(-6, 8, 10, 12), result);
 }
