@@ -359,14 +359,14 @@ fn plan_tokens(args: []const []const u8, plan: *plan_t) open_error_t {
             plan.app = value;
             index += 2;
         } else if (eql(token, "--device") or eql(token, "-d")) {
-            if (plan.path_count > 0) return .OptionAfterTarget;
+            if (plan.app != null or plan.path_count > 0) return .OptionAfterTarget;
             if (plan.device != null) return .DuplicateOption;
             const value = value_at(args, index + 1) orelse return .MissingOptionValue;
             if (!device_valid(value)) return .InvalidDevice;
             plan.device = value;
             index += 2;
         } else if (eql(token, "--wait") or eql(token, "--new-console")) {
-            if (plan.path_count > 0) return .OptionAfterTarget;
+            if (plan.app != null or plan.path_count > 0) return .OptionAfterTarget;
             const flag = if (eql(token, "--wait")) &plan.wait else &plan.new_console;
             if (flag.*) return .DuplicateOption;
             flag.* = true;
@@ -670,7 +670,7 @@ test "grammar: app target with device and flags in every legal order" {
     const forms = [_]form_t{
         .{ .args = &.{ "--app", "a-Microsoft_Notepad" }, .key = "a-Microsoft_Notepad" },
         .{ .args = &.{ "-d", "dev-1", "--wait", "--new-console", "--app", "p-x" }, .key = "p-x" },
-        .{ .args = &.{ "--device", "dev_2", "--app", "a-x", "--wait" }, .key = "a-x" },
+        .{ .args = &.{ "--device", "dev_2", "--wait", "--app", "a-x" }, .key = "a-x" },
         .{ .args = &.{ "--new-console", "--wait", "-d", "d", "--app", "a-Q" }, .key = "a-Q" },
     };
     for (forms) |form| {
@@ -1214,4 +1214,17 @@ test "option values are the next token and are checked by their own rule" {
     try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{"-d"}, &fake, 0, &out));
     try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{"--device"}, &fake, 0, &out));
     try testing.expectEqual(open_error_t.MissingOptionValue, run(&.{ "--wait", "--app" }, &fake, 0, &out));
+}
+
+test "flags may precede the target in any order; options after --app are usage errors" {
+    var fake = fake_reader_t{ .entries = &.{} };
+    var out = std.mem.zeroes(request_t);
+    try testing.expectEqual(open_error_t.None, run(&.{ "--wait", "--new-console", "-d", "dev", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.None, run(&.{ "--new-console", "--device", "dev", "--wait", "--app", "a-x" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.OptionAfterTarget, run(&.{ "--app", "a-x", "--wait" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.OptionAfterTarget, run(&.{ "--app", "a-x", "-d", "dev" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.OptionAfterTarget, run(&.{ "--app", "a-x", "--new-console" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.DuplicateOption, run(&.{ "--app", "a-x", "--app", "a-y" }, &fake, 0, &out));
+    try testing.expectEqual(open_error_t.MixedTargets, run(&.{ "--app", "a-x", "a.txt" }, &fake, 0, &out));
+    try testing.expectEqual(@as(usize, 0), out.item_count);
 }

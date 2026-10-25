@@ -99,10 +99,11 @@ Accepted token forms (exact spelling only):
 
 Rules:
 
-1. **Options before positional items.** An option token is accepted only while
-   no PATH and no `--` has been seen. After a PATH or `--`, a `--device`, `-d`,
-   `--wait` or `--new-console` token is `OptionAfterTarget`. Repeating `--app`
-   after a PATH is `MixedTargets`.
+1. **Options before the target.** `--device`, `-d`, `--wait` and `--new-console`
+   may appear in any order, but only before the target. The target is the
+   first of `--app APP_KEY`, a PATH, or `--`. Any of those four options after
+   `--app` or after a PATH is `OptionAfterTarget` (exit 2). A PATH or `--`
+   after `--app` is `MixedTargets`. `--app` after a PATH is `MixedTargets`.
 2. **Repetition.** Repeating any of `--device`/`-d`, `--app`, `--wait`,
    `--new-console` is `DuplicateOption`, even when the values are identical.
    `-d X --device Y` is a duplicate.

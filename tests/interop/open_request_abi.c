@@ -56,7 +56,7 @@ static void check_app_form(void) {
     reader_t reader = { 0, 0, 0, 2, 0 };
     interop_open_request_t request;
     memset(&request, 0xa5, sizeof(request));
-    const char *argv[] = { "--app", "a-Microsoft_Notepad", "--wait" };
+    const char *argv[] = { "--wait", "--app", "a-Microsoft_Notepad" };
     assert(parse_argv(3, argv, 0, &reader, &request) == InteropOpenErrorNone);
     assert(request.item_count == 1);
     assert(request.wait == 1 && request.new_console == 0);
@@ -64,6 +64,8 @@ static void check_app_form(void) {
     assert(request.items[0].kind == InteropOpenItemApp);
     assert(request.items[0].text_length == strlen("a-Microsoft_Notepad"));
     assert(memcmp(request.items[0].text, "a-Microsoft_Notepad", request.items[0].text_length) == 0);
+    const char *late[] = { "--app", "a-Microsoft_Notepad", "--wait" };
+    assert(parse_argv(3, late, 0, &reader, &request) == InteropOpenErrorOptionAfterTarget);
     assert(request.items[0].argument_count == 0 && request.items[0].argument_first == 0);
     assert(reader.calls == 0);
 }
