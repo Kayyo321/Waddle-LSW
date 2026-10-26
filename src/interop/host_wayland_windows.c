@@ -157,6 +157,7 @@ host_wayland_status_t host_wayland_windows_record_press(host_wayland_t *ctx, con
     slot->lease_epoch = input->lease_epoch;
     slot->kind = input->kind;
     slot->button = input->button;
+    slot->sequence = ++ctx->press_sequence;
     slot->live = 1;
     return HostWaylandOk;
 }
@@ -1014,6 +1015,96 @@ static host_wayland_status_t handle_retire(host_wayland_t *ctx, const uint8_t *p
     if (field_u64(payload, length, InteropTagWindow, &window) != 0) return HostWaylandMalformedFrame;
     if (field_u64(payload, length, InteropTagGeneration, &generation) != 0) return HostWaylandMalformedFrame;
     return retire_window(ctx, window, generation);
+}
+
+/* ---- requests from the guest and compositor-driven state (4.5) ---------------------------------------- */
+
+host_wayland_status_t host_wayland_windows_lookup_press(host_wayland_t *ctx, uint32_t protocol_serial, uint64_t now_ms, host_wayland_press_info_t *out) {
+    if (!context_ready(ctx)) return HostWaylandNotInitialized;
+    if (out == NULL || protocol_serial == 0) return HostWaylandInvalidArgument;
+    observe_clock(ctx, now_ms);
+    host_wayland_press_t *press = press_find(ctx, protocol_serial, now_ms);
+    if (press == NULL) return HostWaylandPressNotFound;
+    out->seat = press->seat;
+    out->wayland_serial = press->wayland_serial;
+    out->window = press->window;
+    out->generation = press->generation;
+    out->lease_epoch = press->lease_epoch;
+    out->kind = press->kind;
+    out->button = press->button;
+    out->latest_for_window = 1;
+    for (size_t index = 0; index < PressCount; ++index) {
+        const host_wayland_press_t *other = &ctx->presses[index];
+        if (other->live && other->window == press->window && other->generation == press->generation && other->sequence > press->sequence) {
+            out->latest_for_window = 0;
+        }
+    }
+    return HostWaylandOk;
+}
+
+/** @brief Toplevel of a realized record of role toplevel or dialog, or NULL. */
+static struct xdg_toplevel *toplevel_of(host_wayland_t *ctx, uint64_t window, uint64_t generation) {
+    host_wayland_record_t *rec = find_record(ctx, window, generation);
+    if (rec == NULL || rec->toplevel == NULL) return NULL;
+    return rec->toplevel;
+}
+
+host_wayland_status_t host_wayland_windows_begin_move(host_wayland_t *ctx, uint64_t window, uint64_t generation, struct wl_seat *seat, uint32_t wayland_serial) {
+    if (!context_ready(ctx)) return HostWaylandNotInitialized;
+    if (window == 0 || generation == 0 || seat == NULL) return HostWaylandInvalidArgument;
+    struct xdg_toplevel *toplevel = toplevel_of(ctx, window, generation);
+    if (toplevel == NULL || !seat_registered(ctx, seat)) return HostWaylandRefused;
+    xdg_toplevel_move(toplevel, seat, wayland_serial);
+    return HostWaylandOk;
+}
+
+/** @brief The eight xdg-shell resize edges, whose values equal the interop edge values of 3.2 (interop_resize_edge_t). */
+static bool edge_valid(uint32_t edge) {
+    switch (edge) {
+    case 1: case 2: case 4: case 5: case 6: case 8: case 9: case 10: return true;
+    default: return false;
+    }
+}
+
+host_wayland_status_t host_wayland_windows_begin_resize(host_wayland_t *ctx, uint64_t window, uint64_t generation, struct wl_seat *seat, uint32_t wayland_serial, uint32_t edge) {
+    if (!context_ready(ctx)) return HostWaylandNotInitialized;
+    if (window == 0 || generation == 0 || seat == NULL || !edge_valid(edge)) return HostWaylandInvalidArgument;
+    struct xdg_toplevel *toplevel = toplevel_of(ctx, window, generation);
+    if (toplevel == NULL || !seat_registered(ctx, seat)) return HostWaylandRefused;
+    xdg_toplevel_resize(toplevel, seat, wayland_serial, edge);
+    return HostWaylandOk;
+}
+
+host_wayland_status_t host_wayland_windows_set_maximized(host_wayland_t *ctx, uint64_t window, uint64_t generation, bool maximized) {
+    if (!context_ready(ctx)) return HostWaylandNotInitialized;
+    if (window == 0 || generation == 0) return HostWaylandInvalidArgument;
+    struct xdg_toplevel *toplevel = toplevel_of(ctx, window, generation);
+    if (toplevel == NULL) return HostWaylandRefused;
+    if (maximized) xdg_toplevel_set_maximized(toplevel); else xdg_toplevel_unset_maximized(toplevel);
+    return HostWaylandOk;
+}
+
+host_wayland_status_t host_wayland_windows_set_fullscreen(host_wayland_t *ctx, uint64_t window, uint64_t generation, bool fullscreen) {
+    if (!context_ready(ctx)) return HostWaylandNotInitialized;
+    if (window == 0 || generation == 0) return HostWaylandInvalidArgument;
+    struct xdg_toplevel *toplevel = toplevel_of(ctx, window, generation);
+    if (toplevel == NULL) return HostWaylandRefused;
+    if (fullscreen) xdg_toplevel_set_fullscreen(toplevel, NULL); else xdg_toplevel_unset_fullscreen(toplevel);
+    return HostWaylandOk;
+}
+
+host_wayland_status_t host_wayland_windows_set_minimized(host_wayland_t *ctx, uint64_t window, uint64_t generation) {
+    if (!context_ready(ctx)) return HostWaylandNotInitialized;
+    if (window == 0 || generation == 0) return HostWaylandInvalidArgument;
+    struct xdg_toplevel *toplevel = toplevel_of(ctx, window, generation);
+    if (toplevel == NULL) return HostWaylandRefused;
+    xdg_toplevel_set_minimized(toplevel);
+    return HostWaylandOk;
+}
+
+bool host_wayland_windows_contains(const host_wayland_t *ctx, uint64_t window, uint64_t generation) {
+    if (!context_ready(ctx)) return false;
+    return find_record((host_wayland_t *)ctx, window, generation) != NULL;
 }
 
 /* ---- mapped parents (4.5) ------------------------------------------------------------------------ */
