@@ -2530,11 +2530,11 @@ test "icon request, chunked transfer and icon publication" {
     try deliver(rt, ids[0], png16, 0);
     try deliver(rt, ids[1], png32, 0);
     try testing.expectEqual(@as(u32, 0), rt.stats().outstanding);
+    // A regular file where the icons directory belongs makes every icon commit fail, while the
+    // desktop entry (under applications/) still publishes.
+    try env.data.writeFile(.{ .sub_path = "icons", .data = "not a directory" });
     _ = drive(rt, 1_000);
 
-    // The desktop entry publishes. The icon artifact paths (icons/hicolor/...) are refused by
-    // the store's current Data-root allowlist (hicolor/...), so publication stays pending with
-    // backoff and the bytes stay retained. This is the documented blocked state.
     var rel_buf: [128]u8 = undefined;
     _ = try env.data.statFile(desktop_rel(&rel_buf, "a-Alpha"));
     try testing.expectError(error.FileNotFound, env.data.statFile("icons/hicolor/16x16/apps/waddle.testdev.a-Alpha.png"));
@@ -2545,6 +2545,14 @@ test "icon request, chunked transfer and icon publication" {
     rt.tick(100_000, UpdatedTimestamp);
     try testing.expectEqual(@as(usize, 0), collect_requests(rt, &ids));
     try testing.expect(rt.publication_pending());
+
+    // Clearing the blocker lets both icons publish with their exact retained bytes.
+    try env.data.deleteFile("icons");
+    _ = drive(rt, 1_000_000);
+    _ = try env.data.statFile("icons/hicolor/16x16/apps/waddle.testdev.a-Alpha.png");
+    _ = try env.data.statFile("icons/hicolor/32x32/apps/waddle.testdev.a-Alpha.png");
+    try testing.expectEqual(@as(u32, 0), rt.stats().publish_failures);
+    try testing.expect(!rt.publication_pending());
 }
 
 test "transfer hostility cancels deterministically and retries are bounded" {
@@ -3022,6 +3030,82 @@ test "C ABI covers configuration, null handling and every export" {
     catalog_runtime_destroy(rt);
 }
 
+test "every C export reaches its non-inlined body with NULL and live handles" {
+    // Direct calls may be inlined into the test, which leaves the exported bodies' branches
+    // unrecorded. Non-inlined calls execute each export's own guards.
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    var handle: ?*runtime_t = null;
+    var raw = config_c_t{
+        .manifest_dir_fd = env.state.fd,
+        .data_root_fd = env.data.fd,
+        .config_root_fd = env.config.fd,
+        .menu_policy = @intFromEnum(menu_policy_t.None),
+        .shortcuts = @intFromEnum(shortcuts_policy_t.None),
+        .data_root = env.data_path.ptr,
+        .data_root_length = env.data_path.len,
+        .config_root = env.config_path.ptr,
+        .config_root_length = env.config_path.len,
+        .launcher_path = "/usr/bin/waddle".ptr,
+        .launcher_path_length = "/usr/bin/waddle".len,
+        .device = "testdev".ptr,
+        .device_length = "testdev".len,
+        .waddle_version = "0.2.0".ptr,
+        .waddle_version_length = "0.2.0".len,
+    };
+    const no_runtime: ?*runtime_t = null;
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_create, .{ @as(?*const config_c_t, null), &handle }));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_create, .{ @as(?*const config_c_t, &raw), @as(?*?*runtime_t, null) }));
+    raw.menu_policy = 9;
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_create, .{ @as(?*const config_c_t, &raw), &handle }));
+    raw.menu_policy = @intFromEnum(menu_policy_t.None);
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_create, .{ @as(?*const config_c_t, &raw), &handle }));
+    const rt = handle.?;
+    var second: ?*runtime_t = null;
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_create, .{ @as(?*const config_c_t, &raw), &second }));
+
+    @call(.never_inline, catalog_runtime_destroy, .{no_runtime});
+    @call(.never_inline, catalog_runtime_destroy, .{second});
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_begin, .{ no_runtime, @as(u64, 0) }));
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_begin, .{ rt, @as(u64, 0) }));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_end, .{no_runtime}));
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_end, .{rt}));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_upsert, .{ no_runtime, @as(c_int, 0), @as(?*const app_c_t, null) }));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_upsert, .{ rt, @as(c_int, 0), @as(?*const app_c_t, null) }));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_remove, .{ no_runtime, @as(?[*]const u8, null), @as(usize, 0) }));
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_remove, .{ rt, @as(?[*]const u8, "a-None".ptr), @as(usize, 6) }));
+    @call(.never_inline, catalog_runtime_reset_session, .{no_runtime});
+    @call(.never_inline, catalog_runtime_reset_session, .{rt});
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_transfer_begin, .{ no_runtime, @as(u32, 1), @as(u64, 4), @as(?[*]const u8, null), @as(usize, 0), @as(u64, 0) }));
+    try testing.expectEqual(@as(c_int, 2), @call(.never_inline, catalog_runtime_transfer_begin, .{ rt, @as(u32, 1), @as(u64, 4), @as(?[*]const u8, "image/png".ptr), @as(usize, 9), @as(u64, 0) }));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_transfer_chunk, .{ no_runtime, @as(u32, 1), @as(u64, 0), @as(?[*]const u8, null), @as(usize, 0), @as(u64, 0) }));
+    try testing.expectEqual(@as(c_int, 2), @call(.never_inline, catalog_runtime_transfer_chunk, .{ rt, @as(u32, 1), @as(u64, 0), @as(?[*]const u8, "abcd".ptr), @as(usize, 4), @as(u64, 0) }));
+    var digest = [_]u8{0} ** 32;
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_transfer_end, .{ no_runtime, @as(u32, 1), @as(?*const [32]u8, &digest), @as(u64, 0) }));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_transfer_end, .{ rt, @as(u32, 1), @as(?*const [32]u8, null), @as(u64, 0) }));
+    @call(.never_inline, catalog_runtime_transfer_cancel, .{ no_runtime, @as(u32, 1), @as(u64, 0) });
+    @call(.never_inline, catalog_runtime_transfer_cancel, .{ rt, @as(u32, 1), @as(u64, 0) });
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_tick, .{ no_runtime, @as(u64, 0), @as(?[*]const u8, null), @as(usize, 0) }));
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_tick, .{ rt, @as(u64, 0), @as(?[*]const u8, UpdatedTimestamp.ptr), UpdatedTimestamp.len }));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_ensure_uncatalogued, .{ no_runtime, @as(?[*]const u8, null), @as(usize, 0), @as(?[*]const u8, null), @as(usize, 0), @as(u64, 0), @as(?[*]const u8, null), @as(usize, 0) }));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_ensure_uncatalogued, .{ rt, @as(?[*]const u8, "x-Bad".ptr), @as(usize, 5), @as(?[*]const u8, "Bad".ptr), @as(usize, 3), @as(u64, 0), @as(?[*]const u8, UpdatedTimestamp.ptr), UpdatedTimestamp.len }));
+    var action: action_c_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_next_action, .{ no_runtime, &action }));
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_next_action, .{ rt, @as(?*action_c_t, null) }));
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_next_action, .{ rt, &action }));
+    try testing.expectEqual(@as(u64, std.math.maxInt(u64)), @call(.never_inline, catalog_runtime_next_deadline, .{ no_runtime, @as(u64, 0) }));
+    _ = @call(.never_inline, catalog_runtime_next_deadline, .{ rt, @as(u64, 0) });
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_request_live, .{ no_runtime, @as(u32, 1) }));
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_request_live, .{ rt, @as(u32, 1) }));
+    @call(.never_inline, catalog_runtime_set_send_blocked, .{ no_runtime, @as(c_int, 1) });
+    @call(.never_inline, catalog_runtime_set_send_blocked, .{ rt, @as(c_int, 0) });
+    var stats: stats_c_t = undefined;
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_stats, .{ no_runtime, &stats }));
+    try testing.expectEqual(@as(c_int, 1), @call(.never_inline, catalog_runtime_stats, .{ rt, @as(?*stats_c_t, null) }));
+    try testing.expectEqual(@as(c_int, 0), @call(.never_inline, catalog_runtime_stats, .{ rt, &stats }));
+    @call(.never_inline, catalog_runtime_destroy, .{rt});
+}
+
 test "emit_manifest is byte-identical to desktop_artifacts candidates" {
     const items = [_]desktop_artifacts.item_input_t{
         .{ .app_key = "a-Zeta", .display_name = "Zeta \"quoted\"", .system = true },
@@ -3060,6 +3144,7 @@ test "a blocked icon does not stall publication of other apps" {
         .{ .key = "a-Iconic", .display_name = "Iconic", .flags = 0, .icon_sizes = &sizes },
         input_app("a-Plain", "Plain"),
     });
+    try env.data.writeFile(.{ .sub_path = "icons", .data = "not a directory" });
     rt.tick(0, UpdatedTimestamp);
     var ids: [8]u32 = undefined;
     const count = collect_requests(rt, &ids);
@@ -3677,6 +3762,7 @@ test "two failing units in one pass report the first failure and keep the rest d
         .{ .key = "a-FailOne", .display_name = "One", .flags = 0, .icon_sizes = &sizes },
         .{ .key = "a-FailTwo", .display_name = "Two", .flags = 0, .icon_sizes = &sizes },
     });
+    try env.data.writeFile(.{ .sub_path = "icons", .data = "not a directory" });
     rt.tick(0, UpdatedTimestamp);
     var ids: [8]u32 = undefined;
     try testing.expectEqual(@as(usize, 2), collect_requests(rt, &ids));
