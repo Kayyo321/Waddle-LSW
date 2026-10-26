@@ -1041,11 +1041,11 @@ static int test_backpressure_closes_and_overflow(void) {
     }
     Check(handler.pending_count == SessionWindowsMaxPending);
     Check(handler.counters.frames_queued == queued_before + SessionWindowsMaxPending);
-    Check(send_frame_ready(1, 1, 0, 999) == 1);
+    Check(send_frame_ready(1, 1, 0, 999) == SessionWindowsHandlerFailure);
     Check(handler.counters.pending_overflow == 1);
     Check(handler.pending_count == SessionWindowsMaxPending);
-    Check(tick() == 1);
-    Check(send_frame_ready(1, 1, 0, 1000) == 1);
+    Check(tick() == SessionWindowsHandlerFailure);
+    Check(send_frame_ready(1, 1, 0, 1000) == SessionWindowsHandlerFailure);
     fake_send_mode = FakeSendAccept;
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
@@ -1075,12 +1075,12 @@ static int test_backpressure_draining_and_fail(void) {
 
     /* Any other result fails the run at once, and the failure is sticky. */
     fake_send_mode = FakeSendFail;
-    Check(send_frame_ready(1, 1, 0, 2) == 1);
+    Check(send_frame_ready(1, 1, 0, 2) == SessionWindowsHandlerFailure);
     Check(handler.failed == 1);
     fake_send_mode = FakeSendAccept;
-    Check(send_frame_ready(1, 1, 0, 3) == 1);
-    Check(tick() == 1);
-    Check(pump() == 1);
+    Check(send_frame_ready(1, 1, 0, 3) == SessionWindowsHandlerFailure);
+    Check(tick() == SessionWindowsHandlerFailure);
+    Check(pump() == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
     return 0;
@@ -1138,11 +1138,11 @@ static int test_stale_generations(void) {
 static int test_display_error_read(void) {
     Check(start_session(1, 1) == 0);
     fake_read_mode = FakeFault;
-    Check(pump() == 1);
+    Check(pump() == SessionWindowsHandlerFailure);
     Check(handler.failed == 1);
     /* Sticky: a later tick and a later frame both report the failure. */
-    Check(tick() == 1);
-    Check(send_frame_ready(1, 1, 0, 1) == 1);
+    Check(tick() == SessionWindowsHandlerFailure);
+    Check(send_frame_ready(1, 1, 0, 1) == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
     return 0;
@@ -1151,8 +1151,8 @@ static int test_display_error_read(void) {
 static int test_display_error_dispatch(void) {
     Check(start_session(1, 1) == 0);
     fake_dispatch_fail_at = fake_dispatch_calls + 1;
-    Check(pump() == 1);
-    Check(tick() == 1);
+    Check(pump() == SessionWindowsHandlerFailure);
+    Check(tick() == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
     return 0;
@@ -1169,8 +1169,8 @@ static int test_display_flush_errors(void) {
     Check((fds[0].events & POLLOUT) != 0);
     /* A flush that fails with a hard error is fatal and sticky. */
     fake_flush_mode = FakeEio;
-    Check(tick() == 1);
-    Check(tick() == 1);
+    Check(tick() == SessionWindowsHandlerFailure);
+    Check(tick() == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
     return 0;
@@ -1197,7 +1197,7 @@ static int test_missing_globals(void) {
     fake_queue_announce(1, "wl_compositor", 6);
     fake_queue_announce(3, "wl_shm", 1);
     fake_queue_announce(5, "wl_seat", 7);
-    Check(table.on_ready(table.context, InteropCapWindows, FakeSender) == 1);
+    Check(table.on_ready(table.context, InteropCapWindows, FakeSender) == SessionWindowsHandlerFailure);
     Check(!handler.wayland_ready);
     table.on_closing(table.context, 0, FakeSender);
     Check(fake_live_count() == 1);
@@ -1531,7 +1531,7 @@ static int test_api_edges(void) {
     Check(idle.next_deadline_ms(idle.context, 5) == UINT64_MAX);
     Check(idle.on_tick(idle.context, 5, FakeSender) == 0);
     Check(idle.on_fds(idle.context, fds, 0, 5, FakeSender) == 0);
-    Check(idle.on_frame(idle.context, InteropMsgWindowAnnounce, 0, (const uint8_t *)"", 0, FakeSender) == 1);
+    Check(idle.on_frame(idle.context, InteropMsgWindowAnnounce, 0, (const uint8_t *)"", 0, FakeSender) == SessionWindowsHandlerFailure);
     Check(idle.on_ready(idle.context, 0, FakeSender) == 0);
     idle.on_closing(idle.context, 0, FakeSender);
     Check(local.closing == 1);
@@ -1556,7 +1556,7 @@ static int test_api_edges(void) {
     count = 99;
     Check(live.poll_fds(live.context, fds, 0, &count) == 0 && count == 0);
     fake_fd_value = -1;
-    Check(live.poll_fds(live.context, fds, SessionHandlerMaxDescriptors, &count) == 1);
+    Check(live.poll_fds(live.context, fds, SessionHandlerMaxDescriptors, &count) == SessionWindowsHandlerFailure);
     fake_fd_value = FakeFd;
     Check(live.poll_fds(live.context, fds, SessionHandlerMaxDescriptors, &count) == 0 && count == 1 && fds[0].fd == FakeFd);
     Check(live.next_deadline_ms(live.context, 5) == UINT64_MAX);
@@ -1572,7 +1572,7 @@ static int test_api_edges(void) {
 
     /* Request ids other than zero are refused; the message types that are not owned are ignored. */
     uint8_t garbage[4] = {1, 2, 3, 4};
-    Check(live.on_frame(live.context, InteropMsgWindowAnnounce, 9, garbage, sizeof garbage, FakeSender) == 1);
+    Check(live.on_frame(live.context, InteropMsgWindowAnnounce, 9, garbage, sizeof garbage, FakeSender) == SessionWindowsHandlerFailure);
     Check(handler.failed == 0);
     Check(live.on_frame(live.context, InteropMsgPing, 0, garbage, sizeof garbage, FakeSender) == 0);
     /* Truncated frames of owned types are refused without a crash. */
@@ -2209,7 +2209,7 @@ static int test_malformed_fields(void) {
     length = raw_frame(frame, sizeof frame, InteropMsgFrameReady, wild_release, 4);
     Check(length != 0);
     unsigned sent = fake_frame_count;
-    Check(send_frame(InteropMsgFrameReady, frame, length) == 1);
+    Check(send_frame(InteropMsgFrameReady, frame, length) == SessionWindowsHandlerFailure);
     Check(handler.failed == 1 && fake_frame_count == sent);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
@@ -2328,7 +2328,7 @@ static int test_send_failures(void) {
     fake_send_mode = FakeSendFail;
     fake_queue_toplevel_configure(toplevel, 100, 100, NULL, 0);
     fake_queue_surface_configure(surface, 1);
-    Check(pump() == 1);
+    Check(pump() == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
 
@@ -2337,7 +2337,7 @@ static int test_send_failures(void) {
     toplevel = index_of(record_of(1, 1)->toplevel);
     fake_send_mode = FakeSendFail;
     fake_queue_toplevel_close(toplevel);
-    Check(pump() == 1);
+    Check(pump() == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
 
@@ -2347,7 +2347,7 @@ static int test_send_failures(void) {
     popup = index_of(record_of(2, 1)->popup);
     fake_send_mode = FakeSendFail;
     fake_queue_popup_configure(popup, 15, 6, 40, 20);
-    Check(pump() == 1);
+    Check(pump() == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
 
@@ -2357,7 +2357,7 @@ static int test_send_failures(void) {
     popup = index_of(record_of(2, 1)->popup);
     fake_send_mode = FakeSendFail;
     fake_queue_popup_done(popup);
-    Check(pump() == 1);
+    Check(pump() == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
 
@@ -2367,8 +2367,8 @@ static int test_send_failures(void) {
     Check(send_frame_ready(1, 1, 0, 1) == 0);
     Check(handler.pending_count == 1);
     fake_send_mode = FakeSendFail;
-    Check(send_frame_ready(1, 1, 0, 2) == 1);
-    Check(tick() == 1);
+    Check(send_frame_ready(1, 1, 0, 2) == SessionWindowsHandlerFailure);
+    Check(tick() == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
 
@@ -2376,7 +2376,7 @@ static int test_send_failures(void) {
     fake_send_mode = FakeSendFull;
     Check(send_frame_ready(1, 1, 0, 1) == 0);
     fake_send_mode = FakeSendFail;
-    Check(tick() == 1);
+    Check(tick() == SessionWindowsHandlerFailure);
     Check(end_session() == 0);
     Check(check_double_clean() == 0);
     return 0;

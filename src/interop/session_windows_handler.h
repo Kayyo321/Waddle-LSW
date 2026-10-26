@@ -55,6 +55,9 @@ struct wl_display;
 #define SessionWindowsButtonLeft 0x110u
 
 /** @brief Startup configuration. Strings and pointers are borrowed for the handler's life. */
+/** @brief Callback return value for a hard failure; distinct from SessionHandlerRequestStop (1), which would end the run as a graceful local stop. */
+enum { SessionWindowsHandlerFailure = 2 };
+
 typedef struct session_windows_config_t {
     const char *device; /**< Device name, 1..64 bytes, used in app ids. Required. */
     const char *display_name; /**< Display socket name, or NULL for WAYLAND_DISPLAY. */

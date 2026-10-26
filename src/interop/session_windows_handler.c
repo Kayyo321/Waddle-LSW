@@ -612,7 +612,7 @@ static int on_ready(void *context, uint64_t negotiated_capabilities, interop_hos
     host_wayland_core_config_t core_config;
     core_config.display_name = handler->config.display_name;
     core_config.display = handler->config.display;
-    if (host_wayland_core_init(&handler->core, &core_config) != HostWaylandCoreOk) return 1;
+    if (host_wayland_core_init(&handler->core, &core_config) != HostWaylandCoreOk) return SessionWindowsHandlerFailure;
     const host_wayland_core_globals_t *globals = host_wayland_core_globals(&handler->core);
     host_wayland_config_t windows_config;
     memset(&windows_config, 0, sizeof windows_config);
@@ -631,19 +631,19 @@ static int on_ready(void *context, uint64_t negotiated_capabilities, interop_hos
     windows_config.callbacks.on_error = on_error;
     if (host_wayland_windows_init(&handler->windows, &windows_config) != HostWaylandOk) {
         host_wayland_core_close(&handler->core);
-        return 1;
+        return SessionWindowsHandlerFailure;
     }
     host_wayland_core_set_seat_listener(&handler->core, on_core_seat, handler);
     handler->wayland_ready = 1;
     handler->sender = sender;
     int result = flush_pending(handler) || flush_core(handler);
     handler->sender = NULL;
-    return handler->failed ? 1 : result;
+    return (handler->failed || result) ? SessionWindowsHandlerFailure : 0;
 }
 
 static int on_frame(void *context, uint32_t message_type, uint32_t request_id, const uint8_t *frame, size_t length, interop_host_feature_sender_t *sender) {
     session_windows_handler_t *handler = context;
-    if (!handler->wayland_ready || handler->failed || request_id != 0) return 1;
+    if (!handler->wayland_ready || handler->failed || request_id != 0) return SessionWindowsHandlerFailure;
     handler->sender = sender;
     ++handler->counters.frames_received;
     int result = flush_pending(handler);
@@ -663,7 +663,7 @@ static int on_frame(void *context, uint32_t message_type, uint32_t request_id, c
     purge_retired(handler);
     if (result == 0) result = flush_pending(handler) || flush_core(handler);
     handler->sender = NULL;
-    return handler->failed ? 1 : result;
+    return (handler->failed || result) ? SessionWindowsHandlerFailure : 0;
 }
 
 static int poll_fds(void *context, struct pollfd *fds, size_t capacity, size_t *count) {
@@ -674,7 +674,7 @@ static int poll_fds(void *context, struct pollfd *fds, size_t capacity, size_t *
     fds[0].events = host_wayland_core_poll_events(&handler->core);
     fds[0].revents = 0;
     *count = 1;
-    return fds[0].fd < 0 ? 1 : 0;
+    return fds[0].fd < 0 ? SessionWindowsHandlerFailure : 0;
 }
 
 static int on_fds(void *context, const struct pollfd *fds, size_t count, uint64_t now_ms, interop_host_feature_sender_t *sender) {
@@ -690,7 +690,7 @@ static int on_fds(void *context, const struct pollfd *fds, size_t count, uint64_
     purge_retired(handler);
     if (result == 0) result = flush_pending(handler) || flush_core(handler);
     handler->sender = NULL;
-    return handler->failed ? 1 : result;
+    return (handler->failed || result) ? SessionWindowsHandlerFailure : 0;
 }
 
 static int on_tick(void *context, uint64_t now_ms, interop_host_feature_sender_t *sender) {
@@ -700,7 +700,7 @@ static int on_tick(void *context, uint64_t now_ms, interop_host_feature_sender_t
     handler->sender = sender;
     int result = flush_pending(handler) || flush_core(handler);
     handler->sender = NULL;
-    return handler->failed ? 1 : result;
+    return (handler->failed || result) ? SessionWindowsHandlerFailure : 0;
 }
 
 static uint64_t next_deadline_ms(void *context, uint64_t now_ms) {
