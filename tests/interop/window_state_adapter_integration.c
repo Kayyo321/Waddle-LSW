@@ -82,8 +82,9 @@ static int check_converged(waddle_window_state_handle_t *handle, window_state_ad
 }
 
 /**
- * @brief Destroys the adapter. A window left fullscreen is first returned through LeaveFullscreen with
- *        faults disabled, because destroy refuses to free an adapter that still holds saved state.
+ * @brief Destroys the adapter. Destroy is refused while any record is admitted, so the teardown first
+ *        leaves fullscreen if needed (faults disabled; NoSavedState when the window is not fullscreen),
+ *        then releases the record, then destroys. A stale record is already gone and releases as NotAdmitted.
  */
 static int teardown_adapter(window_state_adapter_t *adapter, wsa_double_t *d) {
     waddle_window_state_action_t leave;
@@ -94,8 +95,9 @@ static int teardown_adapter(window_state_adapter_t *adapter, wsa_double_t *d) {
     status = window_state_adapter_destroy(&adapter);
     if (status == WindowStateAdapterBusy) {
         d->fault_per_mille = 0;
-        Check(window_state_adapter_execute(adapter, HwndMain, IdMain, GenMain, &leave, 1, &completed) ==
-              WindowStateAdapterOk);
+        (void)window_state_adapter_execute(adapter, HwndMain, IdMain, GenMain, &leave, 1, &completed);
+        status = window_state_adapter_release(adapter, IdMain, GenMain);
+        Check(status == WindowStateAdapterOk || status == WindowStateAdapterNotAdmitted);
         status = window_state_adapter_destroy(&adapter);
     }
     Check(status == WindowStateAdapterOk);

@@ -15,8 +15,8 @@ InteropLaneCoverage += interop-session-lane-coverage
 
 # Application runtime and reconnect supervisor. The binary links the control-host fixture's in-process
 # daemon, VSOCK socketpair seam and guest peer, and drives the real runtime through session_app.
-SessionAppRuntimeSources = src/interop/session_host.c src/interop/linux_session_owner.c src/interop/linux_socket_owner.c src/interop/interop_mapping_linux.c src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c src/daemon/daemon_device.c
-SessionAppObjects = build/interop_control_peer_abi.o build/interop_codec.o build/daemon_wire.o build/device_storage.o build/daemon_config.o build/path_rules.o build/interop_layout_abi.o
+SessionAppRuntimeSources = src/interop/session_local_handler.c src/interop/session_host.c src/interop/linux_session_owner.c src/interop/linux_socket_owner.c src/interop/interop_mapping_linux.c src/interop/interop_mapping_init.c src/interop/interop_native_atomic.c src/daemon/daemon_device.c
+SessionAppObjects = build/interop_activation_store.o build/interop_control_peer_abi.o build/interop_codec.o build/daemon_wire.o build/device_storage.o build/daemon_config.o build/path_rules.o build/interop_layout_abi.o
 SessionAppWrapFlags = $(shell grep -ho '__wrap_[a-z_0-9]*' tests/interop/session_control_host.c | sort -u | sed 's/^__wrap_/-Wl,--wrap=/')
 SessionAppHeaders = src/interop/session_control_host.h src/interop/session_app.h src/interop/session_supervisor.h src/interop/session_handler.h
 build/session_app_test: tests/interop/session_app.c tests/interop/session_supervisor.c tests/interop/session_control_host.c tests/interop/session_control_host_private.c src/interop/session_app.c src/interop/session_supervisor.c src/interop/session_handlers_builtin.c $(SessionAppHeaders) $(SessionAppRuntimeSources) $(SessionAppObjects) | build

@@ -24,6 +24,7 @@ Attempt.mkdir(parents=True, exist_ok=False)
 WrapSymbols = sorted(set(re.findall(r"\b__wrap_([a-z_][a-z_0-9]*)\s*\(", Fixture.read_text())))
 WrapFlags = ["-Wl,--wrap=" + name for name in WrapSymbols]
 RuntimeSources = [
+    Root / "src/interop/session_local_handler.c",
     Root / "src/interop/session_host.c",
     Root / "src/interop/linux_session_owner.c",
     Root / "src/interop/linux_socket_owner.c",
@@ -40,12 +41,13 @@ ObjectPaths = [
     Root / "build/interop_control_peer_abi.o",
     Root / "build/interop_codec.o",
     Root / "build/interop_layout_abi.o",
+    Root / "build/interop_activation_store.o",
 ]
 Flags = ["-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-UNDEBUG", "-O0", "-g",
          "-D_GNU_SOURCE", "-Iinclude", "-Isrc/daemon", "-Isrc", "-Isrc/common", "-Isrc/cli",
          "-Isrc/interop", "-Isubmodules/looking_glass/module", "-ffunction-sections",
          "-fdata-sections", "-pthread"]
-Covered = [App, Supervisor]
+Covered = [App, Supervisor, Builtin]
 Inputs = [Path(__file__).resolve(), App, Supervisor, Builtin, AppTest, SupervisorTest, Fixture, Private,
           Root / "src/interop/session_app.h", Root / "src/interop/session_supervisor.h",
           Root / "src/interop/session_handler.h", Root / "src/interop/session_control_host.h",
@@ -72,6 +74,7 @@ Commands.append(["cc", *LinkObjects, *Coverage, "-pthread", "-Wl,--gc-sections",
 Commands.append([str(Attempt / "runner")])
 Commands.append(["gcov", "--json-format", "-b", "-c", str(Attempt / "app.gcno")])
 Commands.append(["gcov", "--json-format", "-b", "-c", str(Attempt / "supervisor.gcno")])
+Commands.append(["gcov", "--json-format", "-b", "-c", str(Attempt / "builtin.gcno")])
 SanitizerFlags = ["-fsanitize=address,leak,undefined", "-fno-omit-frame-pointer"]
 SanitizerCommands = [
     ["cc", *Flags, *SanitizerFlags, "-c", str(Private), "-o", str(Attempt / "runtime-private.san.o")],
@@ -101,7 +104,8 @@ if any(hashlib.sha256(path.read_bytes()).hexdigest() != Hashes[str(path.relative
     raise RuntimeError("coverage input changed during attempt")
 Summary = {}
 Failed = False
-for source, report_name in ((App, "app.gcov.json.gz"), (Supervisor, "supervisor.gcov.json.gz")):
+for source, report_name in ((App, "app.gcov.json.gz"), (Supervisor, "supervisor.gcov.json.gz"),
+                            (Builtin, "builtin.gcov.json.gz")):
     Report = json.loads(gzip.decompress((Attempt / report_name).read_bytes()))
     Files = [file for file in Report["files"] if Path(file["file"]).resolve() == source.resolve()]
     if len(Files) != 1:

@@ -4,6 +4,7 @@
  *   open_frame_dump launch RID KIND TARGET|- ARGS|- TOKEN|-   (LocalLaunch, from local)
  *   open_frame_dump result RID STATUS MESSAGE|-                (LaunchResult, from guest)
  *   open_frame_dump error RID CODE MESSAGE|-                   (Error, from guest)
+ *   open_frame_dump stop RID                                   (LocalStop, from local)
  * Prints the complete frame as lowercase hex on stdout and exits 0; exits 2 on usage errors and
  * 1 when the codec rejects the frame. Test-only; links the production codec object.
  */
@@ -44,10 +45,18 @@ int main(int argc, char **argv) {
         if (!is_absent(argv[4]) && interop_put_bytes(&writer, InteropTagMessage, argv[4], (uint16_t)strlen(argv[4])) != 0) return 1;
         return print_frame(&writer, InteropMsgLaunchResult, request_id, InteropFromGuest);
     }
+    if (strcmp(argv[1], "stop-result") == 0 && argc == 5) {
+        if (interop_put_uint(&writer, InteropTagStatus, strtoul(argv[3], NULL, 10)) != 0) return 1;
+        if (!is_absent(argv[4]) && interop_put_bytes(&writer, InteropTagMessage, argv[4], (uint16_t)strlen(argv[4])) != 0) return 1;
+        return print_frame(&writer, InteropMsgLocalStopResult, request_id, InteropFromLocal);
+    }
     if (strcmp(argv[1], "error") == 0 && argc == 5) {
         if (!is_absent(argv[4]) && interop_put_bytes(&writer, InteropTagMessage, argv[4], (uint16_t)strlen(argv[4])) != 0) return 1;
         if (interop_put_uint(&writer, InteropTagErrorCode, strtoul(argv[3], NULL, 10)) != 0) return 1;
         return print_frame(&writer, InteropMsgError, request_id, InteropFromGuest);
+    }
+    if (strcmp(argv[1], "stop") == 0 && argc == 3) {
+        return print_frame(&writer, InteropMsgLocalStop, request_id, InteropFromLocal);
     }
     return 2;
 }

@@ -179,3 +179,53 @@ The built-in registry is empty, so the supervised binary currently advertises ze
   Closed, and OutOfMemory are not producible from a feature callback (callbacks run only inside a Ready
   pump, and the runtime never closes the peer during a callback). They are covered at the socket layer.
 
+## 8. Command mode and the builtin registry (tranche 3)
+
+Default mode. `waddle-session --device NAME` with no mode flag runs the supervised session with the
+builtin handlers. This is the command `waddle open` spawns when session.sock is absent. `--supervised`
+selects the same mode explicitly; `--control-only` keeps the one-shot, capability-zero diagnostic run.
+`--max-retries` applies to supervised mode only.
+
+Builtin registry (`session_handlers_builtin.c`). `session_handlers_builtin_make(config, out_handlers,
+out_count)` builds one table, `launch`, which forwards to the session command handler
+(`session_local_handler`). The table is handed to session_app with the caller-owned storage in the
+config; `session_handlers_builtin_destroy` releases the handler state after each run.
+
+- The launch handler is initialised in its on_ready, not before. on_ready runs only after admission
+  succeeded, and admission acquires `session.lock` in the session owner that is kept alive until every
+  on_closing has run. The handler is therefore initialised with `lock_held_proof = 1` after the lock is
+  held, which meets the obligations in `session_local_config_t`.
+- Before Ready every forwarder is inert: owns_type is zero, poll_fds reports nothing, next_deadline is
+  UINT64_MAX, a frame is refused, and on_closing does nothing. An attempt that never reaches Ready
+  therefore never touches the handler.
+- After on_closing the handler is marked not ready, so the next attempt initialises it again from
+  scratch. Two consecutive guest sessions reuse the same table and storage.
+- The runner requires that the daemon socket follows `<XDG_RUNTIME_DIR>/waddle/<device>/daemon.sock`, the
+  layout that both the handler and the `waddle open` client derive session.sock from. Otherwise it refuses
+  with status 2 before any attempt.
+- The catalog handler (`session_catalog_handler.c`) is not registered. Its runtime writes desktop entries
+  and icons under the user's XDG data root, its menu and shortcut policies are not derivable from the device
+  configuration, and the icon-path allowlist defect in the manifest store is still open. It stays for the lead
+  to register once those are decided.
+- The keyboard handler (`session_input_handler.c`) is not registered: it needs a Wayland display and the
+  windows/core lane. The registration hook is documented in `session_handlers_builtin.h`.
+
+Exit statuses (`session_exit_codes.h`). 0 for a bounded run that completed or for a graceful local stop
+(LocalStop or SIGINT/SIGTERM, both Cancelled). 1 for a runtime or OS failure. 2 for usage, profile and
+environment errors. 75 (EX_TEMPFAIL) when another session holds the device's `session.lock` or
+`command.lock`: admission reports Busy or AV-Busy before any daemon exchange. 75 is a handover: the open
+client waits for the other session's socket instead of reporting a failure.
+
+Stop signals. A stop signal that the supervisor only polled (during backoff) stays pending while the signal
+descriptor is blocked. The cleanup drains the descriptor before it restores the prior signal mask, so a
+pending SIGTERM is consumed and never delivered with its default action after a clean stop.
+
+Harness verification. `tests/interop/session_local_harness.c` calls `waddle_session_main` (compiled with
+WaddleSessionNoMain) and serves a fake daemon on the real socket path, with one fake guest per VSOCK connect.
+Open e2e in harness mode covers: warm and cold paths, statuses, LocalStop with status 0 and socket removal,
+reconnect after a dropped guest, and two consecutive guest sessions each serving one open.
+
+Not done in this tranche: the LocalStop reply is still queued to the client before drain. Moving it after
+the owners and locks are released (IMPL 3.12.5) needs `session_local_handler_send_stop_reply()`, which the
+launch lane owns; session_main calls it once that function lands.
+

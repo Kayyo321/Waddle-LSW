@@ -7,7 +7,9 @@
 #include <fcntl.h>
 #include <ftw.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
+#include <sys/file.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -117,6 +119,23 @@ static void *close_accepted_clients(void *context)
         assert(client >= 0);
         close(client);
     }
+    return NULL;
+}
+
+/* Accept one connection, close it, and send SIGTERM during the supervisor's backoff. The thread blocks
+ * SIGTERM itself so the signal is never delivered to it, and the runtime's signalfd consumes it. */
+static void *close_then_stop(void *context)
+{
+    int listener = *(int *)context;
+    int client = accept(listener, NULL, NULL);
+    sigset_t blocked;
+    struct timespec pause = {.tv_sec = 0, .tv_nsec = 100000000L};
+    assert(client >= 0);
+    close(client);
+    assert(sigemptyset(&blocked) == 0 && sigaddset(&blocked, SIGTERM) == 0);
+    assert(pthread_sigmask(SIG_BLOCK, &blocked, NULL) == 0);
+    nanosleep(&pause, NULL);
+    assert(kill(getpid(), SIGTERM) == 0);
     return NULL;
 }
 
@@ -287,6 +306,91 @@ int main(void)
         runtime_home) > 0);
     remove_tree(nomap_runtime);
     assert(unlink(nomap_profile) == 0);
+    /* No daemon listening: each refused connection is retryable; one retry, then exit 1. */
+    char *supervised_absent[] = {(char *)"waddle-session", (char *)"--supervised",
+        (char *)"--device", (char *)"no-daemon", (char *)"--max-retries", (char *)"1"};
+    assert(waddle_session_main(6, supervised_absent) == 1);
+    /* Supervised mode needs XDG_RUNTIME_DIR; without it the command refuses before any attempt. */
+    assert(unsetenv("XDG_RUNTIME_DIR") == 0);
+    assert(waddle_session_main(6, supervised_absent) == 2);
+    assert(setenv("XDG_RUNTIME_DIR", runtime_home, 1) == 0);
+    /* A stop signal during the backoff ends the supervised run cleanly with status 0. */
+    char stop_profile[224];
+    assert(snprintf(stop_profile, sizeof(stop_profile), "%s/stopper.ini", config_dir) > 0);
+    write_profile(stop_profile, random_mapping_path);
+    char stop_socket[256];
+    int stop_listener = make_daemon_listener("stopper", stop_socket);
+    pthread_t stopper;
+    assert(pthread_create(&stopper, NULL, close_then_stop, &stop_listener) == 0);
+    char *stop_args[] = {(char *)"waddle-session", (char *)"--supervised", (char *)"--device",
+        (char *)"stopper", (char *)"--max-retries", (char *)"0"};
+    assert(waddle_session_main(6, stop_args) == 0);
+    assert(pthread_join(stopper, NULL) == 0);
+    close(stop_listener);
+    assert(unlink(stop_socket) == 0);
+    char stop_runtime[256];
+    char stop_state[256];
+    assert(snprintf(stop_runtime, sizeof(stop_runtime), "%s/waddle/stopper", runtime_home) > 0);
+    assert(snprintf(stop_state, sizeof(stop_state), "%s/waddle/devices/stopper", state_home) > 0);
+    remove_tree(stop_runtime);
+    remove_tree(stop_state);
+    remove_empty_if_present(state_devices);
+    remove_empty_if_present(state_waddle);
+    assert(unlink(stop_profile) == 0);
+    /* Another process holds the device's session.lock: admission reports Busy before any daemon
+     * exchange, and both modes map it to the handover status, not a failure. */
+    char locked_profile[224];
+    assert(snprintf(locked_profile, sizeof(locked_profile), "%s/locked.ini", config_dir) > 0);
+    write_profile(locked_profile, random_mapping_path);
+    char locked_socket[256];
+    int locked_listener = make_daemon_listener("locked", locked_socket);
+    char locked_lock[256];
+    assert(snprintf(locked_lock, sizeof(locked_lock), "%s/waddle/locked/session.lock", runtime_home) > 0);
+    int held = open(locked_lock, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    assert(held >= 0 && flock(held, LOCK_EX | LOCK_NB) == 0);
+    char *locked_supervised[] = {(char *)"waddle-session", (char *)"--device", (char *)"locked",
+        (char *)"--max-retries", (char *)"1"};
+    assert(waddle_session_main(5, locked_supervised) == 75);
+    char *locked_one_shot[] = {(char *)"waddle-session", (char *)"--control-only",
+        (char *)"--device", (char *)"locked"};
+    assert(waddle_session_main(4, locked_one_shot) == 75);
+    assert(close(held) == 0);
+    close(locked_listener);
+    assert(unlink(locked_socket) == 0);
+    char locked_runtime[256];
+    assert(snprintf(locked_runtime, sizeof(locked_runtime), "%s/waddle/locked", runtime_home) > 0);
+    remove_tree(locked_runtime);
+    assert(unlink(locked_profile) == 0);
+    /* A failed token read ends the supervised attempt as an OS failure, not a retry. */
+    char random_sup_profile[224];
+    assert(snprintf(random_sup_profile, sizeof(random_sup_profile), "%s/randsup.ini", config_dir) > 0);
+    write_profile(random_sup_profile, random_mapping_path);
+    char randsup_socket[256];
+    int randsup_listener = make_daemon_listener("randsup", randsup_socket);
+    session_main_private_set_random_mode(1);
+    char *randsup_args[] = {(char *)"waddle-session", (char *)"--device", (char *)"randsup",
+        (char *)"--max-retries", (char *)"3"};
+    assert(waddle_session_main(5, randsup_args) == 1);
+    session_main_private_set_random_mode(0);
+    close(randsup_listener);
+    assert(unlink(randsup_socket) == 0);
+    char randsup_runtime[256];
+    assert(snprintf(randsup_runtime, sizeof(randsup_runtime), "%s/waddle/randsup", runtime_home) > 0);
+    remove_tree(randsup_runtime);
+    assert(unlink(random_sup_profile) == 0);
+    /* A malformed AV value makes the device configuration unloadable: exit 2. */
+    char bad_config_profile[224];
+    assert(snprintf(bad_config_profile, sizeof(bad_config_profile), "%s/badcfg.ini", config_dir) > 0);
+    {
+        int bad_fd = open(bad_config_profile, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        static const char malformed[] = "[subsystem]\ndisk_image = /tmp/x.qcow2\nvsock_cid = 33\n[av]\nenabled = 9\n";
+        assert(bad_fd >= 0);
+        assert(write(bad_fd, malformed, sizeof(malformed) - 1) == (ssize_t)(sizeof(malformed) - 1));
+        assert(close(bad_fd) == 0);
+    }
+    char *badcfg_args[] = {(char *)"waddle-session", (char *)"--supervised", (char *)"--device", (char *)"badcfg"};
+    assert(waddle_session_main(4, badcfg_args) == 2);
+    assert(unlink(bad_config_profile) == 0);
     assert(unsetenv("XDG_CONFIG_HOME") == 0);
     assert(unsetenv("XDG_STATE_HOME") == 0);
     assert(unsetenv("XDG_RUNTIME_DIR") == 0);

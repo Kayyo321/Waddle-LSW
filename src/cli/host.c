@@ -11,6 +11,8 @@
 #include "daemon_device.h"
 #include "device_commands.h"
 #include "open_command.h"
+#include "integration_commands.h"
+#include "session_stop_command.h"
 #include "av_commands.h"
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -1132,6 +1134,13 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "open") == 0) {
         return waddle_open_command(argc - 2, argv + 2, cmd_exec, resolve_target_device);
+    }
+    if (strcmp(cmd, "session") == 0) {
+        return waddle_session_command(argc - 2, argv + 2, resolve_target_device);
+    }
+
+    if (strcmp(cmd, "integration") == 0) {
+        return waddle_integration_command(argc - 2, argv + 2);
     }
 
     if (strcmp(cmd, "init") == 0 || strcmp(cmd, "--init") == 0) {

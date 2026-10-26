@@ -63,7 +63,7 @@ by itself, except where the operation documents otherwise (for example
 | `get_style` | `GetWindowLongPtrW(GWL_STYLE)` | Last error cleared before the call; 0 with a set error means failure. |
 | `set_style` | `SetWindowLongPtrW(GWL_STYLE)` | |
 | `show_window` | `ShowWindow` (synchronous) | Command is `SW_MINIMIZE`, `SW_RESTORE` or `SW_MAXIMIZE`. |
-| `set_window_pos` | `SetWindowPos` | Flags are passed through. |
+| `set_window_pos` | `SetWindowPos` | Flags are passed through. SetGeometry passes `SWP_NOMOVE \| SWP_NOZORDER \| SWP_NOACTIVATE`; fullscreen passes `SWP_FRAMECHANGED \| SWP_NOZORDER \| SWP_NOACTIVATE`. |
 | `get_placement` | `GetWindowPlacement` | |
 | `set_placement` | `SetWindowPlacement` | |
 | `get_rect` | `GetWindowRect` | Window rectangle in screen coordinates. |
@@ -75,10 +75,32 @@ by itself, except where the operation documents otherwise (for example
 | `post_message` | `PostMessageW` | The adapter uses it only with `WM_CLOSE`. |
 | `current_thread_id` | `GetCurrentThreadId` | Read at create to define the owner thread, and on every entry to check the caller. The only entry any thread may call. |
 | `last_error` | `GetLastError` | Read after a failed entry. |
+| `extended_frame_bounds` | `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` | The visible frame, without the invisible resize border. A failing HRESULT is stored as the last error with `SetLastError`, so `last_error` reports the HRESULT. |
 
 `ShowWindowAsync` is not in the table. Asynchronous show returns before the state
 change is applied, so a completed count would not mean that the change happened.
 The adapter therefore uses the synchronous call only.
+
+### 2.1 Call choice per Win32 operation (real table)
+
+Cross-thread calls that send a message to the window's thread can block the agent
+thread when the application hangs. Each choice below is made per call. The
+responsiveness probe is `nat_responsive`: `SendMessageTimeoutW(WM_NULL,
+SMTO_ABORTIFHUNG, 50 ms)`, the same bound as IMPL 4.5 step 3. A probe that does not
+answer fails the entry with the probe's error (ERROR_TIMEOUT) and changes nothing.
+
+| Operation | Choice | Reason |
+|:--|:--|:--|
+| `IsWindow`, `GetWindowThreadProcessId`, `IsIconic`, `IsZoomed`, `GetWindowLongPtrW(GWL_STYLE)`, `GetWindowPlacement`, `GetWindowRect`, `MonitorFromWindow` and `GetMonitorInfoW`, `GetForegroundWindow` | Synchronous query, no probe | Reads of window data. They do not wait for the window thread to answer. |
+| `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` | Synchronous query, no probe | Read of the frame bounds. |
+| `SetWindowLongPtrW(GWL_STYLE)` | Probe, then synchronous | The result is needed for rollback. Windows sends WM_STYLECHANGING and WM_STYLECHANGED, and there is no asynchronous form. Residual risk, section 11. |
+| `ShowWindow` (minimize, restore, maximize) | Probe, then synchronous; `ShowWindowAsync` not used | An asynchronous show would report completion before the state changes (section 2). The call's own return value is not a failure signal, so the observation is the check. Residual risk, section 11. |
+| `SetWindowPos` (geometry, fullscreen enter, fullscreen leave) | Probe, then synchronous, with `SWP_NOACTIVATE` (and `SWP_NOMOVE` for geometry); `SWP_ASYNCWINDOWPOS` not used | The result decides the rollback and the reported status. A posted move would report success before the change. |
+| `SetWindowPlacement` (minimized or maximized leave only) | Probe, then synchronous | The only call that writes `rcNormalPosition` of a minimized or maximized window. It activates the window (section 11), so the normal path does not call it. |
+| `SetForegroundWindow` | Direct | It does not send a message to the target thread. Its result is the first test of activation. |
+| `SetActiveWindow` | Fallback only; its result is not used | It returns NULL both on failure and when no window was active. Activation is decided by `GetForegroundWindow`. |
+| `AttachThreadInput` | Fallback only, bracketing the retry | It shares input state with the foreground thread, so the retry of `SetForegroundWindow` can succeed. Always detached when attached. |
+| `PostMessageW(WM_CLOSE)` | Asynchronous post | Posting never waits for the window thread. |
 
 The Win32 implementation is returned by `window_state_native_api()` under
 `_WIN32` and returns NULL on other platforms. The Win32 types never appear in the
@@ -105,9 +127,20 @@ header; `HWND` values travel as `uintptr_t`.
 - The HWND argument of `observe` and `execute` must equal the admitted HWND. A
   different value is `InvalidArgument` and changes nothing; the adapter does not
   look up a second window.
+- `generation` is a `uint64_t` argument of `admit`, `release`, `observe` and `execute`.
+  It must be nonzero and at most `UINT32_MAX`, because the entry stores 32 bits. Any
+  other value is `InvalidArgument` with no change. It is refused, never truncated, so
+  2^32 + 1 cannot match an admitted generation 1. The graph generation is 64 bits, so
+  the owner passes it at full width and must not cast it to `uint32_t` first.
 - `release(window_id, generation)` removes an admitted entry. It returns `Busy`
   when the entry has a saved fullscreen state, so the owner must leave fullscreen
   first. Release makes no native call.
+- A refused release is sticky. A `Busy` release keeps the entry, its HWND binding and
+  its saved state, so the same pair is still admitted: `admit` answers
+  `AlreadyAdmitted` and `observe` reports Fullscreen. The owner retries after
+  LeaveFullscreen succeeds. A failed LeaveFullscreen keeps the record (section 4,
+  item 5), so the retry is `Busy` again until that leave succeeds. A failed release
+  never removes an entry.
 
 Saved fullscreen state per entry: `saved_style` (the `GWL_STYLE` value), `saved_rect`
 (`GetWindowRect`), and `saved_placement` (`GetWindowPlacement`). The presence of
@@ -156,33 +189,56 @@ are `InvalidAction` at their index; they are never executed by the guest.
    - No saved state: `NoSavedState`, no change. The adapter never invents a style
      or a rectangle.
    - `set_style(saved_style)`, then `set_window_pos(saved_rect, SWP_FRAMECHANGED |
-     SWP_NOZORDER | SWP_NOACTIVATE)`, then `is_iconic` and `is_zoomed` read the
-     current state, then `set_placement` with the saved placement whose
-     `show_command` is replaced by the current state: SW_SHOWMINIMIZED when
-     minimized, SW_SHOWMAXIMIZED when maximized, otherwise SW_SHOWNORMAL. The
-     placement therefore restores the saved normal rectangle and leaves the
-     minimized and maximized state alone. The reducer decides that state with its
-     own actions, and they run before this one. Re-applying the saved show command
-     would undo them: the integration test found exactly that, where a configure
-     restored the window and then LeaveFullscreen maximized it again. Any failure
-     is `NativeFailure` and keeps the record, so a retry repeats these calls. Each
-     of them is idempotent.
+     SWP_NOZORDER | SWP_NOACTIVATE)`. The rectangle is the normal rectangle, and
+     `SetWindowPos` updates `rcNormalPosition` of a normal window as well, so that
+     is the placement's normal rectangle. Then `is_iconic` and `is_zoomed` read the
+     current state.
+   - Normal window (neither minimized nor maximized): nothing more. No
+     `SetWindowPlacement` call is made, so the leave does not activate the window.
+   - Minimized or maximized window: `set_placement` with the saved placement whose
+     `show_command` is the current state (SW_SHOWMINIMIZED when minimized, otherwise
+     SW_SHOWMAXIMIZED). The normal rectangle is written and the minimized or
+     maximized state is kept. The reducer decides that state with its own actions,
+     and they run before this one. Re-applying the saved show command would undo
+     them: the integration test found exactly that, where a configure restored the
+     window and then LeaveFullscreen maximized it again. `SetWindowPlacement` activates
+     the window (section 11).
+   - Any failure is `NativeFailure` and keeps the record, so a retry repeats these
+     calls. Each of them is idempotent.
    - On success, the record is removed.
 6. **Activate** (kind 11, `GuestActivate`):
    - `set_foreground_window(window)`. If it succeeds, the action completes.
    - Otherwise, the fallback: `foreground = foreground_window()`; if it is 0,
      `NativeFailure`. `from = current_thread_id()`. `to = window_thread(foreground)`.
      If `to != from`, `attach_thread_input(from, to, 1)`; failure is
-     `NativeFailure`. Then `set_foreground_window(window)`, `set_active_window(window)`,
-     and, if the input was attached, `attach_thread_input(from, to, 0)` is always
-     attempted. The first failure among the foreground, active and detach calls
-     is the result; a detach failure after success is `NativeFailure` too.
+     `NativeFailure`. Then `set_foreground_window(window)` (its failure is recorded,
+     with its native error), `set_active_window(window)` (its result is not used:
+     NULL is ambiguous, see section 2.1), and, if the input was attached,
+     `attach_thread_input(from, to, 0)`, which is always attempted.
+   - A failed detach is `NativeFailure` with the detach error, because the thread
+     stays attached.
+   - Otherwise the result is `Ok` exactly when `foreground_window()` equals the
+     window. A foreground query that fails leaves the outcome unproven, so it is
+     `NativeFailure`. When the outcome is not Ok, the result is `NativeFailure` with
+     the error of the failed retry if there was one, and otherwise the error of the
+     foreground query.
 7. **SetGeometry** (kind 12, `GuestSetGeometry`): width and height must each be
    in `1..16384`, otherwise `InvalidGeometry` with no native call (the reducer
-   already omits zero geometry). Then `set_window_pos(x, y, width, height,
-   SWP_NOZORDER | SWP_NOACTIVATE)`. The `maximized` field is accepted and does not
-   change the call. The rectangle is caller-prepared, as the reducer contract
-   states; the adapter does not compute maximized placement.
+   already omits zero geometry). Then the adapter applies the visible-frame size
+   with the DWM border adjustment of `av_windows.c` (lines 516 to 527):
+   - `get_rect(window)` gives the outer rectangle, and `extended_frame_bounds(window)`
+     the visible frame. Either failing is `NativeFailure` with no change.
+   - `outer_width = width + (outer.right - outer.left) - (visible.right - visible.left)`,
+     and the same for height. The result must lie in `1..16384`; otherwise
+     `InvalidGeometry`, with no `set_window_pos` call.
+   - `set_window_pos(0, 0, outer_width, outer_height, SWP_NOMOVE | SWP_NOZORDER |
+     SWP_NOACTIVATE)`. The `x` and `y` of the action are not applied: the host
+     sends them as zero (IMPL 4.5, WindowConfigure rect(0,0,w,h)), so the window keeps
+     its origin. Failure is `NativeFailure`.
+   The `maximized` field is accepted and does not change the call. The work-area
+   origin for a maximized configure is not applied (IMPL 4.5 places a maximized
+   window at the work-area origin). That needs the monitor work rectangle, which the
+   table does not supply; section 11 lists it as an open item.
 8. **PostClose** (kind 13, `GuestPostClose`): `post_message(window, WM_CLOSE, 0, 0)`.
    Failure is `NativeFailure`. Nothing else is called.
 
@@ -215,8 +271,11 @@ reducer as a GuestObservation plan.
   contains the 64-entry table inline) with `malloc`. Create returns `OutOfMemory`
   when allocation fails and writes nothing to the output.
 - `window_state_adapter_destroy` frees that object and sets the caller's slot to
-  NULL. It returns `Busy` and frees nothing when any entry has a saved fullscreen
-  state. It makes no native call.
+  NULL. It returns `Busy`, frees nothing, and leaves the slot unchanged when any entry
+  is still admitted, fullscreen or not. The adapter stays valid, so the owner releases
+  each entry (fullscreen entries first through LeaveFullscreen) and calls destroy again.
+  It makes no native call. A caller that frees its own memory after a Busy destroy
+  leaks the adapter; the owner must retry, not drop the adapter.
 - No other allocation exists. No function retains a caller pointer after it
   returns. The adapter does not allocate for actions, observations or
   placements; all of them are fixed-size locals or table entries.
@@ -244,12 +303,12 @@ reducer as a GuestObservation plan.
 
 ## 9. Verification
 
-Double suite (`tests/interop/window_state_adapter_suite.c`, 28 tests), built plain and
+Double suite (`tests/interop/window_state_adapter_suite.c`, 36 tests), built plain and
 under `-fsanitize=address,leak,undefined` with `ASAN_OPTIONS=detect_leaks=1`. It runs
 on every platform against `tests/interop/window_state_adapter_double.h`, which logs every
 native call and can fail any call by count or at random:
 
-- The NULL-member contract: each of the 19 table members, set to NULL in turn, makes
+- The NULL-member contract: each of the 20 table members, set to NULL in turn, makes
   `create` return InvalidArgument with no output.
 - Exact native call sequence of every action, including the fullscreen enter and leave
   sequences, the activation direct path, and the activation fallback.
@@ -261,11 +320,23 @@ native call and can fail any call by count or at random:
   applied.
 - Fullscreen: round trips, enter twice, leave without a saved state, rollback when the
   placement call fails, rollback when the rollback also fails, and a leave that fails
-  at each call while the record is kept.
+  at each call while the record is kept. The normal-state leave makes no placement
+  call and sets SWP_NOACTIVATE; a leave from a minimized window writes the placement.
+  Focus: with another window foreground, a round trip leaves that window foreground,
+  with no focus steal recorded by the double.
+- Geometry: the origin is kept (probe P2: 100,100 with configure 0,0,1024,768 gives
+  1024 by 768), SWP_NOMOVE is in the recorded flags, the DWM border is applied, and
+  each bound of the adjusted extent and a failed frame query are refused.
+- Destroy and release: destroy is Busy while any record is admitted; a Busy release
+  is sticky and retryable across a failed leave; no phantom record remains.
+- Generation: 2^32 and 2^32 + 1 (which truncates to an admitted 1) are InvalidArgument
+  in admit, release, observe and execute, with no native call.
+- Partial execution: action 2 of 3 fails with a native error or a validation error;
+  the completed count is 1, the status is not Ok, and the later action never runs.
 - Host-only and unknown kinds, count and NULL-array rules, and geometry bounds.
 - Admission: capacity of 64 (the 65th refused), duplicate pairs and HWNDs, zero
   identity components on their own, NULL adapter in every entry, release and destroy
-  while fullscreen, and destroy with a NULL slot.
+  while fullscreen or admitted, and destroy with a NULL slot.
 - Threading and re-entry: a call from another thread touches nothing; a call made from
   inside a native entry (ShowWindow) returns Reentrant for observe, destroy and execute.
 - Observation bits, including capabilities read from the saved style while fullscreen,
@@ -283,18 +354,31 @@ completed count; a failed completion is followed by a resynchronization from a f
 observation. A stale result caused by a fault is recovered by re-admitting the same
 window. The invariant, checked after every step with faults disabled: once the machine is
 synchronized, its applied guest window bits equal the adapter's observation. The run
-completes 287 guest actions, observes 183 native failures and 107 stale recoveries. The
+completes 248 guest actions, observes 208 native failures and 105 stale recoveries. The
+counts changed when geometry began making two more native queries and when the normal
+leave stopped making a placement call; the seeded faults land on different calls. The
 test found the LeaveFullscreen fault described in section 4, item 5.
 
 Coverage (`tests/interop/window_state_adapter_coverage.py`, run by
 `make interop-window-state-adapter-coverage`): gcov line and branch on the portable logic,
-driven by the double suite. Measured: line 100.00% (298 of 298), branch 100.00% (293 of
-293). The gate is 90 percent. The `_WIN32` table is outside this measure by design.
+driven by the double suite. Measured: line 100.00% (310 of 310), branch 100.00% (307 of
+307). The gate is 90 percent. The `_WIN32` table is outside this measure by design.
 
-Mutation checks, not committed, each run and restored: skipping the EnterFullscreen
-rollback; leaving fullscreen without a record; dropping the activation fallback; making
-Restore leave fullscreen; ignoring the thread id in the identity check; continuing after a
-failed action. Each fails the suite.
+Mutation checks, not committed. Each mutant was compiled from a copy of the adapter and
+run against the suite; the committed source was not changed. Each fails the suite:
+
+- Remove SWP_NOMOVE from SetGeometry: 2 tests fail.
+- Remove SWP_NOACTIVATE from the fullscreen leave: 1 test fails (the focus round trip).
+- Report the completed count as index + 1 on a failed action: 13 tests fail.
+- Report the whole plan completed on a failed action: 13 tests fail.
+- Accept generations above UINT32_MAX (truncation): 1 test fails.
+- Destroy ignores live records: 4 tests fail.
+- Activation trusts the retry return instead of the foreground: 3 tests fail.
+
+The earlier mutants of the first revision also fail the suite: skipping the EnterFullscreen
+rollback, leaving fullscreen without a record, dropping the activation fallback, making
+Restore leave fullscreen, ignoring the thread id in the identity check, continuing after a
+failed action.
 
 ## 10. Native smoke (Windows, executed by CI only)
 
@@ -311,7 +395,8 @@ thread, and asserts through `window_state_adapter_observe` and the real Win32 ca
    WS_THICKFRAME.
 5. LeaveFullscreen: observe no longer reports Fullscreen, the style and the
    rectangle equal their values before step 4.
-6. SetGeometry to 320 by 240 at a fixed position: `GetWindowRect` equals it.
+6. SetGeometry to 320 by 240 with x and y 0: the window origin is unchanged and the
+   visible frame (DWMWA_EXTENDED_FRAME_BOUNDS) is 320 by 240.
 7. Activate: `GetForegroundWindow` equals the window. This depends on the desktop
    granting foreground rights to the smoke process; a failure is reported as
    such and fails the smoke.
@@ -326,6 +411,13 @@ thread, and asserts through `window_state_adapter_observe` and the real Win32 ca
    that step is printed as a note and not counted; the stale identity check cannot be
    told apart from a fresh admission within one process and thread.
 
+Second thread: a worker thread creates a second window, pumps its messages, and destroys
+it on exit. The main thread, the adapter owner, admits it under the pair (2, 2) and drives
+minimize, restore, fullscreen enter and leave, geometry (origin kept, visible frame size),
+activation (completes or reports NativeFailure, desktop-dependent), post close (the worker
+receives WM_CLOSE) and release. Every call crosses threads. Native probes run before the
+synchronous calls (section 2.1). The smoke releases its last record before destroy.
+
 The smoke requires per-monitor DPI awareness v2 on its thread; without it the
 rectangles are not comparable and the smoke fails at its first step.
 The smoke writes one line per step and exits nonzero on any mismatch.
@@ -334,6 +426,21 @@ The smoke writes one line per step and exits nonzero on any mismatch.
 
 - The adapter cannot make Windows accept a foreground change; the activation
   fallback is the documented route and may still fail under foreground locks.
+- Residual hang risk. `SetWindowLongPtrW`, `ShowWindow`, `SetWindowPos` and
+  `SetWindowPlacement` send messages to the window thread and wait for them. The
+  probe of section 2.1 refuses the call when the thread does not answer within
+  50 ms, but a thread that hangs after the probe still blocks the call. Nothing
+  bounds that wait without changing the result semantics (section 2.1).
+- `SetWindowPlacement` activates the window (ShowWindow semantics, section 2.1). It
+  is called only for a minimized or maximized leave, to write the normal rectangle.
+  No non-activating call writes that rectangle, so a focus change is possible there.
+- Open item, IMPL 4.5 maximized configure. The work-area origin (`rcWork` of
+  `MONITORINFO`) and the `ShowWindow(SW_MAXIMIZE)` then `SetWindowPos(work.x,
+  work.y, ...)` sequence are not implemented. The table has no work-area query, and
+  `monitor_rect` returns `rcMonitor`, which fullscreen needs. A maximized configure
+  therefore applies only the size (section 4, item 7).
+- The responsiveness probe and the cross-thread smoke are Win32 code. They are
+  compiled by the mingw cross-build only and run on a Windows desktop.
 - Fullscreen is an adapter convention, not a Windows state. Another process that
   changes the stripped style or the placement is outside what the saved state
   can repair.

@@ -238,9 +238,9 @@ identifier, and the reply is dropped (section 8.3 step 5).
 | `on_ready` | Bind (section 4). Returns 0 or 1. |
 | `on_frame` | Section 8.3. Returns 0, or SessionLocalCallbackFailure for a malformed LaunchResult. |
 | `poll_fds` | Reports exactly one descriptor: the handler's epoll instance, events POLLIN, `revents` zero, count 1. |
-| `on_fds` | Calls `epoll_wait(0)`, accepts, reads and dispatches frames, flushes output, closes failed clients. Returns SessionHandlerRequestStop when a stop flush has completed (section 10); otherwise 0; SessionLocalCallbackFailure on an internal failure. |
-| `on_tick` | Enforces the idle timeout (section 13), the launch timeout (section 8.4), the stop flush bound, and flushes pending output. Returns SessionHandlerRequestStop when the stop is ready. |
-| `next_deadline_ms` | Earliest of: pending launch deadlines, idle deadlines of clients with no complete frame, the stop flush deadline. UINT64_MAX when none. |
+| `on_fds` | Calls `epoll_wait(0)`, accepts, reads and dispatches frames, flushes output, closes failed clients. Returns SessionHandlerRequestStop once a LocalStop is accepted (section 10); otherwise 0; SessionLocalCallbackFailure on an internal failure. |
+| `on_tick` | Enforces the idle timeouts (section 13), the launch timeout (section 8.4), and flushes pending output. Returns SessionHandlerRequestStop once a LocalStop is accepted. |
+| `next_deadline_ms` | Earliest of: pending launch deadlines, and idle deadlines (first-frame, or after a frame while nothing is pending). UINT64_MAX when none. |
 | `on_closing` | Section 12. Exactly once. |
 
 Why one epoll descriptor: `SessionHandlerMaxDescriptors` is 4, but the listener plus four clients
@@ -250,30 +250,38 @@ the four-client limit.
 
 ## 10. LocalStop ordering
 
-1. A complete `LocalStop` (no fields, nonzero request id) from client C queues
-   `LocalStopResult{status = Ok}` with the same request id, and sets `stopping = 1` with
-   `stop_client = (C, serial)` and `stop_deadline = now + 1000 ms`.
-2. While stopping: no further frames are read from any client; accepts are closed at once; a
-   client's `LocalLaunch` already buffered is not dispatched. Output continues to flush.
-3. The stop is ready, and the callback returns `SessionHandlerRequestStop`, when one of:
-   a. the stop client's transmit buffer is fully sent;
-   b. the stop client is gone (closed or reset);
-   c. `now >= stop_deadline` (bounded wait; the reply may be unsent, which the client reports as
-      unconfirmed). The bound is 1000 ms.
-4. The runtime begins drain only after the callback returns, so drain never starts before the
-   reply bytes are written or the client has gone. The reply is never sent by a closing connection
-   after cleanup.
-5. The handler does not release locks; the runtime's teardown releases `session.lock` and the AV
-   lock.
-6. Other clients with pending launches receive Cancelled from `on_closing`.
+IMPL_DESC 3.12.5: the LocalStopResult is sent after the session has drained held input, surfaces,
+audio and transfers and released both the session and AV command locks. A reply that was queued
+may still be sent by a bounded closing connection after cleanup.
+
+1. A complete `LocalStop` (no fields, nonzero request id) from client C sets `stopping = 1`,
+   `stop_client = (C, serial)` and `stop_request_id`. No reply is queued. The callback returns
+   `SessionHandlerRequestStop` at once.
+2. While stopping: no further frames are read from any client; a connection accepted while stopping
+   receives an unsolicited Busy Error (section 5) and is closed; a client's `LocalLaunch` already
+   buffered is not dispatched; a launch that arrives while stopping is answered Cancelled.
+3. The runtime drains, releases the locks, and calls `on_closing` (section 12). `on_closing` holds
+   the stop requester's descriptor: it leaves the epoll set and the client table, and is not closed.
+4. After the run has ended and both locks are released, the owner calls
+   `session_local_handler_send_stop_reply()`. That writes `LocalStopResult{status = Ok}` with the
+   stop request id, waiting for writability for at most 1000 ms (`SessionLocalStopFlushMs`), then
+   closes the held descriptor. It returns 1 when the reply was fully written, and 0 when nothing was
+   held or the write failed or timed out (counted in `stop_deadline_expired`). The client reports 0
+   as a stop it could not confirm, which is the only case a stop ends unconfirmed after cleanup.
+5. The handler never acquires or releases locks. Its teardown runs before the locks are released.
+6. Where the owner calls the post-cleanup function: `session_main` after `session_app_run` returns and
+   the owners are released; the harness after `interop_host_control_run` returns. Until session_main
+   calls it, a held descriptor stays open until the handler is destroyed or re-armed (both close it).
 
 ## 11. Clock and deadlines
 
 - Every callback except `on_frame` receives `now_ms` (CLOCK_MONOTONIC). The handler stores it as
   `last_now_ms`. `on_frame` has no clock argument and uses `last_now_ms`; the runtime ticks at
   least every 100 ms, so the staleness is bounded by about 100 ms.
-- Launch deadline: `now_ms_at_send + 30000` (LaunchTimeoutMs). Idle deadline:
-  `accepted_ms + 10000` (IdleTimeoutMs). Stop bound: 1000 ms (StopFlushMs).
+- Launch deadline: `now_ms_at_send + 30000` (LaunchTimeoutMs). Idle deadlines: `accepted_ms + 10000`
+  before a client's first frame (IdleTimeoutMs), and `last_frame_ms + 120000` after it while none of
+  that client's launches is pending (IdleAfterFrameMs). Post-cleanup stop reply bound: 1000 ms
+  (SessionLocalStopFlushMs).
 - Unit tests inject `now_ms` directly through the callbacks; no production override exists.
 
 ## 12. Teardown (`on_closing`, exactly once)
@@ -281,18 +289,33 @@ the four-client limit.
 1. For each correlation entry whose client is still attached: queue LaunchResult status
    Cancelled (3) with process_id 0 and attempt one nonblocking send. Then release the identifier.
    Clear all entries.
-2. For each client: attempt one nonblocking flush of pending bytes, then close the descriptor.
+2. For each client: attempt one nonblocking flush of pending bytes, then close the descriptor. The
+   stop requester (section 10) is the exception: its descriptor is held for the post-cleanup reply.
 3. Close the epoll descriptor and the listening socket.
 4. If this handler created the socket file, unlink it. Ignore errors.
 5. Set `closed = 1`. Later calls to `on_closing` return without effect.
 6. `destroy` repeats steps 2-4 for anything still open (for example a run that never reached
-   `on_ready`).
+   `on_ready`), and closes a held stop-reply descriptor without sending.
+7. A later `on_ready` after `on_closing` re-arms the handler for a new session: per-session state is
+   reset (clients, pending entries, stop state, the listener and epoll fields) while the
+   configuration, the activation token store, and the statistics are kept. A destroyed handler never
+   binds again.
 
 ## 13. Idle timeout
 
 A client that has sent no complete frame within `IdleTimeoutMs` of its accept is closed
-(`idle_closed` is incremented). After its first complete frame the client may stay connected
-until it closes or the handler stops. The handler keeps no other per-client timer.
+(`idle_closed` is incremented). After its first complete frame, a client with no pending launch is
+closed after `IdleAfterFrameMs` (120 s) of silence; a client with a pending launch is not closed by
+the idle rule, because the launch timeout (section 8.4) bounds that wait. Each client may hold at most
+`SessionLocalMaxOutstanding` (4) launches; the handler holds at most 32 in total, and a launch beyond
+either limit is answered Busy.
+
+## 5a. Busy refusals
+
+A connection that the session cannot take (the fifth client, or any connection accepted while stopping)
+receives one unsolicited Error frame, request id 0 and code Busy, sent with one nonblocking send, and
+is then closed. Clients treat that frame, or a LaunchResult with status Busy, as "not ready" and retry.
+Peer-credential refusals stay silent: the peer is not one this session serves.
 
 ## 14. Errors and failure modes
 
@@ -366,3 +389,35 @@ Run from the worktree root with `-j4` at most.
 4. The epoll descriptor (section 9) is the only descriptor reported by `poll_fds`.
 5. Callback failures return `SessionLocalCallbackFailure` (2). The graceful stop value 1 is
    reserved by `session_handler.h`; a static assertion keeps the two distinct.
+
+## 19. Integration (tranche 3)
+
+Composition. The handler is registered by the builtin registry (`session_handlers_builtin.c`) in the supervised
+binary (`waddle-session --device NAME`, the default mode). Open decision 18.1 is resolved as follows:
+
+- The runtime builds `interop_host_feature_ops_t` from `session_handler_t` (session_app). The test-only adapter
+  and its `pthread_kill` stand-in are removed; the harness drives the real `waddle_session_main`.
+- `lock_held_proof` is set to 1 only at on_ready, which runs after admission has acquired `session.lock`. The
+  owner stays alive until the handler's on_closing has run, because the runtime releases owners only after every
+  on_closing. The handler is initialised with the proof already set, so its stale-socket decision is correct.
+- A graceful stop (SessionHandlerRequestStop from LocalStop) ends the run as HostControlCancelled, which the
+  supervised command reports as exit 0 after the owners are released.
+
+Directory. The handler's runtime directory is `$XDG_RUNTIME_DIR`. The supervised command refuses to start unless
+the daemon socket is `<runtime>/waddle/<device>/daemon.sock`, the layout the client (`waddle open`) uses to derive
+session.sock. session.sock is `<runtime>/waddle/<device>/session.sock`.
+
+Pending on the launch lane (not implemented here): LocalStopResult is still queued to the client before drain.
+IMPL 3.12.5 requires the reply after drain and lock release. session_main will call
+`session_local_handler_send_stop_reply()` once the launch lane lands it, after `session_app_run` returns and
+the owners are released. Until then the reply is sent before the drain begins, as section 10 describes.
+
+Re-arming. The supervisor reuses one handler table across attempts. The builtin wrapper re-initialises the handler
+on each Ready, and the harness case `two_consecutive_sessions` runs two guest sessions in a row through the real
+command path.
+
+Verification (harness and e2e). `tests/integration/open_e2e.py` in harness mode runs 15 cases: the 12 original ones,
+plus `local_stop` (LocalStop reply, exit 0, socket removed), `reconnect_after_guest_drop` (the first guest drops after
+HelloAck, the supervisor reconnects, and a later open is served), and `two_consecutive_sessions` (each of two guest
+sessions serves one open).
+
