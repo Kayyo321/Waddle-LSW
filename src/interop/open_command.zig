@@ -1854,14 +1854,22 @@ test "production realpath canonicalizes symlinks and reports missing paths" {
 }
 
 test "production translate maps configured mounts and reports unmapped paths as outside" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("notes");
+    try tmp.dir.writeFile(.{ .sub_path = "notes/a.txt", .data = "x" });
+    const root = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(root);
+    const file_path = try std.fmt.allocPrint(testing.allocator, "{s}/notes/a.txt", .{root});
+    defer testing.allocator.free(file_path);
     var real = RealHooks.init(null, null);
     c.daemon_config_init_defaults(&real.config);
     real.config.mount_count = 1;
-    @memcpy(real.config.mounts[0].host_path[0..10], "/home/dev/");
-    real.config.mounts[0].host_path[10] = 0;
+    @memcpy(real.config.mounts[0].host_path[0..root.len], root);
+    real.config.mounts[0].host_path[root.len] = 0;
     @memcpy(real.config.mounts[0].guest_drive[0..3], "Z:\\");
     real.config.mounts[0].guest_drive[3] = 0;
-    const guest = try RealHooks.translate(&real, testing.allocator, "/home/dev/notes/a.txt");
+    const guest = try RealHooks.translate(&real, testing.allocator, file_path);
     defer testing.allocator.free(guest);
     try testing.expectEqualSlices(u8, "Z:\\notes\\a.txt", guest);
     try testing.expectError(error.Outside, RealHooks.translate(&real, testing.allocator, "/etc/passwd"));
