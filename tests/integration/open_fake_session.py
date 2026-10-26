@@ -26,6 +26,7 @@ HEADER = struct.Struct("<IHHII")
 TYPE_LOCAL_LAUNCH = 0x7F00
 TYPE_LAUNCH_RESULT = 0x0701
 TYPE_ERROR = 0x0006
+TYPE_LOCAL_STOP = 0x7F01
 FROM_LOCAL = 3
 
 # Field registry subset used by the open client: tag -> (name, kind).
@@ -153,7 +154,10 @@ class FakeSession:
     def bind(self):
         parent = os.path.dirname(self.socket_path)
         os.makedirs(parent, mode=0o700, exist_ok=True)
+        # makedirs applies the mode to the leaf only; the intermediate waddle directory would take
+        # the umask, and the client refuses ancestors that others can write.
         os.chmod(parent, 0o700)
+        os.chmod(os.path.dirname(parent), 0o700)
         if os.path.exists(self.socket_path):
             os.unlink(self.socket_path)
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -188,6 +192,10 @@ class FakeSession:
                 self.record({"connection": index, "time": time.time(), "type": frame["type"],
                              "request_id": frame["request_id"], "fields": frame["by_name"],
                              "critical": frame["critical"]})
+                if frame["type"] == TYPE_LOCAL_STOP:
+                    if not self.answer_stop(conn, frame["request_id"]):
+                        return
+                    continue
                 if frame["type"] != TYPE_LOCAL_LAUNCH:
                     continue
                 if not self.answer(conn, frame["request_id"]):
@@ -196,6 +204,36 @@ class FakeSession:
             self.record({"connection": index, "error": str(error)})
         finally:
             conn.close()
+
+    def answer_stop(self, conn, request_id):
+        """Send the scenario's "stop" reply for one LocalStop. Returns False when the connection ends.
+
+        Values: ok | status:N | status:N:MESSAGE | error:MESSAGE | wrong_id | eof | partial | silent.
+        """
+        reply = self.scenario.get("stop", "ok")
+        if reply == "ok":
+            conn.sendall(encode_with_codec(self.dump, "stop-result", str(request_id), "0", "-"))
+        elif reply.startswith("status:"):
+            parts = reply.split(":", 2)
+            message = parts[2] if len(parts) > 2 else "-"
+            conn.sendall(encode_with_codec(self.dump, "stop-result", str(request_id), parts[1], message))
+        elif reply.startswith("error:"):
+            message = reply.split(":", 1)[1] or "-"
+            conn.sendall(encode_with_codec(self.dump, "error", str(request_id), "3", message))
+        elif reply == "wrong_id":
+            conn.sendall(encode_with_codec(self.dump, "stop-result", str(request_id + 1), "0", "-"))
+        elif reply == "partial":
+            frame = encode_with_codec(self.dump, "stop-result", str(request_id), "0", "-")
+            conn.sendall(frame[: len(frame) // 2])
+            return False
+        elif reply == "eof":
+            return False
+        elif reply == "silent":
+            time.sleep(float(self.scenario.get("hold", 8)))
+            return False
+        else:
+            raise ValueError("unknown scenario stop reply %r" % reply)
+        return True
 
     def answer(self, conn, request_id):
         """Send the scenario's reply for one request. Returns False when the connection ends."""

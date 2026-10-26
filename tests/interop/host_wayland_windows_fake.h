@@ -241,6 +241,8 @@ static void decode_args(fake_request_t *request, const char *iface, uint32_t opc
         if (opcode == XDG_TOPLEVEL_SET_PARENT) ArgPtr(0);
         else if (opcode == XDG_TOPLEVEL_SET_TITLE || opcode == XDG_TOPLEVEL_SET_APP_ID) ArgText();
         else if (opcode == XDG_TOPLEVEL_SET_MIN_SIZE) { ArgInt(0); ArgInt(1); }
+        else if (opcode == XDG_TOPLEVEL_MOVE) { ArgPtr(0); ArgUint(1); }
+        else if (opcode == XDG_TOPLEVEL_RESIZE) { ArgPtr(0); ArgUint(1); ArgUint(2); }
     } else if (!strcmp(iface, "xdg_positioner")) {
         if (opcode == XDG_POSITIONER_SET_SIZE || opcode == XDG_POSITIONER_SET_OFFSET) { ArgInt(0); ArgInt(1); }
         else if (opcode == XDG_POSITIONER_SET_ANCHOR_RECT) { ArgInt(0); ArgInt(1); ArgInt(2); ArgInt(3); }

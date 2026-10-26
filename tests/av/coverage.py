@@ -39,8 +39,14 @@ InteropModes = ('interop_codec', 'interop_layout', 'interop_heap', 'manifest', '
 # so independent lanes never edit this tuple concurrently. Thresholds are unchanged.
 InteropModes += tuple(sorted(marker.name for marker in Path(__file__).resolve().parent.joinpath('coverage_modes').glob('*') if marker.is_file() and marker.name != 'README'))
 DaemonModes = ('daemon_wire',)
+# CLI command modules register one marker each in coverage_modes_cli and live under src/cli.
+CliModes = tuple(sorted(marker.name for marker in Path(__file__).resolve().parent.joinpath('coverage_modes_cli').glob('*') if marker.is_file() and marker.name != 'README'))
+# Modules that import other interop modules by name. Zig rejects a file in two modules,
+# so each dependency is a named module rooted at its interop file.
+NamedDependencyModules = {'integration_commands': ('manifest_store', 'integration_producers', 'mimeapps'), 'integration_producers': ('manifest_store',), 'integration_mime': ('mimeapps',)}
+NamedModuleFiles = {'manifest_store': 'src/interop/manifest_store.zig', 'integration_producers': 'src/interop/integration_producers.zig', 'mimeapps': 'src/interop/mimeapps.zig'}
 mode=sys.argv[1]
-assert mode in InteropModes + DaemonModes + ('interop_codec','av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native','venus_modern_sync_wire','venus_extra_objects_wire','venus_requirements2_wire','venus_image_transfer_wire','venus_dynamic_rendering_wire','venus_graphics_general_wire','venus_graphics_dynamic_wire','venus_sampler_descriptor_wire','venus_transfer2_native','venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native')
+assert mode in InteropModes + DaemonModes + CliModes + ('interop_codec','av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native','venus_modern_sync_wire','venus_extra_objects_wire','venus_requirements2_wire','venus_image_transfer_wire','venus_dynamic_rendering_wire','venus_graphics_general_wire','venus_graphics_dynamic_wire','venus_sampler_descriptor_wire','venus_transfer2_native','venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native')
 if mode == 'av_video':
     import gzip
     output=Path.cwd()/'build/coverage/av/video'
@@ -59,14 +65,14 @@ if mode == 'av_video':
         print(f'av_video production {kind} coverage: {percent:.2f}% ({covered}/{len(entries)})',flush=True)
         assert percent>=90
     sys.exit(0)
-source=('src/daemon/' if mode in DaemonModes else 'src/interop/' if mode in InteropModes  else 'src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native','venus_modern_sync_wire','venus_extra_objects_wire','venus_requirements2_wire','venus_image_transfer_wire','venus_dynamic_rendering_wire','venus_graphics_general_wire','venus_graphics_dynamic_wire','venus_sampler_descriptor_wire','venus_transfer2_native','venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else 'src/av/')+mode+'.zig'
-root=Path.cwd(); output=root/'build/coverage'/('daemon' if mode in DaemonModes else 'interop' if mode in InteropModes  else 'vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native','venus_modern_sync_wire','venus_extra_objects_wire','venus_requirements2_wire','venus_image_transfer_wire','venus_dynamic_rendering_wire','venus_graphics_general_wire','venus_graphics_dynamic_wire','venus_sampler_descriptor_wire','venus_transfer2_native','venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else 'av')/mode
+source=('src/cli/' if mode in CliModes else 'src/daemon/' if mode in DaemonModes else 'src/interop/' if mode in InteropModes  else 'src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native','venus_modern_sync_wire','venus_extra_objects_wire','venus_requirements2_wire','venus_image_transfer_wire','venus_dynamic_rendering_wire','venus_graphics_general_wire','venus_graphics_dynamic_wire','venus_sampler_descriptor_wire','venus_transfer2_native','venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else 'src/av/')+mode+'.zig'
+root=Path.cwd(); output=root/'build/coverage'/('cli' if mode in CliModes else 'daemon' if mode in DaemonModes else 'interop' if mode in InteropModes  else 'vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native','venus_modern_sync_wire','venus_extra_objects_wire','venus_requirements2_wire','venus_image_transfer_wire','venus_dynamic_rendering_wire','venus_graphics_general_wire','venus_graphics_dynamic_wire','venus_sampler_descriptor_wire','venus_transfer2_native','venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else 'av')/mode
 # Retain every qualification attempt, including older modes with existing reports.
 # Historical flat reports remain in the module directory and are never replaced.
 output = output / ('run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
 output.mkdir(parents=True, exist_ok=False)
 print('preserved ' + mode + ' coverage: ' + str(output), flush=True)
-oracle = {'control_peer_abi': 'build/interop_codec.o', 'control_peer': 'build/interop_codec.o', 'stream_reader': 'build/interop_codec.o', 'stream_send_queue': 'build/interop_codec.o', 'venus_device_wire': 'build/venus_device_wire_oracle.o', 'venus_values': 'build/venus_values_oracle.o', 'venus_instance_wire': 'build/venus_instance_oracle.o', 'venus_query_wire': 'build/venus_query_oracle.o', 'venus_icd': 'build/venus_icd_oracle.o', 'venus_render_wire': 'build/venus_render_wire_oracle.o', 'venus_descriptor_wire': 'build/venus_descriptor_wire_oracle.o', 'venus_graphics_wire': 'build/venus_graphics_wire_oracle.o', 'venus_compute_wire': 'build/venus_compute_wire_oracle.o', 'venus_graphics_pipeline_wire': 'build/venus_graphics_pipeline_wire_oracle.o', 'venus_graphics_command_wire': 'build/venus_graphics_command_wire_oracle.o', 'venus_features_wire': 'build/venus_features_query_oracle.o', 'venus_features_native': 'build/venus_features_query_oracle.o', 'venus_tcp_wire': 'build/venus_tcp_wire_oracle.o'}.get(mode)
+oracle = {'control_peer_abi': 'build/interop_codec.o', 'control_peer': 'build/interop_codec.o', 'stream_reader': 'build/interop_codec.o', 'stream_send_queue': 'build/interop_codec.o', 'venus_device_wire': 'build/venus_device_wire_oracle.o', 'venus_values': 'build/venus_values_oracle.o', 'venus_instance_wire': 'build/venus_instance_oracle.o', 'venus_query_wire': 'build/venus_query_oracle.o', 'venus_icd': 'build/venus_icd_oracle.o', 'venus_render_wire': 'build/venus_render_wire_oracle.o', 'venus_descriptor_wire': 'build/venus_descriptor_wire_oracle.o', 'venus_graphics_wire': 'build/venus_graphics_wire_oracle.o', 'venus_compute_wire': 'build/venus_compute_wire_oracle.o', 'venus_graphics_pipeline_wire': 'build/venus_graphics_pipeline_wire_oracle.o', 'venus_graphics_command_wire': 'build/venus_graphics_command_wire_oracle.o', 'venus_features_wire': 'build/venus_features_query_oracle.o', 'venus_features_native': 'build/venus_features_query_oracle.o', 'venus_tcp_wire': 'build/venus_tcp_wire_oracle.o', 'session_stop_command': 'build/interop_codec.o'}.get(mode)
 if mode == 'venus_device_native':
     for name in ('device', 'render'):
         subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
@@ -142,7 +148,7 @@ if mode in ('interop_layout_abi', 'interop_slot_runtime_abi', 'window_state_abi'
     extra_args += ['-Isrc/interop']
 if mode in ('pe_header', 'open_request', 'open_command'):
     extra_args += link_objects
-if mode == 'open_command':
+if mode in ('open_command', 'session_stop_command'):
     extra_args += ['-Isrc/daemon', '-Isrc/common']
 test_source = 'src/vgpu/venus_graphics_general_wire.zig' if mode == 'venus_pipeline_wire_helpers' else source
 compile_command=['zig','test',test_source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
@@ -154,6 +160,17 @@ if mode == 'control_peer':
         '-Iinclude', '--dep', 'peer', '-Mroot=tests/interop/control_peer.zig',
         '-O', 'ReleaseSafe', '-Iinclude', '-Mpeer=' + source, '--test-no-exec',
         '-femit-llvm-ir=' + str(output/'test.ll'), '-femit-bin=' + str(output/'test')]
+if mode in NamedDependencyModules:
+    # Declare each module's dependencies with --dep immediately before the module that uses them.
+    compile_command = ['zig', 'test']
+    for dependency in NamedDependencyModules[mode]:
+        compile_command += ['--dep', dependency]
+    compile_command += ['-Mroot=' + source]
+    for dependency in NamedDependencyModules[mode]:
+        for transitive in NamedDependencyModules.get(dependency, ()):
+            compile_command += ['--dep', transitive]
+        compile_command += ['-M' + dependency + '=' + NamedModuleFiles[dependency]]
+    compile_command += ['-Iinclude', '-lc', '-O', 'ReleaseSafe', '--test-no-exec', '-femit-llvm-ir=' + str(output/'test.ll'), '-femit-bin=' + str(output/'test')]
 source_hash=hashlib.sha256(Path(source).read_bytes()).hexdigest()
 subprocess.run(compile_command,check=True)
 if hashlib.sha256(Path(source).read_bytes()).hexdigest()!=source_hash:
@@ -285,7 +302,7 @@ print(f'{mode} instrumentation: {len(records)} exact metadata-bound sites; '
       f"native target {diagnostics['target_triple']} CPUs {diagnostics['target_cpus']}",flush=True)
 subprocess.run(['clang-19','-Wno-override-module','-c',str(output/'instrumented.ll'),'-o',str(output/'test.o')],check=True)
 subprocess.run(['zig','cc',str(output/'test.o'),*link_objects,recorder_arg,'tests/device_branch_runtime.c','-o',str(output/'runner')],check=True)
-env=os.environ.copy();env['WADDLE_BRANCH_OUT']=str(output)
+env=os.environ.copy();env['WADDLE_BRANCH_OUT']=str(output);env['WADDLE_INSTRUMENTED_SWEEP']='1'
 subprocess.run([str(output/'runner')],env=env,check=True)
 hits=set()
 for report in output.glob('*.edges'):

@@ -299,7 +299,11 @@ void session_main_private_tests(void)
     char *help_overrides_invalid[] = {(char *)"waddle-session", (char *)"--help",
         (char *)"--control-only"};
     assert(!session_parse_args(2, control_without_device, &options));
-    assert(!session_parse_args(3, device_without_control, &options));
+    /* Without a mode flag the command runs supervised (the mode `waddle open` spawns). */
+    assert(session_parse_args(3, device_without_control, &options) && !options.control_only);
+    assert(session_admission_is_lock_held(HostSessionBusy) && session_admission_is_lock_held(HostSessionAvBusy));
+    assert(!session_admission_is_lock_held(HostSessionDaemonError) && !session_admission_is_lock_held(0));
+    assert(options.max_retries == 0);
     assert(!session_parse_args(8, duplicate_backing, &options));
     assert(!session_parse_args(6, bad_backing, &options));
     assert(!session_parse_args(8, duplicate_runtime, &options));
@@ -349,6 +353,9 @@ void session_main_private_tests(void)
     char *supervised_with_control[] = {(char *)"waddle-session", (char *)"--supervised",
         (char *)"--control-only", (char *)"--device", (char *)"private-test"};
     assert(!session_parse_args(5, supervised_with_control, &options));
+    char *control_then_supervised[] = {(char *)"waddle-session", (char *)"--control-only",
+        (char *)"--supervised", (char *)"--device", (char *)"private-test"};
+    assert(!session_parse_args(5, control_then_supervised, &options));
     char *control_with_retries[] = {(char *)"waddle-session", (char *)"--control-only",
         (char *)"--max-retries", (char *)"3", (char *)"--device", (char *)"private-test"};
     assert(!session_parse_args(6, control_with_retries, &options));
@@ -356,6 +363,12 @@ void session_main_private_tests(void)
         (char *)"--device", (char *)"private-test", (char *)"--max-retries", (char *)"1",
         (char *)"--max-retries", (char *)"2"};
     assert(!session_parse_args(8, duplicate_retries, &options));
+    char *zero_retries[] = {(char *)"waddle-session", (char *)"--supervised",
+        (char *)"--device", (char *)"private-test", (char *)"--max-retries", (char *)"0"};
+    assert(session_parse_args(6, zero_retries, &options) && options.max_retries == 0);
+    char *too_many_retries[] = {(char *)"waddle-session", (char *)"--supervised",
+        (char *)"--device", (char *)"private-test", (char *)"--max-retries", (char *)"1001"};
+    assert(!session_parse_args(6, too_many_retries, &options));
     char *bad_retries[] = {(char *)"waddle-session", (char *)"--supervised",
         (char *)"--device", (char *)"private-test", (char *)"--max-retries", (char *)"x"};
     assert(!session_parse_args(6, bad_retries, &options));

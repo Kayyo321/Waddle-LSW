@@ -30,7 +30,7 @@ jobs:
           tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Cross-build the Windows executables added by the 45 percent milestone
-        run: make build/interop_window_state_adapter_native_test.exe
+        run: make build/interop_window_state_adapter_native_test.exe interop-keyboard-guest-native-cross
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: interop-45-windows
@@ -44,11 +44,11 @@ jobs:
         with:
           name: interop-45-windows
           path: build
-      - name: Execute the real Win32 window-state adapter smoke on the runner desktop
+      - name: Execute the real Win32 window-state adapter and guest input smokes on the runner desktop
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($test_name in @('interop_window_state_adapter_native_test.exe')) {
+          foreach ($test_name in @('interop_window_state_adapter_native_test.exe', 'interop_guest_input_native_test.exe')) {
             & ".\build\$test_name"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

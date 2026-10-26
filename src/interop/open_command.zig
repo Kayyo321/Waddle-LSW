@@ -6,6 +6,7 @@
 //! implementation.
 const std = @import("std");
 const open_request = @import("open_request.zig");
+const local = @import("local_session_client.zig");
 const activation_store = @import("activation_store.zig");
 const c = @cImport({
     @cInclude("daemon_device.h");
@@ -31,7 +32,7 @@ pub const NoticeAfterMs: u64 = 1500;
 /// Time to wait for an immediate reply when --wait is not given, in milliseconds.
 pub const GraceMs: i32 = 2000;
 /// Session socket file name inside the device runtime directory.
-pub const SessionSocketName = "session.sock";
+pub const SessionSocketName = local.SessionSocketName;
 /// Notice text, sent once after NoticeAfterMs when integration.notify is enabled.
 pub const StartingMessage = "Starting Windows\u{2026}";
 /// Usage line printed for every usage error.
@@ -42,13 +43,13 @@ pub const ReadError = error{ NotFound, Unreadable };
 /// Failure to canonicalize a host path.
 pub const PathError = error{ NotFound, Failed, OutOfMemory };
 /// Failure to translate a canonical host path into a guest path.
-pub const TranslateError = error{ Outside, Failed, OutOfMemory };
+pub const TranslateError = error{ Outside, Unrepresentable, Failed, OutOfMemory };
 /// Failure to connect to session.sock.
-pub const ConnectError = error{ NotFound, Refused, Failed };
+pub const ConnectError = local.ConnectError;
 /// Failure of a socket read or write.
-pub const IoError = error{ Failed, Timeout };
+pub const IoError = local.IoError;
 /// State of the device runtime directory before connecting.
-pub const DirState = enum { missing, ok, unsafe };
+pub const DirState = local.DirState;
 /// Failure to spawn waddle-session.
 pub const SpawnError = error{Failed};
 /// What waitpid(WNOHANG) reports about a waddle-session child this client started.
@@ -133,6 +134,10 @@ const Conn = struct {
     child_failure: ?ChildState = null,
     /// Set once the single extra retry after a failed child exit has been taken.
     child_retry_spent: bool = false,
+    /// True from connect until the first frame is written on this connection.
+    fresh: bool = false,
+    /// integration.notify of the device: guest errors are also sent as desktop notifications.
+    notify: bool = false,
 };
 
 /// Outcome of waiting for the reply to one frame.
@@ -143,6 +148,8 @@ const Reply = union(enum) {
     exit: u8,
     /// Connection ended at a frame boundary; the next item must reconnect.
     closed: void,
+    /// The session is not ready for this launch (LaunchResult Busy, or an unsolicited Error with request id 0).
+    busy: void,
 };
 
 /// Callback adapter state for open_request.parse.
@@ -274,8 +281,20 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
         };
         const guest = hooks.translate(hooks.ctx, a, canonical) catch |err| switch (err) {
             error.Outside => return report_outside(hooks, a, host, &device),
+            error.Unrepresentable => return report_refused(hooks, a, host, &device, "the name contains characters that cannot be represented in a Windows path"),
             error.Failed, error.OutOfMemory => return 125,
         };
+        if (reserved_component(guest)) |component| {
+            var text = Message{};
+            text.add("waddle open: '");
+            text.add(host);
+            text.add("': '");
+            text.add(component);
+            text.add("' is a reserved Windows device name");
+            hooks.message(hooks.ctx, text.slice());
+            if (device.notify) hooks.notify(hooks.ctx, text.slice());
+            return open_request.ExitNotExecutable;
+        }
         const tail = args[item.argument_first..][0..item.argument_count];
         if (item.kind == .DelegateExec) {
             delegated = .{ .guest = guest, .tail = tail };
@@ -291,41 +310,119 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, hooks: *const
 
     const token = pick_token(hooks);
     const wait = request.wait != 0;
-    var conn = Conn{};
-    if (connect_session(hooks, &device, &conn)) |code| return code;
+    var conn = Conn{ .notify = device.notify };
+    var pacing = Pacing{ .deadline = hooks.now_ms(hooks.ctx) + DeadlineMs };
     var result: u8 = 0;
-    for (sent.items, 0..) |item, position| {
+    var position: usize = 0;
+    while (position < sent.items.len) {
+        const item = sent.items[position];
         if (conn.fd < 0) {
             if (connect_session(hooks, &device, &conn)) |code| {
                 if (result == 0) result = code;
                 break;
             }
+            conn.fresh = true;
         }
+        // A connection that has not carried a frame yet may be one the session accepted and dropped
+        // while it was not ready. Losing it before any reply is retried, not reported as a failure.
+        const first_on_connection = conn.fresh;
         const frame_token: ?[]const u8 = if (position == 0) token else null;
         const request_id: u32 = @intCast(position + 1);
-        const frame = build_frame(a, item, frame_token, request_id) catch return 125;
-        hooks.write_all(hooks.ctx, conn.fd, frame) catch {
+        const frame = build_frame(a, item, frame_token, request_id) catch {
+            hooks.close(hooks.ctx, conn.fd);
+            conn.fd = -1;
+            return 125;
+        };
+        if (hooks.write_all(hooks.ctx, conn.fd, frame)) |_| {} else |_| {
+            if (first_on_connection) {
+                if (pace_retry(hooks, &conn, &pacing)) |code| {
+                    result = code;
+                    break;
+                }
+                continue;
+            }
             hooks.message(hooks.ctx, "waddle open: could not send the launch request");
             if (result == 0) result = 125;
             break;
-        };
+        }
+        conn.fresh = false;
         const reply = await_reply(hooks, a, &conn, request_id, wait) catch {
             if (result == 0) result = 125;
             break;
         };
         switch (reply) {
-            .accepted => {},
+            .accepted => position += 1,
+            .exit => |code| {
+                if (result == 0) result = code;
+                position += 1;
+            },
+            .busy => {
+                if (pace_retry(hooks, &conn, &pacing)) |code| {
+                    result = code;
+                    break;
+                }
+            },
             .closed => {
+                if (first_on_connection and wait) {
+                    if (pace_retry(hooks, &conn, &pacing)) |code| {
+                        result = code;
+                        break;
+                    }
+                    continue;
+                }
+                // A connection that closed after carrying frames keeps the earlier behaviour: with
+                // --wait the close is a failure, otherwise the next item reconnects.
+                if (wait) {
+                    if (result == 0) result = 125;
+                    break;
+                }
                 hooks.close(hooks.ctx, conn.fd);
                 conn.fd = -1;
-            },
-            .exit => |code| if (result == 0) {
-                result = code;
+                position += 1;
             },
         }
     }
     if (conn.fd >= 0) hooks.close(hooks.ctx, conn.fd);
     return result;
+}
+
+/// Retry pacing for a session that is not ready yet: the cold-start backoff (25 ms doubling to 250 ms)
+/// under the same 120 s deadline.
+const Pacing = struct { deadline: u64, backoff: u64 = BackoffMinMs };
+
+/// Drop the connection and wait one backoff before the same item is tried again.
+/// @return null to retry, or 125 after printing that the session never took the launch.
+fn pace_retry(hooks: *const Hooks, conn: *Conn, pacing: *Pacing) ?u8 {
+    if (hooks.now_ms(hooks.ctx) >= pacing.deadline) {
+        hooks.message(hooks.ctx, "waddle open: the session accepted connections but did not take the launch");
+        return 125;
+    }
+    if (conn.fd >= 0) hooks.close(hooks.ctx, conn.fd);
+    conn.fd = -1;
+    hooks.sleep_ms(hooks.ctx, pacing.backoff);
+    pacing.backoff = @min(pacing.backoff * 2, BackoffMaxMs);
+    return null;
+}
+
+/// Copy guest text for display. Control bytes (C0, DEL, and the C1 range as UTF-8 0xC2 0x80..0x9F)
+/// become '?', so no escape sequence the guest chose can reach the terminal or a notification.
+fn printable(a: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8 {
+    var out = try a.alloc(u8, text.len);
+    var length: usize = 0;
+    var index: usize = 0;
+    while (index < text.len) {
+        const byte = text[index];
+        if (byte == 0xC2 and index + 1 < text.len and text[index + 1] >= 0x80 and text[index + 1] <= 0x9F) {
+            out[length] = '?';
+            length += 1;
+            index += 2;
+            continue;
+        }
+        out[length] = if (byte < 0x20 or byte == 0x7F) '?' else byte;
+        length += 1;
+        index += 1;
+    }
+    return out[0..length];
 }
 
 fn quote(a: std.mem.Allocator, tail: []const []const u8) ?[]const u8 {
@@ -350,6 +447,40 @@ fn report_parse_error(hooks: *const Hooks, a: std.mem.Allocator, status: open_re
     hooks.message(hooks.ctx, text);
     if (code == open_request.ExitUsage) hooks.message(hooks.ctx, UsageText);
     return code;
+}
+
+/// Report a path the client refuses for a reason other than being outside the shares (exit 126).
+fn report_refused(hooks: *const Hooks, a: std.mem.Allocator, host: []const u8, device: *const Device, reason: []const u8) u8 {
+    const text = std.fmt.allocPrint(a, "waddle open: '{s}': {s}", .{ host, reason }) catch return 126;
+    hooks.message(hooks.ctx, text);
+    if (device.notify) hooks.notify(hooks.ctx, text);
+    return open_request.ExitNotExecutable;
+}
+
+/// True when name is a Windows reserved device name, with or without an extension: CON, PRN, AUX, NUL,
+/// COM1-9, LPT1-9, compared case-insensitively on the part before the first dot (so NUL.txt is reserved).
+pub fn reserved_name(name: []const u8) bool {
+    const stem = name[0 .. std.mem.indexOfScalar(u8, name, '.') orelse name.len];
+    if (stem.len == 0 or stem.len > 4) return false;
+    var upper: [4]u8 = undefined;
+    for (stem, 0..) |byte, index| upper[index] = std.ascii.toUpper(byte);
+    const text = upper[0..stem.len];
+    if (std.mem.eql(u8, text, "CON") or std.mem.eql(u8, text, "PRN") or std.mem.eql(u8, text, "AUX") or std.mem.eql(u8, text, "NUL")) return true;
+    if (stem.len == 4 and (std.mem.startsWith(u8, text, "COM") or std.mem.startsWith(u8, text, "LPT"))) {
+        return text[3] >= '1' and text[3] <= '9';
+    }
+    return false;
+}
+
+/// The first component of a guest path that is a Windows reserved device name, or null. Both separators
+/// split components; the drive prefix (for example "Z:") is never a device name.
+pub fn reserved_component(guest: []const u8) ?[]const u8 {
+    var parts = std.mem.tokenizeAny(u8, guest, "/\\");
+    while (parts.next()) |component| {
+        if (std.mem.indexOfScalar(u8, component, ':') != null) continue;
+        if (reserved_name(component)) return component;
+    }
+    return null;
 }
 
 fn report_outside(hooks: *const Hooks, a: std.mem.Allocator, host: []const u8, device: *const Device) u8 {
@@ -387,38 +518,7 @@ fn build_frame(a: std.mem.Allocator, item: Sent, token: ?[]const u8, request_id:
     return buffer[0..length];
 }
 
-/// Fixed-capacity diagnostic text built without std.fmt or allocation. Every message this client
-/// prints is at most a device name (63 bytes) plus a fixed sentence, so 256 bytes always fit.
-const Message = struct {
-    buffer: [256]u8 = undefined,
-    len: usize = 0,
-
-    fn add(self: *Message, text: []const u8) void {
-        @memcpy(self.buffer[self.len..][0..text.len], text);
-        self.len += text.len;
-    }
-
-    /// Append a decimal number (0 to 255) without leading zeros.
-    fn add_number(self: *Message, value: u8) void {
-        var digits: [3]u8 = undefined;
-        var count: usize = 0;
-        var rest = value;
-        while (true) {
-            digits[count] = '0' + rest % 10;
-            count += 1;
-            rest /= 10;
-            if (rest == 0) break;
-        }
-        while (count > 0) {
-            count -= 1;
-            self.add(digits[count..][0..1]);
-        }
-    }
-
-    fn slice(self: *const Message) []const u8 {
-        return self.buffer[0..self.len];
-    }
-};
+const Message = local.Message;
 
 /// Diagnostic for a waddle-session that ended before the socket appeared.
 fn child_failure_message(failure: ChildState) Message {
@@ -460,6 +560,10 @@ fn connect_session(hooks: *const Hooks, device: *const Device, conn: *Conn) ?u8 
             error.NotFound, error.Refused => {},
             error.Failed => {
                 hooks.message(hooks.ctx, "waddle open: could not connect to the session socket");
+                return 125;
+            },
+            error.PeerMismatch => {
+                hooks.message(hooks.ctx, "waddle open: the session socket belongs to another user; refusing to connect");
                 return 125;
             },
         }
@@ -507,6 +611,7 @@ fn connect_session(hooks: *const Hooks, device: *const Device, conn: *Conn) ?u8 
             message.add(device.name);
             message.add(") did not start");
             hooks.message(hooks.ctx, message.slice());
+            if (device.notify) hooks.notify(hooks.ctx, message.slice());
             return 125;
         }
         hooks.sleep_ms(hooks.ctx, backoff);
@@ -514,19 +619,10 @@ fn connect_session(hooks: *const Hooks, device: *const Device, conn: *Conn) ?u8 
     }
 }
 
-const ReadExact = enum { ok, eof_boundary, eof_partial, timeout, failed };
+const ReadExact = local.ReadExact;
 
 fn read_exact(hooks: *const Hooks, fd: c_int, buffer: []u8, timeout_ms: i32) ReadExact {
-    var filled: usize = 0;
-    while (filled < buffer.len) {
-        const read = hooks.poll_read(hooks.ctx, fd, buffer[filled..], timeout_ms) catch |err| switch (err) {
-            error.Timeout => return .timeout,
-            error.Failed => return .failed,
-        };
-        if (read == 0) return if (filled == 0) .eof_boundary else .eof_partial;
-        filled += read;
-    }
-    return .ok;
+    return local.read_exact(hooks.ctx, hooks.poll_read, fd, buffer, timeout_ms);
 }
 
 /// Wait for the LaunchResult for request_id. Frames for other request ids are skipped.
@@ -537,7 +633,7 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
         var header_bytes: [c.InteropHeaderBytes]u8 = undefined;
         switch (read_exact(hooks, conn.fd, &header_bytes, timeout)) {
             .ok => {},
-            .eof_boundary => return if (wait) error.Failed else Reply{ .closed = {} },
+            .eof_boundary => return Reply{ .closed = {} },
             .timeout => return Reply{ .accepted = {} },
             .eof_partial, .failed => return error.Failed,
         }
@@ -550,15 +646,19 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
             .timeout => return Reply{ .accepted = {} },
             .eof_boundary, .eof_partial, .failed => return error.Failed,
         }
+        // An Error with request id 0 is the session refusing the connection itself (it is busy).
+        if (header.type == c.InteropMsgError and header.request_id == 0) return Reply{ .busy = {} };
         if (header.request_id != request_id) continue;
         if (header.type == c.InteropMsgError) {
             var message: ?[]const u8 = null;
             var value: ?[*]const u8 = null;
             var value_length: u16 = 0;
             if (c.interop_field_get(payload.ptr, payload.len, c.InteropTagMessage, 0, &value, &value_length) == 0) {
-                message = value.?[0..value_length];
+                message = printable(a, value.?[0..value_length]) catch "message unavailable";
             }
-            hooks.message(hooks.ctx, std.fmt.allocPrint(a, "waddle open: launch refused: {s}", .{message orelse "no message"}) catch "waddle open: launch refused");
+            const text = std.fmt.allocPrint(a, "waddle open: launch refused: {s}", .{message orelse "no message"}) catch "waddle open: launch refused";
+            hooks.message(hooks.ctx, text);
+            if (conn.notify) hooks.notify(hooks.ctx, text);
             return Reply{ .exit = 1 };
         }
         if (header.type != c.InteropMsgLaunchResult) continue;
@@ -567,10 +667,14 @@ fn await_reply(hooks: *const Hooks, a: std.mem.Allocator, conn: *Conn, request_i
         // interop_payload_validate has already required a 4-byte status field.
         std.debug.assert(c.interop_field_uint(payload.ptr, payload.len, c.InteropTagStatus, 4, &status) == 0);
         if (status == 0) return Reply{ .accepted = {} };
+        if (status == c.InteropBusy) return Reply{ .busy = {} };
         var value: ?[*]const u8 = null;
         var value_length: u16 = 0;
-        const message: []const u8 = if (c.interop_field_get(payload.ptr, payload.len, c.InteropTagMessage, 0, &value, &value_length) == 0) value.?[0..value_length] else "launch failed";
-        hooks.message(hooks.ctx, std.fmt.allocPrint(a, "waddle open: {s}", .{message}) catch "waddle open: launch failed");
+        const raw: []const u8 = if (c.interop_field_get(payload.ptr, payload.len, c.InteropTagMessage, 0, &value, &value_length) == 0) value.?[0..value_length] else "launch failed";
+        const message = printable(a, raw) catch "launch failed";
+        const text = std.fmt.allocPrint(a, "waddle open: {s}", .{message}) catch "waddle open: launch failed";
+        hooks.message(hooks.ctx, text);
+        if (conn.notify) hooks.notify(hooks.ctx, text);
         return Reply{ .exit = open_request.exit_code_for_launch_status(@intCast(status)) };
     }
 }
@@ -697,9 +801,10 @@ const RealHooks = struct {
         const zpath = a.dupeZ(u8, path) catch return error.OutOfMemory;
         defer a.free(zpath);
         const mapped = c.daemon_fs_translate_path(zpath.ptr, &self.config) orelse {
-            // EXDEV: no export contains the path; EINVAL: invalid input. Both mean outside every share.
+            // EXDEV: no export contains the path. EINVAL: the name cannot be represented in a guest path
+            // (for example a backslash inside a component); that is not the same as being outside.
             const code = std.c._errno().*;
-            return if (code == c.EXDEV or code == c.EINVAL) error.Outside else if (code == c.ENOMEM) error.OutOfMemory else error.Failed;
+            return if (code == c.EXDEV) error.Outside else if (code == c.EINVAL) error.Unrepresentable else if (code == c.ENOMEM) error.OutOfMemory else error.Failed;
         };
         defer c.free(mapped);
         return a.dupe(u8, std.mem.span(mapped)) catch error.OutOfMemory;
@@ -723,49 +828,27 @@ const RealHooks = struct {
 
     fn dir_state(ctx: *anyopaque, dir: []const u8) DirState {
         _ = ctx;
-        const st = std.posix.fstatat(std.posix.AT.FDCWD, dir, std.posix.AT.SYMLINK_NOFOLLOW) catch |err| return switch (err) {
-            error.FileNotFound => .missing,
-            else => .unsafe,
-        };
-        const is_dir = (st.mode & std.posix.S.IFMT) == std.posix.S.IFDIR;
-        if (!is_dir or st.uid != std.os.linux.getuid() or (st.mode & 0o777) != 0o700) return .unsafe;
-        return .ok;
+        return local.dir_state(dir);
     }
 
     fn connect(ctx: *anyopaque, path: []const u8) ConnectError!c_int {
         _ = ctx;
-        const addr = std.net.Address.initUnix(path) catch return error.Failed;
-        const fd = std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC, 0) catch return error.Failed;
-        std.posix.connect(fd, &addr.any, addr.getOsSockLen()) catch |err| {
-            std.posix.close(fd);
-            return switch (err) {
-                error.FileNotFound => error.NotFound,
-                error.ConnectionRefused => error.Refused,
-                else => error.Failed,
-            };
-        };
-        return fd;
+        return local.connect(path);
     }
 
     fn close(ctx: *anyopaque, fd: c_int) void {
         _ = ctx;
-        std.posix.close(fd);
+        local.close(fd);
     }
 
     fn write_all(ctx: *anyopaque, fd: c_int, bytes: []const u8) IoError!void {
         _ = ctx;
-        var sent: usize = 0;
-        while (sent < bytes.len) {
-            sent += std.posix.write(fd, bytes[sent..]) catch return error.Failed;
-        }
+        return local.write_all(fd, bytes);
     }
 
     fn poll_read(ctx: *anyopaque, fd: c_int, buffer: []u8, timeout_ms: i32) IoError!usize {
         _ = ctx;
-        var fds = [_]std.posix.pollfd{.{ .fd = fd, .events = std.posix.POLL.IN, .revents = 0 }};
-        const ready = std.posix.poll(&fds, timeout_ms) catch return error.Failed;
-        if (ready == 0) return error.Timeout;
-        return std.posix.read(fd, buffer) catch error.Failed;
+        return local.poll_read(fd, buffer, timeout_ms);
     }
 
     fn spawn_session(ctx: *anyopaque, device: []const u8) SpawnError!c_int {
@@ -896,6 +979,12 @@ const Fake = struct {
     fail_write: bool = false,
     fail_realpath: bool = false,
     written: [8192]u8 = undefined,
+    /// Every translation fails as an unrepresentable name (EINVAL in production).
+    unrepresentable: bool = false,
+    /// Writes attempted; bytes beyond the written buffer are counted but not kept.
+    writes: usize = 0,
+    /// Connections (counted from 1) that end at once without a reply, as a session that accepts and drops.
+    dead_connections: usize = 0,
     written_len: usize = 0,
     spawns: usize = 0,
     spawn_fails: bool = false,
@@ -993,6 +1082,7 @@ fn fake_realpath(ctx: *anyopaque, a: std.mem.Allocator, path: []const u8) PathEr
 
 fn fake_translate(ctx: *anyopaque, a: std.mem.Allocator, path: []const u8) TranslateError![]u8 {
     const f = Fake.of(ctx);
+    if (f.unrepresentable) return error.Unrepresentable;
     if (!std.mem.startsWith(u8, path, f.share_prefix)) return error.Outside;
     const rest = path[f.share_prefix.len..];
     const guest = std.fmt.allocPrint(a, "Z:\\{s}", .{rest}) catch return error.OutOfMemory;
@@ -1038,15 +1128,18 @@ fn fake_close(ctx: *anyopaque, fd: c_int) void {
 fn fake_write(ctx: *anyopaque, fd: c_int, bytes: []const u8) IoError!void {
     _ = fd;
     const f = Fake.of(ctx);
+    f.writes += 1;
     if (f.fail_write) return error.Failed;
-    @memcpy(f.written[f.written_len..][0..bytes.len], bytes);
-    f.written_len += bytes.len;
+    const count = @min(bytes.len, f.written.len - f.written_len);
+    @memcpy(f.written[f.written_len..][0..count], bytes[0..count]);
+    f.written_len += count;
 }
 
 fn fake_poll(ctx: *anyopaque, fd: c_int, buffer: []u8, timeout_ms: i32) IoError!usize {
     _ = fd;
     _ = timeout_ms;
     const f = Fake.of(ctx);
+    if (f.connect_calls <= f.dead_connections) return 0;
     if (f.cursor == f.incoming.len) {
         if (f.end_timeout) return error.Timeout;
         return 0;
@@ -1404,8 +1497,149 @@ test "Error reply exits 1 with its message; EOF mid-reply and EOF before a resul
     const full = launch_result(&reply, 1, 0, null);
     var torn = Fake{ .incoming = full[0 .. full.len - 3], .connect_script = &.{@as(c_int, 7)} };
     try testing.expectEqual(@as(u8, 125), run_fake(&torn, &.{ "--wait", "/share/a.txt" }));
+    // A session that accepts and drops every connection is not ready: the launch is retried under
+    // the deadline, and the failure says so at the end.
     var empty = Fake{ .connect_script = &.{@as(c_int, 7)} };
     try testing.expectEqual(@as(u8, 125), run_fake(&empty, &.{ "--wait", "/share/a.txt" }));
+    try testing.expect(empty.connect_calls > 100);
+    try testing.expectEqualSlices(u8, "waddle open: the session accepted connections but did not take the launch", empty.message_at(empty.message_count - 1));
+}
+
+test "a connection that ends before any reply is retried on a new connection when --wait awaits it" {
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ok});
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{ @as(c_int, 7), @as(c_int, 8) }, .dead_connections = 1 };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+    try testing.expectEqual(@as(usize, 2), fake.connect_calls);
+    try testing.expectEqual(@as(usize, 0), fake.message_count);
+}
+
+test "a name that cannot be represented exits 126 and is not reported as outside the shares" {
+    var fake = Fake{ .unrepresentable = true, .connect_script = &.{@as(c_int, 7)}, .device = .{ .name = "dev1", .session_path = "/run/u/waddle/dev1/session.sock", .notify = true } };
+    try testing.expectEqual(open_request.ExitNotExecutable, run_fake(&fake, &.{"/share/a\\b.txt"}));
+    const text = fake.message_at(0);
+    try testing.expect(std.mem.indexOf(u8, text, "cannot be represented") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "outside") == null);
+    try testing.expectEqual(@as(usize, 0), fake.connect_calls);
+    try testing.expectEqualSlices(u8, text, fake.notify_text[0..fake.notify_len]);
+}
+
+test "Windows reserved device names are recognised with or without an extension, and only as whole components" {
+    try testing.expect(reserved_name("CON"));
+    try testing.expect(reserved_name("nul.txt"));
+    try testing.expect(reserved_name("Aux.log"));
+    try testing.expect(reserved_name("PRN"));
+    try testing.expect(reserved_name("COM1"));
+    try testing.expect(reserved_name("lpt9.dat"));
+    try testing.expect(!reserved_name("COM10"));
+    try testing.expect(!reserved_name("LPT0"));
+    try testing.expect(!reserved_name("console.txt"));
+    try testing.expect(!reserved_name("nu"));
+    try testing.expect(!reserved_name(""));
+    try testing.expectEqualSlices(u8, "aux.log", reserved_component("Z:\\dir\\aux.log").?);
+    try testing.expectEqualSlices(u8, "NUL", reserved_component("Z:/x/NUL").?);
+    try testing.expect(reserved_component("Z:\\dir\\file.txt") == null);
+}
+
+test "a reserved device name in a translated path exits 126 before any connect" {
+    var fake = Fake{ .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(open_request.ExitNotExecutable, run_fake(&fake, &.{"/share/dir/LPT9.log"}));
+    try testing.expect(std.mem.indexOf(u8, fake.message_at(0), "reserved Windows device name") != null);
+    try testing.expectEqual(@as(usize, 0), fake.connect_calls);
+}
+
+test "the cold-start deadline and a guest error are notified when integration.notify is on" {
+    var deadline = Fake{ .device = .{ .name = "dev1", .session_path = "/run/u/waddle/dev1/session.sock", .notify = true }, .connect_script = &.{error.Refused} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&deadline, &.{"/share/a.txt"}));
+    try testing.expectEqualSlices(u8, "waddle: Windows (dev1) did not start", deadline.notify_text[0..deadline.notify_len]);
+
+    var reply: [256]u8 = undefined;
+    const refused = launch_result(&reply, 1, 2, "bad path");
+    var guest = Fake{ .device = .{ .name = "dev1", .session_path = "/run/u/waddle/dev1/session.sock", .notify = true }, .incoming = refused, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 1), run_fake(&guest, &.{ "--wait", "/share/a.txt" }));
+    try testing.expectEqualSlices(u8, "waddle open: bad path", guest.notify_text[0..guest.notify_len]);
+}
+
+test "a frame of another type for this request is ignored, and the LaunchResult after it still counts" {
+    var other: [c.InteropHeaderBytes]u8 = undefined;
+    var writer: c.interop_writer_t = undefined;
+    c.interop_writer_init(&writer, &other, other.len);
+    var other_length: usize = 0;
+    codec_ok(c.interop_writer_finish(&writer, c.InteropMsgLocalStop, 1, c.InteropFromLocal, &other_length));
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ other[0..other_length], ok });
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+}
+
+test "a LaunchResult whose payload does not validate is a protocol failure (exit 125)" {
+    // A header-only frame patched to LaunchResult with a four-byte payload whose field claims eight bytes.
+    var reply: [32]u8 = undefined;
+    var writer: c.interop_writer_t = undefined;
+    c.interop_writer_init(&writer, &reply, reply.len);
+    var length: usize = 0;
+    codec_ok(c.interop_writer_finish(&writer, c.InteropMsgLocalStop, 1, c.InteropFromLocal, &length));
+    std.mem.writeInt(u16, reply[6..8], c.InteropMsgLaunchResult, .little);
+    std.mem.writeInt(u32, reply[8..12], 4, .little);
+    reply[16..20].* = .{ 1, 0, 8, 0 };
+    var fake = Fake{ .incoming = reply[0..20], .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+}
+
+test "a Busy LaunchResult is retried on a new connection, not reported as a guest failure" {
+    var busy_reply: [256]u8 = undefined;
+    var ok_reply: [256]u8 = undefined;
+    const busy = launch_result(&busy_reply, 1, c.InteropBusy, null);
+    const ok = launch_result(&ok_reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ busy, ok });
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{ @as(c_int, 7), @as(c_int, 8) } };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 2), fake.connect_calls);
+    try testing.expectEqual(@as(usize, 0), fake.message_count);
+}
+
+test "an unsolicited Error with request id 0 means busy and is retried" {
+    var busy_reply: [256]u8 = undefined;
+    var ok_reply: [256]u8 = undefined;
+    const busy = error_frame(&busy_reply, 0, 5, "busy");
+    const ok = launch_result(&ok_reply, 1, 0, null);
+    const incoming = try stream(testing.allocator, &.{ busy, ok });
+    defer testing.allocator.free(incoming);
+    var fake = Fake{ .incoming = incoming, .connect_script = &.{ @as(c_int, 7), @as(c_int, 8) } };
+    try testing.expectEqual(@as(u8, 0), run_fake(&fake, &.{"/share/a.txt"}));
+    try testing.expectEqual(@as(usize, 2), fake.connect_calls);
+}
+
+test "guest text reaches the terminal with control bytes and escape sequences replaced" {
+    var reply: [256]u8 = undefined;
+    const hostile = "\x1b[2Jcleared\x7f\xc2\x9b31m done \xc3\xa9";
+    const frame = launch_result(&reply, 1, 3, hostile);
+    var fake = Fake{ .incoming = frame, .connect_script = &.{@as(c_int, 7)} };
+    try testing.expectEqual(open_request.ExitGuestFailure, run_fake(&fake, &.{ "--wait", "/share/a.txt" }));
+    const text = fake.message_at(0);
+    for (text) |byte| try testing.expect(byte >= 0x20 and byte != 0x7f);
+    try testing.expect(std.mem.indexOf(u8, text, "cleared") != null);
+    // Ordinary UTF-8 (a two-byte sequence that is not a C1 control) passes through unchanged.
+    try testing.expect(std.mem.endsWith(u8, text, "\xc3\xa9"));
+}
+
+test "a frame that cannot be built closes its connection before the run ends" {
+    // Sweep the allocation that fails: every connection the run opened must be closed by the end.
+    var reply: [256]u8 = undefined;
+    const ok = launch_result(&reply, 1, 0, null);
+    var fail_index: usize = 0;
+    while (fail_index < 64) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        var fake = Fake{ .incoming = ok, .connect_script = &.{@as(c_int, 7)} };
+        var hooks = fake.hooks();
+        _ = run(failing.allocator(), &.{"/share/a.txt"}, &hooks);
+        try testing.expectEqual(fake.connect_calls, fake.closed);
+    }
 }
 
 test "without --wait: a timeout or end of stream at a frame boundary is a handover (0)" {
@@ -1414,7 +1648,7 @@ test "without --wait: a timeout or end of stream at a frame boundary is a handov
     var closed = Fake{ .connect_script = &.{@as(c_int, 7)} };
     try testing.expectEqual(@as(u8, 0), run_fake(&closed, &.{"/share/a.txt"}));
     var reply: [256]u8 = undefined;
-    const refused = launch_result(&reply, 1, 5, null);
+    const refused = launch_result(&reply, 1, 2, null);
     const incoming = try stream(testing.allocator, &.{refused});
     defer testing.allocator.free(incoming);
     var failed = Fake{ .incoming = incoming, .connect_script = &.{@as(c_int, 7)} };
@@ -1474,21 +1708,22 @@ fn write_script(dir: std.fs.Dir, name: []const u8, body: []const u8) !void {
 }
 
 test "production dir_state accepts only a private directory owned by this user" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.makeDir("private");
-    try tmp.dir.makeDir("public");
-    try tmp.dir.writeFile(.{ .sub_path = "plain", .data = "x" });
-    const private = try tmp_path(testing.allocator, &tmp, "private");
+    const base = try local.scratch_root(testing.allocator);
+    defer testing.allocator.free(base);
+    defer std.fs.deleteTreeAbsolute(base) catch {};
+    const private = try std.fmt.allocPrint(testing.allocator, "{s}/private", .{base});
     defer testing.allocator.free(private);
-    const public = try tmp_path(testing.allocator, &tmp, "public");
+    const public = try std.fmt.allocPrint(testing.allocator, "{s}/public", .{base});
     defer testing.allocator.free(public);
-    const plain = try tmp_path(testing.allocator, &tmp, "plain");
+    const plain = try std.fmt.allocPrint(testing.allocator, "{s}/plain", .{base});
     defer testing.allocator.free(plain);
-    const missing = try tmp_path(testing.allocator, &tmp, "missing");
+    const missing = try std.fmt.allocPrint(testing.allocator, "{s}/missing", .{base});
     defer testing.allocator.free(missing);
+    try std.fs.makeDirAbsolute(private);
+    try std.fs.makeDirAbsolute(public);
     try std.posix.fchmodat(std.posix.AT.FDCWD, private, 0o700, 0);
     try std.posix.fchmodat(std.posix.AT.FDCWD, public, 0o755, 0);
+    (try std.fs.createFileAbsolute(plain, .{})).close();
     var real = RealHooks.init(null, null);
     try testing.expectEqual(DirState.ok, RealHooks.dir_state(&real, private));
     try testing.expectEqual(DirState.unsafe, RealHooks.dir_state(&real, public));
@@ -1768,9 +2003,11 @@ test "a GUI executable with a tail sends the quoted arguments with its guest pat
 }
 
 test "a failed write exits 125 with a message; a failed reconnect exits 125 without a spawn" {
+    // A write that fails on a fresh connection means the session dropped it: retried under the deadline.
     var fake = Fake{ .connect_script = &.{@as(c_int, 7)}, .fail_write = true };
     try testing.expectEqual(@as(u8, 125), run_fake(&fake, &.{"/share/a.txt"}));
-    try testing.expectEqualSlices(u8, "waddle open: could not send the launch request", fake.message_at(0));
+    try testing.expect(fake.connect_calls > 100);
+    try testing.expectEqualSlices(u8, "waddle open: the session accepted connections but did not take the launch", fake.message_at(fake.message_count - 1));
 
     var reply: [256]u8 = undefined;
     const late = launch_result(&reply, 2, 0, null);
