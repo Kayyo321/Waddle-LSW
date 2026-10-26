@@ -568,6 +568,8 @@ int main(int argc, char **argv)
     }
     if (result == HostControlCancelled) status_code = 0;
     if (status_code != 0) fprintf(stderr, "session-local-harness: run ended with %d\n", (int)result);
+    /* IMPL_DESC 3.12.5: the stop reply follows the cleanup, after the run has released its owners. */
+    (void)session_local_handler_send_stop_reply(&local_handler);
 
     /* Closing the runtime end lets the fake daemon observe end of stream before it is joined. */
     close(daemon_pair[0]);

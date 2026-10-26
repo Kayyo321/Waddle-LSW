@@ -594,18 +594,17 @@ static void test_stop_reply_echoes_request(void)
     fake_reset();
     session_local_handler_t *handler = new_handler();
     uint64_t serial = attach_client(handler, 0);
-    Check(reply_stop_ok(handler, 0, serial, 7) == 1);
-    interop_header_t header;
-    uint8_t payload[InteropMaxPayloadBytes];
-    size_t payload_length = 0;
-    pop_reply(handler, 0, &header, payload, &payload_length);
-    Check(header.type == InteropMsgLocalStopResult && header.request_id == 7);
-    Check(interop_payload_validate(header.type, InteropFromLocal, payload, payload_length) == 0);
-    uint64_t status = 99;
-    Check(interop_field_uint(payload, payload_length, InteropTagStatus, 4, &status) == 0 && status == InteropOk);
-    detach_client(handler, 0);
-    Check(reply_stop_ok(handler, 0, serial, 8) == 0);
-    Check(handler->stats.replies_dropped == 1);
+    handler->stopping = 1;
+    handler->stop_client_index = 0;
+    handler->stop_client_serial = serial;
+    handler->stop_request_id = 7;
+    hold_stop_requester(handler);
+    Check(handler->stop_reply_pending == 1 && handler->clients[0].fd == -1);
+    /* The held descriptor is /dev/null here, so the post-cleanup send cannot succeed. */
+    Check(session_local_handler_send_stop_reply(handler) == 0);
+    Check(handler->stop_reply_pending == 0 && handler->stats.stop_deadline_expired == 1);
+    Check(session_local_handler_send_stop_reply(handler) == 0);
+    handler->stopping = 0;
     free_handler(handler);
 }
 
@@ -1165,6 +1164,24 @@ static void test_client_protocol_violations_close(void)
     remove_tree(test_runtime);
 }
 
+/* A refused connection gets one unsolicited Busy Error (request id 0), then end of stream. */
+static void expect_busy_refusal(int fd)
+{
+    uint8_t reply[64];
+    size_t received = 0;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        ssize_t got = recv(fd, reply + received, sizeof(reply) - received, 0);
+        Check(got >= 0);
+        if (got == 0) break;
+        received += (size_t)got;
+    }
+    interop_header_t header;
+    Check(received >= InteropHeaderBytes);
+    Check(interop_header_decode(reply, received, &header) == 0);
+    Check(header.type == InteropMsgError && header.request_id == 0);
+    Check(received == InteropHeaderBytes + header.length);
+}
+
 static void test_max_clients_and_flush_order(void)
 {
     fake_reset();
@@ -1180,8 +1197,7 @@ static void test_max_clients_and_flush_order(void)
     }
     Check(handler->stats.accepted == SessionLocalMaxClients);
     Check(handler->stats.refused_capacity == 1);
-    uint8_t byte;
-    Check(recv(clients[SessionLocalMaxClients], &byte, 1, 0) == 0);
+    expect_busy_refusal(clients[SessionLocalMaxClients]);
     for (uint32_t index = 0; index < SessionLocalMaxClients; ++index) Check(close(clients[index]) == 0);
     Check(close(clients[SessionLocalMaxClients]) == 0);
     session_local_handler_destroy(handler);
@@ -1202,7 +1218,6 @@ static void test_local_stop_replies_then_requests_stop(void)
     uint8_t frame[InteropMaxFrameBytes];
     size_t length = build_frame_with(frame, sizeof(frame), InteropMsgLocalStop, 21, InteropFromLocal);
     send_all(client, frame, length);
-    /* Accepted on the same cycle: the reply is flushed before the stop is returned. */
     struct pollfd fds[SessionHandlerMaxDescriptors];
     size_t count = 0;
     Check(table.poll_fds(table.context, fds, SessionHandlerMaxDescriptors, &count) == 0);
@@ -1213,6 +1228,26 @@ static void test_local_stop_replies_then_requests_stop(void)
     }
     Check(stop);
     Check(handler->stopping == 1 && handler->stats.stop_requests == 1);
+    /* IMPL_DESC 3.12.5: nothing is sent to the requester until the session has cleaned up. */
+    uint8_t byte;
+    Check(recv(client, &byte, 1, MSG_DONTWAIT) < 0 && errno == EAGAIN);
+
+    /* Input after the stop is never read, and a new launch is refused as busy. */
+    length = build_local_launch(frame, sizeof(frame), 22, InteropLaunchPath, "Z:\\late.exe", NULL, NULL, NULL);
+    send_all(other, frame, length);
+    pump_once(&table, 2100);
+    Check(fake_sends == 0);
+    Check(handler->stats.accepted == 2);
+    int late = connect_path(handler->socket_path);
+    pump_once(&table, 2200);
+    expect_busy_refusal(late);
+    Check(close(late) == 0);
+    Check(handler->stats.refused_capacity == 1);
+
+    /* Cleanup holds the requester and cancels the rest; the reply follows once the owners are released. */
+    table.on_closing(table.context, 0, FakeSender);
+    Check(handler->stop_reply_pending == 1 && handler->clients[0].fd == -1);
+    Check(session_local_handler_send_stop_reply(handler) == 1);
     interop_header_t reply;
     uint8_t payload[InteropMaxPayloadBytes];
     size_t payload_length = 0;
@@ -1221,19 +1256,7 @@ static void test_local_stop_replies_then_requests_stop(void)
     Check(interop_payload_validate(reply.type, InteropFromLocal, payload, payload_length) == 0);
     uint64_t status = 9;
     Check(interop_field_uint(payload, payload_length, InteropTagStatus, 4, &status) == 0 && status == InteropOk);
-
-    /* Input after the stop is never read, and a new launch is answered Cancelled. */
-    length = build_local_launch(frame, sizeof(frame), 22, InteropLaunchPath, "Z:\\late.exe", NULL, NULL, NULL);
-    send_all(other, frame, length);
-    pump_once(&table, 2100);
-    Check(fake_sends == 0);
-    Check(handler->stats.accepted == 2);
-    int late = connect_path(handler->socket_path);
-    pump_once(&table, 2200);
-    uint8_t byte;
-    Check(recv(late, &byte, 1, 0) == 0);
-    Check(close(late) == 0);
-    Check(handler->stats.refused_capacity == 1);
+    Check(session_local_handler_send_stop_reply(handler) == 0);
 
     Check(close(client) == 0);
     Check(close(other) == 0);
@@ -1244,29 +1267,23 @@ static void test_local_stop_replies_then_requests_stop(void)
 
 static void test_local_stop_flush_bound_and_lost_client(void)
 {
-    /* The socket flushes a small reply at once, so the bound and the lost-client rules are
-     * exercised on the stop state directly: pending bytes, a torn-down client, or a flushed reply. */
+    /* The post-cleanup send is a no-op without a held reply, and a held reply to a lost peer is
+     * not written: the descriptor is closed and the failure counted. */
     fake_reset();
     session_local_handler_t *handler = new_handler();
+    Check(session_local_handler_send_stop_reply(handler) == 0);
+    Check(session_local_handler_send_stop_reply(NULL) == 0);
     uint64_t serial = attach_client(handler, 0);
     handler->stopping = 1;
     handler->stop_client_index = 0;
     handler->stop_client_serial = serial;
-    handler->stop_deadline_ms = 5000;
-    handler->clients[0].tx_length = 10;
-    Check(stop_ready(handler, 4999) == 0);
-    Check(handler->stats.stop_deadline_expired == 0);
-    Check(stop_ready(handler, 5000) == 1);
-    Check(handler->stats.stop_deadline_expired == 1);
-    handler->clients[0].tx_offset = 10;
-    Check(stop_ready(handler, 4000) == 1);
-    Check(handler->stats.stop_deadline_expired == 1);
-    handler->clients[0].tx_length = 0;
-    handler->clients[0].tx_offset = 0;
-    detach_client(handler, 0);
+    handler->stop_request_id = 9;
     Check(stop_ready(handler, 0) == 1);
+    hold_stop_requester(handler);
+    Check(handler->stop_reply_pending == 1 && handler->clients[0].fd == -1);
+    Check(session_local_handler_send_stop_reply(handler) == 0);
+    Check(handler->stop_reply_pending == 0 && handler->stats.stop_deadline_expired == 1);
     handler->stopping = 0;
-    Check(stop_ready(handler, 99999) == 0);
     free_handler(handler);
 }
 
@@ -1331,7 +1348,7 @@ static void test_idle_limit_before_first_frame(void)
     Check(recv(idle, &byte, 1, 0) == 0);
     Check(close(idle) == 0);
 
-    /* A client that completed one frame is not idle-closed afterwards. */
+    /* A client that completed one frame is idle-closed 120 s after its last frame, with nothing pending. */
     int active = connect_path(handler->socket_path);
     pump_once(&table, 20000);
     uint8_t frame[InteropMaxFrameBytes];
@@ -1339,8 +1356,10 @@ static void test_idle_limit_before_first_frame(void)
     send_all(active, frame, length);
     pump_once(&table, 20001);
     Check(handler->clients[0].frame_seen == 1);
-    Check(table.on_tick(table.context, 900000, FakeSender) == 0);
+    Check(table.on_tick(table.context, 20001 + SessionLocalIdleAfterFrameMs - 1u, FakeSender) == 0);
     Check(handler->clients[0].fd >= 0 && handler->stats.idle_closed == 1);
+    Check(table.on_tick(table.context, 20001 + SessionLocalIdleAfterFrameMs, FakeSender) == 0);
+    Check(handler->clients[0].fd == -1 && handler->stats.idle_closed == 2);
     Check(close(active) == 0);
     session_local_handler_destroy(handler);
     free(handler);
@@ -1554,7 +1573,7 @@ static void test_accept_and_peer_fault_paths(void)
     int stopping = connect_path(handler->socket_path);
     pump_once(&table, 16);
     Check(handler->stats.refused_capacity == 1);
-    Check(recv(stopping, &byte, 1, 0) == 0);
+    expect_busy_refusal(stopping);
     Check(close(stopping) == 0);
     handler->stopping = 0;
 
@@ -1645,7 +1664,7 @@ static void test_client_io_fault_paths(void)
     /* Send: EAGAIN keeps the bytes and the writable interest; EINTR retries; EPIPE closes. */
     client = connect_path(handler->socket_path);
     pump_once(&table, 140);
-    Check(reply_stop_ok(handler, 0, handler->clients[0].serial, 72) == 1);
+    Check(reply_launch_result(handler, 0, handler->clients[0].serial, 72, InteropOk, 1, NULL, 0) == 1);
     fault_arm(FaultSend, 1, EAGAIN);
     Check(table.on_tick(table.context, 141, FakeSender) == 0);
     Check(handler->clients[0].tx_offset == 0 && handler->clients[0].tx_length > 0 && handler->clients[0].epoll_writable == 1);
@@ -1655,11 +1674,11 @@ static void test_client_io_fault_paths(void)
     uint8_t payload[InteropMaxPayloadBytes];
     size_t payload_length = 0;
     Check(recv_frame(client, &reply, payload, &payload_length) && reply.request_id == 72);
-    Check(reply_stop_ok(handler, 0, handler->clients[0].serial, 73) == 1);
+    Check(reply_launch_result(handler, 0, handler->clients[0].serial, 73, InteropOk, 1, NULL, 0) == 1);
     fault_arm(FaultSend, 1, EINTR);
     Check(table.on_tick(table.context, 143, FakeSender) == 0);
     Check(recv_frame(client, &reply, payload, &payload_length) && reply.request_id == 73);
-    Check(reply_stop_ok(handler, 0, handler->clients[0].serial, 74) == 1);
+    Check(reply_launch_result(handler, 0, handler->clients[0].serial, 74, InteropOk, 1, NULL, 0) == 1);
     fault_arm(FaultSend, 1, EPIPE);
     Check(table.on_tick(table.context, 144, FakeSender) == 0);
     Check(handler->clients[0].fd == -1 && handler->stats.closed_io == 3);
@@ -1668,7 +1687,7 @@ static void test_client_io_fault_paths(void)
     /* Interest changes that fail leave the recorded interest unchanged. */
     client = connect_path(handler->socket_path);
     pump_once(&table, 150);
-    Check(reply_stop_ok(handler, 0, handler->clients[0].serial, 75) == 1);
+    Check(reply_launch_result(handler, 0, handler->clients[0].serial, 75, InteropOk, 1, NULL, 0) == 1);
     handler->clients[0].epoll_writable = 0;
     fault_arm(FaultEpollCtl, 1, EBADF);
     update_interest(handler, 0);
@@ -1717,7 +1736,7 @@ static void test_reply_and_state_edges(void)
     handler->stop_deadline_ms = 700;
     handler->pending[0].in_use = 1;
     handler->pending[0].deadline_ms = 900;
-    Check(table.next_deadline_ms(table.context, 1) == 700);
+    Check(table.next_deadline_ms(table.context, 1) == 900);
     handler->stop_deadline_ms = 1000;
     Check(table.next_deadline_ms(table.context, 1) == 900);
     handler->stopping = 0;
@@ -1734,11 +1753,11 @@ static void test_reply_and_state_edges(void)
     Check(handler->stats.replies_dropped == 1);
     handler->clients[0].tx_offset = 3;
     handler->clients[0].tx_length = 3;
-    Check(reply_stop_ok(handler, 0, serial, 81) == 1);
+    Check(reply_launch_result(handler, 0, serial, 81, InteropOk, 1, NULL, 0) == 1);
     Check(handler->clients[0].tx_offset == 0 && handler->clients[0].tx_length > 0);
     handler->clients[0].tx_length = SessionLocalTxBytes - 4;
     handler->clients[0].tx_offset = 0;
-    Check(reply_stop_ok(handler, 0, serial, 82) == 0);
+    Check(reply_launch_result(handler, 0, serial, 82, InteropOk, 1, NULL, 0) == 0);
     Check(handler->clients[0].fd == -1 && handler->stats.closed_io == 1);
 
     /* An oversize launch message cannot be encoded; the client is closed rather than corrupted. */
@@ -1847,7 +1866,7 @@ static int build_reply_kind(session_local_handler_t *handler, int kind, uint64_t
     switch (kind) {
     case 0: return reply_launch_result(handler, 0, serial, 7, InteropOk, 1234, message, sizeof(message) - 1u);
     case 1: return reply_error(handler, 0, serial, 7, InteropErrorUnexpected, "sweep");
-    default: return reply_stop_ok(handler, 0, serial, 7);
+    default: return reply_launch_result(handler, 0, serial, 7, InteropOk, 1, NULL, 0);
     }
 }
 
@@ -1955,6 +1974,66 @@ static void test_branch_margin_edges(void)
     free_handler(handler);
 }
 
+/* A closed handler binds again for a new session; a destroyed one never does. */
+static void test_second_session_rearms_the_handler(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    table.on_closing(table.context, 0, FakeSender);
+    Check(handler->closed == 1 && handler->bound == 0);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+    Check(handler->bound == 1 && handler->closed == 0 && handler->stopping == 0);
+    int client = connect_path(handler->socket_path);
+    pump_once(&table, 200);
+    Check(handler->stats.accepted == 1);
+    Check(close(client) == 0);
+    table.on_closing(table.context, 0, FakeSender);
+    session_local_handler_destroy(handler);
+    Check(table.on_ready(table.context, 0, FakeSender) != 0 && handler->bound == 0);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
+/* A client that has sent a frame is closed after 120 s of silence, unless its launch is pending. */
+static void test_idle_limit_after_a_frame(void)
+{
+    fake_reset();
+    make_runtime();
+    session_local_handler_t *handler = open_handler("alpha", 1);
+    session_handler_t table;
+    session_local_handler_table(handler, &table);
+    Check(table.on_ready(table.context, 0, FakeSender) == 0);
+
+    attach_client(handler, 0);
+    handler->clients[0].frame_seen = 1;
+    handler->clients[0].last_frame_ms = 1000;
+    Check(table.on_tick(table.context, 1000 + SessionLocalIdleAfterFrameMs - 1u, FakeSender) == 0);
+    Check(handler->clients[0].fd >= 0);
+    Check(table.on_tick(table.context, 1000 + SessionLocalIdleAfterFrameMs, FakeSender) == 0);
+    Check(handler->clients[0].fd == -1 && handler->stats.idle_closed == 1);
+
+    /* A pending launch of the client keeps it open past the limit. */
+    uint64_t serial = attach_client(handler, 1);
+    handler->clients[1].frame_seen = 1;
+    handler->clients[1].last_frame_ms = 1000;
+    handler->pending[0].in_use = 1;
+    handler->pending[0].client_index = 1;
+    handler->pending[0].client_serial = serial;
+    handler->pending[0].deadline_ms = UINT64_MAX;
+    Check(table.on_tick(table.context, 1000 + 10u * SessionLocalIdleAfterFrameMs, FakeSender) == 0);
+    Check(handler->clients[1].fd >= 0 && handler->stats.idle_closed == 1);
+    handler->pending[0].in_use = 0;
+    client_close(handler, 1);
+    table.on_closing(table.context, 0, FakeSender);
+    session_local_handler_destroy(handler);
+    free(handler);
+    remove_tree(test_runtime);
+}
+
 int main(void)
 {
     test_init_rejects_bad_input();
@@ -1992,6 +2071,8 @@ int main(void)
     test_client_io_fault_paths();
     test_reply_and_state_edges();
     test_branch_margin_edges();
+    test_second_session_rearms_the_handler();
+    test_idle_limit_after_a_frame();
     Check(count_open_descriptors() == descriptors_before);
     printf("session_local_handler_test: passed\n");
     return 0;

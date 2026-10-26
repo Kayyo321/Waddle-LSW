@@ -79,6 +79,27 @@ interop-open-command-coverage: $(OpenCommandObjects)
 	python3 tests/av/coverage.py open_command
 
 InteropLaneTests += interop-open-request-test interop-activation-store-test interop-open-command-test
+
+# Session stop client (IMPL_DESC 3.12.5). The shared session.sock primitives are tested with it.
+SessionStopCommandObjects = build/interop_codec.o
+SessionStopCommandFlags = -Iinclude -Isrc/daemon -Isrc/common
+
+interop-session-stop-test: $(SessionStopCommandObjects)
+	$(ZIG) test src/interop/session_stop_command.zig $(SessionStopCommandObjects) $(SessionStopCommandFlags) -lc
+
+interop-session-stop-coverage: $(SessionStopCommandObjects)
+	python3 tests/av/coverage.py session_stop_command
+
+interop-session-shared-coverage: $(SessionStopCommandObjects)
+	python3 tests/av/coverage.py local_session_client
+
+# Real session handler (harness) and the fake server; the abnormal cases use the fake server.
+.PHONY: interop-session-stop-e2e-test
+interop-session-stop-e2e-test: build/waddle build/open_frame_dump build/interop_session_local_harness
+	WADDLE_TEST_SESSION_HARNESS=build/interop_session_local_harness python3 tests/integration/session_stop_e2e.py
+
+InteropLaneTests += interop-session-stop-test interop-session-stop-e2e-test
+InteropLaneCoverage += interop-session-stop-coverage interop-session-shared-coverage
 InteropLaneSanitizers += interop-open-request-sanitizers interop-activation-store-sanitizers
 InteropLaneCoverage += interop-open-request-coverage interop-activation-store-coverage interop-open-command-coverage
 

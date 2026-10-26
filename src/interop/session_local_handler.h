@@ -37,6 +37,7 @@ enum {
     SessionLocalListenBacklog = 8, /**< listen(2) backlog. */
     SessionLocalLaunchTimeoutMs = 30000, /**< Guest result deadline, from forwarding. */
     SessionLocalIdleTimeoutMs = 10000, /**< Idle limit before a client's first complete frame. */
+    SessionLocalIdleAfterFrameMs = 120000, /**< Idle limit after a complete frame, while none of that client's launches is pending. */
     SessionLocalStopFlushMs = 1000 /**< Bounded wait for the LocalStopResult flush. */
 };
 
@@ -135,6 +136,7 @@ typedef struct session_local_client_t {
     int fd; /**< Connected nonblocking descriptor, or -1 when the slot is free. */
     uint64_t serial; /**< Nonzero while occupied; never reused for a different client. */
     uint64_t accepted_ms; /**< Monotonic accept time for the first-frame idle timeout. */
+    uint64_t last_frame_ms; /**< Monotonic time of the most recent complete frame. */
     int frame_seen; /**< Nonzero after the first complete frame. */
     int epoll_writable; /**< Nonzero while EPOLLOUT is registered for pending output. */
     size_t rx_length; /**< Bytes buffered in rx. */
@@ -168,10 +170,14 @@ typedef struct session_local_handler_t {
     int socket_created; /**< Nonzero when this handler bound the socket file. */
     int bound; /**< Nonzero after a successful on_ready. */
     int stopping; /**< Nonzero after an accepted LocalStop. */
-    int closed; /**< Nonzero after on_closing has run. */
+    int closed; /**< Nonzero after on_closing has run; on_ready may bind the handler again. */
+    int destroyed; /**< Nonzero after session_local_handler_destroy; the handler never binds again. */
     uint32_t stop_client_index; /**< Client that receives the LocalStopResult. */
     uint64_t stop_client_serial; /**< Serial of that client. */
-    uint64_t stop_deadline_ms; /**< Flush bound for the stop reply. */
+    uint64_t stop_deadline_ms; /**< Unused since the post-cleanup stop reply; kept for layout stability. */
+    uint32_t stop_request_id; /**< Request id of the accepted LocalStop, echoed by the held reply. */
+    int stop_reply_pending; /**< Nonzero while the stop requester's descriptor is held for the post-cleanup reply. */
+    int stop_reply_fd; /**< Held descriptor of the stop requester; valid only while stop_reply_pending. */
     uint64_t last_now_ms; /**< Last monotonic time from any callback, used by on_frame. */
     uint64_t next_serial; /**< Next client serial; starts at one. */
     session_local_client_t clients[SessionLocalMaxClients]; /**< Client slots. */
@@ -210,6 +216,18 @@ void session_local_handler_table(session_local_handler_t *handler, session_handl
  * @thread_safety Pump thread only, after the run has returned.
  */
 void session_local_handler_destroy(session_local_handler_t *handler);
+
+/**
+ * @brief Send the LocalStopResult held for the stop requester, after the session has cleaned up.
+ * @param[in,out] handler Handler whose on_closing has run; NULL is allowed and returns 0.
+ * @return 1 when the reply (status Ok, the request id of the LocalStop) was fully written, 0 when no
+ *         reply was held or it could not be written within SessionLocalStopFlushMs (counted in
+ *         stop_deadline_expired). The held descriptor is closed in every case.
+ * @note Call only after the run has ended and session.lock and the command lock are released; this
+ *       ordering is IMPL_DESC 3.12.5. Session main calls it after session_app_run returns; the
+ *       harness calls it after interop_host_control_run returns. Not thread-safe: pump thread only.
+ */
+int session_local_handler_send_stop_reply(session_local_handler_t *handler);
 
 /**
  * @brief Copy the current counters.
