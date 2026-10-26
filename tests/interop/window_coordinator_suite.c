@@ -2034,6 +2034,136 @@ static int test_review_shutdown_and_pending_slot_retries(void) {
     return 0;
 }
 
+/**
+ * @brief Coverage (review P3 follow-up): a refused geometry request stays pending and is retried on later passes;
+ * begin_shutdown refuses NULL and a call from a foreign thread.
+ */
+static void shutdown_from_other_thread(void *argument) {
+    window_coordinator_status_t *status = (window_coordinator_status_t *)argument;
+    *status = window_coordinator_begin_shutdown(GlobalFixture.coordinator);
+}
+
+static int test_coverage_geometry_retry_and_shutdown_refusals(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_status_t status = WindowCoordinatorOk;
+    Check(window_coordinator_begin_shutdown(NULL) == WindowCoordinatorInvalidArgument);
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    add_window(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(api_double_run_on_other_thread(fp->observer, 0x7777u, shutdown_from_other_thread, &status) == 0);
+    Check(status == WindowCoordinatorWrongThread);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning);
+    /* The runtime refuses the resized geometry twice: the request stays pending and is accepted on a later pass. */
+    Faults.slot_geometry = 2u;
+    api_double_find(fp->observer, 0x1000)->facts.width = 1280u;
+    api_double_find(fp->observer, 0x1000)->facts.height = 720u;
+    api_double_hint(fp->observer, 0x800Bu, 0x1000);
+    for (uint32_t pass = 0; pass < 4u && fp->capture.resized == 0u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(fp->capture.resized == 1u && fp->capture.last_width == 1280u);
+    retire_one_window(fp, 0x1000);
+    fixture_close(fp);
+    return 0;
+}
+
+/**
+ * @brief Coverage: a host release the slot runtime refuses is counted and leaves the pin in place; a refused observe
+ * during an Update's reducer resync is counted as a reducer failure; a reconnect whose native leave fails leaves the
+ * adapter record, so teardown is refused until the adapter releases it.
+ */
+static int test_coverage_refused_release_resync_and_reconnect_leftover(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_stats_t stats;
+    api_double_window_t *record;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgFrameReady, 0x1000, 1) >= 1u);
+    /* The slot runtime refuses the release: the pin stays and the release is counted as ignored. */
+    Faults.slot_release = 1u;
+    release_window_frames(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.releases_ignored >= 1u);
+    /* The next release goes through. */
+    release_window_frames(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    /* An Update whose reducer resynchronization cannot observe the window counts a reducer failure. */
+    record = api_double_find(fp->observer, 0x1000);
+    api_double_set_text(record->facts.title, InteropWindowGraphMaxTitleBytes, &record->facts.title_length, "again");
+    api_double_hint(fp->observer, 0x800Cu, 0x1000);
+    Faults.adapter_observe = 1u;
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_get_stats(fp->coordinator, &stats) == WindowCoordinatorOk);
+    Check(stats.reducer_failures >= 1u);
+    Faults.adapter_observe = 0u;
+    retire_one_window(fp, 0x1000);
+    fixture_close(fp);
+
+    /* A fullscreen window whose native leave is refused during a reconnect keeps its adapter record. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x2000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    {
+        uint8_t frame[WireFrameBytes];
+        size_t length = 0;
+        Check(build_host(InteropMsgWindowConfigure, frame, sizeof(frame), &length, 0x2000, 1, 0, 0, 0, 1, WaddleWindowStateFullscreen) == 0);
+        Check(wire_push_host(&fp->wire, frame, length) == 0);
+    }
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+    wsa_double_arm(&fp->adapter, WsaDoubleSetStyle, 0, 1);
+    wsa_double_arm(&fp->adapter, WsaDoubleSetWindowPos, 0, 1);
+    wsa_double_arm(&fp->adapter, WsaDoubleSetPlacement, 0, 1);
+    wsa_double_arm(&fp->adapter, WsaDoubleShowWindow, 0, 1);
+    fp->wire.disconnected = 0;
+    Check(window_coordinator_reconnect(fp->coordinator, CoordEpoch + 3u, 1u) == WindowCoordinatorOk);
+    {
+        window_coordinator_t *coordinator = fp->coordinator;
+        Check(window_coordinator_destroy(&coordinator, 1u) == WindowCoordinatorBusy);
+        Check(coordinator != NULL);
+    }
+    for (uint32_t entry = 0; entry < WsaDoubleEntryCount; ++entry) {
+        fp->adapter.fail_forever[entry] = 0u;
+        fp->adapter.fail_at[entry] = 0xFFFFFFFFu;
+    }
+    fixture_close(fp);
+    return 0;
+}
+
+/**
+ * @brief Coverage: an Update staged while the coordinator is Lost is consumed without a frame, and an Announce
+ * staged after a shutdown has begun is consumed without admission.
+ */
+static int test_coverage_lost_update_and_shutdown_announce(void) {
+    fixture_t *fp = &GlobalFixture;
+    api_double_window_t *record;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+    record = api_double_find(fp->observer, 0x1000);
+    api_double_set_text(record->facts.title, InteropWindowGraphMaxTitleBytes, &record->facts.title_length, "lost");
+    api_double_hint(fp->observer, 0x800Cu, 0x1000);
+    advance_clock(fp, 300u);
+    (void)tick(fp);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateLost);
+    fixture_close(fp);
+
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Check(window_coordinator_begin_shutdown(fp->coordinator) == WindowCoordinatorOk);
+    add_window(fp, 0x2000);
+    api_double_hint(fp->observer, 0x8000u, 0x2000);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgWindowAnnounce, 0x2000, 1) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2487,6 +2617,9 @@ int main(void) {
         {"review: update resyncs the reducer", test_review_update_resyncs_reducer},
         {"review: parent waits for its child", test_review_parent_waits_for_child},
         {"review: shutdown and pending slot retries", test_review_shutdown_and_pending_slot_retries},
+        {"coverage: geometry retry and shutdown refusals", test_coverage_geometry_retry_and_shutdown_refusals},
+        {"coverage: refused release, resync and reconnect leftover", test_coverage_refused_release_resync_and_reconnect_leftover},
+        {"coverage: lost update and shutdown announce", test_coverage_lost_update_and_shutdown_announce},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},

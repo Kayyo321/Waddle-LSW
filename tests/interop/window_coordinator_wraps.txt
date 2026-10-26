@@ -31,3 +31,4 @@ waddle_window_state_complete
 interop_writer_finish
 calloc
 window_observer_drain_protected_destroys
+waddle_slot_runtime_request_geometry

@@ -62,6 +62,7 @@ typedef struct coordinator_faults_t {
     uint32_t writer_finish;
     uint32_t reducer_unsynchronized;
     uint32_t observer_drain;
+    uint32_t slot_geometry;
 } coordinator_faults_t;
 
 /** @brief The one fault plan of the suite. fixture_open clears it. */
@@ -356,6 +357,16 @@ extern window_observer_status_t __real_window_observer_drain_protected_destroys(
 window_observer_status_t __wrap_window_observer_drain_protected_destroys(window_observer_t *observer) {
     if (fault_take(&Faults.observer_drain)) return WindowObserverStatusGraphQueueFull;
     return __real_window_observer_drain_protected_destroys(observer);
+}
+
+extern waddle_slot_status_t __real_waddle_slot_runtime_request_geometry(waddle_slot_runtime_handle_t *handle,
+                                                                        uint64_t session_epoch, uint64_t window,
+                                                                        uint64_t generation, uint32_t width, uint32_t height);
+waddle_slot_status_t __wrap_waddle_slot_runtime_request_geometry(waddle_slot_runtime_handle_t *handle, uint64_t session_epoch,
+                                                                 uint64_t window, uint64_t generation, uint32_t width,
+                                                                 uint32_t height) {
+    if (fault_take(&Faults.slot_geometry)) return WaddleSlotBusy;
+    return __real_waddle_slot_runtime_request_geometry(handle, session_epoch, window, generation, width, height);
 }
 
 #endif
