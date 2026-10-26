@@ -1973,6 +1973,67 @@ static int test_review_parent_waits_for_child(void) {
     return 0;
 }
 
+/**
+ * @brief The paths the review changes add: a refused invalidation during shutdown is retried on later passes; a
+ * pending heap-exhausted window keeps waiting while the heap stays full and its capture start may be refused.
+ */
+static int test_review_shutdown_and_pending_slot_retries(void) {
+    fixture_t *fp = &GlobalFixture;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    /* Shutdown with the graph refusing its invalidation: the request stays pending and is retried. */
+    admit_window_now(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Faults.graph_invalidate = 1u;
+    Check(window_coordinator_begin_shutdown(fp->coordinator) == WindowCoordinatorOk);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_entry_count(fp->coordinator) == 1u);
+    release_window_frames(fp, 0x1000);
+    for (uint32_t pass = 0; pass < 4u && window_coordinator_entry_count(fp->coordinator) != 0u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+        release_window_frames(fp, 0x1000);
+    }
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    Check(window_coordinator_destroy(&fp->coordinator, 1u) == WindowCoordinatorOk);
+    Check(fp->coordinator == NULL);
+    fixture_close(fp);
+
+    /* A window announced while the heap is full keeps waiting; each refusal of the retry is harmless. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.slot_admit_heap = 2u;
+    admit_window_now(fp, 0x2000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgWindowAnnounce, 0x2000, 1) == 1u);
+    Check(fp->capture.started == 0u);
+    /* The retry is refused by the heap again, then succeeds: the capture starts. */
+    for (uint32_t pass = 0; pass < 3u && fp->capture.started == 0u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(fp->capture.started == 1u);
+    /* A window waiting for the heap whose capture start is refused releases its slots and keeps waiting. */
+    Faults.slot_admit_heap = 1u;
+    admit_window_now(fp, 0x3000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    fp->capture.start_failure = 1u;
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning);
+    retire_one_window(fp, 0x2000);
+    retire_one_window(fp, 0x3000);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+
+    /* Shutdown from Faulted is refused; a stale generation check is exercised by the same gate. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Faults.slot_writer = 1u;
+    admit_window_now(fp, 0x4000);
+    Check(tick(fp) == WindowCoordinatorFaulted);
+    Check(window_coordinator_begin_shutdown(fp->coordinator) == WindowCoordinatorBadState);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2425,6 +2486,7 @@ int main(void) {
         {"review: HWND reuse while an Announce is held", test_review_hwnd_reuse_while_announce_held},
         {"review: update resyncs the reducer", test_review_update_resyncs_reducer},
         {"review: parent waits for its child", test_review_parent_waits_for_child},
+        {"review: shutdown and pending slot retries", test_review_shutdown_and_pending_slot_retries},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},
