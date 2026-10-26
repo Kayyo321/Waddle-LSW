@@ -389,3 +389,35 @@ Run from the worktree root with `-j4` at most.
 4. The epoll descriptor (section 9) is the only descriptor reported by `poll_fds`.
 5. Callback failures return `SessionLocalCallbackFailure` (2). The graceful stop value 1 is
    reserved by `session_handler.h`; a static assertion keeps the two distinct.
+
+## 19. Integration (tranche 3)
+
+Composition. The handler is registered by the builtin registry (`session_handlers_builtin.c`) in the supervised
+binary (`waddle-session --device NAME`, the default mode). Open decision 18.1 is resolved as follows:
+
+- The runtime builds `interop_host_feature_ops_t` from `session_handler_t` (session_app). The test-only adapter
+  and its `pthread_kill` stand-in are removed; the harness drives the real `waddle_session_main`.
+- `lock_held_proof` is set to 1 only at on_ready, which runs after admission has acquired `session.lock`. The
+  owner stays alive until the handler's on_closing has run, because the runtime releases owners only after every
+  on_closing. The handler is initialised with the proof already set, so its stale-socket decision is correct.
+- A graceful stop (SessionHandlerRequestStop from LocalStop) ends the run as HostControlCancelled, which the
+  supervised command reports as exit 0 after the owners are released.
+
+Directory. The handler's runtime directory is `$XDG_RUNTIME_DIR`. The supervised command refuses to start unless
+the daemon socket is `<runtime>/waddle/<device>/daemon.sock`, the layout the client (`waddle open`) uses to derive
+session.sock. session.sock is `<runtime>/waddle/<device>/session.sock`.
+
+Pending on the launch lane (not implemented here): LocalStopResult is still queued to the client before drain.
+IMPL 3.12.5 requires the reply after drain and lock release. session_main will call
+`session_local_handler_send_stop_reply()` once the launch lane lands it, after `session_app_run` returns and
+the owners are released. Until then the reply is sent before the drain begins, as section 10 describes.
+
+Re-arming. The supervisor reuses one handler table across attempts. The builtin wrapper re-initialises the handler
+on each Ready, and the harness case `two_consecutive_sessions` runs two guest sessions in a row through the real
+command path.
+
+Verification (harness and e2e). `tests/integration/open_e2e.py` in harness mode runs 15 cases: the 12 original ones,
+plus `local_stop` (LocalStop reply, exit 0, socket removed), `reconnect_after_guest_drop` (the first guest drops after
+HelloAck, the supervisor reconnects, and a later open is served), and `two_consecutive_sessions` (each of two guest
+sessions serves one open).
+

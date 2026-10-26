@@ -33,8 +33,10 @@ ObjectPaths = [
     Root / "build/interop_control_peer_abi.o",
     Root / "build/interop_codec.o",
     Root / "build/interop_layout_abi.o",
+    Root / "build/interop_activation_store.o",
 ]
 Sources = [
+    Root / "src/interop/session_local_handler.c",
     Root / "src/interop/session_app.c",
     Root / "src/interop/session_supervisor.c",
     Root / "src/interop/session_handlers_builtin.c",

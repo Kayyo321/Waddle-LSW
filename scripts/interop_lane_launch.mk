@@ -135,8 +135,11 @@ InteropLaneTests += interop-session-local-test
 build/session_local_handler.o: src/interop/session_local_handler.c src/interop/session_local_handler.h | build
 	$(CC) $(SessionLocalCFlags) -c $< -o $@
 
-build/interop_session_local_harness: tests/interop/session_local_harness.c build/session_local_handler.o build/interop_activation_store.o $(InteropHostControlSources) $(InteropHostControlObjects) | build
-	$(CC) $(SessionLocalCFlags) -Isubmodules/looking_glass/module -pthread tests/interop/session_local_harness.c build/session_local_handler.o build/interop_activation_store.o $(InteropHostControlSources) $(InteropHostControlObjects) -Wl,--wrap=socket -Wl,--wrap=connect $(LDFLAGS) -o $@
+# The harness is the real supervised command (waddle_session_main, compiled with WaddleSessionNoMain)
+# plus a fake daemon on the real socket path and a fake guest behind the VSOCK wrappers.
+SessionHarnessSources = src/interop/session_main.c src/interop/session_app.c src/interop/session_supervisor.c src/interop/session_handlers_builtin.c src/interop/session_local_handler.c
+build/interop_session_local_harness: tests/interop/session_local_harness.c $(SessionHarnessSources) build/interop_activation_store.o $(InteropHostControlSources) $(InteropHostControlObjects) | build
+	$(CC) $(SessionLocalCFlags) -DWaddleSessionNoMain '-DWaddleSessionAgentVersion="1.2.3"' -Isubmodules/looking_glass/module -pthread tests/interop/session_local_harness.c $(SessionHarnessSources) build/interop_activation_store.o $(InteropHostControlSources) $(InteropHostControlObjects) -Wl,--wrap=socket -Wl,--wrap=connect $(LDFLAGS) -o $@
 
 # The built `waddle open` against the real session command handler (harness mode of open_e2e.py).
 # Cases that need a deliberately misbehaving server stay in interop-open-e2e-test (fake server).

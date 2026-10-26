@@ -22,7 +22,9 @@ import json
 import os
 import shlex
 import shutil
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -173,15 +175,19 @@ class HarnessServer:
     stop, and checks that it exited cleanly.
     """
 
-    def __init__(self, lab, scenario):
+    def __init__(self, lab, scenario, drop_first=False, drop_after_launch=False):
         self.record = lab.root / ("harness-%d.jsonl" % time.monotonic_ns())
         self.ready = Path(str(self.record) + ".ready")
+        self.connections_file = Path(str(self.record) + ".connections")
+        extra = ["--drop-first-guest"] if drop_first else []
+        if drop_after_launch:
+            extra = ["--drop-first-after-launch"]
         # The harness takes its runtime and state directories from the lab environment, the same
         # ones the client uses. Inheriting the developer's XDG_RUNTIME_DIR would share session.lock
         # with other runs and make admission fail with Busy.
         self.process = subprocess.Popen(
             [str(HARNESS), "--runtime-dir", str(lab.runtime), "--device", "alpha",
-             "--reply", scenario.get("reply", "ok"), "--record", str(self.record)],
+             "--reply", scenario.get("reply", "ok"), "--record", str(self.record), *extra],
             env=lab.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         deadline = time.monotonic() + 15.0
         while not self.ready.exists():
@@ -190,6 +196,19 @@ class HarnessServer:
             if time.monotonic() > deadline:
                 self.process.kill()
                 raise AssertionError("harness did not bind the socket")
+            time.sleep(0.01)
+
+    def connection_count(self):
+        if not self.connections_file.exists():
+            return 0
+        return len(self.connections_file.read_text().splitlines())
+
+    def wait_for_connections(self, count, timeout=20.0):
+        deadline = time.monotonic() + timeout
+        while self.connection_count() < count:
+            if self.process.poll() is not None:
+                raise AssertionError(("harness exited early", self.process.stdout.read()))
+            check(time.monotonic() < deadline, ("connections", self.connection_count(), count))
             time.sleep(0.01)
 
     def launches(self):
@@ -508,6 +527,88 @@ def codec_cross_check(lab):  # noqa: ARG001 - no device state needed
           error)
 
 
+FRAME_HEADER_BYTES = 16
+
+
+def read_exact(conn, count):
+    data = b""
+    while len(data) < count:
+        chunk = conn.recv(count - len(data))
+        check(chunk, "session.sock closed before a complete reply")
+        data += chunk
+    return data
+
+
+def local_stop(lab):
+    """LocalStop: the reply echoes the request, the run ends with status 0, and session.sock is removed."""
+    server = HarnessServer(lab, {"reply": "ok"})
+    stop = fake.encode_with_codec(str(DUMP), "stop", "7")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(15)
+        client.connect(str(lab.session_socket))
+        client.sendall(stop)
+        header = read_exact(client, FRAME_HEADER_BYTES)
+        length = struct.unpack_from("<I", header, 8)[0]
+        reply_type = struct.unpack_from("<H", header, 6)[0]
+        request_id = struct.unpack_from("<I", header, 12)[0]
+        read_exact(client, length)
+    check(reply_type == 0x7F02 and request_id == 7, ("LocalStopResult", hex(reply_type), request_id))
+    try:
+        status = server.process.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        server.process.kill()
+        raise AssertionError("harness kept running after LocalStop")
+    check(status == 0, ("LocalStop exit", status, server.process.stdout.read()))
+    check(not lab.session_socket.exists(), "LocalStop removes session.sock")
+
+
+def reconnect_after_guest_drop(lab):
+    """The guest drops the first connection after HelloAck: the supervisor reconnects and serves the open."""
+    server = HarnessServer(lab, {"reply": "ok"}, drop_first=True)
+    try:
+        server.wait_for_connections(2)
+        target = lab.make_file("after-drop.txt")
+        deadline = time.monotonic() + 20.0
+        result = None
+        while time.monotonic() < deadline:
+            # The launch socket is torn down with the dropped attempt and re-bound by the next one.
+            result = lab.run("open", "--wait", str(target))
+            if result.returncode == 0:
+                break
+            time.sleep(0.2)
+        check(result is not None and result.returncode == 0, ("open after reconnect", result))
+        launches = server.launches()
+        check(len(launches) == 1, ("one launch after reconnect", launches))
+        check(server.connection_count() >= 2, "a second VSOCK attempt was admitted")
+    finally:
+        server.close()
+
+
+def two_consecutive_sessions(lab):
+    """Two guest sessions in a row: the first serves one open and drops; the second serves its own open."""
+    server = HarnessServer(lab, {"reply": "ok"}, drop_after_launch=True)
+    try:
+        first = lab.make_file("session-one.txt")
+        result = lab.run("open", "--wait", str(first))
+        check(result.returncode == 0, ("first session open", result.returncode, result.stderr))
+        server.wait_for_connections(2)
+        second = lab.make_file("session-two.txt")
+        deadline = time.monotonic() + 20.0
+        result = None
+        while time.monotonic() < deadline:
+            # The launch socket is re-bound by the second attempt; retry until it accepts.
+            result = lab.run("open", "--wait", str(second))
+            if result.returncode == 0:
+                break
+            time.sleep(0.2)
+        check(result is not None and result.returncode == 0, ("second session open", result))
+        launches = server.launches()
+        check(len(launches) == 2, ("one launch per consecutive session", launches))
+        check(server.connection_count() >= 2, "the second session used a second VSOCK connection")
+    finally:
+        server.close()
+
+
 def main():
     cases = [codec_cross_check, warm_path, statuses, error_and_eof, grace_handover, multiple_items,
              outside_share, usage_errors, wrong_mode_directory, cold_path, cold_path_without_notice,
@@ -516,6 +617,7 @@ def main():
         cases.append(cold_path_deadline)
     if HARNESS is not None:
         cases = [case for case in cases if case.__name__ not in FAKE_ONLY_CASES]
+        cases += [local_stop, reconnect_after_guest_drop, two_consecutive_sessions]
     with tempfile.TemporaryDirectory(prefix="waddle-open-e2e-") as directory:
         lab = Lab(os.path.realpath(directory))
         for case in cases:
