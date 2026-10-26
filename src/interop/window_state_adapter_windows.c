@@ -27,6 +27,7 @@ enum {
     WsaShowMaximized = 3,
     WsaSwpNoSize = 0x0001,
     WsaSwpNoMove = 0x0002,
+    WsaDwmwaExtendedFrameBounds = 9,
     WsaSwpNoZOrder = 0x0004,
     WsaSwpNoActivate = 0x0010,
     WsaSwpFrameChanged = 0x0020,
@@ -96,6 +97,7 @@ static int api_complete(const window_state_native_api_t *api) {
     if (api->post_message == NULL) return 0;
     if (api->current_thread_id == NULL) return 0;
     if (api->last_error == NULL) return 0;
+    if (api->extended_frame_bounds == NULL) return 0;
     return 1;
 }
 
@@ -124,12 +126,22 @@ static void leave(window_state_adapter_t *adapter) {
     adapter->busy = 0;
 }
 
-/** @brief Finds the admitted entry for a pair, or NULL. */
+/**
+ * @brief True when a generation argument is usable: nonzero and within the 32-bit generation of the entry.
+ *
+ * The graph generation is 64 bits, the reducer's is 32 bits. A value above UINT32_MAX is refused, never
+ * truncated, so 2^32 + 1 cannot match an admitted generation 1.
+ */
+static int generation_is_valid(uint64_t generation) {
+    return generation != 0 && generation <= UINT32_MAX;
+}
+
+/** @brief Finds the admitted entry for a pair, or NULL. The generation is compared at full width. */
 static window_state_adapter_entry_t *find_pair(window_state_adapter_t *adapter, uint64_t window_id,
-                                               uint32_t generation) {
+                                               uint64_t generation) {
     for (uint32_t index = 0; index < WaddleWindowStateAdapterMaxWindows; ++index) {
         window_state_adapter_entry_t *entry = &adapter->entries[index];
-        if (entry->in_use != 0 && entry->window_id == window_id && entry->generation == generation) {
+        if (entry->in_use != 0 && entry->window_id == window_id && (uint64_t)entry->generation == generation) {
             return entry;
         }
     }
@@ -150,10 +162,10 @@ static void drop_entry(window_state_adapter_entry_t *entry) {
     memset(entry, 0, sizeof(*entry));
 }
 
-/** @brief True when any entry holds a saved fullscreen state. */
-static int any_fullscreen(const window_state_adapter_t *adapter) {
+/** @brief True when any entry is admitted, whether or not it holds a saved fullscreen state. */
+static int any_admitted(const window_state_adapter_t *adapter) {
     for (uint32_t index = 0; index < WaddleWindowStateAdapterMaxWindows; ++index) {
-        if (adapter->entries[index].in_use != 0 && adapter->entries[index].fullscreen != 0) return 1;
+        if (adapter->entries[index].in_use != 0) return 1;
     }
     return 0;
 }
@@ -264,9 +276,14 @@ static window_state_adapter_status_t leave_fullscreen(window_state_adapter_t *ad
     }
     if (!adapter->api.is_iconic(context, entry->window, &iconic)) return native_fail(adapter);
     if (!adapter->api.is_zoomed(context, entry->window, &zoomed)) return native_fail(adapter);
-    placement = entry->saved_placement;
-    placement.show_command = iconic != 0 ? WsaShowMinimized : (zoomed != 0 ? WsaShowMaximized : WsaShowNormal);
-    if (!adapter->api.set_placement(context, entry->window, &placement)) return native_fail(adapter);
+    /* A normal window's rcNormalPosition is the rectangle SetWindowPos just applied, so the placement is written
+     * only for a minimized or maximized window, the one case where it is the only call that can. SetWindowPlacement
+     * activates the window (section 11), so it is avoided on the normal path. */
+    if (iconic != 0 || zoomed != 0) {
+        placement = entry->saved_placement;
+        placement.show_command = iconic != 0 ? WsaShowMinimized : WsaShowMaximized;
+        if (!adapter->api.set_placement(context, entry->window, &placement)) return native_fail(adapter);
+    }
     entry->fullscreen = 0;
     return WindowStateAdapterOk;
 }
@@ -274,8 +291,16 @@ static window_state_adapter_status_t leave_fullscreen(window_state_adapter_t *ad
 /**
  * @brief Activate: SetForegroundWindow, with the AttachThreadInput fallback when it fails.
  *
- * The fallback attaches this thread to the foreground window's thread, retries the foreground and
- * active calls, and always detaches when it attached. The first failing call is reported.
+ * The fallback attaches this thread to the foreground window's thread, retries SetForegroundWindow and
+ * calls SetActiveWindow, and always detaches when it attached. Success is decided by the foreground
+ * window itself, not by the return values of the fallback calls:
+ * - SetActiveWindow returns the previously active window, which is NULL both on failure and when no
+ *   window was active. Its result is therefore not used.
+ * - The retry of SetForegroundWindow may fail while the window still becomes the foreground window, so
+ *   its failure is kept only as the reported error when the foreground check fails too.
+ * A failed detach is reported first, because the thread then stays attached. Otherwise the result is Ok
+ * exactly when GetForegroundWindow() equals the window. When it does not, the result is NativeFailure with
+ * the error of the retry, or with the error of the foreground query when the retry succeeded.
  */
 static window_state_adapter_status_t activate(window_state_adapter_t *adapter,
                                               window_state_adapter_entry_t *entry) {
@@ -285,8 +310,9 @@ static window_state_adapter_status_t activate(window_state_adapter_t *adapter,
     uint32_t process_id = 0;
     uint32_t foreground_thread = 0;
     uint32_t self_thread;
+    uint32_t focus_error = 0;
     int attached = 0;
-    int failed = 0;
+    int focus_failed = 0;
 
     status = check_identity(adapter, entry);
     if (status != WindowStateAdapterOk) return status;
@@ -303,34 +329,55 @@ static window_state_adapter_status_t activate(window_state_adapter_t *adapter,
         attached = 1;
     }
     if (!adapter->api.set_foreground_window(context, entry->window)) {
-        status = native_fail(adapter);
-        failed = 1;
+        focus_failed = 1;
+        focus_error = adapter->api.last_error(context);
     }
-    if (!adapter->api.set_active_window(context, entry->window) && failed == 0) {
-        status = native_fail(adapter);
-        failed = 1;
+    (void)adapter->api.set_active_window(context, entry->window);
+    if (attached != 0 && !adapter->api.attach_thread_input(context, self_thread, foreground_thread, 0)) {
+        return native_fail(adapter);
     }
-    if (attached != 0 && !adapter->api.attach_thread_input(context, self_thread, foreground_thread, 0) && failed == 0) {
-        status = native_fail(adapter);
-        failed = 1;
+    if (adapter->api.foreground_window(context) == entry->window) return WindowStateAdapterOk;
+    if (focus_failed != 0) {
+        adapter->last_error = focus_error;
+        return WindowStateAdapterNativeFailure;
     }
-    return failed != 0 ? status : WindowStateAdapterOk;
+    return native_fail(adapter);
 }
 
-/** @brief SetGeometry: caller-prepared rectangle, no activation and no z-order change. */
+/**
+ * @brief SetGeometry: the requested size applied to the visible frame, at the window's current origin.
+ *
+ * The host sends x and y as zero, so the origin is not part of the request: the call carries SWP_NOMOVE
+ * and the window keeps its position. The size is the visible frame size. GetWindowRect includes the
+ * invisible resize border that DWM does not draw, so the outer size is the request plus the difference
+ * between the two rectangles, as in av_windows.c (the border adjustment there). The adjusted extent
+ * must lie in 1..WaddleWindowStateAdapterMaxExtent, or the result is InvalidGeometry after the two
+ * queries. Activation and z-order are unchanged (SWP_NOZORDER and SWP_NOACTIVATE).
+ */
 static window_state_adapter_status_t set_geometry(window_state_adapter_t *adapter,
                                                   window_state_adapter_entry_t *entry,
                                                   const waddle_window_state_action_t *action) {
     window_state_adapter_status_t status;
+    window_state_rect_t outer;
+    window_state_rect_t visible;
+    int64_t width;
+    int64_t height;
     if (action->width == 0 || action->height == 0 || action->width > WaddleWindowStateAdapterMaxExtent ||
         action->height > WaddleWindowStateAdapterMaxExtent) {
         return WindowStateAdapterInvalidGeometry;
     }
     status = check_identity(adapter, entry);
     if (status != WindowStateAdapterOk) return status;
-    if (!adapter->api.set_window_pos(adapter->context, entry->window, action->x, action->y,
-                                     (int32_t)action->width, (int32_t)action->height,
-                                     WsaSwpNoZOrder | WsaSwpNoActivate)) {
+    if (!adapter->api.get_rect(adapter->context, entry->window, &outer)) return native_fail(adapter);
+    if (!adapter->api.extended_frame_bounds(adapter->context, entry->window, &visible)) return native_fail(adapter);
+    width = (int64_t)action->width + ((int64_t)outer.right - outer.left) - ((int64_t)visible.right - visible.left);
+    height = (int64_t)action->height + ((int64_t)outer.bottom - outer.top) - ((int64_t)visible.bottom - visible.top);
+    if (width <= 0 || height <= 0 || width > WaddleWindowStateAdapterMaxExtent ||
+        height > WaddleWindowStateAdapterMaxExtent) {
+        return WindowStateAdapterInvalidGeometry;
+    }
+    if (!adapter->api.set_window_pos(adapter->context, entry->window, 0, 0, (int32_t)width, (int32_t)height,
+                                     WsaSwpNoMove | WsaSwpNoZOrder | WsaSwpNoActivate)) {
         return native_fail(adapter);
     }
     return WindowStateAdapterOk;
@@ -400,19 +447,21 @@ window_state_adapter_status_t window_state_adapter_destroy(window_state_adapter_
     if (adapter == NULL) return WindowStateAdapterOk;
     if (adapter->api.current_thread_id(adapter->context) != adapter->owner_thread) return WindowStateAdapterWrongThread;
     if (adapter->busy != 0) return WindowStateAdapterReentrant;
-    if (any_fullscreen(adapter)) return WindowStateAdapterBusy;
+    if (any_admitted(adapter)) return WindowStateAdapterBusy;
     free(adapter);
     *adapter_slot = NULL;
     return WindowStateAdapterOk;
 }
 
 window_state_adapter_status_t window_state_adapter_admit(window_state_adapter_t *adapter, uintptr_t window,
-                                                         uint64_t window_id, uint32_t generation) {
+                                                         uint64_t window_id, uint64_t generation) {
     window_state_adapter_status_t status;
     window_state_adapter_entry_t *slot = NULL;
     uint32_t process_id = 0;
     uint32_t thread_id = 0;
-    if (adapter == NULL || window == 0 || window_id == 0 || generation == 0) return WindowStateAdapterInvalidArgument;
+    if (adapter == NULL || window == 0 || window_id == 0 || !generation_is_valid(generation)) {
+        return WindowStateAdapterInvalidArgument;
+    }
     status = enter(adapter);
     if (status != WindowStateAdapterOk) return status;
 
@@ -432,7 +481,7 @@ window_state_adapter_status_t window_state_adapter_admit(window_state_adapter_t 
             memset(slot, 0, sizeof(*slot));
             slot->in_use = 1;
             slot->window_id = window_id;
-            slot->generation = generation;
+            slot->generation = (uint32_t)generation;
             slot->window = window;
             slot->process_id = process_id;
             slot->thread_id = thread_id;
@@ -444,10 +493,10 @@ window_state_adapter_status_t window_state_adapter_admit(window_state_adapter_t 
 }
 
 window_state_adapter_status_t window_state_adapter_release(window_state_adapter_t *adapter, uint64_t window_id,
-                                                           uint32_t generation) {
+                                                           uint64_t generation) {
     window_state_adapter_status_t status;
     window_state_adapter_entry_t *entry;
-    if (adapter == NULL || window_id == 0 || generation == 0) return WindowStateAdapterInvalidArgument;
+    if (adapter == NULL || window_id == 0 || !generation_is_valid(generation)) return WindowStateAdapterInvalidArgument;
     status = enter(adapter);
     if (status != WindowStateAdapterOk) return status;
     entry = find_pair(adapter, window_id, generation);
@@ -464,7 +513,7 @@ window_state_adapter_status_t window_state_adapter_release(window_state_adapter_
 }
 
 window_state_adapter_status_t window_state_adapter_observe(window_state_adapter_t *adapter, uintptr_t window,
-                                                           uint64_t window_id, uint32_t generation,
+                                                           uint64_t window_id, uint64_t generation,
                                                            uint32_t *out_guest_state) {
     window_state_adapter_status_t status;
     window_state_adapter_entry_t *entry;
@@ -472,7 +521,7 @@ window_state_adapter_status_t window_state_adapter_observe(window_state_adapter_
     int zoomed = 0;
     int64_t style = 0;
     uint32_t bits = 0;
-    if (adapter == NULL || out_guest_state == NULL || window_id == 0 || generation == 0) {
+    if (adapter == NULL || out_guest_state == NULL || window_id == 0 || !generation_is_valid(generation)) {
         return WindowStateAdapterInvalidArgument;
     }
     status = enter(adapter);
@@ -512,13 +561,13 @@ window_state_adapter_status_t window_state_adapter_observe(window_state_adapter_
 }
 
 window_state_adapter_status_t window_state_adapter_execute(window_state_adapter_t *adapter, uintptr_t window,
-                                                           uint64_t window_id, uint32_t generation,
+                                                           uint64_t window_id, uint64_t generation,
                                                            const waddle_window_state_action_t *actions,
                                                            uint64_t count, uint64_t *out_completed) {
     window_state_adapter_status_t status;
     window_state_adapter_entry_t *entry;
     uint64_t index;
-    if (adapter == NULL || out_completed == NULL || window_id == 0 || generation == 0) {
+    if (adapter == NULL || out_completed == NULL || window_id == 0 || !generation_is_valid(generation)) {
         return WindowStateAdapterInvalidArgument;
     }
     if (count > WaddleWindowStateMaxActions || (count != 0 && actions == NULL)) {
@@ -558,6 +607,7 @@ uint32_t window_state_adapter_last_error(const window_state_adapter_t *adapter) 
 
 #ifdef _WIN32
 #include <windows.h>
+#include <dwmapi.h>
 
 _Static_assert(WsaStyleCaption == WS_CAPTION, "WS_CAPTION value");
 _Static_assert(WsaStyleThickFrame == WS_THICKFRAME, "WS_THICKFRAME value");
@@ -575,6 +625,9 @@ _Static_assert(WsaSwpNoZOrder == SWP_NOZORDER, "SWP_NOZORDER value");
 _Static_assert(WsaSwpNoActivate == SWP_NOACTIVATE, "SWP_NOACTIVATE value");
 _Static_assert(WsaSwpFrameChanged == SWP_FRAMECHANGED, "SWP_FRAMECHANGED value");
 _Static_assert(WsaWmClose == WM_CLOSE, "WM_CLOSE value");
+_Static_assert((int)WsaDwmwaExtendedFrameBounds == (int)DWMWA_EXTENDED_FRAME_BOUNDS, "DWMWA_EXTENDED_FRAME_BOUNDS value");
+/** @brief Bound of the responsiveness probe in milliseconds (nat_responsive). */
+#define WsaProbeTimeoutMs 50
 
 static int nat_is_window(void *context, uintptr_t window) {
     (void)context;
@@ -604,6 +657,22 @@ static int nat_is_zoomed(void *context, uintptr_t window, int *zoomed) {
     return 1;
 }
 
+/**
+ * @brief Bounded responsiveness probe before a synchronous cross-thread call.
+ *
+ * SetWindowLongPtr, ShowWindow, SetWindowPos and SetWindowPlacement send messages to the window's thread
+ * and wait for them, so a hung application would block the agent thread. The probe sends WM_NULL with
+ * SMTO_ABORTIFHUNG and a 50 ms bound (the same bound as IMPL 4.5 step 3). The call proceeds only when the
+ * window thread answered; otherwise the caller fails with the probe's error (ERROR_TIMEOUT when hung)
+ * and nothing is changed. The probe does not remove the race between the probe and the call. A thread
+ * that hangs after the probe still blocks the call, which is the residual risk in section 11.
+ */
+static int nat_responsive(uintptr_t window) {
+    DWORD_PTR result = 0;
+    /* SendMessageTimeoutW returns nonzero when the message was processed, whatever the WM_NULL result is. */
+    return SendMessageTimeoutW((HWND)window, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, WsaProbeTimeoutMs, &result) != 0 ? 1 : 0;
+}
+
 static int nat_get_style(void *context, uintptr_t window, int64_t *style) {
     LONG_PTR value;
     (void)context;
@@ -617,6 +686,7 @@ static int nat_get_style(void *context, uintptr_t window, int64_t *style) {
 static int nat_set_style(void *context, uintptr_t window, int64_t style) {
     LONG_PTR previous;
     (void)context;
+    if (!nat_responsive(window)) return 0;
     SetLastError(0);
     previous = SetWindowLongPtrW((HWND)window, GWL_STYLE, (LONG_PTR)(LONG)(DWORD)(uint32_t)style);
     if (previous == 0 && GetLastError() != 0) return 0;
@@ -625,8 +695,9 @@ static int nat_set_style(void *context, uintptr_t window, int64_t style) {
 
 static int nat_show_window(void *context, uintptr_t window, int32_t command) {
     (void)context;
+    if (!nat_responsive(window)) return 0;
     /* ShowWindow reports only prior visibility, not failure. The identity check precedes it, and the
-     * observed state is what the smoke and the reducer verify. */
+     * observed state is what the smoke and the reducer verify. ShowWindowAsync is not used: section 2.1. */
     (void)ShowWindow((HWND)window, (int)command);
     return 1;
 }
@@ -634,6 +705,7 @@ static int nat_show_window(void *context, uintptr_t window, int32_t command) {
 static int nat_set_window_pos(void *context, uintptr_t window, int32_t x, int32_t y, int32_t width,
                               int32_t height, uint32_t flags) {
     (void)context;
+    if (!nat_responsive(window)) return 0;
     return SetWindowPos((HWND)window, NULL, x, y, width, height, (UINT)flags) ? 1 : 0;
 }
 
@@ -671,6 +743,7 @@ static int nat_set_placement(void *context, uintptr_t window, const window_state
     value.rcNormalPosition.top = placement->normal.top;
     value.rcNormalPosition.right = placement->normal.right;
     value.rcNormalPosition.bottom = placement->normal.bottom;
+    if (!nat_responsive(window)) return 0;
     return SetWindowPlacement((HWND)window, &value) ? 1 : 0;
 }
 
@@ -735,6 +808,26 @@ static uint32_t nat_last_error(void *context) {
     return (uint32_t)GetLastError();
 }
 
+/*
+ * DwmGetWindowAttribute returns an HRESULT, not a Win32 error. A failure is stored as the last error
+ * unchanged, so window_state_adapter_last_error reports the HRESULT value.
+ */
+static int nat_extended_frame_bounds(void *context, uintptr_t window, window_state_rect_t *rect) {
+    RECT value;
+    HRESULT result;
+    (void)context;
+    result = DwmGetWindowAttribute((HWND)window, DWMWA_EXTENDED_FRAME_BOUNDS, &value, sizeof(value));
+    if (result != S_OK) {
+        SetLastError((DWORD)result);
+        return 0;
+    }
+    rect->left = value.left;
+    rect->top = value.top;
+    rect->right = value.right;
+    rect->bottom = value.bottom;
+    return 1;
+}
+
 static const window_state_native_api_t NativeWindowStateApi = {
     .is_window = nat_is_window,
     .window_thread = nat_window_thread,
@@ -755,6 +848,7 @@ static const window_state_native_api_t NativeWindowStateApi = {
     .post_message = nat_post_message,
     .current_thread_id = nat_current_thread_id,
     .last_error = nat_last_error,
+    .extended_frame_bounds = nat_extended_frame_bounds,
 };
 
 const window_state_native_api_t *window_state_native_api(void) {

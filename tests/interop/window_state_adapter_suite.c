@@ -35,7 +35,7 @@
 #define WsaApiMembers(X) X(is_window) X(window_thread) X(is_iconic) X(is_zoomed) X(get_style) X(set_style) \
     X(show_window) X(set_window_pos) X(get_placement) X(set_placement) X(get_rect) X(monitor_rect) \
     X(foreground_window) X(set_foreground_window) X(set_active_window) X(attach_thread_input) \
-    X(post_message) X(current_thread_id) X(last_error)
+    X(post_message) X(current_thread_id) X(last_error) X(extended_frame_bounds)
 
 static waddle_window_state_action_t action_of(uint32_t kind);
 
@@ -60,8 +60,8 @@ static int fixture_open(fixture_t *f) {
 }
 
 /**
- * @brief Tears a fixture down. A window left fullscreen is first returned through LeaveFullscreen with
- *        faults disabled, because destroy refuses to free an adapter that still holds saved state.
+ * @brief Tears a fixture down. Destroy refuses while any record is admitted, so a fixture that still holds
+ *        its main record first leaves fullscreen (with faults disabled, if it is fullscreen) and releases it.
  */
 static void fixture_close(fixture_t *f) {
     waddle_window_state_action_t leave = action_of(WaddleWindowStateActionGuestLeaveFullscreen);
@@ -70,6 +70,7 @@ static void fixture_close(fixture_t *f) {
     if (window_state_adapter_destroy(&f->a) == WindowStateAdapterBusy) {
         wsa_double_disarm(&f->d);
         (void)window_state_adapter_execute(f->a, f->window, IdMain, GenMain, &leave, 1, &completed);
+        (void)window_state_adapter_release(f->a, IdMain, GenMain);
         (void)window_state_adapter_destroy(&f->a);
     }
 }
@@ -189,6 +190,59 @@ static int test_destroy_is_busy_while_fullscreen(void) {
     return 0;
 }
 
+/** @brief Destroy refuses while any record is admitted, even one that is not fullscreen; nothing is freed. */
+static int test_destroy_refuses_while_any_record_is_live(void) {
+    fixture_t f;
+    uint32_t bits = 0;
+
+    Check(fixture_open(&f) == 0);
+    Check(window_state_adapter_destroy(&f.a) == WindowStateAdapterBusy);
+    Check(f.a != NULL);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterOk);
+    Check(window_state_adapter_destroy(&f.a) == WindowStateAdapterOk);
+    Check(f.a == NULL);
+    return 0;
+}
+
+/**
+ * @brief A release refused as Busy stays recorded, and the failed LeaveFullscreen that gates it is retryable.
+ *
+ * The adapter's release makes no native call. The native failure on this path is the LeaveFullscreen that
+ * the owner runs before a release that answers Busy. Each refusal keeps the record, and the retry succeeds.
+ */
+static int test_release_busy_is_sticky_and_retryable(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t enter = action_of(WaddleWindowStateActionGuestEnterFullscreen);
+    waddle_window_state_action_t leave = action_of(WaddleWindowStateActionGuestLeaveFullscreen);
+    uint32_t bits = 0;
+
+    Check(fixture_open(&f) == 0);
+    Check(run(&f, &enter, 1, &completed) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterBusy);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterBusy);
+
+    /* The leave fails once: the record stays, so the release is still Busy and the observation is unchanged. */
+    wsa_double_arm(&f.d, WsaDoubleSetWindowPos, 1, 0);
+    Check(run(&f, &leave, 1, &completed) == WindowStateAdapterNativeFailure);
+    Check(completed == 0);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterBusy);
+    Check(window_state_adapter_destroy(&f.a) == WindowStateAdapterBusy);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
+    Check((bits & WaddleWindowStateFullscreen) != 0);
+    wsa_double_disarm(&f.d);
+
+    /* The retry succeeds, then the release, and nothing is left behind. */
+    Check(run(&f, &leave, 1, &completed) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, IdMain, GenMain) == WindowStateAdapterNotAdmitted);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterNotAdmitted);
+    Check(window_state_adapter_destroy(&f.a) == WindowStateAdapterOk);
+    Check(f.a == NULL);
+    return 0;
+}
+
 /* ---- Admission ---------------------------------------------------------------------------------- */
 
 static int test_admission_rules(void) {
@@ -238,6 +292,11 @@ static int test_capacity_is_bounded_at_sixty_four(void) {
     Check(window_state_adapter_admit(f.a, 0x20000, 999, GenMain) == WindowStateAdapterCapacityExhausted);
     Check(window_state_adapter_release(f.a, 101, GenMain) == WindowStateAdapterOk);
     Check(window_state_adapter_admit(f.a, 0x20000, 999, GenMain) == WindowStateAdapterOk);
+    /* Destroy refuses while any record is live, so every extra record is released before the close. */
+    for (uint32_t index = 2; index < WaddleWindowStateAdapterMaxWindows; ++index) {
+        Check(window_state_adapter_release(f.a, 100u + index, GenMain) == WindowStateAdapterOk);
+    }
+    Check(window_state_adapter_release(f.a, 999, GenMain) == WindowStateAdapterOk);
     fixture_close(&f);
     return 0;
 }
@@ -288,7 +347,7 @@ static int test_fullscreen_round_trip(void) {
         WsaDoubleGetPlacement, WsaDoubleMonitorRect, WsaDoubleSetStyle, WsaDoubleSetWindowPos};
     const wsa_double_entry_t leave_expected[] = {
         WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleSetStyle, WsaDoubleSetWindowPos, WsaDoubleIsIconic,
-        WsaDoubleIsZoomed, WsaDoubleSetPlacement};
+        WsaDoubleIsZoomed};
     uint32_t bits = 0;
     int64_t default_style;
 
@@ -313,7 +372,7 @@ static int test_fullscreen_round_trip(void) {
 
     wsa_double_reset(&f.d);
     Check(run(&f, &leave, 1, &completed) == WindowStateAdapterOk);
-    Check(log_matches(&f.d, leave_expected, 7));
+    Check(log_matches(&f.d, leave_expected, 6));
     Check(f.d.windows[0].style == default_style);
     Check(f.d.windows[0].rect.left == MainRect.left && f.d.windows[0].rect.right == MainRect.right);
     Check(f.d.windows[0].rect.top == MainRect.top && f.d.windows[0].rect.bottom == MainRect.bottom);
@@ -348,6 +407,10 @@ static int test_restore_does_not_leave_fullscreen(void) {
     return 0;
 }
 
+/* SetWindowPos flags as Win32 defines them, for checking the flags the adapter passes. */
+#define TestSwpNoZOrder 0x0004u
+#define TestSwpNoActivate 0x0010u
+
 static int test_geometry_and_close(void) {
     fixture_t f;
     uint64_t completed = 0;
@@ -356,7 +419,8 @@ static int test_geometry_and_close(void) {
     waddle_window_state_action_t zero_height = geometry_of(0, 0, 240, 0);
     waddle_window_state_action_t too_wide = geometry_of(0, 0, WaddleWindowStateAdapterMaxExtent + 1, 240);
     waddle_window_state_action_t close = action_of(WaddleWindowStateActionGuestPostClose);
-    const wsa_double_entry_t geometry_expected[] = {WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleSetWindowPos};
+    const wsa_double_entry_t geometry_expected[] = {
+        WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleGetRect, WsaDoubleExtendedFrameBounds, WsaDoubleSetWindowPos};
     const wsa_double_entry_t close_expected[] = {WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoublePostMessage};
 
     Check(fixture_open(&f) == 0);
@@ -367,10 +431,11 @@ static int test_geometry_and_close(void) {
     Check(run(&f, &too_wide, 1, &completed) == WindowStateAdapterInvalidGeometry);
     Check(f.d.log_count == 0);
 
+    /* The origin x=10, y=20 is ignored (SWP_NOMOVE): the window keeps its position and takes the size. */
     Check(run(&f, &geometry, 1, &completed) == WindowStateAdapterOk);
-    Check(log_matches(&f.d, geometry_expected, 3));
-    Check(f.d.windows[0].rect.left == 10 && f.d.windows[0].rect.top == 20);
-    Check(f.d.windows[0].rect.right == 330 && f.d.windows[0].rect.bottom == 260);
+    Check(log_matches(&f.d, geometry_expected, 5));
+    Check(f.d.windows[0].rect.left == MainRect.left && f.d.windows[0].rect.top == MainRect.top);
+    Check(f.d.windows[0].rect.right == MainRect.left + 320 && f.d.windows[0].rect.bottom == MainRect.top + 240);
 
     wsa_double_reset(&f.d);
     Check(run(&f, &close, 1, &completed) == WindowStateAdapterOk);
@@ -419,6 +484,128 @@ static int test_host_and_unknown_kinds_and_counts(void) {
     return 0;
 }
 
+/**
+ * @brief SetGeometry keeps the window origin (SWP_NOMOVE), applies the DWM frame adjustment of av_windows.c,
+ *        and refuses an adjusted extent that is out of range or whose frame query fails.
+ */
+static int test_geometry_keeps_origin_and_adds_frame(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t configure = geometry_of(0, 0, 1024, 768);
+    waddle_window_state_action_t moved = geometry_of(300, 200, 640, 480);
+    waddle_window_state_action_t small = geometry_of(0, 0, 1, 1);
+    waddle_window_state_action_t largest = geometry_of(0, 0, WaddleWindowStateAdapterMaxExtent, 10);
+    waddle_window_state_action_t tall = geometry_of(0, 0, 10, WaddleWindowStateAdapterMaxExtent);
+    waddle_window_state_action_t short_tall = geometry_of(0, 0, 10, 1);
+    int32_t visible_width;
+    int32_t visible_height;
+
+    /* Probe P2: a window at 100,100 with configure rect(0,0,1024,768) stays at 100,100 and becomes 1024 by 768. */
+    Check(fixture_open(&f) == 0);
+    wsa_double_reset(&f.d);
+    Check(run(&f, &configure, 1, &completed) == WindowStateAdapterOk);
+    Check(completed == 1);
+    Check(f.d.windows[0].rect.left == 100 && f.d.windows[0].rect.top == 100);
+    Check(f.d.windows[0].rect.right - f.d.windows[0].rect.left == 1024);
+    Check(f.d.windows[0].rect.bottom - f.d.windows[0].rect.top == 768);
+    Check(f.d.set_window_pos_count == 1);
+    Check((f.d.set_window_pos_flags[0] & WsaDoubleSwpNoMove) != 0);
+    Check((f.d.set_window_pos_flags[0] & (TestSwpNoZOrder | TestSwpNoActivate)) == (TestSwpNoZOrder | TestSwpNoActivate));
+
+    /* A nonzero origin from the caller is also ignored. */
+    Check(run(&f, &moved, 1, &completed) == WindowStateAdapterOk);
+    Check(f.d.windows[0].rect.left == 100 && f.d.windows[0].rect.top == 100);
+    Check(f.d.windows[0].rect.right - f.d.windows[0].rect.left == 640);
+
+    /* An invisible 8-pixel border per side: the outer rectangle grows by 16 and the visible frame is the request. */
+    f.d.windows[0].frame_inset = 8;
+    Check(run(&f, &configure, 1, &completed) == WindowStateAdapterOk);
+    Check(f.d.windows[0].rect.right - f.d.windows[0].rect.left == 1024 + 16);
+    Check(f.d.windows[0].rect.bottom - f.d.windows[0].rect.top == 768 + 16);
+    visible_width = (f.d.windows[0].rect.right - 8) - (f.d.windows[0].rect.left + 8);
+    visible_height = (f.d.windows[0].rect.bottom - 8) - (f.d.windows[0].rect.top + 8);
+    Check(visible_width == 1024 && visible_height == 768);
+
+    /* An adjusted extent of zero or below is refused (a negative border makes the visible frame larger). */
+    f.d.windows[0].frame_inset = -1;
+    wsa_double_reset(&f.d);
+    Check(run(&f, &small, 1, &completed) == WindowStateAdapterInvalidGeometry);
+    Check(completed == 0);
+    Check(f.d.set_window_pos_count == 0);
+
+    /* An adjusted extent above the maximum is refused: 16384 plus the border of 2 pixels per side. */
+    f.d.windows[0].frame_inset = 1;
+    Check(run(&f, &largest, 1, &completed) == WindowStateAdapterInvalidGeometry);
+    Check(f.d.set_window_pos_count == 0);
+
+    /* Each bound of the height is checked on its own: a width in range with a height out of range. */
+    Check(run(&f, &tall, 1, &completed) == WindowStateAdapterInvalidGeometry);
+    Check(f.d.set_window_pos_count == 0);
+    f.d.windows[0].frame_inset = -1;
+    Check(run(&f, &short_tall, 1, &completed) == WindowStateAdapterInvalidGeometry);
+    Check(f.d.set_window_pos_count == 0);
+
+    /* A failing frame query is a native failure with no window change. */
+    f.d.windows[0].frame_inset = 0;
+    wsa_double_reset(&f.d);
+    wsa_double_arm(&f.d, WsaDoubleExtendedFrameBounds, 1, 0);
+    Check(run(&f, &configure, 1, &completed) == WindowStateAdapterNativeFailure);
+    Check(completed == 0);
+    Check(f.d.set_window_pos_count == 0);
+    wsa_double_disarm(&f.d);
+    fixture_close(&f);
+    return 0;
+}
+
+/**
+ * @brief Fullscreen enter and leave on a normal window do not take the focus: both SetWindowPos calls carry
+ *        SWP_NOACTIVATE, and no placement call is made on the normal path.
+ */
+static int test_fullscreen_round_trip_keeps_focus(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    window_state_rect_t rect = {0, 0, 200, 200};
+    waddle_window_state_action_t enter = action_of(WaddleWindowStateActionGuestEnterFullscreen);
+    waddle_window_state_action_t leave = action_of(WaddleWindowStateActionGuestLeaveFullscreen);
+
+    Check(fixture_open(&f) == 0);
+    wsa_double_add(&f.d, HwndOther, 8, 77, rect);
+    f.d.foreground = HwndOther;
+    wsa_double_reset(&f.d);
+    Check(run(&f, &enter, 1, &completed) == WindowStateAdapterOk);
+    Check(f.d.foreground == HwndOther && f.d.focus_steals == 0);
+    Check(run(&f, &leave, 1, &completed) == WindowStateAdapterOk);
+    Check(f.d.foreground == HwndOther && f.d.focus_steals == 0);
+    Check(f.d.set_window_pos_count == 2);
+    Check((f.d.set_window_pos_flags[0] & TestSwpNoActivate) != 0);
+    Check((f.d.set_window_pos_flags[1] & TestSwpNoActivate) != 0);
+    Check(f.d.calls[WsaDoubleSetPlacement] == 0);
+    fixture_close(&f);
+    return 0;
+}
+
+/** @brief Leaving fullscreen from a minimized window writes the placement and keeps the window minimized. */
+static int test_leave_fullscreen_from_minimized_keeps_minimized(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t enter = action_of(WaddleWindowStateActionGuestEnterFullscreen);
+    waddle_window_state_action_t leave = action_of(WaddleWindowStateActionGuestLeaveFullscreen);
+    waddle_window_state_action_t minimize = action_of(WaddleWindowStateActionGuestMinimize);
+    uint32_t bits = 0;
+
+    Check(fixture_open(&f) == 0);
+    Check(run(&f, &enter, 1, &completed) == WindowStateAdapterOk);
+    Check(run(&f, &minimize, 1, &completed) == WindowStateAdapterOk);
+    wsa_double_reset(&f.d);
+    Check(run(&f, &leave, 1, &completed) == WindowStateAdapterOk);
+    Check(f.d.calls[WsaDoubleSetPlacement] == 1);
+    Check(f.d.windows[0].iconic == 1);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
+    Check((bits & WaddleWindowStateMinimized) != 0 && (bits & WaddleWindowStateFullscreen) == 0);
+    fixture_close(&f);
+    return 0;
+}
+
 /* ---- Activation and its fallback ---------------------------------------------------------------- */
 
 static int test_activate_direct_and_fallback(void) {
@@ -429,7 +616,7 @@ static int test_activate_direct_and_fallback(void) {
     const wsa_double_entry_t fallback[] = {
         WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleSetForegroundWindow, WsaDoubleForegroundWindow,
         WsaDoubleWindowThread, WsaDoubleAttachThreadInput, WsaDoubleSetForegroundWindow, WsaDoubleSetActiveWindow,
-        WsaDoubleAttachThreadInput};
+        WsaDoubleAttachThreadInput, WsaDoubleForegroundWindow};
 
     Check(fixture_open(&f) == 0);
     wsa_double_reset(&f.d);
@@ -441,7 +628,7 @@ static int test_activate_direct_and_fallback(void) {
     f.d.foreground = HwndOther;
     wsa_double_reset(&f.d);
     Check(run(&f, &activate, 1, &completed) == WindowStateAdapterOk);
-    Check(log_matches(&f.d, fallback, 9));
+    Check(log_matches(&f.d, fallback, 10));
     Check(f.d.foreground == HwndMain);
     Check(f.d.attached == 0);
     fixture_close(&f);
@@ -458,7 +645,7 @@ static int test_activate_failures(void) {
     const wsa_double_entry_t set_active_failed[] = {
         WsaDoubleIsWindow, WsaDoubleWindowThread, WsaDoubleSetForegroundWindow, WsaDoubleForegroundWindow,
         WsaDoubleWindowThread, WsaDoubleAttachThreadInput, WsaDoubleSetForegroundWindow, WsaDoubleSetActiveWindow,
-        WsaDoubleAttachThreadInput};
+        WsaDoubleAttachThreadInput, WsaDoubleForegroundWindow};
 
     /* No foreground window at all. */
     Check(fixture_open(&f) == 0);
@@ -489,13 +676,16 @@ static int test_activate_failures(void) {
     Check(f.d.calls[WsaDoubleAttachThreadInput] == 0);
     fixture_close(&f);
 
-    /* SetActiveWindow fails: the first failure is reported and the thread is still detached. */
+    /* SetActiveWindow fails: its NULL result is ambiguous, so the outcome is decided by the foreground window.
+     * The retry made the window foreground, so the activation succeeds and the thread is still detached. */
     Check(fixture_open(&f) == 0);
     prepare_locked_foreground(&f.d, 77);
     wsa_double_reset(&f.d);
     wsa_double_arm(&f.d, WsaDoubleSetActiveWindow, 1, 0);
-    Check(run(&f, &activate, 1, &completed) == WindowStateAdapterNativeFailure);
-    Check(log_matches(&f.d, set_active_failed, 9));
+    Check(run(&f, &activate, 1, &completed) == WindowStateAdapterOk);
+    Check(completed == 1);
+    Check(log_matches(&f.d, set_active_failed, 10));
+    Check(f.d.foreground == HwndMain);
     Check(f.d.attached == 0);
     wsa_double_disarm(&f.d);
     fixture_close(&f);
@@ -507,6 +697,26 @@ static int test_activate_failures(void) {
     wsa_double_arm(&f.d, WsaDoubleAttachThreadInput, 2, 0);
     Check(run(&f, &activate, 1, &completed) == WindowStateAdapterNativeFailure);
     Check(f.d.attached == 1);
+    wsa_double_disarm(&f.d);
+    fixture_close(&f);
+    return 0;
+}
+
+/** @brief A foreground query that fails after the fallback leaves the outcome unproven, which is a native failure. */
+static int test_activate_unverified_foreground_is_failure(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t activate = action_of(WaddleWindowStateActionGuestActivate);
+
+    Check(fixture_open(&f) == 0);
+    prepare_locked_foreground(&f.d, 77);
+    wsa_double_reset(&f.d);
+    wsa_double_arm(&f.d, WsaDoubleForegroundWindow, 2, 0);
+    Check(run(&f, &activate, 1, &completed) == WindowStateAdapterNativeFailure);
+    Check(completed == 0);
+    Check(f.d.attached == 0);
+    /* The retry succeeded, so the window is in fact foreground, but the adapter cannot prove it and says so. */
+    Check(f.d.foreground == HwndMain);
     wsa_double_disarm(&f.d);
     fixture_close(&f);
     return 0;
@@ -636,14 +846,17 @@ static int test_leave_fullscreen_keeps_record_until_all_calls_succeed(void) {
     uint64_t completed = 0;
     waddle_window_state_action_t enter = action_of(WaddleWindowStateActionGuestEnterFullscreen);
     waddle_window_state_action_t leave = action_of(WaddleWindowStateActionGuestLeaveFullscreen);
+    waddle_window_state_action_t maximize = action_of(WaddleWindowStateActionGuestMaximize);
     uint32_t bits = 0;
-    wsa_double_entry_t stages[] = {WsaDoubleSetPlacement, WsaDoubleSetWindowPos};
+    /* Stage 0 fails the normal-state SetWindowPos. Stage 1 maximizes first, so the leave must write the placement. */
+    wsa_double_entry_t stages[] = {WsaDoubleSetWindowPos, WsaDoubleSetPlacement};
     int64_t original;
 
     for (uint32_t stage = 0; stage < 2; ++stage) {
         Check(fixture_open(&f) == 0);
         original = f.d.windows[0].style;
         Check(run(&f, &enter, 1, &completed) == WindowStateAdapterOk);
+        if (stage == 1) Check(run(&f, &maximize, 1, &completed) == WindowStateAdapterOk);
         wsa_double_arm(&f.d, stages[stage], 1, 0);
         Check(run(&f, &leave, 1, &completed) == WindowStateAdapterNativeFailure);
         Check(completed == 0);
@@ -852,6 +1065,8 @@ static int test_reentry_is_refused(void) {
     Check(adapter != NULL);
     Check(window_state_adapter_observe(adapter, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
     Check((bits & WaddleWindowStateMinimized) != 0);
+    Check(window_state_adapter_destroy(&adapter) == WindowStateAdapterBusy);
+    Check(window_state_adapter_release(adapter, IdMain, GenMain) == WindowStateAdapterOk);
     Check(window_state_adapter_destroy(&adapter) == WindowStateAdapterOk);
     return 0;
 }
@@ -953,7 +1168,96 @@ static int test_random_sequences_with_faults(void) {
     return 0;
 }
 
+/* ---- Partial execution is never reported as complete -------------------------------------------- */
+
+/**
+ * @brief When action 2 of 3 fails, the completed count is 1, the status is not Ok, and the later action is
+ *        never attempted. Each case is a different failure: a native failure and a validation failure.
+ */
+static int test_partial_execution_reports_completed_count(void) {
+    fixture_t f;
+    uint64_t completed = 99;
+    window_state_adapter_status_t status;
+    waddle_window_state_action_t minimize = action_of(WaddleWindowStateActionGuestMinimize);
+    waddle_window_state_action_t restore = action_of(WaddleWindowStateActionGuestRestore);
+    waddle_window_state_action_t maximize = action_of(WaddleWindowStateActionGuestMaximize);
+    waddle_window_state_action_t sequence[3];
+    waddle_window_state_action_t invalid = geometry_of(0, 0, 0, 240);
+    uint32_t bits = 0;
+
+    /* Native failure at action 2 (restore): minimize completed, maximize never ran. */
+    Check(fixture_open(&f) == 0);
+    sequence[0] = minimize;
+    sequence[1] = restore;
+    sequence[2] = maximize;
+    wsa_double_reset(&f.d);
+    wsa_double_arm(&f.d, WsaDoubleShowWindow, 2, 0);
+    status = run(&f, sequence, 3, &completed);
+    Check(status == WindowStateAdapterNativeFailure);
+    Check(completed == 1);
+    Check(f.d.calls[WsaDoubleShowWindow] == 2);
+    Check(f.d.windows[0].iconic == 1 && f.d.windows[0].zoomed == 0);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
+    Check((bits & WaddleWindowStateMinimized) != 0 && (bits & WaddleWindowStateMaximized) == 0);
+    wsa_double_disarm(&f.d);
+    fixture_close(&f);
+
+    /* Validation failure at action 2: the geometry is refused with no native call, and maximize never runs. */
+    Check(fixture_open(&f) == 0);
+    sequence[1] = invalid;
+    wsa_double_reset(&f.d);
+    completed = 99;
+    status = run(&f, sequence, 3, &completed);
+    Check(status == WindowStateAdapterInvalidGeometry);
+    Check(completed == 1);
+    Check(f.d.calls[WsaDoubleShowWindow] == 1);
+    Check(f.d.calls[WsaDoubleSetWindowPos] == 0);
+    Check(f.d.windows[0].zoomed == 0);
+    fixture_close(&f);
+    return 0;
+}
+
 /* ---- Argument, identity and failure forms not reached above ------------------------------------- */
+
+/**
+ * @brief A generation that does not fit in uint32_t is InvalidArgument in every entry that takes one, with
+ *        no change. The truncated value of 2^32 + 1 is 1, which is admitted, so each call must be refused
+ *        before it can match the admitted pair.
+ */
+static int test_generation_must_fit_uint32(void) {
+    fixture_t f;
+    uint64_t completed = 0;
+    waddle_window_state_action_t minimize = action_of(WaddleWindowStateActionGuestMinimize);
+    const uint64_t TwoPow32 = UINT64_C(0x100000000);
+    const uint64_t Truncates = TwoPow32 + GenMain;
+    uint32_t bits = 0;
+    window_state_rect_t rect = {0, 0, 10, 10};
+
+    Check(fixture_open(&f) == 0);
+    wsa_double_add(&f.d, 0x3000, MainProcess, MainThread, rect);
+    wsa_double_reset(&f.d);
+
+    Check(window_state_adapter_admit(f.a, 0x3000, 3, TwoPow32) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_admit(f.a, 0x3000, 3, Truncates) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_release(f.a, IdMain, TwoPow32) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_release(f.a, IdMain, Truncates) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, TwoPow32, &bits) == WindowStateAdapterInvalidArgument);
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, Truncates, &bits) == WindowStateAdapterInvalidArgument);
+    Check(bits == 0);
+    Check(window_state_adapter_execute(f.a, HwndMain, IdMain, Truncates, &minimize, 1, &completed) ==
+          WindowStateAdapterInvalidArgument);
+    Check(completed == 0);
+    Check(window_state_adapter_execute(f.a, HwndMain, IdMain, TwoPow32, &minimize, 1, &completed) ==
+          WindowStateAdapterInvalidArgument);
+    Check(f.d.log_count == 0);
+
+    /* The admitted pair is untouched by the refused calls, and the largest uint32 value is a valid generation. */
+    Check(window_state_adapter_observe(f.a, HwndMain, IdMain, GenMain, &bits) == WindowStateAdapterOk);
+    Check(window_state_adapter_admit(f.a, 0x3000, 3, UINT64_C(0xffffffff)) == WindowStateAdapterOk);
+    Check(window_state_adapter_release(f.a, 3, UINT64_C(0xffffffff)) == WindowStateAdapterOk);
+    fixture_close(&f);
+    return 0;
+}
 
 /* calloc is wrapped (link flag --wrap=calloc) so the out-of-memory path of create can be taken. */
 extern void *__real_calloc(size_t count, size_t size);
@@ -1142,15 +1446,21 @@ int main(void) {
     int failures = 0;
     failures += run_test("create, destroy and NULL members", test_create_and_destroy_contract);
     failures += run_test("destroy and release are busy while fullscreen", test_destroy_is_busy_while_fullscreen);
+    failures += run_test("destroy refuses while any record is live", test_destroy_refuses_while_any_record_is_live);
+    failures += run_test("release busy is sticky and retryable", test_release_busy_is_sticky_and_retryable);
     failures += run_test("admission rules", test_admission_rules);
     failures += run_test("capacity is bounded at sixty-four", test_capacity_is_bounded_at_sixty_four);
     failures += run_test("minimize, restore and maximize sequences", test_minimize_restore_maximize_sequences);
     failures += run_test("fullscreen round trip", test_fullscreen_round_trip);
     failures += run_test("restore does not leave fullscreen", test_restore_does_not_leave_fullscreen);
     failures += run_test("geometry and close", test_geometry_and_close);
+    failures += run_test("geometry keeps origin and adds frame", test_geometry_keeps_origin_and_adds_frame);
     failures += run_test("host, unknown and count rules", test_host_and_unknown_kinds_and_counts);
     failures += run_test("activate direct and fallback", test_activate_direct_and_fallback);
     failures += run_test("activate failures", test_activate_failures);
+    failures += run_test("activate with an unverified foreground is a failure", test_activate_unverified_foreground_is_failure);
+    failures += run_test("fullscreen round trip keeps focus", test_fullscreen_round_trip_keeps_focus);
+    failures += run_test("leave fullscreen from minimized keeps minimized", test_leave_fullscreen_from_minimized_keeps_minimized);
     failures += run_test("destroyed window is stale and removed", test_destroyed_window_is_stale_and_removed);
     failures += run_test("reused window drops saved state unapplied", test_reused_window_drops_saved_state_without_applying_it);
     failures += run_test("thread change and identity failures", test_thread_change_is_stale_and_identity_failures);
@@ -1168,6 +1478,8 @@ int main(void) {
     failures += run_test("zero thread at identity and foreground", test_thread_zero_at_identity_and_foreground);
     failures += run_test("first fallback failure is kept", test_fallback_first_failure_is_kept);
     failures += run_test("geometry height above maximum", test_geometry_height_above_maximum);
+    failures += run_test("generation must fit uint32", test_generation_must_fit_uint32);
+    failures += run_test("partial execution reports the completed count", test_partial_execution_reports_completed_count);
     if (failures != 0) {
         fprintf(stderr, "window_state_adapter_suite: %d test(s) failed\n", failures);
         return 1;
