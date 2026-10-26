@@ -122,6 +122,9 @@ int session_handlers_builtin_make(const session_builtin_config_t *config,
 void session_handlers_builtin_destroy(session_builtin_storage_t *storage)
 {
     if (storage == NULL || !storage->launch_initialized) return;
+    /* IMPL_DESC 3.12.5: the supervised run has returned, so its owners and both locks are released;
+     * only now may the LocalStop requester receive its result (a no-op when none is pending). */
+    (void)session_local_handler_send_stop_reply(&storage->launch);
     session_local_handler_destroy(&storage->launch);
     storage->launch_initialized = 0;
     storage->launch_ready = 0;
