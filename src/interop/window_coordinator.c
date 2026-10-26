@@ -64,6 +64,7 @@ typedef struct coord_entry_t {
     uint32_t capture_started;
     /** @brief Last frame sequence consumed for this generation (0 before the first). */
     uint32_t retire_sent; /**< 1 once WindowRetire was queued for this generation (IMPL 5.3: only after the drain). */
+    uint32_t native_released; /**< 1 once the adapter released the native window; the entry completes only after this. */
     uint32_t geometry_pending; /**< 1 while the slot runtime has not yet accepted the current size (growth in progress). */
     uint32_t slots_pending; /**< 1 while the window is announced without slots (heap exhausted); retried each pass (IMPL 3.3). */
     uint64_t last_sequence;
@@ -325,7 +326,12 @@ static int encode_stale_error(window_coordinator_t *coordinator) {
 /* ---- Native state teardown and reducer glue -------------------------------------------------- */
 
 /** @brief Releases the adapter entry, leaving fullscreen first when the adapter refuses with Busy. */
-static void release_native(window_coordinator_t *coordinator, uint64_t window, uint64_t generation) {
+/**
+ * @brief Releases the adapter's record for one generation. A refusal (Busy: a fullscreen leave that failed)
+ *        is retried once after the leave; the caller keeps the entry and retries on later passes.
+ * @return 0 when the adapter no longer holds the generation; 1 when it still does.
+ */
+static int release_native(window_coordinator_t *coordinator, uint64_t window, uint64_t generation) {
     window_state_adapter_status_t status = window_state_adapter_release(coordinator->adapter, window, generation);
     if (status == WindowStateAdapterBusy) {
         waddle_window_state_action_t leave;
@@ -333,8 +339,10 @@ static void release_native(window_coordinator_t *coordinator, uint64_t window, u
         memset(&leave, 0, sizeof(leave));
         leave.kind = WaddleWindowStateActionGuestLeaveFullscreen;
         (void)window_state_adapter_execute(coordinator->adapter, window, window, generation, &leave, 1, &completed);
-        (void)window_state_adapter_release(coordinator->adapter, window, generation);
+        status = window_state_adapter_release(coordinator->adapter, window, generation);
     }
+    /* NotAdmitted: the adapter holds nothing for this generation, so there is nothing left to release. */
+    return status == WindowStateAdapterOk || status == WindowStateAdapterNotAdmitted ? 0 : 1;
 }
 
 /** @brief Reads the current guest state through the adapter, or fails. */
@@ -675,7 +683,6 @@ static int handle_retire_intent(window_coordinator_t *coordinator, const interop
     entry->slots_pending = 0u;
     slots_retire(coordinator, entry->window, entry->generation);
     if (entry->reducer != NULL) waddle_window_state_destroy(&entry->reducer);
-    release_native(coordinator, entry->window, entry->generation);
     entry->kind = CoordEntryRetiring;
     return CoordEventDone;
 }
@@ -751,6 +758,14 @@ static void progress_retirements(window_coordinator_t *coordinator) {
                 }
                 entry->retire_sent = 1u;
                 coordinator->stats.retires = saturate_add(coordinator->stats.retires);
+            }
+            if (entry->native_released == 0u) {
+                /* A refused native release keeps the generation quarantined; the next pass tries again. */
+                if (release_native(coordinator, entry->window, entry->generation) != 0) {
+                    coordinator->stats.admission_failures = saturate_add(coordinator->stats.admission_failures);
+                    continue;
+                }
+                entry->native_released = 1u;
             }
             proof.capture_stopped = 1u;
             proof.pins_drained = 1u;
@@ -1188,7 +1203,11 @@ window_coordinator_status_t window_coordinator_destroy(window_coordinator_t **co
         (void)waddle_slot_runtime_destroy(&coordinator->slots);
     }
     if (coordinator->adapter != NULL) {
-        (void)window_state_adapter_destroy(&coordinator->adapter);
+        /* The adapter refuses to destroy while it still holds a record; the coordinator stays valid for a retry. */
+        if (window_state_adapter_destroy(&coordinator->adapter) != WindowStateAdapterOk) {
+            leave(coordinator);
+            return WindowCoordinatorBusy;
+        }
     }
     free(coordinator);
     *coordinator_slot = NULL;

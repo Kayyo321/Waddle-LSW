@@ -1741,6 +1741,59 @@ static int test_review_p2_configure_keeps_position(void) {
     return 0;
 }
 
+/**
+ * @brief P6: a native release refused by a failing fullscreen leave keeps the generation quarantined (no record is
+ * dropped, no leak). Retire goes out once the pins drained; completion waits for the native release.
+ */
+static int test_review_p6_refused_native_release_keeps_quarantine(void) {
+    fixture_t *fp = &GlobalFixture;
+    uint8_t frame[WireFrameBytes];
+    size_t length = 0;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgWindowAnnounce, 0x1000, 1) == 1u);
+    Check(build_host(InteropMsgWindowConfigure, frame, sizeof(frame), &length, 0x1000, 1, 0, 0, 0, 1, WaddleWindowStateFullscreen) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Check(tick(fp) == WindowCoordinatorOk);
+    /* The fullscreen leave's native calls fail from now on, so the release is refused. */
+    wsa_double_arm(&fp->adapter, WsaDoubleSetStyle, 0, 1);
+    wsa_double_arm(&fp->adapter, WsaDoubleSetWindowPos, 0, 1);
+    wsa_double_arm(&fp->adapter, WsaDoubleSetPlacement, 0, 1);
+    wsa_double_arm(&fp->adapter, WsaDoubleShowWindow, 0, 1);
+    /* The observer stops reporting the window, but the native window stays (hidden), so its state is still there. */
+    fp->visible_count = 0u;
+    api_double_enum_set(fp->observer, fp->visible, 0u);
+    api_double_remove(fp->observer, 0x1000);
+    api_double_hint(fp->observer, 0x8001u, 0x1000);
+    release_window_frames(fp, 0x1000);
+    for (uint32_t pass = 0; pass < 4u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+        release_window_frames(fp, 0x1000);
+    }
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 1u);
+    Check(window_coordinator_entry_count(fp->coordinator) == 1u);
+    /* The coordinator still holds the generation, so the teardown is refused too. */
+    {
+        window_coordinator_t *coordinator = fp->coordinator;
+        Check(window_coordinator_destroy(&coordinator, 1u) == WindowCoordinatorBusy);
+        Check(coordinator != NULL);
+    }
+    /* The fault clears: the next pass releases the native window and completes the retirement. */
+    for (uint32_t entry = 0; entry < WsaDoubleEntryCount; ++entry) {
+        fp->adapter.fail_forever[entry] = 0u;
+        fp->adapter.fail_at[entry] = 0xFFFFFFFFu;
+    }
+    for (uint32_t pass = 0; pass < 4u && window_coordinator_entry_count(fp->coordinator) != 0u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2188,6 +2241,7 @@ int main(void) {
         {"review P5: heap pressure announces without frames", test_review_p5_heap_pressure_announces_without_frames},
         {"review P3: resize reaches slots and capture", test_review_p3_resize_reaches_slots_and_capture},
         {"review P2: configure keeps position", test_review_p2_configure_keeps_position},
+        {"review P6: refused native release keeps quarantine", test_review_p6_refused_native_release_keeps_quarantine},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},
