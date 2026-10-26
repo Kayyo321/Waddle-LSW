@@ -447,6 +447,27 @@ static void make_phantom(window_coordinator_t *coordinator, coord_entry_t *entry
 }
 
 /** @brief Admits an Announce event, or records it as a phantom when the window cannot be served. */
+/**
+ * @brief Decides whether a staged Announce or Update may still be sent (observer contract, protected Destroy and
+ *        exact graph check_action). Returns 0 proceed; 1 suppress (the generation is no longer Active: nothing is
+ *        sent and the graph's RetireIntent completes it untracked); 2 hold (a protected Destroy is pending for the HWND).
+ */
+static int staged_event_gate(window_coordinator_t *coordinator, const interop_window_event_t *event) {
+    uint32_t pending = 0;
+    if (window_observer_destroy_pending(coordinator->observer, event->window, &pending) == WindowObserverStatusOk && pending != 0u) {
+        /* The observer is not pumped while events are staged, so a pending Destroy is applied here (bounded drain). */
+        (void)window_observer_drain_protected_destroys(coordinator->observer);
+        if (window_observer_destroy_pending(coordinator->observer, event->window, &pending) == WindowObserverStatusOk && pending != 0u) {
+            return 2;
+        }
+    }
+    if (interop_window_graph_check_action(coordinator->graph, coordinator->epoch, event->window, event->generation) !=
+        InteropWindowGraphStatusOk) {
+        return 1;
+    }
+    return 0;
+}
+
 static int handle_announce(window_coordinator_t *coordinator, const interop_window_event_t *event) {
     coord_entry_t *entry;
     coord_entry_t *parent;
@@ -459,6 +480,11 @@ static int handle_announce(window_coordinator_t *coordinator, const interop_wind
 
     if (find_pair(coordinator, event->window, event->generation) != NULL) return CoordEventDone;
     if (coordinator->shutting_down != 0u) return CoordEventDone; /* no new admissions while the mapping stops */
+    {
+        int gate = staged_event_gate(coordinator, event);
+        if (gate == 1) return CoordEventDone;
+        if (gate == 2) return CoordEventHold;
+    }
     if (event->generation > UINT32_MAX) {
         /* The reducer and the capture seams take 32-bit generations: refuse, never truncate (the graph retires it untracked). */
         coordinator->stats.admission_failures = saturate_add(coordinator->stats.admission_failures);
@@ -620,6 +646,11 @@ static int handle_update(window_coordinator_t *coordinator, const interop_window
     uint32_t title_changed;
     if (entry == NULL || entry->kind != CoordEntryAnnounced) return CoordEventDone;
     if (coordinator->state != WindowCoordinatorStateRunning) return CoordEventDone;
+    {
+        int gate = staged_event_gate(coordinator, event);
+        if (gate == 1) return CoordEventDone;
+        if (gate == 2) return CoordEventHold;
+    }
     if (outbound_full(coordinator)) {
         coordinator->stats.admissions_held = saturate_add(coordinator->stats.admissions_held);
         return CoordEventHold;
@@ -662,6 +693,7 @@ static void complete_untracked(window_coordinator_t *coordinator, uint64_t windo
                                                       &proof)) != 0u) {
         coordinator->stats.retire_completed = saturate_add(coordinator->stats.retire_completed);
     }
+    (void)window_observer_sync_tracked(coordinator->observer);
 }
 
 /**
@@ -1040,6 +1072,8 @@ static void flush_outbound(window_coordinator_t *coordinator) {
 static void drive_observer(window_coordinator_t *coordinator, uint32_t budget) {
     uint64_t now;
     if (coordinator->observer_started == 0u) return;
+    /* Staged events are held (a barrier, a FIFO hold, or a pending destroy): no new observation until they drain. */
+    if (coordinator->staging_count != 0u) return;
     now = coordinator->config.observer_api->monotonic_ms(coordinator->config.observer_api_context);
     if (window_observer_refresh_due(coordinator->observer, now) != 0) {
         (void)window_observer_refresh(coordinator->observer, coordinator->graph, coordinator->epoch, NULL);

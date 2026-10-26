@@ -1840,6 +1840,54 @@ static int test_review_p4_orderly_shutdown(void) {
     return 0;
 }
 
+/**
+ * @brief HWND reuse while an Announce is held: the held old generation is never announced, so no stale title,
+ * app key or process id reaches the host; the new incarnation is announced with its own generation.
+ */
+static int test_review_hwnd_reuse_while_announce_held(void) {
+    fixture_t *fp = &GlobalFixture;
+    uint32_t pass;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    /* W1 retires but its pins stay held: the retire barrier holds every new Announce. */
+    admit_window_now(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    remove_window(fp, 0x1000);
+    api_double_hint(fp->observer, 0x8001u, 0x1000);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    /* W2 (HWND 0x2000) appears with title "old"; its Announce is held behind the barrier. */
+    add_window(fp, 0x2000);
+    api_double_set_text(api_double_find(fp->observer, 0x2000)->facts.title, InteropWindowGraphMaxTitleBytes,
+                        &api_double_find(fp->observer, 0x2000)->facts.title_length, "old");
+    api_double_hint(fp->observer, 0x8000u, 0x2000);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgWindowAnnounce, 0x2000, 2) == 0u);
+    /* HWND 0x2000 is destroyed and reused with title "new" while the Announce is still held. */
+    remove_window(fp, 0x2000);
+    api_double_hint(fp->observer, 0x8001u, 0x2000);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    add_window(fp, 0x2000);
+    api_double_set_text(api_double_find(fp->observer, 0x2000)->facts.title, InteropWindowGraphMaxTitleBytes,
+                        &api_double_find(fp->observer, 0x2000)->facts.title_length, "new");
+    api_double_hint(fp->observer, 0x8000u, 0x2000);
+    /* The barrier clears: W1 completes. */
+    release_window_frames(fp, 0x1000);
+    for (pass = 0; pass < 6u; ++pass) {
+        release_window_frames(fp, 0x1000);
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    /* Safety: the stale generation (2) never reached the host, whatever its title or pid was. */
+    Check(count_type(&fp->wire, InteropMsgWindowAnnounce, 0x2000, 2) == 0u);
+    Check(window_coordinator_state(fp->coordinator) == WindowCoordinatorStateRunning);
+    /* OPEN (not asserted here): the new incarnation is announced only after the old generation's adapter record is gone. */
+    retire_one_window(fp, 0x2000);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2289,6 +2337,7 @@ int main(void) {
         {"review P2: configure keeps position", test_review_p2_configure_keeps_position},
         {"review P6: refused native release keeps quarantine", test_review_p6_refused_native_release_keeps_quarantine},
         {"review P4: orderly shutdown", test_review_p4_orderly_shutdown},
+        {"review: HWND reuse while an Announce is held", test_review_hwnd_reuse_while_announce_held},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},
