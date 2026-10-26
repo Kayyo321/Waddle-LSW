@@ -13,14 +13,15 @@ Parent references: `IMPL_DESC.md` 3.2.5, 3.2.6, 3.8.1 to 3.8.5, 4.3, 8.45;
 
 Inside this contract:
 
-* Per-session snapshot of guest catalog applications, bounded to 4096 entries and 16 MiB of key
-  and name bytes, with the frozen app-key rules and the desktop-file name length rule.
+* Per-session snapshot of guest catalog applications, bounded to 480 entries (`MaxApps`) and 16 MiB
+  of key and name bytes, with the frozen app-key rules and the desktop-file name length rule.
 * Full-sync transactions: `CatalogBegin` opens, `CatalogEnd` closes and removes applications not
   announced since the matching Begin. Add, Update and Remove outside a transaction are incremental.
 * Icon retrieval: per (app, frozen size) requests with `IconRequest`, a bounded outstanding window
   of 8, a 10 s begin and idle deadline, bounded retries, reassembly through the codec's transfer
-  accounting, SHA-256 verification, a PNG header check, and a 1 MiB per-icon and 32 MiB retained
-  budget.
+  accounting, SHA-256 verification, full PNG validation (CRC-32 per chunk, IHDR first, IEND last,
+  at most 64 chunks), a 1 MiB per-icon limit, and a 32 MiB budget covering retained icons and
+  receives in flight. A content-hash change cancels that application's open transfers.
 * Publication: desktop entries, menu and directory artifacts and icons are rendered by
   `desktop_artifacts.build` and committed or replaced through `manifest_store.store_t`, with
   byte-identical candidate manifests from `catalog_runtime.emit_manifest`.
@@ -37,9 +38,12 @@ Outside this contract (explicit, not done):
   association. The runtime proves only host-side publication into rooted temporary trees.
 * No desktop-shortcut mirror. `desktop_shortcuts=mirror` is rejected with `Unsupported` at
   creation (TODO #28 mirror 10 percent stays open).
-* No removal of published records. The manifest store has no remove API on this branch, so
-  records for removed applications persist; no counter reports them, and deleting them is the
-  manifest lane's remove API (TODO #33), a required follow-up.
+* Removal of published records is a seam, not a store API. `set_unpublisher` takes a caller
+  function; the runtime asks it to remove at most one deferred record per tick and then checks that
+  the record left `manifest.json` (a surviving record backs the seam off). `deferred_removals`
+  counts published records of removed applications. The manifest store has no remove API on this
+  branch (TODO #33, a required follow-up), and the session handler installs no seam, so in the
+  composed build removed applications' records persist and are reported only by the counter.
 * No launch path. The host sends only the app key; launch is owned by the launch lane (#29).
 * The session control runtime is not composed here. `session_app` does not exist on this branch,
   so the handler is tested against the real codec, the real runtime and a rooted store with a fake
@@ -72,10 +76,13 @@ threading). The Zig API is `runtime_t` with `create`, `destroy`, `begin`, `end`,
   directory through the same descriptor (no-follow, bounded by 4 MiB). A missing file means no
   records. The runtime owns every copied string and the store until `destroy`.
 * Every runtime call is single-threaded and must come from the session pump. No internal locks.
-* Outbound actions live in a bounded ring of 64. Callers must drain actions after each call;
-  each call produces at most 16, so the ring cannot overflow when drained.
-* The session handler duplicates an action's key into its own 200-byte buffer when a send returns
-  `QueueFull`, so the runtime's borrowed pointer is never retained.
+* Outbound actions live in a bounded ring of 64. A push into a full ring is dropped and counted in
+  `dropped_actions`. New IconRequests are issued only while at least `MaxTransfers` ring slots stay
+  free, so cancels for open transfers always fit. `set_send_blocked` stops new requests while the
+  sender is refusing.
+* The session handler copies an action's key into its own 200-byte buffer (`memmove`) when a send
+  returns `QueueFull`, retains that one action, retries it after 100 ms, and blocks new requests. A
+  retained IconRequest whose transfer is no longer live is dropped unsent.
 * `transfer_state_t` mirrors `interop_transfer_t` layout; the three codec transfer symbols are
   declared `extern` and resolved by linking `interop_codec.o`.
 
@@ -97,22 +104,30 @@ Transactions: `begin` increments an epoch and opens the transaction; application
 epoch carry its mark. `end` removes applications whose mark differs and closes the transaction.
 A second `begin` inside a transaction restarts the epoch without changing the snapshot.
 
-Poisoning: inside a transaction, a duplicate upsert of a key already announced in the same epoch,
-or any invalid upsert, sets `sync_required`. `end` then closes the transaction without removing
-anything and reports `Rejected`. Publication is blocked until `reset_session` or a later clean
-transaction. Outside a transaction, invalid frames are counted and ignored, and the snapshot is
-unchanged. Updates of unknown keys are rejected without poisoning.
+Poisoning is per transaction: inside a transaction, a duplicate upsert of a key already announced in
+the same epoch, or any invalid upsert, marks it poisoned. `end` of a poisoned transaction closes it
+without removing anything, reports `Rejected`, and leaves `sync_required` set, so publication stays
+blocked. A later clean full sync clears `sync_required` and sweeps. `reset_session` also clears it.
+Outside a transaction, invalid frames are counted and ignored, and the snapshot is unchanged. Updates
+of unknown keys are rejected without poisoning. An `end` without a matching `begin` is counted.
 
-Quota: 4096 applications; exceeding it is `Quota` (poisoning inside a transaction). The snapshot
-byte bound is a compile-time check: 4096 times the maximum key and name sizes is below 16 MiB.
+Timeout: a transaction open for `TransactionTimeoutMs` (60 s) from `begin(now)` without its `end` is
+aborted without a sweep. The abort counts in `aborted_transactions` and sets `sync_required`.
+
+Quota: 480 applications (`MaxApps`); exceeding it is `Quota` (poisoning inside a transaction). Two
+compile-time checks hold: 480 times the maximum key and name sizes (200 + 255 bytes) is below 16 MiB,
+and 480 times eight records, plus two menu records and `MaxUncatalogued` (128) entries, is within
+`manifest.MaxManifestRecords`.
 
 ## 5. Publication
 
 Work units are applications (desktop entry plus advertised icons, rendered together by one
 `desktop_artifacts.build` call per application), the menu pair (rendered from all applications
-when the menu is dirty), and uncatalogued entries. A pass processes dirty units in key order and
-consumes at most 32 store operations; a unit that fails stays dirty, and the first non-budget
-failure is returned after the pass, so one failing unit never stops the others.
+when the menu is dirty), and uncatalogued entries. A pass visits each unit once from a rotating
+cursor, publishes the dirty ones, and consumes at most 32 store operations (`MaxOpsPerPass`). A unit
+that fails stays dirty and has its own backoff, so a failing unit never blocks the others. A
+regression test runs one good application beside a hundred permanently failing units and publishes it
+within a bounded number of ticks.
 
 Each artifact is compared with the base manifest by record identity and digest:
 
@@ -131,19 +146,20 @@ Parent directories are created below the owning store root with `mkdirat` and `O
 descriptor-relative opens. Existing components are accepted; a file or symlink in the way fails
 closed with backoff. The store does not create parents itself.
 
-Backoff: a failed pass sets `publish_not_before` to `now + 125 ms << failures`, capped at 8 s.
-`tick` and `ensure_uncatalogued` both honour it. A pass that only hit the budget reschedules at
-once and makes progress. No path busy-loops.
+Backoff: a failed unit waits `125 ms << failures`, capped at 8 s, before its next attempt.
+`tick` and `ensure_uncatalogued` both honour it, and `ensure_uncatalogued` publishes only its own
+entry. A pass that ran out of budget with failures retries after `PassBackoffMs` (250 ms). No path
+busy-loops, and the stats field `publish_failures` counts units currently backing off.
 
 Stale generation: `reset_session` drops the snapshot, open transfers and the sync requirement
 without changing published files or the manifest; the next full sync decides their fate.
 
 Menu policy: `Installed`, `All`, `None` are passed to `desktop_artifacts` as menu filters.
-Menu regeneration calls `desktop_artifacts.build` with every application in one request. The
-producer's cumulative candidate output is capped at 32 MiB, so menu regeneration fails closed
-(backoff, previous menu intact) once that cap is reached. The catalog size at which this happens
-is an estimate from the per-candidate sizes (roughly 450 applications) and has not been measured. Lifting this needs a
-non-cumulative mode in `desktop_artifacts`, recorded as a follow-up.
+Menu regeneration calls `desktop_artifacts.build` with every application in one request and
+`cumulative_candidates = false`. Each candidate then carries only its own record, and
+`publish_artifact` composes the commit candidate from the base manifest. The producer's cumulative
+32 MiB candidate cap therefore does not apply to menu output, and a 600-application menu is covered
+by a `desktop_artifacts` test. Menu size is bounded only by `MaxApps`.
 
 ## 6. Icon retrieval state machine
 
@@ -153,22 +169,32 @@ open), `attempts`, `not_before`, and the stored PNG bytes. Invariant: `want` imp
 
 * `want` is set for every advertised size when an application is new, when its content hash
   changes, or when its advertised mask grows. Re-announcing unchanged content does not re-request.
+  A content change also cancels the application's open transfers (`TransferCancel(Cancelled)`), so
+  data for the old content can never be stored.
 * `tick` issues `IconRequest` for wanted, unrequested slots in key order while fewer than 8
   transfers are open, outside transactions and sync-blocked states. Transfer identifiers are
   nonzero, unique among open transfers, and never reuse a live value.
 * Begin deadline and idle deadline: 10 s from issue and from each accepted chunk. Expiry sends
   `TransferCancel(TimedOut)` and schedules a retry after `5 s x attempts`.
-* `TransferBegin`: MIME must be `image/png` (else cancel Unsupported); total must be 1..1 MiB and
-  within the 32 MiB retained budget (else cancel TooLarge). The codec's `interop_transfer_begin`
-  does the accounting. A second begin on a receiving transfer is refused with cancel NotFound.
+* `TransferBegin`: MIME must be `image/png` (else cancel Unsupported); total must be 1..1 MiB (else
+  cancel TooLarge). The budget check, which the codec's `interop_transfer_begin` does not perform, is
+  `icon_bytes - replaced + icon_inflight + total <= 32 MiB`: the slot's replaced icon is not counted,
+  and every other receive in flight is. A receive that fails the check is cancelled TooLarge. A second
+  begin on a receiving transfer is refused with cancel NotFound.
 * `TransferChunk`: contiguous offsets only (codec); a gap, overlap or wrong-state chunk cancels
   with GuestError.
 * `TransferEnd`: the codec verifies the SHA-256 of the whole payload. A mismatch cancels with
-  GuestError and frees the buffer. The header must be a PNG whose IHDR width and height equal the
-  requested size, bit depth 8, colour type 6, and no compression, filter or interlace variant.
-  A non-PNG payload is dropped without a cancel (the guest has finished) and counts as a failure.
-* Guest `TransferCancel` and host-side cancellations (removal, timeout, reset) free the entry.
-  Removal and reset emit `TransferCancel(Cancelled)` only when the entry was open.
+  GuestError and frees the buffer. The payload must pass `png_valid`: the PNG signature; IHDR first,
+  length 13, width and height equal to the requested size, bit depth 8, colour type 6, and no
+  compression, filter or interlace variant; every chunk's length inside the buffer and CRC-32
+  correct; at most 64 chunks; an IDAT present; IEND last with zero length and no trailing bytes.
+  APNG control chunks (`acTL`, `fcTL`, `fdAT`) and unknown critical chunks are refused. A payload that
+  fails validation is freed without a cancel (the guest has finished), counts as a failure and in
+  `rejected_frames`, and returns `Rejected`.
+* Guest `TransferCancel` and host-side cancellations (removal, content change, timeout, reset) free
+  the entry. Removal, content change and reset emit `TransferCancel(Cancelled)` only when the entry
+  was open. Removing an application also purges its queued IconRequests, so a request for a
+  released transfer is never sent.
 * Unknown transfer identifiers in Begin, Chunk, End receive `TransferCancel(NotFound)`. Cancel
   for an unknown identifier is a no-op.
 
@@ -184,9 +210,9 @@ codec enforces.
 
 Outbound frames are built with the codec writer (IconRequest: app key, transfer, icon size;
 TransferCancel: transfer, status) and sent through the injected sender. `QueueFull` retains the
-single action for the next callback; later actions stay in the runtime's ring, so ordering is
-preserved. Other send results drop the action. `next_deadline` returns the current instant while
-an action is retained. `on_closing` resets the runtime's session. The handler never fails the run:
+single action and retries it 100 ms later; later actions stay in the runtime's ring, so ordering is
+preserved, and new requests are blocked until the retained action is sent. Other send results drop
+the action. `next_deadline` returns the retry instant while an action is retained. `on_closing` resets the runtime's session. The handler never fails the run:
 every callback returns zero, except a wall-clock failure in `on_tick` (returns one).
 
 Clocks: `on_frame` reads the injected monotonic clock (default `CLOCK_MONOTONIC`). `on_tick`
@@ -216,14 +242,17 @@ previous published state.
   exhaustive `emit_manifest` sweep).
 * Open transfers at teardown are released by `destroy`.
 * Known limits, recorded for the lead: icon files blocked by the store allowlist (section 2);
-  deferred removals (section 1); menu size bound (section 5); the uncatalogued Exec form
-  (section 1). The pre-existing store behaviour that refuses a stale base (`ManifestMismatch`)
+  deferred removals, with no store remove API and no seam installed by the session handler
+  (section 1); the uncatalogued Exec form (section 1). The pre-existing store behaviour that refuses a stale base (`ManifestMismatch`)
   makes the runtime fail closed with backoff if the state directory is edited by another writer.
 
 ## 10. Verification
 
-Zig (`zig test src/interop/catalog_runtime.zig -Iinclude -lc`, 157 tests including the imported
-module tests): unit and helper branches, the 100-application sync, idempotent repeated syncs
+Zig (`zig test src/interop/catalog_runtime.zig -Iinclude -lc`, 170 tests passing, including the
+imported module tests): regressions for the review findings (action-ring bounds and drop policy,
+send backpressure, queued-key lifetime and purge, per-transaction poisoning and clean clear, the
+transaction timeout, per-unit backoff and starvation, content-change cancel, the in-flight budget
+and its M3 mutant, PNG chunk validation, the removal seam and deferred counter), unit and helper branches, the 100-application sync, idempotent repeated syncs
 (inode and mtime unchanged), changed content replacement, removed applications, transaction
 semantics, poisoning and recovery, hostile frames and quotas, the icon request and transfer state
 machine (including each cancel and timeout path and the retained budget), store fault injection at
@@ -232,8 +261,9 @@ reference model, the restart path, and the C ABI (every export, null guards and 
 All Zig tests use `std.testing.allocator`, which reports leaks at test end.
 
 Coverage: `python3 tests/av/coverage.py catalog_runtime` gates production lines and taken arcs
-(marker `tests/av/coverage_modes/catalog_runtime`). The last run reported 99.01% lines and 90.06%
-taken arcs of the module.
+(marker `tests/av/coverage_modes/catalog_runtime`). The latest run FAILED the gate: 97.76% lines
+(871/891) and 87.17% taken arcs (530/608), below the 90% threshold. The uncovered arcs are in the C ABI
+null guards of `catalog_runtime_create` and the new exports; they are not yet covered by tests.
 
 C: `tests/interop/session_catalog_handler.c` runs the real codec, the real runtime and a rooted
 store through a fake sender. It asserts the exact IconRequest and TransferCancel bytes and the

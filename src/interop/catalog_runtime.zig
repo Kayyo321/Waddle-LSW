@@ -19,7 +19,10 @@ comptime {
 }
 
 /// Maximum catalog applications in one snapshot (IMPL_DESC 3.2.5, app_catalog_contract).
-pub const MaxApps: usize = 4096;
+/// Each application publishes at most eight records (desktop entry and seven icons). With the two
+/// menu records and MaxUncatalogued entries the worst case stays within
+/// manifest.MaxManifestRecords (asserted below), so this bound is deterministic.
+pub const MaxApps: usize = 480;
 /// Maximum aggregate bytes of retained app keys and display names. With at most `MaxApps`
 /// entries of 200-byte keys and 255-byte names the snapshot stays below this bound, so the
 /// runtime needs no separate per-byte quota check (asserted at compile time below).
@@ -28,7 +31,10 @@ comptime {
     std.debug.assert(MaxApps * (200 + 255) <= MaxSnapshotBytes);
 }
 /// Maximum uncatalogued-window entries kept by the runtime.
-pub const MaxUncatalogued: usize = 256;
+pub const MaxUncatalogued: usize = 128;
+comptime {
+    std.debug.assert(MaxApps * 8 + 2 + MaxUncatalogued <= manifest.MaxManifestRecords);
+}
 /// Maximum outstanding IconRequest transfers.
 pub const MaxOutstanding: usize = 8;
 /// Maximum transfer table entries (outstanding requests plus cancelled in-flight state).
@@ -232,6 +238,8 @@ pub const stats_c_t = extern struct {
     aborted_transactions: u32,
     /// Store commit and replace calls made by publication.
     store_ops: u32,
+    /// Published records of removed applications not yet unpublished.
+    deferred_removals: u32,
 };
 
 /// Outbound action with its key borrowed from the runtime.
@@ -381,6 +389,8 @@ pub const runtime_t = struct {
     dropped_actions: u32 = 0,
     /// Retained icon bytes and snapshot string bytes.
     icon_bytes: usize = 0,
+    /// Bytes allocated for icon receives still in flight (their announced sizes).
+    icon_inflight: usize = 0,
     snapshot_bytes: usize = 0,
     /// Next candidate transfer identifier; zero is never used.
     next_transfer_id: u32 = 1,
@@ -408,6 +418,17 @@ pub const runtime_t = struct {
     store_ops: u32 = 0,
     /// Parsed base manifest, valid until `base` changes. Owned; released by replace_base/destroy.
     base_cache: ?manifest.document_t = null,
+    /// Borrowed state directory descriptor, used to re-read manifest.json after an unpublish.
+    state_fd: c_int,
+    /// Optional seam that removes one published record of a removed application. Null in
+    /// production until the manifest store provides a removal API (TODO #33); removals are then
+    /// only counted in deferred_removals.
+    unpublisher: ?unpublisher_t = null,
+    unpublish_failures: u32 = 0,
+    unpublish_not_before: u64 = 0,
+    /// Published desktop and icon records whose application was removed and not yet unpublished.
+    deferred_removals: u32 = 0,
+    deferred_dirty: bool = true,
     /// Frames rejected since creation.
     rejected_frames: u32 = 0,
 
@@ -447,6 +468,7 @@ pub const runtime_t = struct {
             .waddle_version = version,
             .menu_policy = config.menu_policy,
             .base = base,
+            .state_fd = config.manifest_dir_fd,
             .apps = std.ArrayList(app_t).init(allocator),
             .uncatalogued = std.ArrayList(uncatalogued_t).init(allocator),
         };
@@ -455,6 +477,8 @@ pub const runtime_t = struct {
 
     /// Release every retained snapshot, transfer buffer, action and the store lock.
     /// Safe only after the owning pump has stopped calling the runtime.
+    /// Ownership: releases every allocation and the store lock; the handle must not be used afterwards.
+    /// Thread-safety: owner thread only.
     pub fn destroy(self: *runtime_t) void {
         const allocator = self.allocator;
         self.clear_snapshot();
@@ -484,6 +508,8 @@ pub const runtime_t = struct {
 
     /// Begin a full-sync transaction. A Begin inside an open transaction restarts it: the
     /// announce marks of the abandoned attempt are discarded and the snapshot is kept.
+    /// Ownership: updates the transaction state only; no allocation.
+    /// Thread-safety: owner thread only.
     pub fn begin(self: *runtime_t, now: u64) void {
         self.transaction_open = true;
         self.tx_poisoned = false;
@@ -494,6 +520,7 @@ pub const runtime_t = struct {
     /// Close the open transaction. Apps not announced since the matching Begin are removed.
     /// Returns Rejected when no transaction is open or the transaction was poisoned; the
     /// snapshot then stays as it is and publication stays blocked until a clean full sync.
+    /// Ownership: may remove applications, releasing their storage. Thread-safety: owner thread only.
     pub fn end(self: *runtime_t) error_t!void {
         if (!self.transaction_open) {
             self.rejected_frames +|= 1;
@@ -512,6 +539,8 @@ pub const runtime_t = struct {
 
     /// Add or update one application. Outside a transaction this is incremental; inside one,
     /// a second upsert of the same key poisons the transaction. Invalid input is Rejected.
+    /// Input: `input` is borrowed and copied before return. Ownership: the runtime owns its copies.
+    /// Thread-safety: owner thread only.
     pub fn upsert(self: *runtime_t, is_update: bool, input: app_input_t) error_t!void {
         const parsed = self.parse_input(input) catch return self.reject_invalid();
         const found = self.find(input.key);
@@ -531,12 +560,14 @@ pub const runtime_t = struct {
     }
 
     /// Remove one application if present. Unknown keys are a no-op.
+    /// Input: `key` is borrowed for the call. Thread-safety: owner thread only.
     pub fn remove(self: *runtime_t, key: []const u8) void {
         if (self.find(key)) |index| self.remove_at(index);
     }
 
     /// Reset the in-memory snapshot after a session change. Published files and the manifest
     /// are not modified; the next full sync decides their fate.
+    /// Ownership: releases the snapshot, transfers and queued actions. Thread-safety: owner thread only.
     pub fn reset_session(self: *runtime_t) void {
         self.clear_snapshot();
         self.action_count = 0;
@@ -552,23 +583,29 @@ pub const runtime_t = struct {
     }
 
     /// Begin receiving the icon for the outstanding request `id`.
+    /// Input: `mime` is borrowed for the call. Thread-safety: owner thread only.
     pub fn transfer_begin(self: *runtime_t, id: u32, total: u64, mime: []const u8, now: u64) error_t!void {
         const index = self.transfer_index(id) orelse return self.cancel_unknown(id);
         const transfer = &self.transfers[index].?;
         if (transfer.phase != .AwaitBegin) return self.cancel_unknown(id);
         if (!std.mem.eql(u8, mime, "image/png")) return self.fail_transfer(index, CancelUnsupported, now);
         if (total == 0 or total > MaxIconBytes) return self.fail_transfer(index, CancelTooLarge, now);
+        // Budget after this receive: retained icons, minus the slot's icon this one replaces, plus
+        // every other receive in flight and this one. The replaced bytes stay allocated until the
+        // receive completes, so the transient peak is bounded by the budget plus one icon.
         const old_bytes = self.slot_bytes(transfer.key, transfer.slot);
-        if (self.icon_bytes - old_bytes + total > MaxIconBudget) return self.fail_transfer(index, CancelTooLarge, now);
+        if (self.icon_bytes - old_bytes + self.icon_inflight + total > MaxIconBudget) return self.fail_transfer(index, CancelTooLarge, now);
         if (interop_transfer_begin(&transfer.state, id, total, MaxIconBytes) != 0) {
             return self.fail_transfer(index, CancelGuestError, now);
         }
         transfer.buffer = try self.allocator.alloc(u8, @intCast(total));
+        self.icon_inflight += transfer.buffer.len;
         transfer.phase = .Receiving;
         transfer.deadline = now + RequestTimeoutMs;
     }
 
     /// Account one chunk for transfer `id`. Gaps, overlaps and oversize chunks cancel it.
+    /// Input: `data` is borrowed and copied into the owned buffer before return. Thread-safety: owner thread only.
     pub fn transfer_chunk(self: *runtime_t, id: u32, offset: u64, data: []const u8, now: u64) error_t!void {
         const index = self.transfer_index(id) orelse return self.cancel_unknown(id);
         const transfer = &self.transfers[index].?;
@@ -582,6 +619,7 @@ pub const runtime_t = struct {
     }
 
     /// Verify the digest and PNG header, then store the icon and mark the app dirty.
+    /// Input: `hash` is borrowed for the call. Thread-safety: owner thread only.
     pub fn transfer_end(self: *runtime_t, id: u32, hash: *const [32]u8, now: u64) error_t!void {
         const index = self.transfer_index(id) orelse return self.cancel_unknown(id);
         const transfer = &self.transfers[index].?;
@@ -604,6 +642,7 @@ pub const runtime_t = struct {
         }
         slot.bytes = transfer.buffer;
         self.icon_bytes += transfer.buffer.len;
+        self.icon_inflight -= transfer.buffer.len;
         transfer.buffer = &.{};
         slot.want = false;
         slot.attempts = 0;
@@ -612,6 +651,7 @@ pub const runtime_t = struct {
     }
 
     /// Guest-side cancellation of transfer `id`. Unknown identifiers are a no-op.
+    /// Ownership: releases the transfer if open. Thread-safety: owner thread only.
     pub fn transfer_cancel(self: *runtime_t, id: u32, now: u64) void {
         const index = self.transfer_index(id) orelse return;
         self.note_failure(index, now);
@@ -620,6 +660,7 @@ pub const runtime_t = struct {
 
     /// Advance timeouts, issue icon requests and publish pending artifacts.
     /// `updated` is the UTC RFC3339 timestamp recorded in candidate manifests.
+    /// Input: `updated` is borrowed for the call. Ownership: publication may allocate and release store state. Thread-safety: owner thread only.
     pub fn tick(self: *runtime_t, now: u64, updated: []const u8) void {
         self.expire_transaction(now);
         self.expire_transfers(now);
@@ -628,6 +669,71 @@ pub const runtime_t = struct {
             const outcome = self.publish_pass(now, updated);
             if (outcome.failed and outcome.exhausted) self.pass_not_before = now + PassBackoffMs;
         }
+        self.recount_deferred();
+        self.unpublish_removed(now);
+    }
+
+    /// Count published desktop and icon records whose application is no longer in the snapshot
+    /// or among the uncatalogued entries. Recounted only after the base or the snapshot changed.
+    fn recount_deferred(self: *runtime_t) void {
+        if (!self.deferred_dirty) return;
+        self.deferred_dirty = false;
+        const records = self.base_records() catch {
+            self.deferred_removals = 0;
+            return;
+        };
+        var count: u32 = 0;
+        for (records) |record| {
+            if (!is_app_record(record)) continue;
+            if (self.is_live_key(record.app_key.?)) continue;
+            count +|= 1;
+        }
+        self.deferred_removals = count;
+    }
+
+    fn is_live_key(self: *runtime_t, key: []const u8) bool {
+        return self.find(key) != null or self.uncat_index(key) != null;
+    }
+
+    /// Ask the seam to remove one deferred record, at most once per tick. A success must leave the
+    /// record out of manifest.json; a failure, or a record that survives, backs the seam off.
+    fn unpublish_removed(self: *runtime_t, now: u64) void {
+        const seam = self.unpublisher orelse return;
+        if (now < self.unpublish_not_before) return;
+        const records = self.base_records() catch return;
+        var target: ?[]const u8 = null;
+        for (records) |record| {
+            if (is_app_record(record) and !self.is_live_key(record.app_key.?)) {
+                target = record.id;
+                break;
+            }
+        }
+        const borrowed_id = target orelse return;
+        // The id borrows the cached base, which install_base frees, so keep an owned copy.
+        const record_id = self.allocator.dupe(u8, borrowed_id) catch {
+            self.note_unpublish_failure(now);
+            return;
+        };
+        defer self.allocator.free(record_id);
+        seam.remove_record(seam.context, record_id) catch {
+            self.note_unpublish_failure(now);
+            return;
+        };
+        const bytes = read_manifest_file(self.allocator, self.state_fd) catch {
+            self.note_unpublish_failure(now);
+            return;
+        };
+        self.install_base(bytes);
+        const after = self.base_records() catch {
+            self.note_unpublish_failure(now);
+            return;
+        };
+        if (find_record_index(after, record_id) != null) self.note_unpublish_failure(now) else self.unpublish_failures = 0;
+    }
+
+    fn note_unpublish_failure(self: *runtime_t, now: u64) void {
+        self.unpublish_failures +|= 1;
+        self.unpublish_not_before = now + backoff_ms(self.unpublish_failures, MaxPublishBackoffMs);
     }
 
     /// Ensure an uncatalogued window's NoDisplay entry exists before its first commit.
@@ -656,6 +762,7 @@ pub const runtime_t = struct {
     }
 
     /// Earliest absolute deadline the caller must tick at, or null when idle.
+    /// Read-only query. Thread-safety: owner thread only.
     pub fn next_deadline(self: *runtime_t, now: u64) ?u64 {
         var best: ?u64 = null;
         if (self.transaction_open) best = min_optional(best, @max(self.tx_started + TransactionTimeoutMs, now));
@@ -678,6 +785,7 @@ pub const runtime_t = struct {
 
     /// Pop the next outbound action, or null when none are queued. Key slices in the
     /// returned action stay valid until the next runtime call.
+    /// Ownership: the returned key slice is owned by the ring and valid until the next runtime call. Thread-safety: owner thread only.
     pub fn next_action(self: *runtime_t) ?action_t {
         if (self.action_count == 0) return null;
         const entry = &self.actions[self.action_head];
@@ -705,7 +813,15 @@ pub const runtime_t = struct {
         self.send_blocked = blocked;
     }
 
+    /// Install or clear the unpublish seam. Owner thread only; the seam is called from tick.
+    pub fn set_unpublisher(self: *runtime_t, seam: ?unpublisher_t) void {
+        self.unpublisher = seam;
+        self.unpublish_failures = 0;
+        self.unpublish_not_before = 0;
+    }
+
     /// Snapshot of diagnostic counters.
+    /// Read-only snapshot by value. Thread-safety: owner thread only.
     pub fn stats(self: *runtime_t) stats_c_t {
         return .{
             .apps = @intCast(self.apps.items.len),
@@ -721,6 +837,7 @@ pub const runtime_t = struct {
             .queued_actions = @intCast(self.action_count),
             .aborted_transactions = self.aborted_transactions,
             .store_ops = self.store_ops,
+            .deferred_removals = self.deferred_removals,
         };
     }
 
@@ -828,8 +945,12 @@ pub const runtime_t = struct {
         const flags_changed = app.flags != input.flags;
         app.flags = input.flags;
         var wanted = false;
+        var content_changed = false;
         if (parsed.hash) |hash| {
-            if (app.content_hash == null or !std.mem.eql(u8, &app.content_hash.?, &hash)) wanted = true;
+            if (app.content_hash == null or !std.mem.eql(u8, &app.content_hash.?, &hash)) {
+                wanted = true;
+                content_changed = true;
+            }
             app.content_hash = hash;
         }
         if (parsed.mask & ~app.mask != 0) wanted = true;
@@ -839,6 +960,9 @@ pub const runtime_t = struct {
             app.dirty = true;
             self.menu_dirty = true;
         }
+        // Icons for the previous content may still be in flight. They are cancelled, so a late
+        // TransferEnd for them is refused and the stale image is never stored.
+        if (content_changed) self.cancel_transfers_for(app.key, true);
         if (wanted) self.want_icons(index);
     }
 
@@ -853,7 +977,16 @@ pub const runtime_t = struct {
         }
     }
 
+    /// Install an explicit manifest snapshot (or none) as the base and invalidate its cache.
+    fn install_base(self: *runtime_t, bytes: ?[]u8) void {
+        if (self.base) |old| self.allocator.free(old);
+        self.base = bytes;
+        self.drop_base_cache();
+        self.deferred_dirty = true;
+    }
+
     fn remove_at(self: *runtime_t, index: usize) void {
+        self.deferred_dirty = true;
         self.cancel_transfers_for(self.apps.items[index].key, true);
         const app = self.apps.orderedRemove(index);
         self.snapshot_bytes -= app.key.len + app.display_name.len;
@@ -956,6 +1089,7 @@ pub const runtime_t = struct {
         const transfer = self.transfers[index].?;
         self.apps.items[self.find(transfer.key).?].icons[transfer.slot].requested = false;
         self.purge_request(transfer.id);
+        self.icon_inflight -= transfer.buffer.len;
         self.allocator.free(transfer.key);
         self.allocator.free(transfer.buffer);
         self.transfers[index] = null;
@@ -970,6 +1104,7 @@ pub const runtime_t = struct {
             if (emit) self.push_cancel(transfer.id, CancelCancelled);
             self.apps.items[self.find(transfer.key).?].icons[transfer.slot].requested = false;
             self.purge_request(transfer.id);
+            self.icon_inflight -= transfer.buffer.len;
             self.allocator.free(transfer.key);
             self.allocator.free(transfer.buffer);
             self.transfers[index] = null;
@@ -1356,9 +1491,7 @@ pub const runtime_t = struct {
 
     /// Install a newly published manifest as the base and invalidate the parsed cache.
     fn replace_base(self: *runtime_t, candidate: []u8) void {
-        if (self.base) |old| self.allocator.free(old);
-        self.base = candidate;
-        self.drop_base_cache();
+        self.install_base(candidate);
     }
 
     fn drop_base_cache(self: *runtime_t) void {
@@ -1517,6 +1650,16 @@ fn valid_absolute(path: []const u8, directory: bool) bool {
     return true;
 }
 
+/// Removes one published record of a removed application. Contract: the implementation must remove
+/// the record from the manifest store under the store lock and must return success only once the
+/// record is gone; the runtime re-reads manifest.json and treats a surviving record as a failure.
+pub const unpublisher_t = struct {
+    /// Passed unchanged to remove_record; may be null.
+    context: ?*anyopaque,
+    /// Remove the record with `record_id`. Returns an error when the removal did not happen.
+    remove_record: *const fn (context: ?*anyopaque, record_id: []const u8) error_t!void,
+};
+
 /// Largest chunk count walked in one PNG; bounds the walk on hostile input.
 const MaxPngChunks: usize = 64;
 
@@ -1566,6 +1709,11 @@ fn chunk_allowed(kind: []const u8) bool {
     return true;
 }
 
+/// True for the desktop entry and icon records that carry an application key.
+fn is_app_record(record: manifest.record_t) bool {
+    return (record.kind == .DesktopEntry or record.kind == .Icon) and record.app_key != null;
+}
+
 /// Counting sink: sizes the output without allocating. Appends cannot fail.
 const count_sink_t = struct {
     len: usize = 0,
@@ -1601,6 +1749,7 @@ const fill_sink_t = struct {
 /// desktop_artifacts' emitter; the differential test in this file checks that equality.
 /// Records are sorted by id. Caller owns the returned slice. A count pass sizes the output
 /// exactly, so the only allocation is the final buffer.
+/// Ownership: returns a caller-owned slice, released with the same allocator. Inputs are borrowed for the call. Thread-safety: pure; distinct calls are independent.
 pub fn emit_manifest(allocator: std.mem.Allocator, waddle_version: []const u8, updated: []const u8, records: []const manifest.record_t) ![]u8 {
     const sorted = try allocator.dupe(manifest.record_t, records);
     defer allocator.free(sorted);
@@ -1761,12 +1910,14 @@ export fn catalog_runtime_create(config: ?*const config_c_t, out: ?*?*runtime_t)
 }
 
 /// Release a runtime and its store lock. Null is ignored.
+/// Ownership: see destroy. Thread-safety: owner thread only.
 export fn catalog_runtime_destroy(runtime: ?*runtime_t) void {
     const self = runtime orelse return;
     self.destroy();
 }
 
 /// Open a catalog transaction (CatalogBegin).
+/// Thread-safety: owner thread only.
 export fn catalog_runtime_begin(runtime: ?*runtime_t, now_ms: u64) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     self.begin(now_ms);
@@ -1774,12 +1925,14 @@ export fn catalog_runtime_begin(runtime: ?*runtime_t, now_ms: u64) c_int {
 }
 
 /// Close a catalog transaction (CatalogEnd). Returns Rejected for unopened or poisoned sessions.
+/// Thread-safety: owner thread only.
 export fn catalog_runtime_end(runtime: ?*runtime_t) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     return status_from(self.end());
 }
 
 /// Apply CatalogAdd (is_update 0) or CatalogUpdate (is_update nonzero).
+/// Input: `app` and its slices are borrowed for the call. Thread-safety: owner thread only.
 export fn catalog_runtime_upsert(runtime: ?*runtime_t, is_update: c_int, app: ?*const app_c_t) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     const raw = app orelse return @intFromEnum(status_t.InvalidArgument);
@@ -1794,6 +1947,7 @@ export fn catalog_runtime_upsert(runtime: ?*runtime_t, is_update: c_int, app: ?*
 }
 
 /// Apply CatalogRemove.
+/// Input: `key` is borrowed for the call. Thread-safety: owner thread only.
 export fn catalog_runtime_remove(runtime: ?*runtime_t, key: ?[*]const u8, key_length: usize) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     self.remove(slice_of(key, key_length));
@@ -1801,24 +1955,28 @@ export fn catalog_runtime_remove(runtime: ?*runtime_t, key: ?[*]const u8, key_le
 }
 
 /// Drop the in-memory snapshot after a session change; published files stay.
+/// Thread-safety: owner thread only.
 export fn catalog_runtime_reset_session(runtime: ?*runtime_t) void {
     const self = runtime orelse return;
     self.reset_session();
 }
 
 /// Accept TransferBegin for an icon request identifier.
+/// Input: `mime` is borrowed for the call. Thread-safety: owner thread only.
 export fn catalog_runtime_transfer_begin(runtime: ?*runtime_t, id: u32, total: u64, mime: ?[*]const u8, mime_length: usize, now_ms: u64) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     return status_from(self.transfer_begin(id, total, slice_of(mime, mime_length), now_ms));
 }
 
 /// Accept one TransferChunk.
+/// Input: `data` is borrowed for the call. Thread-safety: owner thread only.
 export fn catalog_runtime_transfer_chunk(runtime: ?*runtime_t, id: u32, offset: u64, data: ?[*]const u8, length: usize, now_ms: u64) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     return status_from(self.transfer_chunk(id, offset, slice_of(data, length), now_ms));
 }
 
 /// Accept TransferEnd. `hash` must point to 32 readable bytes.
+/// Input: `hash` is borrowed for the call. Thread-safety: owner thread only.
 export fn catalog_runtime_transfer_end(runtime: ?*runtime_t, id: u32, hash: ?*const [32]u8, now_ms: u64) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     const digest = hash orelse return @intFromEnum(status_t.InvalidArgument);
@@ -1826,6 +1984,7 @@ export fn catalog_runtime_transfer_end(runtime: ?*runtime_t, id: u32, hash: ?*co
 }
 
 /// Accept a guest TransferCancel.
+/// Thread-safety: owner thread only.
 export fn catalog_runtime_transfer_cancel(runtime: ?*runtime_t, id: u32, now_ms: u64) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     self.transfer_cancel(id, now_ms);
@@ -1833,6 +1992,7 @@ export fn catalog_runtime_transfer_cancel(runtime: ?*runtime_t, id: u32, now_ms:
 }
 
 /// Run timeouts, issue requests and publish pending artifacts. `updated` is UTC RFC3339.
+/// Input: `updated` is borrowed for the call. Thread-safety: owner thread only.
 export fn catalog_runtime_tick(runtime: ?*runtime_t, now_ms: u64, updated: ?[*]const u8, updated_length: usize) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     self.tick(now_ms, slice_of(updated, updated_length));
@@ -1840,12 +2000,14 @@ export fn catalog_runtime_tick(runtime: ?*runtime_t, now_ms: u64, updated: ?[*]c
 }
 
 /// Publish an uncatalogued window's NoDisplay entry before its first commit.
+/// Inputs are borrowed for the call. Thread-safety: owner thread only.
 export fn catalog_runtime_ensure_uncatalogued(runtime: ?*runtime_t, key: ?[*]const u8, key_length: usize, title: ?[*]const u8, title_length: usize, now_ms: u64, updated: ?[*]const u8, updated_length: usize) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     return status_from(self.ensure_uncatalogued(slice_of(key, key_length), slice_of(title, title_length), now_ms, slice_of(updated, updated_length)));
 }
 
 /// Copy the next outbound action into `out`. Returns 1 when written, 0 when none is queued.
+/// `out` is written only when the return is 1; the key stays valid until the next runtime call. Thread-safety: owner thread only.
 export fn catalog_runtime_next_action(runtime: ?*runtime_t, out: ?*action_c_t) c_int {
     const self = runtime orelse return 0;
     const target = out orelse return 0;
@@ -1862,6 +2024,7 @@ export fn catalog_runtime_next_action(runtime: ?*runtime_t, out: ?*action_c_t) c
 }
 
 /// Earliest deadline at or after `now_ms`, or UINT64_MAX when nothing is scheduled.
+/// Thread-safety: owner thread only.
 export fn catalog_runtime_next_deadline(runtime: ?*runtime_t, now_ms: u64) u64 {
     const self = runtime orelse return std.math.maxInt(u64);
     return self.next_deadline(now_ms) orelse std.math.maxInt(u64);
@@ -1880,6 +2043,7 @@ export fn catalog_runtime_set_send_blocked(runtime: ?*runtime_t, blocked: c_int)
 }
 
 /// Copy diagnostic counters into `out`.
+/// `out` is written only on success. Thread-safety: owner thread only.
 export fn catalog_runtime_stats(runtime: ?*runtime_t, out: ?*stats_c_t) c_int {
     const self = runtime orelse return @intFromEnum(status_t.InvalidArgument);
     const target = out orelse return @intFromEnum(status_t.InvalidArgument);
@@ -3780,4 +3944,200 @@ test "PNG validation checks every chunk and refuses corrupted, truncated and APN
     const over_limit = try build_png_chunks(gpa, &many);
     defer gpa.free(over_limit);
     try testing.expect(!png_valid(over_limit, 16));
+}
+
+/// Find the next IconRequest for `key` among the queued actions, draining everything before it.
+fn request_id_for(rt: *runtime_t, key: []const u8) ?u32 {
+    while (rt.next_action()) |action| {
+        if (action.kind == .IconRequest and std.mem.eql(u8, action.key, key)) return action.transfer;
+    }
+    return null;
+}
+
+/// Drain the queued actions, recording the IconRequest identifier of each key `a-<prefix><NNN>`
+/// by its three-digit suffix. Other actions are discarded, which the caller accounts for.
+fn collect_keyed_requests(rt: *runtime_t, table: []?u32) void {
+    while (rt.next_action()) |action| {
+        if (action.kind != .IconRequest) continue;
+        const index = std.fmt.parseInt(usize, action.key[action.key.len - 3 ..], 10) catch unreachable;
+        table[index] = action.transfer;
+    }
+}
+
+/// Deliver a complete standalone PNG for transfer `id`, in chunks of the protocol's size.
+fn deliver_png(rt: *runtime_t, id: u32, png: []const u8) !void {
+    try rt.transfer_begin(id, png.len, "image/png", 0);
+    var offset: usize = 0;
+    while (offset < png.len) {
+        const end = @min(png.len, offset + 61440);
+        try rt.transfer_chunk(id, offset, png[offset..end], 0);
+        offset = end;
+    }
+    var digest: [32]u8 = undefined;
+    sha256.hash(png, &digest, .{});
+    try rt.transfer_end(id, &digest, 0);
+}
+
+test "a content change cancels the in-flight icon so its late data is never stored" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    const sizes = [_]u8{ 16, 0 };
+    const hash_a = [_]u8{0xA1} ** 32;
+    const hash_b = [_]u8{0xB2} ** 32;
+    rt.begin(0);
+    try rt.upsert(false, .{ .key = "a-Alpha", .display_name = "A", .flags = 0, .icon_sizes = &sizes, .content_hash = &hash_a });
+    try rt.end();
+    rt.tick(0, UpdatedTimestamp);
+    const old_id = request_id_for(rt, "a-Alpha") orelse return error.TestUnexpectedResult;
+    // The content changes while the old request is open.
+    rt.begin(1);
+    try rt.upsert(true, .{ .key = "a-Alpha", .display_name = "A", .flags = 0, .icon_sizes = &sizes, .content_hash = &hash_b });
+    try rt.end();
+    var cancelled = false;
+    while (rt.next_action()) |action| {
+        if (action.kind == .TransferCancel and action.transfer == old_id) cancelled = true;
+    }
+    try testing.expect(cancelled);
+    rt.tick(2, UpdatedTimestamp);
+    const new_id = request_id_for(rt, "a-Alpha") orelse return error.TestUnexpectedResult;
+    try testing.expect(new_id != old_id);
+    // The late data of the old request is refused; the new request stores its icon.
+    const stale = try fake_png(testing.allocator, 16, 30, 0x01);
+    defer testing.allocator.free(stale);
+    try testing.expectError(error.Rejected, deliver_png(rt, old_id, stale));
+    const fresh = try fake_png(testing.allocator, 16, 40, 0x02);
+    defer testing.allocator.free(fresh);
+    try deliver_png(rt, new_id, fresh);
+    try testing.expectEqual(fresh.len, rt.stats().icon_bytes);
+}
+
+test "the icon budget charges replacements once and counts receives in flight" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    const size_256 = [_]u8{ 0x00, 0x01 };
+    const hash = [_]u8{0x77} ** 32;
+    const big = try fake_png(testing.allocator, 256, MaxIconBytes - 57, 0x5a);
+    defer testing.allocator.free(big);
+    // Thirty-one stored icons: one budget slot short of the cap.
+    var keys: [33][8]u8 = undefined;
+    rt.begin(0);
+    for (0..33) |i| {
+        const key = try std.fmt.bufPrint(&keys[i], "a-B{d:0>3}", .{i});
+        if (i < 31) try rt.upsert(false, .{ .key = key, .display_name = "B", .flags = 0, .icon_sizes = &size_256, .content_hash = &hash });
+    }
+    try rt.end();
+    var stored: usize = 0;
+    var table = [_]?u32{null} ** 33;
+    while (stored < 31) {
+        rt.issue_requests(0);
+        collect_keyed_requests(rt, &table);
+        for (0..31) |i| {
+            if (table[i]) |id| {
+                try deliver_png(rt, id, big);
+                table[i] = null;
+                stored += 1;
+            }
+        }
+    }
+    try testing.expectEqual(@as(usize, 31 * MaxIconBytes), rt.stats().icon_bytes);
+    // Two receives in flight: the first fits the last slot, the second must not, because the
+    // first's bytes are already counted against the budget.
+    // Two new apps arrive incrementally; each is requested, and both receives are then in flight.
+    for (31..33) |i| {
+        try rt.upsert(false, .{ .key = keys[i][0..6], .display_name = "B", .flags = 0, .icon_sizes = &size_256, .content_hash = &hash });
+    }
+    rt.issue_requests(0);
+    table = [_]?u32{null} ** 33;
+    collect_keyed_requests(rt, &table);
+    const first_id = table[31] orelse return error.TestUnexpectedResult;
+    const second_id = table[32] orelse return error.TestUnexpectedResult;
+    try rt.transfer_begin(first_id, big.len, "image/png", 0);
+    try testing.expectError(error.Rejected, rt.transfer_begin(second_id, big.len, "image/png", 0));
+    _ = rt.next_action();
+}
+
+test "replacing an icon at the budget edge is accepted because the replaced bytes are freed" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    const size_256 = [_]u8{ 0x00, 0x01 };
+    const hash_a = [_]u8{0x78} ** 32;
+    const hash_b = [_]u8{0x79} ** 32;
+    const big = try fake_png(testing.allocator, 256, MaxIconBytes - 57, 0x6b);
+    defer testing.allocator.free(big);
+    var keys: [32][8]u8 = undefined;
+    rt.begin(0);
+    for (0..32) |i| {
+        const key = try std.fmt.bufPrint(&keys[i], "a-R{d:0>3}", .{i});
+        try rt.upsert(false, .{ .key = key, .display_name = "R", .flags = 0, .icon_sizes = &size_256, .content_hash = &hash_a });
+    }
+    try rt.end();
+    var stored: usize = 0;
+    var table = [_]?u32{null} ** 33;
+    while (stored < 32) {
+        rt.issue_requests(0);
+        collect_keyed_requests(rt, &table);
+        for (0..32) |i| {
+            if (table[i]) |id| {
+                try deliver_png(rt, id, big);
+                table[i] = null;
+                stored += 1;
+            }
+        }
+    }
+    try testing.expectEqual(@as(usize, 32 * MaxIconBytes), rt.stats().icon_bytes);
+    // Replace one icon. Its old bytes count as freed, so the new one fits exactly at the cap.
+    // Outside a transaction an upsert is incremental: the other 31 apps are untouched.
+    try rt.upsert(true, .{ .key = keys[0][0..6], .display_name = "R", .flags = 0, .icon_sizes = &size_256, .content_hash = &hash_b });
+    rt.issue_requests(0);
+    table = [_]?u32{null} ** 33;
+    collect_keyed_requests(rt, &table);
+    const replacement = table[0] orelse return error.TestUnexpectedResult;
+    try deliver_png(rt, replacement, big);
+    try testing.expectEqual(@as(usize, 32 * MaxIconBytes), rt.stats().icon_bytes);
+}
+
+test "removed applications are counted as deferred until the seam unpublishes them" {
+    var env = env_t.init(testing.allocator);
+    defer env.deinit();
+    const rt = try runtime_t.create(testing.allocator, env.config_for());
+    defer rt.destroy();
+    rt.begin(0);
+    try rt.upsert(false, .{ .key = "a-Gone", .display_name = "G", .flags = 0 });
+    try rt.end();
+    rt.tick(0, UpdatedTimestamp);
+    try testing.expectEqual(@as(u32, 0), rt.stats().deferred_removals);
+    rt.remove("a-Gone");
+    rt.tick(1000, UpdatedTimestamp);
+    try testing.expectEqual(@as(u32, 1), rt.stats().deferred_removals);
+    // The seam fails first: the record stays counted and the seam backs off.
+    const Seam = struct {
+        calls: u32 = 0,
+        fail: bool = true,
+        fn remove(context: ?*anyopaque, record_id: []const u8) error_t!void {
+            _ = record_id;
+            const self: *@This() = @ptrCast(@alignCast(context.?));
+            self.calls += 1;
+            if (self.fail) return error.StoreFailed;
+        }
+    };
+    var seam = Seam{};
+    rt.set_unpublisher(.{ .context = &seam, .remove_record = Seam.remove });
+    rt.tick(2000, UpdatedTimestamp);
+    try testing.expectEqual(@as(u32, 1), seam.calls);
+    try testing.expectEqual(@as(u32, 1), rt.stats().deferred_removals);
+    rt.tick(2100, UpdatedTimestamp);
+    try testing.expectEqual(@as(u32, 1), seam.calls);
+    // The seam now reports success without changing the store: the surviving record is a failure.
+    seam.fail = false;
+    rt.tick(5000, UpdatedTimestamp);
+    try testing.expectEqual(@as(u32, 2), seam.calls);
+    try testing.expectEqual(@as(u32, 1), rt.stats().deferred_removals);
+    rt.tick(5100, UpdatedTimestamp);
+    try testing.expectEqual(@as(u32, 2), seam.calls);
 }

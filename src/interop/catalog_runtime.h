@@ -135,6 +135,7 @@ typedef struct catalog_runtime_stats_t {
     uint32_t queued_actions;      /**< Actions currently queued for the owner. */
     uint32_t aborted_transactions; /**< Transactions aborted for want of an End. */
     uint32_t store_ops;           /**< Store commit and replace calls made by publication. */
+    uint32_t deferred_removals;   /**< Published records of removed applications not yet unpublished. */
 } catalog_runtime_stats_t;
 
 /**
