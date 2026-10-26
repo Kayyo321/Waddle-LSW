@@ -1888,6 +1888,91 @@ static int test_review_hwnd_reuse_while_announce_held(void) {
     return 0;
 }
 
+/**
+ * @brief An Update resynchronizes the reducer with the observed guest state: a later host configure to the state the
+ * window already has plans nothing (no native show or placement call). Without the resync the reducer would still
+ * think the window is normal and would maximize it again.
+ */
+static int test_review_update_resyncs_reducer(void) {
+    fixture_t *fp = &GlobalFixture;
+    uint8_t frame[WireFrameBytes];
+    size_t length = 0;
+    wsa_double_window_t *native;
+    uint32_t show_before;
+    uint32_t placement_before;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    /* The guest maximizes the window itself; the observer reports it through an Update. */
+    native = wsa_double_find(&fp->adapter, 0x1000);
+    Check(native != NULL);
+    native->zoomed = 1;
+    api_double_find(fp->observer, 0x1000)->facts.flags |= InteropWindowFactZoomed;
+    api_double_hint(fp->observer, 0x800Bu, 0x1000);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgWindowUpdate, 0x1000, 1) >= 1u);
+    show_before = fp->adapter.calls[WsaDoubleShowWindow];
+    placement_before = fp->adapter.calls[WsaDoubleSetPlacement];
+    /* The host asks for the state the window already has. */
+    Check(build_host(InteropMsgWindowConfigure, frame, sizeof(frame), &length, 0x1000, 1, 0, 0, 0, 1, WaddleWindowStateMaximized) == 0);
+    Check(wire_push_host(&fp->wire, frame, length) == 0);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(fp->adapter.calls[WsaDoubleShowWindow] == show_before);
+    Check(fp->adapter.calls[WsaDoubleSetPlacement] == placement_before);
+    fp->observer->desktop = WindowObserverDesktopDefault;
+    retire_one_window(fp, 0x1000);
+    fixture_close(fp);
+    return 0;
+}
+
+/** @brief A parent whose own pins drained still waits for its child: its Retire and completion follow the child. */
+static int test_review_parent_waits_for_child(void) {
+    fixture_t *fp = &GlobalFixture;
+    api_double_window_t *child;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    add_window(fp, 0x1000);
+    add_window(fp, 0x2000);
+    child = api_double_find(fp->observer, 0x2000);
+    child->facts.owner = 0x1000;
+    child->facts.owner_root = 0x1000;
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(window_coordinator_entry_count(fp->coordinator) == 2u);
+    remove_window(fp, 0x1000);
+    remove_window(fp, 0x2000);
+    advance_clock(fp, 300u);
+    Check(tick(fp) == WindowCoordinatorOk);
+    /* The parent's pins drain; the child keeps its own. */
+    {
+        uint32_t index;
+        sent_t sent;
+        for (index = 0; index < fp->wire.count; ++index) {
+            if (sent_at(&fp->wire, index, &sent) && sent.type == InteropMsgFrameReady && sent.window == 0x1000u) {
+                Check(host_release(fp, 0x1000, 1, sent.slot, sent.sequence) == 0);
+            }
+        }
+    }
+    for (uint32_t pass = 0; pass < 3u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 0u);
+    Check(window_coordinator_entry_count(fp->coordinator) == 2u);
+    /* The child drains; the chain completes child first. */
+    release_window_frames(fp, 0x2000);
+    for (uint32_t pass = 0; pass < 4u && window_coordinator_entry_count(fp->coordinator) != 0u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+        release_window_frames(fp, 0x1000);
+        release_window_frames(fp, 0x2000);
+    }
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x2000, 2) == 1u);
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 1u);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2338,6 +2423,8 @@ int main(void) {
         {"review P6: refused native release keeps quarantine", test_review_p6_refused_native_release_keeps_quarantine},
         {"review P4: orderly shutdown", test_review_p4_orderly_shutdown},
         {"review: HWND reuse while an Announce is held", test_review_hwnd_reuse_while_announce_held},
+        {"review: update resyncs the reducer", test_review_update_resyncs_reducer},
+        {"review: parent waits for its child", test_review_parent_waits_for_child},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},
