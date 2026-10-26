@@ -1794,6 +1794,52 @@ static int test_review_p6_refused_native_release_keeps_quarantine(void) {
     return 0;
 }
 
+/**
+ * @brief P4 (IMPL 4.7): an orderly stop retires every window through the normal drain; teardown waits for the
+ * exact releases and the caller's ticks; a window that is never released keeps the coordinator alive.
+ */
+static int test_review_p4_orderly_shutdown(void) {
+    fixture_t *fp = &GlobalFixture;
+    window_coordinator_t *coordinator;
+    uint32_t pass;
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    admit_window_now(fp, 0x1000);
+    Check(tick(fp) == WindowCoordinatorOk);
+    Check(count_type(&fp->wire, InteropMsgWindowAnnounce, 0x1000, 1) == 1u);
+    Check(window_coordinator_begin_shutdown(fp->coordinator) == WindowCoordinatorOk);
+    /* A repeated shutdown is idempotent: the coordinator is still Running and nothing is admitted. */
+    Check(window_coordinator_begin_shutdown(fp->coordinator) == WindowCoordinatorOk);
+    /* Teardown is refused while the window is still held by the host. */
+    coordinator = fp->coordinator;
+    Check(window_coordinator_destroy(&coordinator, 1u) == WindowCoordinatorBusy);
+    Check(coordinator != NULL);
+    /* The host never releases: the window stays quarantined however long the caller ticks. */
+    for (pass = 0; pass < 6u; ++pass) {
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(window_coordinator_entry_count(fp->coordinator) == 1u);
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 0u);
+    /* The host releases the pins; the normal drain sends Retire and the generation leaves. */
+    for (pass = 0; pass < 4u && window_coordinator_entry_count(fp->coordinator) != 0u; ++pass) {
+        release_window_frames(fp, 0x1000);
+        advance_clock(fp, 300u);
+        Check(tick(fp) == WindowCoordinatorOk);
+    }
+    Check(count_type(&fp->wire, InteropMsgWindowRetire, 0x1000, 1) == 1u);
+    Check(window_coordinator_entry_count(fp->coordinator) == 0u);
+    Check(window_coordinator_destroy(&fp->coordinator, 1u) == WindowCoordinatorOk);
+    Check(fp->coordinator == NULL);
+    fixture_close(fp);
+
+    /* A coordinator that is not Running cannot begin a shutdown. */
+    Check(fixture_open(fp, InteropCapWindows) == 0);
+    Check(window_coordinator_mark_lost(fp->coordinator) == WindowCoordinatorOk);
+    Check(window_coordinator_begin_shutdown(fp->coordinator) == WindowCoordinatorBadState);
+    fixture_close(fp);
+    return 0;
+}
+
 /* ---- Defensive guards and owner-thread refusal ------------------------------------------------ */
 
 /** @brief Results of the owner-only calls made from a foreign thread. */
@@ -2242,6 +2288,7 @@ int main(void) {
         {"review P3: resize reaches slots and capture", test_review_p3_resize_reaches_slots_and_capture},
         {"review P2: configure keeps position", test_review_p2_configure_keeps_position},
         {"review P6: refused native release keeps quarantine", test_review_p6_refused_native_release_keeps_quarantine},
+        {"review P4: orderly shutdown", test_review_p4_orderly_shutdown},
         {"defensive guards and owner-thread refusal", test_defensive_guards_and_owner_thread},
         {"title change reaches the host as WindowUpdate", test_title_change_sends_window_update},
         {"random long sequences with faults and wire invariants", test_random_long_sequences_with_faults},

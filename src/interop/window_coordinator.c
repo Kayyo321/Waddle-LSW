@@ -88,6 +88,7 @@ struct window_coordinator_t {
     uint32_t owner_thread;
     /** @brief Nonzero while a coordinator entry is active on the owner thread. */
     uint32_t busy;
+    uint32_t shutting_down; /**< 1 after begin_shutdown: no admissions; generations retire through the normal path. */
     /** @brief window_coordinator_state_t. */
     uint32_t state;
     /** @brief Epoch of the current graph, observer and slot runtime. */
@@ -457,6 +458,7 @@ static int handle_announce(window_coordinator_t *coordinator, const interop_wind
     int phantom = 0;
 
     if (find_pair(coordinator, event->window, event->generation) != NULL) return CoordEventDone;
+    if (coordinator->shutting_down != 0u) return CoordEventDone; /* no new admissions while the mapping stops */
     if (event->generation > UINT32_MAX) {
         /* The reducer and the capture seams take 32-bit generations: refuse, never truncate (the graph retires it untracked). */
         coordinator->stats.admission_failures = saturate_add(coordinator->stats.admission_failures);
@@ -1242,6 +1244,10 @@ window_coordinator_status_t window_coordinator_tick(window_coordinator_t *coordi
         process_staging(coordinator);
         if (coordinator->state == WindowCoordinatorStateRunning) receive_host_frames(coordinator);
         progress_retirements(coordinator);
+        if (coordinator->shutting_down != 0u && coordinator->invalidate_pending != 0u &&
+            graph_ok(interop_window_graph_invalidate_all(coordinator->graph, coordinator->epoch, NULL)) != 0u) {
+            coordinator->invalidate_pending = 0u;
+        }
         if (coordinator->state == WindowCoordinatorStateRunning) retry_pending_slots(coordinator);
         if (coordinator->state == WindowCoordinatorStateRunning) publish_frames(coordinator);
         flush_outbound(coordinator);
@@ -1280,6 +1286,28 @@ static void enter_lost(window_coordinator_t *coordinator) {
     if (graph_ok(interop_window_graph_invalidate_all(coordinator->graph, coordinator->epoch, NULL)) == 0u) {
         coordinator->invalidate_pending = 1u;
     }
+}
+
+window_coordinator_status_t window_coordinator_begin_shutdown(window_coordinator_t *coordinator) {
+    window_coordinator_status_t status;
+    if (coordinator == NULL) return WindowCoordinatorInvalidArgument;
+    status = enter(coordinator);
+    if (status != WindowCoordinatorOk) return status;
+    if (coordinator->state != WindowCoordinatorStateRunning) {
+        leave(coordinator);
+        return WindowCoordinatorBadState;
+    }
+    coordinator->shutting_down = 1u;
+    /* Stop reporting the windows; the retirements come from the graph and run the normal drain (IMPL 4.7). */
+    if (coordinator->observer_started != 0u) {
+        (void)window_observer_stop(coordinator->observer);
+        coordinator->observer_started = 0u;
+    }
+    if (graph_ok(interop_window_graph_invalidate_all(coordinator->graph, coordinator->epoch, NULL)) == 0u) {
+        coordinator->invalidate_pending = 1u;
+    }
+    leave(coordinator);
+    return WindowCoordinatorOk;
 }
 
 window_coordinator_status_t window_coordinator_mark_lost(window_coordinator_t *coordinator) {

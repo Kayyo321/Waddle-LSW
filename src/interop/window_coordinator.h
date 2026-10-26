@@ -282,6 +282,21 @@ window_coordinator_status_t window_coordinator_tick(window_coordinator_t *coordi
 window_coordinator_status_t window_coordinator_mark_lost(window_coordinator_t *coordinator);
 
 /**
+ * @brief Begin an orderly stop of the mapping (IMPL 4.7): no new admissions, the observer stops, every generation
+ *        is retired through the normal path, and the guest keeps publishing until each pin drained.
+ *
+ * Proof obligations: the caller keeps calling tick. A generation leaves only after the host released its pins
+ * (IMPL 5.3); teardown (destroy) is refused until every generation is gone, and the caller decides how long to
+ * keep ticking. There is no timeout here: a host that never releases keeps the window quarantined. Applications keep
+ * running; the native windows are released, not closed.
+ *
+ * @param[in,out] coordinator Non-NULL owner-thread coordinator.
+ * @return Ok; BadState unless Running; WrongThread; Reentrant; InvalidArgument for NULL.
+ * @thread_safety Owner thread only.
+ */
+window_coordinator_status_t window_coordinator_begin_shutdown(window_coordinator_t *coordinator);
+
+/**
  * @brief Start a fresh session epoch after the previous session has safely ended.
  *
  * The caller asserts that every host buffer of the previous epoch is destroyed. That assertion releases
