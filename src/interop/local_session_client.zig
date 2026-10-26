@@ -471,13 +471,14 @@ test "ancestors_safe accepts a relative path, a missing ancestor and a caller-ow
     defer testing.allocator.free(through_file);
     try testing.expect(ancestors_safe(through_file, uid));
     // An ancestor that cannot be searched (EACCES) and a self-referencing symbolic link (ELOOP) are
-    // unexpected errors, which are unsafe. Test runs as a non-root user, so mode 0 denies search.
+    // unexpected errors, which are unsafe. Mode 0 denies search to an unprivileged user.
     try root.makeDir("locked");
     try std.posix.fchmodat(root.fd, "locked", 0o000, 0);
     defer std.posix.fchmodat(root.fd, "locked", 0o700, 0) catch {};
     const denied = try std.fmt.allocPrint(testing.allocator, "{s}/locked/sub/device", .{base});
     defer testing.allocator.free(denied);
-    try testing.expect(!ancestors_safe(denied, uid));
+    // Root searches mode-0 directories anyway, so this case only holds for an unprivileged user.
+    if (std.os.linux.geteuid() != 0) try testing.expect(!ancestors_safe(denied, uid));
     try root.symLink("loop", "loop", .{});
     const looped = try std.fmt.allocPrint(testing.allocator, "{s}/loop/device", .{base});
     defer testing.allocator.free(looped);
