@@ -489,7 +489,8 @@ test "ancestors_safe accepts a relative path, a missing ancestor and a caller-ow
     const owned = try std.fmt.allocPrint(testing.allocator, "{s}/own/device", .{base});
     defer testing.allocator.free(owned);
     try testing.expect(ancestors_safe(owned, uid));
-    try testing.expect(!ancestors_safe(owned, uid +% 1));
+    // A root-owned directory is always trusted, so the foreign-owner case needs an unprivileged owner.
+    if (std.os.linux.geteuid() != 0) try testing.expect(!ancestors_safe(owned, uid +% 1));
 }
 
 test "lock_state refuses a session.lock reached through a regular file and treats an absent directory as unlocked" {
