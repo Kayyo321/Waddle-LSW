@@ -95,15 +95,18 @@ pub fn dir_state(dir: []const u8) DirState {
     };
     const is_dir = (st.mode & std.posix.S.IFMT) == std.posix.S.IFDIR;
     if (!is_dir or st.uid != std.os.linux.getuid() or (st.mode & 0o777) != 0o700) return .unsafe;
-    if (!ancestors_safe(dir)) return .unsafe;
+    if (!ancestors_safe(dir, std.os.linux.getuid())) return .unsafe;
     return .ok;
 }
 
 /// Every existing ancestor of dir must be a real directory (no symbolic links), owned by root or
-/// this user, and not writable by others unless it is sticky (like /tmp). A missing ancestor ends
-/// the walk: nothing below it can exist.
-fn ancestors_safe(dir: []const u8) bool {
-    const uid = std.os.linux.getuid();
+/// the caller's uid, and not writable by others unless it is sticky (like /tmp). A missing ancestor
+/// ends the walk: nothing below it can exist. The uid is a parameter so tests can name a foreign
+/// owner for a fixture this user owns; dir_state always passes the effective uid.
+/// @param[in] dir Absolute directory path, borrowed for the call.
+/// @param[in] uid Owner accepted besides root.
+/// @return true when every existing ancestor is safe. Thread-safe.
+fn ancestors_safe(dir: []const u8, uid: std.posix.uid_t) bool {
     var parent = std.fs.path.dirname(dir);
     while (parent) |ancestor| : (parent = std.fs.path.dirname(ancestor)) {
         if (ancestor.len == 0 or std.mem.eql(u8, ancestor, "/")) break;
@@ -124,6 +127,15 @@ fn ancestors_safe(dir: []const u8) bool {
 /// @param[in] path Absolute socket path, borrowed for the call.
 /// @return A connected descriptor the caller must close, or the connect failure.
 pub fn connect(path: []const u8) ConnectError!c_int {
+    return connect_as(path, std.os.linux.geteuid());
+}
+
+/// connect with the expected peer uid supplied by the caller. connect passes the effective uid;
+/// tests pass a different uid to observe the PeerMismatch refusal without a second account.
+/// @param[in] path Absolute socket path, borrowed for the call.
+/// @param[in] uid Peer uid the connected server must run as.
+/// @return A connected descriptor the caller must close, or the connect failure.
+fn connect_as(path: []const u8, uid: std.posix.uid_t) ConnectError!c_int {
     const addr = std.net.Address.initUnix(path) catch return error.Failed;
     const fd = std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC, 0) catch return error.Failed;
     std.posix.connect(fd, &addr.any, addr.getOsSockLen()) catch |err| {
@@ -134,20 +146,22 @@ pub fn connect(path: []const u8) ConnectError!c_int {
             else => error.Failed,
         };
     };
-    if (!peer_is_self(fd)) {
+    if (!peer_is_self(fd, uid)) {
         std.posix.close(fd);
         return error.PeerMismatch;
     }
     return fd;
 }
 
-/// True when SO_PEERCRED names this process's effective user. Any failure to read it is false.
-fn peer_is_self(fd: c_int) bool {
+/// True when SO_PEERCRED names the given uid. Any failure to read it is false.
+/// @param[in] fd Connected descriptor whose peer is inspected.
+/// @param[in] uid Expected peer uid.
+fn peer_is_self(fd: c_int, uid: std.posix.uid_t) bool {
     var credentials: PeerCredentials = undefined;
     var length: std.c.socklen_t = @sizeOf(PeerCredentials);
     if (getsockopt(fd, SolSocket, SoPeerCred, &credentials, &length) != 0) return false;
     if (length != @sizeOf(PeerCredentials)) return false;
-    return credentials.uid == std.os.linux.geteuid();
+    return credentials.uid == uid;
 }
 
 /// Close a descriptor. Errors are ignored: the descriptor is gone either way.
@@ -185,14 +199,12 @@ pub fn poll_read(fd: c_int, buffer: []u8, timeout_ms: i32) IoError!usize {
 pub fn read_exact(ctx: *anyopaque, poll: PollFn, fd: c_int, buffer: []u8, timeout_ms: i32) ReadExact {
     var filled: usize = 0;
     while (filled < buffer.len) {
-        const read = poll(ctx, fd, buffer[filled..], timeout_ms) catch |err| switch (err) {
-            error.Timeout => return .timeout,
-            error.Failed => return .failed,
-        };
-        if (read == 0) return if (filled == 0) .eof_boundary else .eof_partial;
+        const read = poll(ctx, fd, buffer[filled..], timeout_ms) catch |err| return if (err == error.Timeout) .timeout else .failed;
+        if (read == 0) break;
         filled += read;
     }
-    return .ok;
+    if (filled == buffer.len) return .ok;
+    return if (filled == 0) .eof_boundary else .eof_partial;
 }
 
 /// Probe whether a process holds the device's session.lock, without taking it for longer than the
@@ -201,7 +213,8 @@ pub fn read_exact(ctx: *anyopaque, poll: PollFn, fd: c_int, buffer: []u8, timeou
 /// The lock file is opened read-only with O_NOFOLLOW, so a symbolic link is never followed.
 /// Callers probe only when no live session accepted a connection; see session_stop_contract.md.
 /// @param[in] dir Device runtime directory (the directory that contains session.sock).
-/// @return unlocked when the file is absent or free, held when another open file holds it.
+/// @return unlocked when the file is absent or free; held when another open file holds it or the shared
+///         probe lock is refused for any reason (a probe that cannot take the lock never claims it is free).
 pub fn lock_state(dir: []const u8) LockState {
     var buffer: [MaxPathBytes]u8 = undefined;
     if (dir.len + 1 + SessionLockName.len >= buffer.len) return .unsafe;
@@ -219,13 +232,9 @@ pub fn lock_state(dir: []const u8) LockState {
     if ((st.mode & std.posix.S.IFMT) != std.posix.S.IFREG or st.uid != std.os.linux.getuid()) return .unsafe;
 
     const rc = flock(fd, LockShared | LockNonBlocking);
-    if (rc == 0) {
-        _ = flock(fd, LockUnlock);
-        return .unlocked;
-    }
-    // EWOULDBLOCK and EAGAIN are the same value on Linux.
-    if (std.posix.errno(rc) == .AGAIN) return .held;
-    return .unsafe;
+    if (rc != 0) return .held; // EWOULDBLOCK, or any refusal: never claim the device is unlocked.
+    _ = flock(fd, LockUnlock);
+    return .unlocked;
 }
 
 /// A scratch directory directly under /tmp (sticky and root-owned, so it is a safe ancestor). The
@@ -435,4 +444,137 @@ test "Message formats numbers without leading zeros, including zero and the larg
     var largest = Message{};
     largest.add_number(std.math.maxInt(u64));
     try std.testing.expectEqualSlices(u8, "18446744073709551615", largest.slice());
+}
+
+test "ancestors_safe accepts a relative path, a missing ancestor and a caller-owned ancestor, and refuses non-directories and foreign owners" {
+    const testing = std.testing;
+    const base = try scratch_root(testing.allocator);
+    defer testing.allocator.free(base);
+    defer std.fs.deleteTreeAbsolute(base) catch {};
+    var root = try std.fs.openDirAbsolute(base, .{});
+    defer root.close();
+    const uid = std.os.linux.getuid();
+    // A relative name has no parent directory, so there is nothing to walk.
+    try testing.expect(ancestors_safe("device", uid));
+    // A missing ancestor ends the walk as safe: nothing below it can exist.
+    const missing = try std.fmt.allocPrint(testing.allocator, "{s}/absent/device", .{base});
+    defer testing.allocator.free(missing);
+    try testing.expect(ancestors_safe(missing, uid));
+    // A regular file as the direct parent is not a directory.
+    (try root.createFile("file.txt", .{})).close();
+    const under_file = try std.fmt.allocPrint(testing.allocator, "{s}/file.txt/device", .{base});
+    defer testing.allocator.free(under_file);
+    try testing.expect(!ancestors_safe(under_file, uid));
+    // A path that runs through a regular file fails with ENOTDIR, which std maps to FileNotFound,
+    // so the walk ends as a missing ancestor. The behaviour is unchanged; nothing below can exist.
+    const through_file = try std.fmt.allocPrint(testing.allocator, "{s}/file.txt/sub/device", .{base});
+    defer testing.allocator.free(through_file);
+    try testing.expect(ancestors_safe(through_file, uid));
+    // An ancestor that cannot be searched (EACCES) and a self-referencing symbolic link (ELOOP) are
+    // unexpected errors, which are unsafe. Test runs as a non-root user, so mode 0 denies search.
+    try root.makeDir("locked");
+    try std.posix.fchmodat(root.fd, "locked", 0o000, 0);
+    defer std.posix.fchmodat(root.fd, "locked", 0o700, 0) catch {};
+    const denied = try std.fmt.allocPrint(testing.allocator, "{s}/locked/sub/device", .{base});
+    defer testing.allocator.free(denied);
+    try testing.expect(!ancestors_safe(denied, uid));
+    try root.symLink("loop", "loop", .{});
+    const looped = try std.fmt.allocPrint(testing.allocator, "{s}/loop/device", .{base});
+    defer testing.allocator.free(looped);
+    try testing.expect(!ancestors_safe(looped, uid));
+    // An ancestor owned by neither root nor the accepted uid is unsafe; the caller's own uid passes.
+    try root.makeDir("own");
+    try std.posix.fchmodat(root.fd, "own", 0o700, 0);
+    const owned = try std.fmt.allocPrint(testing.allocator, "{s}/own/device", .{base});
+    defer testing.allocator.free(owned);
+    try testing.expect(ancestors_safe(owned, uid));
+    try testing.expect(!ancestors_safe(owned, uid +% 1));
+}
+
+test "lock_state refuses a session.lock reached through a regular file and treats an absent directory as unlocked" {
+    const testing = std.testing;
+    const base = try scratch_root(testing.allocator);
+    defer testing.allocator.free(base);
+    defer std.fs.deleteTreeAbsolute(base) catch {};
+    var root = try std.fs.openDirAbsolute(base, .{});
+    defer root.close();
+    // The directory component is a regular file, so open fails with ENOTDIR, not FileNotFound.
+    (try root.createFile("plain", .{})).close();
+    const through_file = try std.fmt.allocPrint(testing.allocator, "{s}/plain", .{base});
+    defer testing.allocator.free(through_file);
+    try testing.expectEqual(LockState.unsafe, lock_state(through_file));
+    // A directory that does not exist has no lock file, which is unlocked.
+    const absent = try std.fmt.allocPrint(testing.allocator, "{s}/absent", .{base});
+    defer testing.allocator.free(absent);
+    try testing.expectEqual(LockState.unlocked, lock_state(absent));
+}
+
+test "peer_is_self treats a non-socket descriptor as a failure, and connect_as refuses a mismatched peer uid" {
+    const testing = std.testing;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plain = try tmp.dir.createFile("plain", .{ .read = true });
+    defer plain.close();
+    // getsockopt(SO_PEERCRED) fails on a regular file, so no peer is accepted.
+    try testing.expect(!peer_is_self(plain.handle, std.os.linux.geteuid()));
+
+    // A live listener runs as this user, so a caller that expects another uid is refused.
+    const base = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(base);
+    const live = try std.fmt.allocPrint(testing.allocator, "{s}/peer.sock", .{base});
+    defer testing.allocator.free(live);
+    const live_addr = try std.net.Address.initUnix(live);
+    const listener = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0);
+    defer std.posix.close(listener);
+    try std.posix.bind(listener, &live_addr.any, live_addr.getOsSockLen());
+    try std.posix.listen(listener, 1);
+    try testing.expectError(error.PeerMismatch, connect_as(live, std.os.linux.geteuid() +% 1));
+}
+
+test "lock_state refuses a directory path longer than its buffer when the length is only known at run time" {
+    const testing = std.testing;
+    var long_buffer: [MaxPathBytes + 1]u8 = undefined;
+    @memset(&long_buffer, 'd');
+    // doNotOptimizeAway keeps the length opaque so the length check is compiled, not folded away.
+    var length: usize = MaxPathBytes;
+    std.mem.doNotOptimizeAway(&length);
+    try testing.expectEqual(LockState.unsafe, lock_state(long_buffer[0..length]));
+}
+
+test "read_exact reports end of stream at a boundary and mid-buffer for a poll whose count is only known at run time" {
+    const testing = std.testing;
+    const Counted = struct {
+        fn poll(ctx: *anyopaque, fd: c_int, buffer: []u8, timeout_ms: i32) IoError!usize {
+            _ = fd;
+            _ = timeout_ms;
+            const remaining: *usize = @ptrCast(@alignCast(ctx));
+            if (remaining.* == 0) return 0;
+            remaining.* -= 1;
+            buffer[0] = 'x';
+            return 1;
+        }
+    };
+    var buffer: [4]u8 = undefined;
+    var none: usize = 0;
+    std.mem.doNotOptimizeAway(&none);
+    try testing.expectEqual(ReadExact.eof_boundary, read_exact(&none, Counted.poll, 0, &buffer, 1));
+    var two: usize = 2;
+    std.mem.doNotOptimizeAway(&two);
+    try testing.expectEqual(ReadExact.eof_partial, read_exact(&two, Counted.poll, 0, &buffer, 1));
+}
+
+test "write_all continues after a partial send and then reports the failure of the stalled remainder" {
+    const testing = std.testing;
+    var pair: [2]std.posix.fd_t = undefined;
+    try testing.expectEqual(@as(usize, 0), std.os.linux.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair));
+    defer close(pair[0]);
+    defer close(pair[1]);
+    // With a send timeout and no reader, the first send returns the part that fit in the socket buffer
+    // (a partial count), and the next send times out, which write_all reports as Failed.
+    const timeout = std.posix.timeval{ .tv_sec = 0, .tv_usec = 100_000 };
+    try std.posix.setsockopt(pair[0], std.posix.SOL.SOCKET, std.posix.SO.SNDTIMEO, std.mem.asBytes(&timeout));
+    const big = try testing.allocator.alloc(u8, 8 * 1024 * 1024);
+    defer testing.allocator.free(big);
+    @memset(big, 0x5a);
+    try testing.expectError(error.Failed, write_all(pair[0], big));
 }
