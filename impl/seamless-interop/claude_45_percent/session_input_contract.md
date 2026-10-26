@@ -201,3 +201,111 @@ traffic. `next_deadline_ms` reports it while Barrier or AwaitReady.
 - Generation values above UINT32_MAX are not inhibited (the reducer's field is 32-bit). The
   handler still forwards input for them.
 - Repeat across a clock step is not restored for held keys (section 7).
+
+## 12. Integration (tranche 5)
+
+Scope: the handler on the real session runtime path. The runtime is `session_app_run_detailed`
+(handler table, union offer, pump, drain and closing) over `interop_host_control_run_detailed`.
+A fake guest thread speaks the wire protocol over the control-host fixture's socketpair seam.
+Files: `tests/interop/session_input_integration.c` (test), `scripts/interop_lane_keyboard_integration.mk`
+(target `interop-keyboard-integration-test`, added to `InteropLaneTests` and `InteropLaneSanitizers`).
+Run: `make interop-keyboard-integration-test`. It builds `build/session_input_integration_test` with the
+keyboard lane's sanitizer flags and runs it with `ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1`
+and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`.
+
+### 12.1 Composition and seam
+
+- Runtime: `session_app_run_detailed` with one table, a copy of `session_input_make_handler`. The
+  runtime supplies the offer (Input|KeyboardLayout). `control.feature_ops` is NULL, the admission
+  `local_capabilities` is zero, `run_for_ms` is zero (unbounded). Stop is SIGTERM to the pump
+  thread through the fixture's signalfd (`stop_fd`).
+- Seam: the handler's display descriptor is the read end of a nonblocking pipe
+  (`session_input_set_display`). For each scripted step the guest writes one byte. The dispatch
+  hook (`kb_dispatch`, pump thread, from `on_fds`) drains the pipe, calls exactly one post function
+  and returns zero. The handler then flushes inside the same callback. Frames from a step are
+  therefore sent before the pump runs anything else. The guest waits until the step counter has
+  advanced before it triggers the next step. Posts never run on the guest thread.
+- Sync: the test copies the handler table and wraps two members. `on_frame` runs the handler
+  and then increments a counter, so the guest knows the handler returned after each owned frame
+  it sends (LeaseRevoked, LeaseReady, CaretRect). `on_closing` counts the call and then calls the
+  original. The handler source is unchanged.
+- Guest: it validates and decodes every host frame with the codec (`interop_header_decode`,
+  `interop_payload_validate` with `InteropFromHost`, `interop_field_*`). It answers Ping with
+  Pong. It checks that every serial-bearing frame's serial is strictly greater than the previous
+  one. Its held-key model is set by InputKey, and cleared by InputRelease, by InputFocus with
+  pressed 0, and by the guest's own LeaseRevoked (decision 1).
+
+### 12.2 Main scenario (frames a to m)
+
+Serials are exact where the sequence is fixed. S is the LeaseAck serial of the second epoch.
+
+| Step | Guest sends or posts | Host frames, in order |
+|---|---|---|
+| a | Hello (Input and KeyboardLayout offered) | HelloAck; `Capabilities` equals Input\|KeyboardLayout |
+| b | LeaseRevoked(epoch 1); LeaseReady(serial 1, epoch 1) | LeaseAck(serial 1, lease 1) |
+| c | focus enter (window 0x1000, generation 7) | InputFocus(window, generation, pressed 1, serial 2, lease 1) |
+| d | key 30 down, key 30 up, modifiers locked 0x12, same modifiers again | InputKey(pressed 1, key 30, serial 3, lease 1); InputKey(pressed 0, key 30, serial 4, lease 1); InputLockState(locks 0x03, serial 5, lease 1); no frame for the repeat of the modifiers (quiet window 80 ms) |
+| e | keymap `include "pc+de+inet(evdev)"` | KeyboardLayout(Layout = KLID of "de", from `waddle_keyboard_layouts_observe` on a zero state); no serial, no lease |
+| f | repeat info (rate 50, delay 100 ms); key 30 down; release after six repeats | InputRepeatInfo(IntervalMs 100, Rate 50); InputKey(pressed 1, key 30, serial 6, lease 1); six InputKey(pressed 1, key 30) with serials 7 to 12; InputKey(pressed 0, key 30, next serial, lease 1) |
+| g | quiet window 250 ms after the release | no frame (a release cancels repeats) |
+| h | LeaseRevoked(epoch 2); LeaseReady(S, epoch 2) | LeaseAck(serial S, lease 2). No InputRelease on revoke. |
+| i | after Ready: key 30 down, key 30 up, focus leave (no frames, quiet 80 ms each); focus enter; modifiers; key 30 down | InputFocus(pressed 1, serial S+1, lease 2); InputLockState(0x03, S+2, lease 2); InputKey(pressed 1, key 30, S+3, lease 2) |
+| j | focus leave while key 30 is held | InputRelease(window, generation, serial S+4, lease 2); InputFocus(pressed 0, serial S+5, lease 2). The guest model is empty. |
+| m | SIGTERM to the pump | Goodbye is the only frame drained; the run returns HostControlCancelled (7); on_closing runs once with reason 7 |
+
+Frame count of the main run: 21 host frames, with keyboard frames as in the table. The full
+sequence is asserted in order, with type, window, generation, serial, pressed, key, lease, locks,
+layout and interval or rate checked on each frame.
+
+### 12.3 Timing (real CLOCK_MONOTONIC on the guest side)
+
+- First repeat: arrival time minus the trigger time for the key-down step. Asserted >= 100 ms with
+  no early tolerance. The host computes the due time from its own clock inside the post, which
+  is later than the trigger time, and the pump wakes at a millisecond-rounded deadline (round up,
+  never early). Measured in three runs: 100.15, 100.16 and 100.19 ms.
+- Consecutive repeats: asserted >= 15 ms (the nominal period is 20 ms; the allowance is 5 ms).
+  Measured minimum gap 21.06 to 21.08 ms, maximum 21.08 to 21.10 ms in three runs. The period is
+  about 21 ms because the reducer reschedules at `now + period` after each take, and the pump
+  wakes at millisecond-rounded deadlines, so the rate drifts to about 47 per second. No upper
+  bound is asserted. This is the reducer's current scheduling, reported for lead review; it is not
+  changed here.
+- Repeat frames that arrive before the release frame are accepted by the loop. None occurred in the
+  recorded runs.
+
+### 12.4 Hostile and other runs (outcomes the runtime returned)
+
+- CaretRect with a wrong window (0x999, generation 7) and with a wrong generation (0x1000,
+  generation 8): no host frame in each 80 ms window. A following key down and up are forwarded
+  with serials 3 and 4. Outcome HostControlCancelled (7).
+- Stale epoch: after epoch 2 is Ready, LeaseRevoked(1). The handler returns SessionAppFailure,
+  and the run fails. Outcome HostControlFeatureFailed (11). The host sent one Goodbye. on_closing
+  ran once with reason 11.
+- Unassigned type 0x0FF0 from the guest (header only, empty payload). The frame is rejected by
+  the stream codec, not by feature admission. The host sends Error (0x0006), then drains. Outcome
+  HostControlPeerFailed (4), not UnexpectedFeature. `detail.guest_error` stays 0, because that flag
+  is set only on the Error and Draining admission path. on_closing ran once with reason 4.
+- Known feature type the negotiated set does not admit (WindowAnnounce 0x0100; no Windows
+  capability). Outcome HostControlUnexpectedFeature (5). The host sent Error (0x0006), then drained.
+  on_closing ran once with reason 5.
+- Disconnect while key 30 is held (the guest closes its socket end without Goodbye). Outcome
+  HostControlPeerFailed (4). on_closing ran once with reason 4. Nothing is sent after the closing
+  call.
+
+### 12.5 Verification
+
+- `make interop-keyboard-integration-test` passes (exit 0) under ASan, LSan and UBSan with
+  `halt_on_error`. The run takes about 3.4 s. Three consecutive runs passed.
+- `make interop-keyboard-lanes-test` still passes (exit 0), including its sanitizer phase.
+
+### 12.6 Limits
+
+- No real guest agent. The guest is a test thread. Its held-key and serial model is the codec
+  decoder's view, not a guest key-state or toggle implementation (`GetKeyState`, `LoadKeyboardLayoutW`).
+- The scroll bit (2) is not exercised. The keymap in the scenario has no `modifier_map`, so the fallback
+  indices apply (caps 1, num 4, scroll absent), and the only mask asserted is 0x03.
+- One window pair and one key (evdev 30). No pointer, text, caret position or inhibit path is run.
+- The stop is a SIGTERM to the pump thread through the fixture's signalfd, not a process signal.
+- The test includes `session_control_host.c`, so the fixture's vsock, mapping and admission seams are
+  active (the same seams the session tests use). The handler itself is not wrapped.
+- Mutation testing of the handler was not run. The assertions are exact frame and serial checks, so a
+  change in the frame sequence fails the test.
