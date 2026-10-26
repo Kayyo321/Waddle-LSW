@@ -1,5 +1,12 @@
 # Seamless interop: 45 percent execution plan and acceptance ledger
 
+> **Outcome (2026-10-26): stopped at 36.79%, target not reached.** See
+> [HANDOFF_RETURN.md](HANDOFF_RETURN.md) for accepted vs implemented-but-uncredited slices and
+> [REVIEW_TODO.md](REVIEW_TODO.md) for pending reviews. Deviations from this plan: the window map
+> never defers children on the host (the guest defers), the #11 positioner/grab rules were amended
+> in IMPL_DESC 8.44/8.45 after review, and the coordinator, catalog and several native/live slices
+> were not credited. Plan text below is the original ledger and was not rewritten.
+
 Branch `feat/seamless-45-percent`, worktree `/home/dev/worktrees/seamless-45`.
 Baseline `origin/feat/seamless-interop` = `f5178d3` (verified to contain the
 30 percent checkpoint; the remote had not advanced). Accepted completion at the

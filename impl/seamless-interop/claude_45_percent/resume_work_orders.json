@@ -1,0 +1,39 @@
+{
+  "phase_id": "resume_after_45_percent_attempt_2026_10_26",
+  "baseline": "f5178d3",
+  "branch": "feat/seamless-45-percent",
+  "accepted_overall_percent": 36.79,
+  "target_overall_percent": 45,
+  "status": "paused by the user; 45 percent NOT reached; feature remains In Progress",
+  "active_workers": [],
+  "ownership": "All worker ownership released; no worker may edit, stage or commit without a new assignment.",
+  "unmerged_lane_branches": {
+    "seamless-45-lanes/coordinator": {
+      "head": "fc3155f2",
+      "state": "13 commits: coordinator review fixes (items 1-8,10,11 fixed or partial) + guest launch tail; coverage gate fails at 88.78 percent branch",
+      "resume": "merge feat/seamless-45-percent; add tests to reach >= 91 percent branch; write the IMPL 5.3 retire-timing spec question into window_coordinator_contract.md; item 9 (phantoms retry, global barrier stall); rerun sanitizers and mingw; merge",
+      "potential_points": "#10 coordinator 20 percent = 0.80"
+    },
+    "seamless-45-lanes/catalog": {
+      "head": "7407c8dc",
+      "state": "catalog runtime with all eleven review findings addressed except store remove API; arc gate fails at 87.17 percent; C export test does not compile (discarded c_int near line 3086)",
+      "resume": "fix the test compile error, add null-guard/export tests to >= 90 percent arcs, wire store remove (forget) for removed apps, update catalog_runtime_contract.md, register the handler in session_handlers_builtin.c once a rooted store directory source exists",
+      "potential_points": "#27 wire/runtime + #28 runtime/association portable halves about 1.9"
+    }
+  },
+  "next_work_in_order": [
+    "Run the three second-pass reviews in REVIEW_TODO.md; reduce credit for any slice they reject",
+    "Confirm client handling of session exit 75 as 'handed over' (lock contention) in open_command.zig; server runtime path derivation from daemon_device.c fallback; drop pending launches on client disconnect",
+    "Dispatch av_passthrough / interop / native-components / window-graph workflows on the final head; credit #15 typed injection 15 percent (0.45) only when av_passthrough is green",
+    "Merge the two unmerged lane branches after their gates pass; re-review",
+    "Register windows, input and catalog handlers in session_handlers_builtin.c (needs Wayland display ownership composition and rooted dirs)",
+    "Frames/buffer layer: host FrameReady import (host_buffer_registry + slot runtime) - not built by any lane; needed for visible windows (#5/#10/#11)",
+    "#16 pointer reviews, #14/#12 host halves, #21+ not started",
+    "Native qualification: GNOME/KDE/Sway (11i/11j), installed guest, crash qualification stay open"
+  ],
+  "do_not": [
+    "run make clean, make test-sanitizers or broad build-tree cleanup in the main checkout",
+    "touch the original Win11 disk, TPM, firmware or private preparation assets",
+    "modify README.md or merge/open an integration PR before 100 percent"
+  ]
+}

@@ -1,6 +1,6 @@
 # Feature Tracker: Seamless Interop
 
-- **Contributors / Agents**: Claude Code (cloud session), Codex (/root), Luna implementation/review (luna_foundations, luna_integration, luna_acceptance, luna_layout, luna_mounts, luna_qemu_build, luna_host_runtime, luna_fresh_guest, luna_manifest_engine)
+- **Contributors / Agents**: Claude Code (cloud session), Codex (/root), Luna implementation/review (luna_foundations, luna_integration, luna_acceptance, luna_layout, luna_mounts, luna_qemu_build, luna_host_runtime, luna_fresh_guest, luna_manifest_engine), Claude Code 45 percent milestone (Haiku implementation workers, Opus reviewers)
 - **Time Started**: 2026-10-22T00:59:49Z
 - **Time Ended**: TBD
 - **Feature Branch**: feat/seamless-interop
@@ -38,11 +38,11 @@ acceptance remain pending.
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 80% | Pure graph25%, C ABI10%, portable observer15%, native adapter15%, installed-session15% accepted. Fresh Windows guest graph/observer/foreign lifecycle tests pass; coordinator/capture/slot/wire20% remains open |
-| #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
+| #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | In Progress | 4% | 80% | Accepted by the 45 percent milestone: mapping table 11a, toplevel/dialog 11b, positioner 11c, popup lifecycle 11d, decoration 11e, teardown order 11f and gates 11h (xdg-shell realization tested with the strict wl_proxy double, 100% line/96% branch). Handler wiring 11g, real GNOME/KDE/Sway 11i and live app_id association 11j remain open; second-pass review pending ([REVIEW_TODO](claude_45_percent/REVIEW_TODO.md)) |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
-| #13 | Minimize/maximize/fullscreen/restore/close state machine | In Progress | 3% | 50% | Portable generation-safe ordered reducer50% accepted with root170tests/100%lines/93.90%arcs. Native adapters25%, wire/compositor15% and integrated native10% remain open; waits on #11 for runtime |
+| #13 | Minimize/maximize/fullscreen/restore/close state machine | In Progress | 3% | 75% | Portable reducer50% and native Win32 adapter25% accepted (reviewed; real windows-2022 desktop run 40247820926 incl. cross-thread window). Wire/compositor15% and integrated native10% remain open |
 | #14 | Guest display sizing, fractional scale/DPI, multi-output | Pending | 3% | 0% | Waits on #11 |
-| #15 | Keyboard completeness (full scancode table, host repeat, lock sync, layout sync, shortcut inhibit) | In Progress | 3% | 20% | Typed translation10% and portable repeat timing10% accepted with root gates. Live repeat/injection, lock/layout, inhibit and native integration remain open |
+| #15 | Keyboard completeness (full scancode table, host repeat, lock sync, layout sync, shortcut inhibit) | In Progress | 3% | 55% | Typed translation10%, pure repeat timing10%, live host repeat10% (AV path), pure lock8%, pure layout12% (82 KLIDs) and pure inhibit5% accepted. Typed Windows injection15%, live lock/layout/inhibit on the interop path, guest executor and native qualification stay open or pending CI/second-pass review |
 | #16 | Pointer completeness (XBUTTONs, value120, activating click) + cursor shape/image sync | Pending | 3% | 0% | Waits on #7, #10 |
 | #17 | Relative pointer & pointer lock | Pending | 2% | 0% | Waits on #16 |
 | #18 | Touch + pen/tablet via synthetic pointer devices | Pending | 3% | 0% | Waits on #16 |
@@ -56,14 +56,14 @@ acceptance remain pending.
 | #26 | Printing via IPP guestfwd to host CUPS | Pending | 2% | 0% | Waits on #8 |
 | #27 | Guest app catalog, icon extraction (PNG), change notifications | In Progress | 4% | 65% | PNG10%, snapshot/diff20%, fixed native icon15% and native enumeration20% accepted. Exact6318a3d all native CI green; provider100%lines/90.15%arcs. Watches/enrichment, wire/runtime and integrated qualification remain open |
 | #28 | Host desktop-entry/icon/menu materialization, app_id matching, toplevel icon, desktop-shortcut mirroring | In Progress | 4% | 60% | Desktop20%, menu/directory10%, supplied-icon data10% and real rooted publication/recovery consumer20% accepted. Root90 tests,98.55%lines/90.03%arcs, real GLib C sanitizer consumer. Runtime/association20%, desktop mirror10%, native installed-shell10% open |
-| #29 | `waddle open` launch path, activation tokens, cold-boot feedback, File Explorer seed | Pending | 3% | 0% | Waits on #7, #27 |
+| #29 | `waddle open` launch path, activation tokens, cold-boot feedback, File Explorer seed | In Progress | 3% | 28% | Accepted: grammar/classification29a12%, path translation/quoting/delegation29b8%, activation token store29e8%. Auto-spawn/retry29d, session.sock LocalLaunch29c, dispatch29f, e2e fixtures29h, File Explorer seed29g, guest ShellExecute29i (real-desktop smoke passes, unreviewed) and native/activation items open; see REVIEW_TODO |
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
 | #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | In Progress | 2% | 40% | PE classifier20% and preserving MIME editor20% accepted with root whole-module gates. Artifacts/configuration/routes and native integration remain open; waits on #29/#33 for complete flow |
 | #32 | binfmt_misc system artifacts, `install --system`, status/conflict reporting | Pending | 1% | 0% | Waits on #31 |
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 65% | Schema15%, complete journal milestone30% and rooted ownership/backup/restore API20% accepted. Root64+3 tests; whole module99.79%lines/90.02%taken arcs. Commands/all producers20% and comprehensive crash/native/full-removal15% remain open |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `30.95%`
+**Total Feature Completion**: `36.79%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -94,6 +94,34 @@ Current exclusive assignments are in resume_work_orders.json; previous runner
 state must be rechecked before native actions.
 The historical [checkpoint](checkpoint_2026_10_23.md) remains valid evidence;
 its uncompiled draft earns no credit until current acceptance passes.
+
+## 45 percent milestone (2026-10-25/26): accepted slices and attribution
+
+Baseline `f5178d3` = 30.95%. Result **36.79%** (+5.84): the 45% target was **not reached**.
+Plan and ledger: [claude_45_percent/EXECUTION_PLAN.md](claude_45_percent/EXECUTION_PLAN.md);
+handoff: [claude_45_percent/HANDOFF_RETURN.md](claude_45_percent/HANDOFF_RETURN.md);
+pending reviews: [claude_45_percent/REVIEW_TODO.md](claude_45_percent/REVIEW_TODO.md).
+Splits defined before implementation: #11 (11a-11j), #29 (29a-29k), #33 commands vs producers, #31, #16.
+
+| Task | Subtask (share of the task) | Points | Attributed commits |
+|---|---|---|---|
+| #11 | 11a mapping table 15% | +0.60 | `474b173f`, `f106a2cf`, `d3a67d80`, `d41ed845`, `90d6f727`, `269f372d`, `bca1a46a`, `c7d6cf97`, `47c47f85`, `88e082d0` |
+| #11 | 11c positioner 10% | +0.40 | `8c5fdef2`, `7bcb6e2c`, `0f5855e2`, `42915755`, `c6f7827d` |
+| #11 | 11b toplevel/dialog 15%, 11d popups 15%, 11e decoration 10%, 11f teardown 10%, 11h gates 5% | +2.20 | `7eed797a`, `326f22f9`, `076413ec`, `d992bc2f`, `19e55b54`, `a863417b`, then review fixes `04b24a36`, `a47b8bd1`, `1191f9cb`, `0d697774`, `cdb12a7c`, `aec53488`, `326fea3a`, `c559ffa0` |
+| #13 | native Win32 adapter 25% (CI run 40247820926 on a real desktop) | +0.75 | `d63bee5e`, `cf32cab4`, `9a5a16b2`, `e7d6cb6c`, `d4b33f34`, `dcedb2c2`, `6eb39168` |
+| #15 | live host repeat 10% (AV path) | +0.30 | `ef052e2`, `890df48d`, `fd6798f`, `8c05cc37`, `e785155d`, `aae97e1`, `8e74249` |
+| #15 | pure lock sync 8% | +0.24 | `f2e17e2d`, `10046263`, `bc556767` |
+| #15 | pure layout sync 12% (82-row KLID table) | +0.36 | `0e169662`, `a2316324` |
+| #15 | pure shortcut inhibit 5% | +0.15 | `e79b6b8d`, `99390e45` |
+| #29 | 29a grammar/classification 12%, 29b translation/quoting 8%, 29e token store 8% | +0.84 | `f2cd6338`..`128e9c06`, `bfb2910e`..`1b0f9c08`, `cd40da2e`, `543a8c7f` |
+
+Allocation rule used: a slice earns credit only when it has an independently reviewed
+first pass, every confirmed High/Critical finding is fixed with a failing-before test, the
+module gates (>= 90% line/arc, sanitizers/Zig allocator) pass on the merged head, and
+native claims have real-runner evidence. Anything reviewed but not fixed, unreviewed, or
+failing a gate is **implemented but not credited** (HANDOFF_RETURN.md lists it with the
+points it could earn). The second-pass verification reviews are TODO; credit is to be
+reduced if they find a defect.
 
 ## Commit History & Progress Log
 
